@@ -1,0 +1,199 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #1a1008;
+  font-family: 'Georgia', serif;
+  color: #e8dcc8;
+}
+
+/* ═══ Game animations ═══════════════════════════════════════════════════════ */
+
+/* Troop bubble — number change bounce + color flash */
+@keyframes troop-bounce-up {
+  0%   { transform: scale(1); }
+  30%  { transform: scale(1.45); }
+  55%  { transform: scale(0.92); }
+  75%  { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+@keyframes troop-flash-up {
+  0%, 60% { fill: #2ecc71; }
+  100%    { fill: white; }
+}
+@keyframes troop-flash-down {
+  0%, 60% { fill: #ff5544; }
+  100%    { fill: white; }
+}
+@keyframes troop-ring-up {
+  0%   { stroke: #2ecc71; stroke-width: 3.2; }
+  100% { stroke: rgba(0,0,0,0.60); stroke-width: 1.8; }
+}
+@keyframes troop-ring-down {
+  0%   { stroke: #ff5544; stroke-width: 3.2; }
+  100% { stroke: rgba(0,0,0,0.60); stroke-width: 1.8; }
+}
+.troop-anim {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: troop-bounce-up 0.55s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.troop-anim-up text   { animation: troop-flash-up 0.8s ease-out; }
+.troop-anim-down text { animation: troop-flash-down 0.8s ease-out; }
+.troop-anim-up   circle.troop-ring { animation: troop-ring-up 0.8s ease-out; }
+.troop-anim-down circle.troop-ring { animation: troop-ring-down 0.8s ease-out; }
+
+/* Territory capture — expanding ripple rings */
+@keyframes capture-ripple {
+  0%   { transform: scale(0.3); opacity: 0.9; }
+  100% { transform: scale(4.5); opacity: 0; }
+}
+.capture-ripple {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: capture-ripple 0.9s ease-out forwards;
+}
+.capture-ripple.delay-1 { animation-delay: 0.18s; opacity: 0; }
+.capture-ripple.delay-2 { animation-delay: 0.36s; opacity: 0; }
+
+/* City placement — drop down with a bounce */
+@keyframes city-drop {
+  0%   { transform: translateY(-26px) scale(1.4); opacity: 0; }
+  55%  { transform: translateY(2px) scale(1); opacity: 1; }
+  72%  { transform: translateY(-4px) scale(1.05); }
+  88%  { transform: translateY(1px) scale(0.98); }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+.city-drop {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: city-drop 0.6s cubic-bezier(0.34, 1.3, 0.64, 1) both;
+}
+
+/* HQ placement — crown spins in with scale */
+@keyframes hq-spin-in {
+  0%   { transform: rotate(-540deg) scale(0); opacity: 0; }
+  70%  { transform: rotate(20deg) scale(1.25); opacity: 1; }
+  100% { transform: rotate(0deg) scale(1); opacity: 1; }
+}
+.hq-spin-in {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: hq-spin-in 0.8s cubic-bezier(0.34, 1.4, 0.64, 1) both;
+}
+
+/* Dice — real 3D cube: tumbles through space while rolling, then rotates to
+   land on the rolled face. .die3d-cube carries the six faces in preserve-3d. */
+.die3d-scene {
+  position: relative;
+  flex-shrink: 0;
+}
+.die3d-cube {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 0.7s cubic-bezier(0.34, 1.45, 0.64, 1);
+}
+.die3d-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+}
+@keyframes die-cube-spin {
+  0%   { transform: rotateX(0deg)    rotateY(0deg)    rotateZ(0deg); }
+  25%  { transform: rotateX(200deg)  rotateY(110deg)  rotateZ(40deg); }
+  50%  { transform: rotateX(390deg)  rotateY(250deg)  rotateZ(-30deg); }
+  75%  { transform: rotateX(550deg)  rotateY(370deg)  rotateZ(35deg); }
+  100% { transform: rotateX(720deg)  rotateY(540deg)  rotateZ(0deg); }
+}
+.die3d-cube.spinning {
+  animation: die-cube-spin 1.15s linear infinite;
+  transition: none;
+}
+@keyframes die-hop {
+  0%, 100% { transform: translateY(0); }
+  30%      { transform: translateY(-8px); }
+  65%      { transform: translateY(-3px); }
+}
+.die3d-scene.spinning { animation: die-hop 1.15s ease-in-out infinite; }
+@keyframes die-land {
+  0%   { transform: scale(1.22) rotate(4deg); }
+  45%  { transform: scale(0.94) rotate(-2deg); }
+  75%  { transform: scale(1.05) rotate(1deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+.die-land { animation: die-land 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); }
+
+/* Attack flight — bubble travelling from attacker to defender territory */
+@keyframes flight-travel {
+  0%   { transform: translate(0, 0) scale(0.6); opacity: 0; }
+  12%  { transform: translate(calc(var(--fx) * 0.12), calc(var(--fy) * 0.12)) scale(1.15); opacity: 1; }
+  88%  { transform: translate(calc(var(--fx) * 0.88), calc(var(--fy) * 0.88)) scale(1.15); opacity: 1; }
+  100% { transform: translate(var(--fx), var(--fy)) scale(0.7); opacity: 0; }
+}
+.flight-bubble {
+  animation: flight-travel var(--fd, 0.85s) ease-in-out both;
+  animation-iteration-count: var(--fr, 1);
+}
+@keyframes flight-dash {
+  to { stroke-dashoffset: -26; }
+}
+.flight-line {
+  animation: flight-dash 0.5s linear infinite;
+}
+@keyframes flight-fade {
+  0%   { opacity: 0; }
+  15%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+.flight-layer { animation: flight-fade var(--fld, 1.1s) ease-in-out both; }
+
+/* Cards — slide in from the deck / slide out when taken or traded */
+@keyframes card-slide-in {
+  0%   { transform: translateX(60px) rotate(4deg); opacity: 0; }
+  100% { transform: translateX(0) rotate(0deg); opacity: 1; }
+}
+.card-slide-in { animation: card-slide-in 0.38s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes card-slide-out {
+  0%   { transform: translateX(0) scale(1); opacity: 1; }
+  100% { transform: translateX(-70px) translateY(-18px) scale(0.75) rotate(-6deg); opacity: 0; }
+}
+.card-slide-out { animation: card-slide-out 0.32s ease-in both; }
+
+/* Confetti / particle burst */
+@keyframes confetti-fall {
+  0% {
+    transform: translate(0, 0) rotate(0deg) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--cx), var(--cy)) rotate(var(--cr)) scale(0.6);
+    opacity: 0;
+  }
+}
+.confetti-piece {
+  position: absolute;
+  animation: confetti-fall var(--cd) cubic-bezier(0.15, 0.6, 0.45, 1) both;
+}
+
+/* Win screen — shimmering victory text */
+@keyframes victory-shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+.victory-shimmer {
+  background: linear-gradient(100deg, #C8940A 30%, #FFF3C0 50%, #C8940A 70%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: victory-shimmer 2.4s linear infinite;
+}

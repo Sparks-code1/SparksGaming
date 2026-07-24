@@ -1,0 +1,11 @@
+node_modules
+dist
+.env
+.env.local
+*.local
+
+# Personal Claude Code settings (shared config lives in .claude/launch.json)
+.claude/settings.local.json
+
+# Stray dev-time data dump (mangled C:\Temp\ path that landed in the repo root)
+*legacy_raw.json
