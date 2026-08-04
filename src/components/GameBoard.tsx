@@ -24,7 +24,7 @@ import { campaignOutcome, applyCampaignCompletion, championLabel, type CampaignO
 import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALIEN_ISLAND_TERRITORY_ID, calcDraftTroops, applyHqReserveTroops, expandClickAction, legalJoinWarTerritoryIds, cardCoinValue, leadFactionId, resolveResourceDepletion, type ResourceDepletion, troopsAfterEntry, minTroopsToEnter, LEAD_FACTION_WORLD_CAPITAL_TROOPS, worldCapitalReplacedCities, citiesLostOn, mergeLegacyEdits, countCitiesOn } from '@/lib/gameLogic'
 import {
   defaultLegacyState, saveLegacyState, loadLegacyState, awardRedStars,
-  applyLegacyToTerritories, cityBonus, pickUnlocks, SCAR_META,
+  applyLegacyToTerritories, pickUnlocks, SCAR_META,
   type LegacyEvent, type UnlockOption,
 } from '@/lib/legacyApi'
 import { getScarCard, type ScarCard, MERCENARY_CARD_IDS, BIOHAZARD_CARD_IDS } from '@/data/scarCards'
@@ -51,7 +51,7 @@ import { MassHypnosisModal, MindshackleModal } from './MutantPowerModals'
 import { MISSILE_POWERS } from '@/data/missilePowers'
 import {
   buildInitialGameCards, findBestTradeIn,
-  getEventCard, checkMissionComplete, getTerritoryCard, getCoinCard, COIN_CARDS,
+  getEventCard, getTerritoryCard, getCoinCard, COIN_CARDS,
   TERRITORY_CARDS, EVENT_EFFECTS, CARD_LOOKUP, type ActiveGameCards,
   CARD_TRADE_IN_VALUES, isPrivateMission, seedPrivateMissions, canClaimStarPower,
   shuffle,
@@ -72,7 +72,6 @@ import {
 
 // ─── Colours ─────────────────────────────────────────────────────────────────
 
-const GOLD_ACCENT = 0xC8940A
 
 // ─── Polygon helpers ──────────────────────────────────────────────────────────
 
@@ -82,27 +81,6 @@ function parsePolygon(shape: string): number[][] {
 
 // ─── Scar & city indicators ───────────────────────────────────────────────────
 
-function drawCrown(g: PIXI.Graphics, cx: number, cy: number, fill: number, alpha: number, outline: number) {
-  // Simple 3-point crown shape
-  g.lineStyle(0.8, outline, alpha * 0.7)
-  g.beginFill(fill, alpha)
-  g.moveTo(cx - 7, cy)
-  g.lineTo(cx - 7, cy - 8)
-  g.lineTo(cx - 3, cy - 4)
-  g.lineTo(cx,     cy - 9)
-  g.lineTo(cx + 3, cy - 4)
-  g.lineTo(cx + 7, cy - 8)
-  g.lineTo(cx + 7, cy)
-  g.closePath()
-  g.endFill()
-  // Jewel dots on the three crown points
-  g.lineStyle(0)
-  g.beginFill(outline, alpha)
-  g.drawCircle(cx - 7, cy - 8, 1.5)
-  g.drawCircle(cx,     cy - 9, 1.5)
-  g.drawCircle(cx + 7, cy - 8, 1.5)
-  g.endFill()
-}
 
 function drawIndicators(g: PIXI.Graphics, t: Territory, lx: number, ly: number) {
   g.clear()
@@ -1344,7 +1322,13 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
             state.players.find(p => p.id === currentPlayerId)?.factionId ?? ''
           ] : null
           if (currentAbility === 'sahara-anytime-fortify') {
-            const saharaFreeMove = currentAbility === 'sahara-free-fortify'
+            // No Desert Network branch here. This block only runs for the
+            // ANYTIME ability — the enclosing check narrows it, and the button
+            // that turns this mode on is gated on the same ability — so a
+            // `currentAbility === 'sahara-free-fortify'` test was always false.
+            // It came in with a copy of the normal fortify path below, where it
+            // is meaningful. Reachability is connectivity, or adjacency when
+            // Short Sighted applies.
             const saharaShortSighted = factionWeaknessOf(
               state.players.find(p => p.id === currentPlayerId)?.factionId ?? '',
             ) === 'wp-short-sighted'
@@ -1353,8 +1337,6 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
               const src = state.territories[srcId]
               const isReachable = saharaShortSighted
                 ? (isOwn && (src?.adjacentIds ?? []).includes(def.id))
-                : saharaFreeMove
-                ? (isOwn && def.id !== srcId)
                 : connectedOwnedIds(srcId, currentPlayerId ?? '', state.territories, fzNoTraverse()).has(def.id)
               if (def.id === srcId) {
                 fortifySrcRef.current = null; setFortifySrcId(null)
@@ -1463,9 +1445,6 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
             else {
               const fortifySrc = fortifySrcRef.current
               const attackSrc  = attackSrcRef.current
-              const allOwned = new Set(
-                Object.values(state.territories).filter(tt => tt.occupyingPlayerId === currentPlayerId).map(tt => tt.id),
-              )
               if (fortifySrc) {
                 // A fortify source is already selected — resolve the fortify move
                 const src = state.territories[fortifySrc]
@@ -1493,7 +1472,6 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
 
           const srcId = attackSrcRef.current
           if (srcId) {
-            const src = state.territories[srcId]
             if (def.id === srcId) {
               attackSrcRef.current = null; setAttackSrcId(null)
             } else if (canStartAttack(state, srcId, def.id, currentPlayerId ?? '')) {
@@ -5035,7 +5013,6 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
       // player takes a sideboard card that reveals an even-coin card on spot 1
       // (see triggerEventCard). Clear the previous round's active effects.
       const eventBonus = 0
-      const drawnEventCardId: string | null = null
       if (isNewRound) {
         activeEffectsRef.current = new Set()
         setActiveEffects(new Set())

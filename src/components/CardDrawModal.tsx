@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import type { Territory } from '@/types/territory'
 import { getTerritoryCard, getCoinCard } from '@/data/cards'
 import { TERRITORY_DEFINITIONS } from '@/data/territoryData'
@@ -40,13 +40,6 @@ const CONTINENT_COLOR: Record<string, string> = {
   'africa':        '#E74C3C',
   'asia':          '#8E44AD',
   'australia':     '#F39C12',
-}
-
-const SUIT_LABEL: Record<string, string> = {
-  soldiers:  'Infantry',
-  cavalry:   'Cavalry',
-  artillery: 'Artillery',
-  wild:      'Resource',
 }
 
 export default function CardDrawModal({ playerId, sideboard, resourceDeck, territories, cardResources = {}, freeChoice = false, coinBlocked = false, reconAvailable = false, reconActive = false, onActivateRecon, homelandContinentId = null, title, subtitle, onSelect, onSkip }: Props) {
@@ -151,7 +144,7 @@ export default function CardDrawModal({ playerId, sideboard, resourceDeck, terri
           </div>
 
           <div style={{ display: 'flex', gap: 10 }}>
-            {sideboardCards.map(({ cardId, card, terrDef, controls, viaHomeland }, idx) => {
+            {sideboardCards.map(({ cardId, terrDef, controls, viaHomeland }, idx) => {
               const continent = terrDef?.continentId ?? ''
               const contColor = CONTINENT_COLOR[continent] ?? '#888'
               const selectable = sideboardSelectable(controls)

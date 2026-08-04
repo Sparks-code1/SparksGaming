@@ -207,7 +207,6 @@ export default function CalibrationOverlay({ containerRef, onClose }: Props) {
   }
 
   const currentName = currentId ? nameOf(currentId) : null
-  const rect = containerRef.current?.getBoundingClientRect()
 
   return (
     <>
@@ -300,7 +299,7 @@ export default function CalibrationOverlay({ containerRef, onClose }: Props) {
               }}>
                 {section.label}
               </div>
-              {section.ids.map((id, i) => {
+              {section.ids.map(id => {
                 const globalIdx = ORDERED_IDS.indexOf(id)
                 const isCurrent = globalIdx === currentIdx
                 const isDone = points[id] !== undefined

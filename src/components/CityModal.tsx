@@ -21,8 +21,6 @@ export default function CityModal({ territory, gameNumber, currentFactionId, onA
   const [newCityName, setNewCityName] = useState(territory.name + ' City')
   const [view, setView] = useState<'menu' | 'place-city'>('menu')
 
-  const activeCities = territory.cities.filter(c => !c.isDestroyed)
-  const destroyedCities = territory.cities.filter(c => c.isDestroyed)
   const hasHQ = territory.cities.some(c => c.headquartersFactionId === currentFactionId)
   const canPlaceHQ = currentFactionId && !territory.scars.some(s => s.type === 'wasteland') && !hasHQ
 

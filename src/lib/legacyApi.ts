@@ -1,7 +1,6 @@
 import { supabase } from './supabase'
 import type { LegacyState } from '@/types/legacy'
 import type { ScarType } from '@/types/territory'
-import { TERRITORY_DEFINITIONS } from '@/data/territoryData'
 import { getInitialScarDeck } from '@/data/scarCards'
 import { storeGet, storeSet, storeRemove } from './appStore'
 import { generateJoinCode, normalizeJoinCode, isValidJoinCode } from './joinCode'

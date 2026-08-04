@@ -49,10 +49,6 @@ interface Props {
   onSkip: () => void
 }
 
-function hexToRgb(hex: number) {
-  return `rgb(${(hex >> 16) & 0xff},${(hex >> 8) & 0xff},${hex & 0xff})`
-}
-
 function coinDots(count: number, max: number = 6) {
   const filled = Math.min(count, max)
   return (
