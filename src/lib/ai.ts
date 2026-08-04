@@ -15,6 +15,9 @@ import type { Territory } from '@/types/territory'
 import type { LegacyState } from '@/types/legacy'
 import type { AIDifficulty } from '@/types/ai'
 import { TERRITORY_DEFINITIONS, CONTINENT_BONUSES } from '@/data/territoryData'
+import { getCoinCard, coinTradeInTroops } from '@/data/cards'
+import { cardCoinValue, livingCities } from '@/lib/gameLogic'
+import { isSeaLine, ISLAND_TERRITORY_IDS } from '@/data/seaLines'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -34,6 +37,45 @@ function enemyNeighbours(state: GameState, t: Terr, playerId: string): Terr[] {
   return t.adjacentIds
     .map(adj => state.territories[adj])
     .filter((n): n is Terr => !!n && n.occupyingPlayerId !== playerId)
+}
+
+/**
+ * Where an AI should drop a bonus troop it did not draft — the Resistance
+ * event's troops, for instance.
+ *
+ * Purely defensive, because these troops arrive outside the AI's own turn and
+ * cannot be attacked with: the border territory under the most pressure, scored
+ * as the enemy troops that can reach it minus the garrison already standing
+ * there, plus a little weight for ground that is expensive to lose. Falls back
+ * to the biggest holding when nothing borders an enemy, and to null when the
+ * player holds nothing.
+ *
+ * Deterministic — ties break on territory id — so a replay places identically.
+ */
+export function aiBonusTroopTarget(
+  state: GameState,
+  playerId: string,
+  /** Restricts the choice — Join the Cause may only reinforce cities. */
+  eligible?: (t: Terr) => boolean,
+): string | null {
+  const owned = ownedList(state, playerId).filter(t => !eligible || eligible(t))
+  if (owned.length === 0) return null
+  const borders = owned.filter(t => isBorder(state, t, playerId))
+  const pool = borders.length > 0 ? borders : owned
+
+  let best: Terr | null = null
+  let bestScore = -Infinity
+  for (const t of pool) {
+    const pressure = enemyNeighbours(state, t, playerId).reduce((s, n) => s + n.troops, 0)
+    const worth = (t.activeHqPlayerId ? 3 : 0)
+      + livingCities(t).reduce((n, c) => n + (c.isMajor ? 2 : 1), 0)
+    const score = pressure - t.troops + worth
+    if (score > bestScore || (score === bestScore && best !== null && t.id < best.id)) {
+      best = t
+      bestScore = score
+    }
+  }
+  return best?.id ?? null
 }
 
 /** Continent id → number of territories in it (from the static map). */
@@ -190,6 +232,14 @@ export function aiAttackPlan(
   const owned = ownedList(state, playerId)
   const orders: AttackOrder[] = []
 
+  // ── Red-star pressure ──────────────────────────────────────────────────
+  // Red stars, not territory count, are the win condition. Chase the face-up
+  // mission when it is within reach, and gang up on anyone one star from
+  // taking the campaign.
+  const focus = aiMissionFocus(state, legacy, playerId)
+  const pursuing = aiShouldPursueMission(focus, difficulty)
+  const matchPoint = new Set(rivalsOnMatchPoint(state, legacy, playerId))
+
   // Candidate (src, tgt) pairs: own territory with 2+ troops adjacent to an enemy
   interface Cand { src: Terr; tgt: Terr; score: number }
   const cands: Cand[] = []
@@ -199,10 +249,12 @@ export function aiAttackPlan(
       // Never attack the Fallout Zone (destroyed ground) with a token stack
       let score = 0
       const favorable = attackFavorable(src.troops, tgt.troops, difficulty === 'medium' ? 2 : 1.2)
+      const isMissionTarget = pursuing && !!focus?.targetIds.has(tgt.id)
       if (difficulty === 'easy') {
         score = Math.random()
       } else if (difficulty === 'medium') {
-        if (!favorable) continue
+        // A mission within a conquest or two is worth relaxing the odds bar for.
+        if (!favorable && !(isMissionTarget && attackFavorable(src.troops, tgt.troops, 1.2))) continue
         score = (src.troops - 1) - tgt.troops
       } else {
         // Hard: value-weighted, prefer favorable odds, target the leader
@@ -215,6 +267,16 @@ export function aiAttackPlan(
         const owns = continentOwnership(state, playerId)[tgt.continentId] ?? 0
         const size = CONTINENT_SIZES[tgt.continentId] ?? 99
         if (size - owns <= 2) score += 4
+      }
+      // Mission targets outrank ordinary expansion — a completed mission is a
+      // red star, which is the actual win condition.
+      if (isMissionTarget) score += 12
+      // Deny the campaign to anyone sitting on 3 stars. Easy stays oblivious —
+      // its moves are meant to be random.
+      if (difficulty !== 'easy' && tgt.occupyingPlayerId && matchPoint.has(tgt.occupyingPlayerId)) {
+        score += 8
+        // Taking an HQ off them removes a star outright.
+        if (tgt.activeHqPlayerId) score += 6
       }
       cands.push({ src, tgt, score })
     }
@@ -290,4 +352,243 @@ export function aiFortifyMove(
     }
   }
   return null
+}
+
+// ─── Card trade-ins ───────────────────────────────────────────────────────────
+
+/**
+ * Coin value of a hand, using EXACTLY the human trade-in math: resource/coin
+ * cards are 1, territory cards carry their own coin value including permanent
+ * runner-up upgrades. Any drift here would let the AI mis-price its hand.
+ */
+export function handCoinTotal(
+  hand: string[],
+  cardResources: Record<string, number> | undefined | null,
+): number {
+  return hand.reduce(
+    (sum, id) => sum + (getCoinCard(id) ? 1 : cardCoinValue(cardResources, id)),
+    0,
+  )
+}
+
+export interface TradeInDecision {
+  /** Cards to spend — the whole hand; the track rewards bigger piles. */
+  cardIds: string[]
+  totalCoins: number
+  troops: number
+  reason: string
+}
+
+/**
+ * Should the AI cash its hand in this draft phase, and for how much?
+ *
+ * Reward track (coins → troops): 2→2, 3→4, 4→7, 5→10, 6→13, 7→17, 8→21, 9→25,
+ * 10+→30. Returns null to hold.
+ *
+ *   Easy   — trades the moment the hand is worth anything at all (2+ coins).
+ *   Medium — waits until the hand is worth 4+ coins (the 7-troop tier).
+ *   Hard   — looks one turn ahead: if a single extra coin would jump to a
+ *            significantly better tier it holds, otherwise it cashes in now.
+ *            It stops holding once the track flattens, and cashes immediately
+ *            when a rival is one star from winning (troops now beat troops later).
+ */
+export function aiTradeInDecision(
+  hand: string[],
+  cardResources: Record<string, number> | undefined | null,
+  difficulty: AIDifficulty,
+  opts?: { rivalOnMatchPoint?: boolean },
+): TradeInDecision | null {
+  if (hand.length === 0) return null
+  const totalCoins = handCoinTotal(hand, cardResources)
+  const troops = coinTradeInTroops(totalCoins)
+  if (troops === null) return null   // below the 2-coin minimum
+
+  const spend = (reason: string): TradeInDecision => ({ cardIds: [...hand], totalCoins, troops, reason })
+
+  if (difficulty === 'easy') return spend('easy: cash in whenever the hand is worth something')
+  if (difficulty === 'medium') {
+    return totalCoins >= 4 ? spend('medium: reached the 4-coin tier') : null
+  }
+
+  // Hard — is one more coin worth the delay?
+  if (opts?.rivalOnMatchPoint) return spend('hard: a rival is on 3 stars — troops now')
+
+  const next = coinTradeInTroops(totalCoins + 1) ?? troops
+  const gain = next - troops
+  // "Significantly better tier": a solid absolute jump, or a big relative one
+  // (which is what makes holding a tiny 2-coin hand worthwhile).
+  const worthHolding = gain >= 3 || next >= troops * 1.5
+  // Past 7 coins the track flattens and a fat hand is a liability — an
+  // elimination would hand the whole pile to the attacker.
+  if (worthHolding && totalCoins < 7) return null
+
+  return spend(`hard: holding gains only +${gain} troops`)
+}
+
+// ─── Red stars ────────────────────────────────────────────────────────────────
+
+/** Red stars a player holds: HQs they control plus stars earned/bought. */
+export function playerRedStars(state: GameState, legacy: LegacyState, playerId: string): number {
+  const hqStars = Object.values(state.territories).filter(
+    t => t.occupyingPlayerId === playerId && !!t.activeHqPlayerId,
+  ).length
+  return hqStars + ((legacy.purchasedStars ?? {})[playerId] ?? 0)
+}
+
+/** Every rival's star count, highest first. 4 stars wins the game. */
+export function rivalStarCounts(
+  state: GameState, legacy: LegacyState, playerId: string,
+): Array<{ playerId: string; stars: number }> {
+  return state.players
+    .filter(p => p.id !== playerId && !p.isEliminated)
+    .map(p => ({ playerId: p.id, stars: playerRedStars(state, legacy, p.id) }))
+    .sort((a, b) => b.stars - a.stars)
+}
+
+/** Rivals one star from the campaign win — worth ganging up on. */
+export function rivalsOnMatchPoint(
+  state: GameState, legacy: LegacyState, playerId: string,
+): string[] {
+  return rivalStarCounts(state, legacy, playerId).filter(r => r.stars >= 3).map(r => r.playerId)
+}
+
+// ─── Mission pursuit ──────────────────────────────────────────────────────────
+
+export interface MissionFocus {
+  missionId: string
+  /** Enemy territories whose CAPTURE advances the mission. */
+  targetIds: Set<string>
+  /** Conquests still needed. 0 = already satisfied. */
+  remaining: number
+}
+
+/** Cities standing on a territory (HQ markers and ruins don't count). */
+function standingCities(t: Terr): number {
+  return (t.cities ?? []).filter(c => !c.isDestroyed && !c.headquartersFactionId).length
+}
+
+/**
+ * What the AI must conquer to finish the face-up mission, and how far off it is.
+ *
+ * IMPORTANT: mission progress counts conquests BY COMBAT only — `turn.conqueredIds`.
+ * Walking into an empty territory bumps `captureCount` but never counts here, so
+ * the AI must not treat undefended land as mission progress.
+ *
+ * Returns null when the mission has no conquest path (e.g. the trade-in-driven
+ * private missions), so the caller falls back to its normal expansion plan.
+ */
+export function aiMissionFocus(
+  state: GameState,
+  legacy: LegacyState,
+  playerId: string,
+): MissionFocus | null {
+  const missionId = legacy.activeGameCards?.currentMissionId
+  if (!missionId) return null
+
+  const all = Object.values(state.territories)
+  const mine = all.filter(t => t.occupyingPlayerId === playerId)
+  const enemy = all.filter(t => t.occupyingPlayerId && t.occupyingPlayerId !== playerId)
+  // Combat conquests only — this is the distinction the missions actually score.
+  const conquered = state.turn?.conqueredIds ?? []
+  const conqueredSea = state.turn?.conqueredViaSeaIds ?? []
+  const ids = (ts: Terr[]) => new Set(ts.map(t => t.id))
+  const focus = (targets: Terr[], remaining: number): MissionFocus =>
+    ({ missionId, targetIds: ids(targets), remaining: Math.max(0, remaining) })
+
+  switch (missionId) {
+    case 'mc-6-cities': {
+      const held = mine.reduce((n, t) => n + standingCities(t), 0)
+      return focus(enemy.filter(t => standingCities(t) > 0), 6 - held)
+    }
+    case 'mc-4-cities-turn': {
+      const taken = conquered.reduce((n, id) => {
+        const t = state.territories[id]
+        return n + (t?.occupyingPlayerId === playerId ? standingCities(t) : 0)
+      }, 0)
+      return focus(enemy.filter(t => standingCities(t) > 0), 4 - taken)
+    }
+    case 'mc-9-territories-turn':
+      return focus(enemy, 9 - conquered.length)
+
+    case 'mc-4-sea-turn': {
+      // Only enemy territories reachable across a sea line from something we hold.
+      const reachable = enemy.filter(t =>
+        mine.some(m => m.troops > 1 && m.adjacentIds.includes(t.id) && isSeaLine(m.id, t.id)))
+      return focus(reachable, 4 - conqueredSea.length)
+    }
+    case 'mc-continent-turn': {
+      // Whichever continent we are closest to completing.
+      const owned = continentOwnership(state, playerId)
+      let bestC: string | null = null, bestGap = Infinity
+      for (const [cId, size] of Object.entries(CONTINENT_SIZES)) {
+        const gap = size - (owned[cId] ?? 0)
+        if (gap > 0 && gap < bestGap) { bestGap = gap; bestC = cId }
+      }
+      if (!bestC) return focus([], 0)
+      return focus(enemy.filter(t => t.continentId === bestC), bestGap)
+    }
+    case 'mc-7-continent-bonus': {
+      const owned = continentOwnership(state, playerId)
+      let bonus = 0
+      for (const [cId, n] of Object.entries(owned)) {
+        if (n >= (CONTINENT_SIZES[cId] ?? Infinity)) {
+          bonus += (CONTINENT_BONUSES[cId as keyof typeof CONTINENT_BONUSES] ?? 0)
+        }
+      }
+      if (bonus >= 7) return focus([], 0)
+      // Push on continents we can still finish, nearest-first.
+      const gaps = Object.entries(CONTINENT_SIZES)
+        .map(([cId, size]) => ({ cId, gap: size - (owned[cId] ?? 0) }))
+        .filter(g => g.gap > 0)
+        .sort((a, b) => a.gap - b.gap)
+      const push = new Set(gaps.slice(0, 2).map(g => g.cId))
+      return focus(enemy.filter(t => push.has(t.continentId)), gaps[0]?.gap ?? Infinity)
+    }
+    case 'mc-7-islands': {
+      const held = mine.filter(t => ISLAND_TERRITORY_IDS.has(t.id)).length
+      return focus(enemy.filter(t => ISLAND_TERRITORY_IDS.has(t.id)), 7 - held)
+    }
+    case 'pm-guerrilla-warfare': {
+      const marked = all.filter(t => (t.scars ?? []).some(s => s.type === 'fortified' || s.type === 'mercenary'))
+      if (marked.length === 0) return null
+      const missing = marked.filter(t => t.occupyingPlayerId !== playerId)
+      return focus(missing, missing.length)
+    }
+    case 'pm-urban-troop-surge': {
+      const wcId = legacy.worldCapitalTerritoryId ?? null
+      if (!wcId) return null
+      const majors = mine.filter(t => t.id !== wcId
+        && (t.cities ?? []).some(c => c.isMajor && !c.isDestroyed && !c.headquartersFactionId)).length
+      const need = (state.territories[wcId]?.occupyingPlayerId === playerId ? 0 : 1) + Math.max(0, 3 - majors)
+      const targets = enemy.filter(t => t.id === wcId
+        || (t.cities ?? []).some(c => c.isMajor && !c.isDestroyed && !c.headquartersFactionId))
+      return focus(targets, need)
+    }
+    case 'pm-wide-border': {
+      const owned = continentOwnership(state, playerId)
+      const complete = Object.entries(CONTINENT_SIZES)
+        .filter(([cId, size]) => (owned[cId] ?? 0) >= size).length
+      if (complete >= 2) return focus([], 0)
+      const gaps = Object.entries(CONTINENT_SIZES)
+        .map(([cId, size]) => ({ cId, gap: size - (owned[cId] ?? 0) }))
+        .filter(g => g.gap > 0)
+        .sort((a, b) => a.gap - b.gap)
+      const push = new Set(gaps.slice(0, 2 - complete).map(g => g.cId))
+      return focus(enemy.filter(t => push.has(t.continentId)),
+        gaps.slice(0, 2 - complete).reduce((s, g) => s + g.gap, 0))
+    }
+    default:
+      // World Capital and the trade-in / knockout private missions are not
+      // advanced by conquering anything.
+      return null
+  }
+}
+
+/** How many conquests the AI will chase a mission from. */
+const MISSION_REACH: Record<AIDifficulty, number> = { easy: 0, medium: 2, hard: 6 }
+
+/** Is this mission close enough that this difficulty should prioritise it? */
+export function aiShouldPursueMission(focus: MissionFocus | null, difficulty: AIDifficulty): boolean {
+  if (!focus || focus.remaining <= 0) return false
+  return focus.remaining <= MISSION_REACH[difficulty]
 }
