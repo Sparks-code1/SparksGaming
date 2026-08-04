@@ -21,7 +21,7 @@ import WinScreen from './WinScreen'
 import LegacyPanel from './LegacyPanel'
 import CampaignCompleteScreen from './CampaignCompleteScreen'
 import { campaignOutcome, applyCampaignCompletion, championLabel, type CampaignOutcome } from '@/lib/campaign'
-import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALIEN_ISLAND_TERRITORY_ID, calcDraftTroops, applyHqReserveTroops, expandClickAction, legalJoinWarTerritoryIds, cardCoinValue, leadFactionId, resolveResourceDepletion, type ResourceDepletion, troopsAfterEntry, minTroopsToEnter, LEAD_FACTION_WORLD_CAPITAL_TROOPS, worldCapitalReplacedCities, citiesLostOn, mergeLegacyEdits, countCitiesOn } from '@/lib/gameLogic'
+import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALIEN_ISLAND_TERRITORY_ID, calcDraftTroops, applyHqReserveTroops, expandClickAction, legalJoinWarTerritoryIds, cardCoinValue, leadFactionId, resolveResourceDepletion, type ResourceDepletion, troopsAfterEntry, minTroopsToEnter, LEAD_FACTION_WORLD_CAPITAL_TROOPS, worldCapitalReplacedCities, citiesLostOn, mergeLegacyEdits, countCitiesOn, FORTIFICATION_SUPPLY, fortificationsPlaced, canPlaceFortification, FORTIFY_EVENT_TROOPS, FORTIFY_EVENT_CITIES } from '@/lib/gameLogic'
 import {
   defaultLegacyState, saveLegacyState, loadLegacyState, awardRedStars,
   applyLegacyToTerritories, pickUnlocks, SCAR_META,
@@ -454,9 +454,33 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
    */
   const [joinCausePlacement, setJoinCausePlacement] = useState<{ playerId: string; troopsLeft: number } | null>(null)
   const joinCausePlacementRef = useRef<{ playerId: string; troopsLeft: number } | null>(null)
-  // Fortify event: the drawer places 2 troops on ONE territory they control
-  const [fortifyEventPlayerId, setFortifyEventPlayerId] = useState<string | null>(null)
-  const fortifyEventRef = useRef<string | null>(null)
+  /**
+   * Fortify event: the LARGEST-POPULATION player chooses between troops and a
+   * permanent fortification.
+   *
+   * One state machine rather than three loose flags, because `cardId` has to
+   * survive all the way to the end: the choice decides the card's fate. Taking
+   * the fortification destroys it for the whole campaign; taking the troops
+   * only discards it, so it comes back in later games.
+   *
+   * It used to go to the DRAWER and hand them 2 troops on one territory, which
+   * is why it was cleared at END_TURN. Now that it belongs to a player the
+   * board picks — usually not the one taking the turn — it must survive the
+   * hand-off like the other board-picked rewards.
+   */
+  type FortifyEvent =
+    | { phase: 'choice'; playerId: string; cardId: string }
+    /** +2 troops into each of 2 DIFFERENT cities. `usedCityIds` enforces the difference. */
+    | { phase: 'troops'; playerId: string; cardId: string; citiesLeft: number; usedCityIds: string[] }
+    /** Pick one city to fortify permanently. */
+    | { phase: 'fortification'; playerId: string; cardId: string }
+  const [fortifyEvent, setFortifyEvent] = useState<FortifyEvent | null>(null)
+  const fortifyEventRef = useRef<FortifyEvent | null>(null)
+  /** Both writes at once — PIXI click handlers read the ref mid-tick. */
+  function updateFortifyEvent(next: FortifyEvent | null) {
+    fortifyEventRef.current = next
+    setFortifyEvent(next)
+  }
   // Control the People event: the largest-population player chooses a reward —
   // 5 troops in one of their cities, or an immediate maneuver.
   const [controlPeopleChoice, setControlPeopleChoice] = useState<string | null>(null) // playerId choosing
@@ -1213,25 +1237,44 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
           return
         }
 
-        // ── FORTIFY EVENT: place 2 troops on ONE owned territory ─────────────
-        const fortifyEvId = fortifyEventRef.current
-        if (fortifyEvId) {
-          if (t.occupyingPlayerId !== fortifyEvId) {
-            const fp = state.players.find(p => p.id === fortifyEvId)
-            showWeaknessNotice(`⛨ Fortify — ${fp?.name ?? 'the player'} must choose a territory they control`)
+        // ── FORTIFY EVENT ────────────────────────────────────────────────────
+        // Two placement modes off one choice: troops into two different cities,
+        // or a single permanent fortification.
+        const fe = fortifyEventRef.current
+        if (fe && fe.phase !== 'choice') {
+          const fp = state.players.find(p => p.id === fe.playerId)
+          const eligible = ownedCityIds(fe.playerId)
+          if (!eligible.includes(def.id)) {
+            showWeaknessNotice(t.occupyingPlayerId === fe.playerId
+              ? `⛨ Fortify — ${t.name} has no city; choose a city you control`
+              : `⛨ Fortify — ${fp?.name ?? 'the player'} must choose a CITY they control`)
+            return
+          }
+
+          if (fe.phase === 'fortification') {
+            placeFortifyEventFortification(fe.playerId, fe.cardId, def.id)
+            return
+          }
+
+          // Troops: two DIFFERENT cities, so a city already used is refused
+          // rather than silently stacking the whole reward in one place.
+          if (fe.usedCityIds.includes(def.id)) {
+            showWeaknessNotice(`⛨ Fortify — ${t.name} already took its troops; choose a different city`)
             return
           }
           setGameState(prev => ({
             ...prev,
             territories: {
               ...prev.territories,
-              [def.id]: { ...prev.territories[def.id], troops: prev.territories[def.id].troops + 2 },
+              [def.id]: { ...prev.territories[def.id], troops: prev.territories[def.id].troops + FORTIFY_EVENT_TROOPS },
             },
           }))
-          const fp = state.players.find(p => p.id === fortifyEvId)
-          showWeaknessNotice(`⛨ Fortify — ${fp?.name ?? 'Player'} reinforced ${t.name} with 2 troops`)
-          fortifyEventRef.current = null
-          setFortifyEventPlayerId(null)
+          const left = fe.citiesLeft - 1
+          showWeaknessNotice(
+            `⛨ Fortify — ${fp?.name ?? 'Player'} reinforced ${t.name} with ${FORTIFY_EVENT_TROOPS} troops`
+            + (left > 0 ? ` — ${left} more ${left === 1 ? 'city' : 'cities'} to choose` : ''))
+          if (left <= 0) finishFortifyTroops(fe.cardId)
+          else updateFortifyEvent({ ...fe, citiesLeft: left, usedCityIds: [...fe.usedCityIds, def.id] })
           return
         }
 
@@ -2005,6 +2048,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     if (mutantsEvolvePendingCardId && isHumanId(factionPlayer('mutants'))) return 'a Mutants Evolve choice'
     if (showJoinTheCause && isHumanId(largestPopulationPlayerId())) return 'a Join the Cause choice'
     if (joinCausePlacement && isHumanId(joinCausePlacement.playerId)) return 'a Join the Cause placement'
+    if (fortifyEvent && isHumanId(fortifyEvent.playerId)) {
+      return fortifyEvent.phase === 'choice' ? 'a Fortify choice' : 'a Fortify placement'
+    }
     return null
   }
 
@@ -2139,6 +2185,46 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     setRiotResult(null)
   }
 
+  /**
+   * One step of an AI's Fortify event.
+   *
+   * It takes the FORTIFICATION whenever one is left. A fortification is
+   * permanent and the troops are not, and taking it also removes the card from
+   * the campaign — so the AI is choosing the lasting board change over four
+   * troops it may lose next turn. Once the supply is gone the choice makes
+   * itself.
+   */
+  function stepAiFortifyEvent(fe: FortifyEvent) {
+    const eligible = new Set(ownedCityIds(fe.playerId))
+    if (eligible.size === 0) { updateFortifyEvent(null); returnEventCardToDiscard(fe.cardId); return }
+    const best = (allowed: Set<string>) =>
+      aiBonusTroopTarget(gameStateRef.current, fe.playerId, t => allowed.has(t.id)) ?? [...allowed][0]
+
+    if (fe.phase === 'choice') {
+      if (canPlaceFortification(legacyStateRef.current)) {
+        updateFortifyEvent({ phase: 'fortification', playerId: fe.playerId, cardId: fe.cardId })
+      } else {
+        startFortifyTroops(fe.playerId, fe.cardId)
+      }
+      return
+    }
+    if (fe.phase === 'fortification') {
+      placeFortifyEventFortification(fe.playerId, fe.cardId, best(eligible))
+      return
+    }
+    // Troops — one city per tick, and never the same city twice.
+    const unused = new Set([...eligible].filter(id => !fe.usedCityIds.includes(id)))
+    if (unused.size === 0) { finishFortifyTroops(fe.cardId); return }
+    const targetId = best(unused)
+    setGameState(prev => ({
+      ...prev,
+      territories: { ...prev.territories, [targetId]: { ...prev.territories[targetId], troops: prev.territories[targetId].troops + FORTIFY_EVENT_TROOPS } },
+    }))
+    const left = fe.citiesLeft - 1
+    if (left <= 0) finishFortifyTroops(fe.cardId)
+    else updateFortifyEvent({ ...fe, citiesLeft: left, usedCityIds: [...fe.usedCityIds, targetId] })
+  }
+
   function stepAiResistancePlacement(rp: { playerId: string; troopsLeft: number }) {
     // One troop per tick onto the most threatened border, recomputed each time
     // so the troops spread across the front instead of stacking on one spot
@@ -2148,6 +2234,82 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     const left = rp.troopsLeft - 1
     if (left <= 0) { resistancePlacementRef.current = null; setResistancePlacement(null) }
     else { const n = { ...rp, troopsLeft: left }; resistancePlacementRef.current = n; setResistancePlacement(n) }
+  }
+
+  // ── Fortify event ──────────────────────────────────────────────────────────
+
+  /**
+   * Take the troops: +2 into each of two DIFFERENT cities.
+   *
+   * A leader holding only one city places into that one and stops, rather than
+   * forfeiting the reward on a technicality — the same failure Join the Cause
+   * had. The card is only DISCARDED, so it returns in later games.
+   */
+  function startFortifyTroops(playerId: string, cardId: string) {
+    const cities = ownedCityIds(playerId)
+    const name = gameStateRef.current.players.find(p => p.id === playerId)?.name ?? 'Player'
+    const target = Math.min(FORTIFY_EVENT_CITIES, cities.length)
+    updateFortifyEvent({ phase: 'troops', playerId, cardId, citiesLeft: target, usedCityIds: [] })
+    logHistory(
+      `⛨ Fortify — ${name} had the largest population and takes ${FORTIFY_EVENT_TROOPS} troops`
+      + ` in each of ${target} ${target === 1 ? 'city' : 'cities'}`
+      + (target < FORTIFY_EVENT_CITIES ? ' (all the cities they control)' : ''),
+    )
+  }
+
+  /** Finish the troops option: the card goes to the discard, not the bin. */
+  function finishFortifyTroops(cardId: string) {
+    updateFortifyEvent(null)
+    returnEventCardToDiscard(cardId)
+  }
+
+  /**
+   * Take the fortification: one city is permanently fortified, and the card is
+   * DESTROYED for the rest of the campaign.
+   *
+   * Spends one of the campaign's five fortifications — the same supply the
+   * winner's reward draws from, not a separate pool.
+   */
+  function placeFortifyEventFortification(playerId: string, cardId: string, territoryId: string) {
+    const st = gameStateRef.current
+    const name = st.players.find(p => p.id === playerId)?.name ?? 'Player'
+    const terrName = st.territories[territoryId]?.name ?? territoryId
+    updateFortifyEvent(null)
+
+    setLegacyState(prev => {
+      // Re-checked against the state being written, not the render that drew
+      // the button: the supply is finite and must not go to six.
+      if (!canPlaceFortification(prev)) {
+        showWeaknessNotice(`⛨ Fortify — all ${FORTIFICATION_SUPPLY} fortifications are already placed`)
+        return prev
+      }
+      const next: LegacyState = {
+        ...prev,
+        stickers: [...prev.stickers, {
+          id: `fortify-event-${Date.now()}`,
+          name: 'Fortification',
+          description: 'fortification:10',
+          placement: 'territory' as const,
+          targetId: territoryId,
+          appliedInGame: st.gameNumber,
+          placedByPlayerId: playerId,
+        }],
+        // Using the fortification is what destroys the card. Taking the troops
+        // does not — that path calls returnEventCardToDiscard instead.
+        destroyedEventCardIds: [...(prev.destroyedEventCardIds ?? []), cardId],
+        historyLog: [...prev.historyLog, {
+          gameNumber: st.gameNumber,
+          entry: `⛨ Fortify — ${name} permanently fortified ${terrName} (10 charges)`
+            + ` — ${FORTIFICATION_SUPPLY - fortificationsPlaced(prev.stickers) - 1} of ${FORTIFICATION_SUPPLY} left`
+            + ' — and that event card is destroyed for the campaign',
+          timestamp: new Date().toISOString(),
+        }],
+      }
+      legacyStateRef.current = next
+      saveLegacyState(next).catch(() => {})
+      return next
+    })
+    showWeaknessNotice(`⛨ ${name} fortified ${terrName} permanently — the event card is destroyed`)
   }
 
   /** Ruinable minor city for an AI Die Humans: an enemy's first, then any. */
@@ -2263,11 +2425,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
       run(() => stepAiJoinCausePlacement(joinCausePlacement))
       return
     }
-    if (fortifyEventPlayerId && !isHuman(fortifyEventPlayerId)) {
-      // Both troops go on ONE territory, so there is nothing to recompute —
-      // pick the most threatened border and put them there.
-      const targetId = aiBonusTroopTarget(gameStateRef.current, fortifyEventPlayerId)
-      run(() => { if (targetId) setGameState(prev => ({ ...prev, territories: { ...prev.territories, [targetId]: { ...prev.territories[targetId], troops: prev.territories[targetId].troops + 2 } } })); fortifyEventRef.current = null; setFortifyEventPlayerId(null) })
+    if (fortifyEvent && !isHuman(fortifyEvent.playerId)) {
+      run(() => stepAiFortifyEvent(fortifyEvent))
       return
     }
     if (controlPeopleChoice && !isHuman(controlPeopleChoice)) {
@@ -2548,6 +2707,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     if (controlPeopleChoice && isAiOwned(controlPeopleChoice)) {
       step(() => resolveAiControlPeople(controlPeopleChoice)); return
     }
+    if (fortifyEvent && isAiOwned(fortifyEvent.playerId)) {
+      step(() => stepAiFortifyEvent(fortifyEvent)); return
+    }
     // Riot is deliberately absent. Its modal is the only place the rolls are
     // ever shown, so on YOUR turn it waits for you to read it — the button
     // resolves an AI loser itself. Auto-dismissing here would flash the dice
@@ -2558,8 +2720,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showJoinTheCause, joinCausePlacement, resistancePlacement, controlPeopleChoice,
-      riotRemovalPlayerId, showWinScreen, gameState.currentPlayerIndex, gameState.phase,
-      gameState.players])
+      fortifyEvent, riotRemovalPlayerId, showWinScreen, gameState.currentPlayerIndex,
+      gameState.phase, gameState.players])
 
   // ── Missile replenishment: every game starts with one missile per career win ──
   useEffect(() => {
@@ -3600,12 +3762,17 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     }
     if (effect.kind === 'fallout-event') applyFalloutEvent(cardId)
     if (effect.kind === 'fortify-city') {
-      // The drawer (current player) places 2 troops on one owned territory
-      const drawerId = state.players[state.currentPlayerIndex]?.id ?? null
-      const ownsAny = drawerId && Object.values(state.territories).some(t => t.occupyingPlayerId === drawerId)
-      if (drawerId && ownsAny) {
-        fortifyEventRef.current = drawerId
-        setFortifyEventPlayerId(drawerId)
+      // The largest-population player chooses: troops into two of their cities,
+      // or one permanent fortification. Both options need a city, so a leader
+      // holding none gets nothing and the card is discarded rather than
+      // destroyed — nothing was used.
+      const leaderId = largestPopulationPlayerId()
+      if (leaderId && ownedCityIds(leaderId).length > 0) {
+        updateFortifyEvent({ phase: 'choice', playerId: leaderId, cardId })
+      } else {
+        const name = state.players.find(p => p.id === leaderId)?.name ?? 'The leader'
+        showWeaknessNotice(`⛨ Fortify — ${name} controls no city, so nothing can be reinforced`)
+        returnEventCardToDiscard(cardId)
       }
     }
     if (effect.kind === 'control-the-people') {
@@ -4957,10 +5124,11 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
       }
       drewCardPlayerIdsRef.current = new Set()
       eventDrawCreditsRef.current = new Map()
-      // Fortify City belongs to the DRAWER, who is the player whose turn this
-      // is — so it expires with the turn, as it should.
-      fortifyEventRef.current = null; setFortifyEventPlayerId(null)
-      // Everything below used to be cleared here too, and must not be. Each one
+      // Nothing here expires with the turn any more. Fortify City used to —
+      // it went to the DRAWER, so the turn ending was their own deadline — but
+      // it now goes to the largest-population player like the rest.
+      //
+      // Everything below used to be cleared here, and must not be. Each one
       // belongs to a player the BOARD picks — fewest territories, largest
       // population, lowest roll — who is usually NOT the one taking the turn and
       // has no reason to be racing someone else's clock. Wiping them at END_TURN
@@ -4973,6 +5141,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
       //   controlTroopsPlayerId 5 troops in one city
       //   controlManeuver       the immediate maneuver
       //   riotRemovalPlayerId   the 2-troop penalty — a debt, not a prize
+      //   fortifyEvent          troops or a fortification, largest population
       //
       // All of them self-clear the moment they resolve, and every click handler
       // re-checks ownership against the live board, so carrying them across a
@@ -7032,13 +7201,86 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         )
       })()}
 
-      {/* Hint bar for Fortify event placement */}
-      {fortifyEventPlayerId && (() => {
-        const fp = gameState.players.find(p => p.id === fortifyEventPlayerId)
+      {/* Hint bars for the two Fortify event placement modes */}
+      {fortifyEvent && fortifyEvent.phase !== 'choice' && (() => {
+        const fp = gameState.players.find(p => p.id === fortifyEvent.playerId)
         return (
           <HintBar color="#3498DB">
-            ⛨ <strong>Fortify</strong> — {fp?.name ?? 'Player'}: click one territory you control to place <strong>2 troops</strong> on it
+            ⛨ <strong>Fortify</strong> — {fp?.name ?? 'Player'}: {fortifyEvent.phase === 'fortification'
+              ? <>click a <strong>city</strong> you control to fortify it <strong>permanently</strong></>
+              : <>click a <strong>city</strong> you control to add <strong>{FORTIFY_EVENT_TROOPS} troops</strong>
+                {' '}— <strong>{fortifyEvent.citiesLeft}</strong> more to choose</>}
           </HintBar>
+        )
+      })()}
+
+      {/* Fortify event — the largest-population player chooses a reward */}
+      {fortifyEvent?.phase === 'choice' && (() => {
+        const fp = gameState.players.find(p => p.id === fortifyEvent.playerId)
+        const cityCount = ownedCityIds(fortifyEvent.playerId).length
+        const fortsLeft = FORTIFICATION_SUPPLY - fortificationsPlaced(legacyState.stickers)
+        const canFortify = fortsLeft > 0
+        const troopCities = Math.min(FORTIFY_EVENT_CITIES, cityCount)
+        return (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 8000,
+            background: 'rgba(2,8,14,0.85)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontFamily: 'Georgia, serif',
+          }}>
+            <div style={{
+              background: 'linear-gradient(155deg,#08202e 0%,#04121b 100%)',
+              border: '2px solid rgba(52,152,219,0.6)', borderRadius: 14,
+              padding: '24px 28px', width: 460, maxWidth: '92vw', color: '#E8DCC8',
+              boxShadow: '0 0 50px rgba(52,152,219,0.2)',
+            }}>
+              <div style={{ textAlign: 'center', marginBottom: 8 }}>
+                <div style={{ fontSize: 34 }}>⛨</div>
+                <div style={{ fontSize: 18, fontWeight: 'bold', color: '#7ec8f0', letterSpacing: 1 }}>FORTIFY</div>
+                <div style={{ fontSize: 11, color: '#6a94ac', marginTop: 4 }}>
+                  <strong style={{ color: '#d0ecff' }}>{fp?.name ?? 'Player'}</strong> has the largest population — choose a reward
+                </div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 16 }}>
+                <button
+                  onClick={() => startFortifyTroops(fortifyEvent.playerId, fortifyEvent.cardId)}
+                  style={{
+                    padding: '14px 16px', borderRadius: 8, textAlign: 'left',
+                    border: '1px solid rgba(52,152,219,0.45)', background: 'rgba(52,152,219,0.10)',
+                    cursor: 'pointer', fontFamily: 'Georgia, serif', color: '#e8dcc8',
+                  }}>
+                  <div style={{ fontSize: 14, fontWeight: 'bold', color: '#7ec8f0', marginBottom: 3 }}>
+                    ⚔ Reinforce {troopCities} {troopCities === 1 ? 'City' : 'Cities'}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#8aa0ac' }}>
+                    Add {FORTIFY_EVENT_TROOPS} troops to each of {troopCities} different {troopCities === 1 ? 'city' : 'cities'} you control
+                    {troopCities < FORTIFY_EVENT_CITIES ? ' — all you control' : ''}. This card returns in later games.
+                  </div>
+                </button>
+                {/* Refused up front when the supply is gone — this is the one
+                    choice the campaign can permanently run out of. */}
+                <button
+                  onClick={() => canFortify && updateFortifyEvent({ phase: 'fortification', playerId: fortifyEvent.playerId, cardId: fortifyEvent.cardId })}
+                  disabled={!canFortify}
+                  style={{
+                    padding: '14px 16px', borderRadius: 8, textAlign: 'left',
+                    border: '1px solid rgba(52,152,219,0.45)',
+                    background: canFortify ? 'rgba(52,152,219,0.10)' : 'rgba(80,80,80,0.15)',
+                    cursor: canFortify ? 'pointer' : 'not-allowed', opacity: canFortify ? 1 : 0.5,
+                    fontFamily: 'Georgia, serif', color: '#e8dcc8',
+                  }}>
+                  <div style={{ fontSize: 14, fontWeight: 'bold', color: '#7ec8f0', marginBottom: 3 }}>◎ Fortify a City — Permanent</div>
+                  <div style={{ fontSize: 11, color: '#8aa0ac' }}>
+                    {canFortify
+                      ? <>Place a fortification on one city you control, for the rest of the campaign.
+                          {' '}<strong style={{ color: '#e0a070' }}>This destroys the event card permanently.</strong>
+                          {' '}({fortsLeft} of {FORTIFICATION_SUPPLY} fortifications left.)</>
+                      : <>All {FORTIFICATION_SUPPLY} fortifications have been placed this campaign — there are none left.</>}
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
         )
       })()}
 

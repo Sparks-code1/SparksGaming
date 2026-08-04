@@ -55,6 +55,26 @@ export function mergeLegacyEdits<T extends MergeableLegacy>(
   return out
 }
 
+// ─── Fortify event ───────────────────────────────────────────────────────────
+
+/** Troops the Fortify event puts into EACH chosen city. */
+export const FORTIFY_EVENT_TROOPS = 2
+/** How many DIFFERENT cities the troops must be split across. */
+export const FORTIFY_EVENT_CITIES = 2
+
+/**
+ * Whether a fortification can still be placed this campaign.
+ *
+ * The supply is the same five the winner's reward draws from — the Fortify
+ * event does not get its own pool. Once they are gone the fortification option
+ * is off the table for good, which is what makes taking one a real decision.
+ */
+export function canPlaceFortification(
+  legacy: { stickers?: Array<{ description: string }> } | null | undefined,
+): boolean {
+  return fortificationsPlaced(legacy?.stickers) < FORTIFICATION_SUPPLY
+}
+
 /**
  * How many scars a campaign may ever cancel.
  *

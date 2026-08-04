@@ -62,7 +62,7 @@ const EFFECT_DURATION: Record<string, string> = {
   'nuclear-fallout-round': 'Lasts the entire round',
   'forced-march':        'Lasts the entire round',
   'famine':              'Immediate effect',
-  'fortify-city':        'Current player chooses — immediate',
+  'fortify-city':        'Largest population chooses — immediate',
   'control-the-people':  'Largest population chooses — immediate',
   'riot':                'Immediate — each player rolls',
   'resistance':          'Immediate effect',
@@ -166,9 +166,13 @@ export default function EventCardDisplay({ card, effect, roundNumber, onDismiss 
         )}
         {effect.kind === 'fortify-city' && (
           <EffectDetail color={color}>
-            The <strong>current player</strong> chooses a territory they control and places
-            <strong> +{effect.troops} troops</strong> on it immediately.
-            This card is <strong>removed from the game</strong> after use.
+            The player with the <strong>largest population</strong> chooses one:
+            <br />• <strong>+{effect.troops} troops</strong> into each of <strong>2 different cities</strong> they control
+            <br />• <strong>Permanently fortify</strong> one city they control
+            <br />
+            <br />The fortification spends one of the campaign's <strong>5</strong> — it cannot be chosen once
+            they are gone — and <strong>destroys this card for the whole campaign</strong>.
+            Taking the troops only discards it, so it returns in later games.
           </EffectDetail>
         )}
         {effect.kind === 'control-the-people' && (
