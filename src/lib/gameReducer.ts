@@ -27,6 +27,7 @@
 
 import type { GameState } from '@/types/game'
 import type { Territory } from '@/types/territory'
+import { legalJoinWarTerritoryIds, troopsAfterEntry } from '@/lib/gameLogic'
 
 // ─── Injected randomness ────────────────────────────────────────────────────
 
@@ -147,6 +148,34 @@ export type Action =
       /** Extra defender troops from Mutant Unstable Cloning on a repelled attack (0 if N/A). */
       defenderCloningBonus: number
     }
+  /**
+   * Declare an attack and let the RESOLVER roll it. The server-authoritative
+   * counterpart to `RESOLVE_COMBAT`.
+   *
+   * `RESOLVE_COMBAT` takes the losses and the capture flag as inputs, because
+   * in hotseat the client has already rolled. That makes it useless for server
+   * authority — a server running it applies whatever result the caller claims,
+   * so `{ totalDefLoss: 99, captured: true }` would simply be honoured. This
+   * action carries only intent, and the dice are rolled inside the reducer from
+   * the injected Rng, which the server seeds and owns.
+   *
+   * `mods` is still supplied by the caller: the modifier stack is derived from
+   * legacy/scar/faction state the server does not model yet. It is clamped
+   * server-side (see `clampCombatModifiers`) and logged verbatim for audit.
+   */
+  | {
+      type: 'DECLARE_ATTACK'
+      playerId: string
+      srcId: string
+      tgtId: string
+      /** Troops to advance on capture; clamped to what actually survives. */
+      troopsToAdvance: number
+      mods: CombatModifiers
+      entryCostTotal: number
+      entryCostFalloutHalf: boolean
+      /** Applied only if the dice actually produced defender doubles. */
+      defenderCloningBonus: number
+    }
 
 // ─── Effects ──────────────────────────────────────────────────────────────────
 //
@@ -166,7 +195,25 @@ export type Effect =
   /** One or more players lost their last territory this combat (already marked
    *  eliminated + cards transferred in the returned state). Drives elimination
    *  sound, eliminate-scar card, comeback power + First Blood + mercenary deck. */
-  | { kind: 'players-eliminated'; playerIds: string[]; byPlayerId: string }
+  | {
+      kind: 'players-eliminated'
+      playerIds: string[]
+      byPlayerId: string
+      /** Cards taken from the eliminated players. Reported here because the
+       *  reducer has already moved them to the capturer by the time the
+       *  component sees this — the Forced Occupation private mission needs to
+       *  know whether any was worth 3+ resources. */
+      capturedCardIds: string[]
+    }
+  /**
+   * The resolver rolled a battle. Carries every round so a client can animate
+   * the dice the SERVER rolled instead of inventing its own — without this the
+   * board would jump straight to the result.
+   *
+   * Only `DECLARE_ATTACK` emits it; hotseat's `RESOLVE_COMBAT` does not,
+   * because there the client already has the rounds it rolled itself.
+   */
+  | { kind: 'combat-resolved'; srcId: string; tgtId: string; outcome: CombatOutcome }
 
 /** What the reducer returns: the next state plus any effects to interpret. */
 export interface ReducerResult {
@@ -242,15 +289,35 @@ export function canStartFortify(state: GameState, srcId: string, playerId: strin
   return src.occupyingPlayerId === playerId && src.troops > 1
 }
 
-/** The next player to act and whether a new round begins. Skips players who are
- *  eliminated AND have already used or forfeited their Join the War option. */
+/**
+ * Should this eliminated player's turn be passed over entirely?
+ *
+ * Two cases: they already used or forfeited their Join the War option, or they
+ * are still undecided but there is nowhere legal to re-enter — in which case
+ * the only "choice" on offer would be to forfeit, so skip them silently and
+ * leave the option open for a later turn if a spot frees up.
+ */
+function skipEliminatedPlayer(state: GameState, idx: number): boolean {
+  const p = state.players[idx]
+  if (!p?.isEliminated) return false
+  if (p.joinedWarThisGame !== undefined) return true
+  return legalJoinWarTerritoryIds(
+    state.territories,
+    Object.values(state.activeHqs ?? {}),
+    state.legacySnapshot?.falloutZoneTerritoryId,
+  ).length === 0
+}
+
+/** The next player to act and whether a new round begins. Skips eliminated
+ *  players who have no Join the War decision left to make. */
 export function computeTurnAdvance(state: GameState): { nextIdx: number; isNewRound: boolean } {
   const n = state.players.length
   let nextIdx = (state.currentPlayerIndex + 1) % n
+  let guard = 0
   while (
-    state.players[nextIdx].isEliminated &&
-    state.players[nextIdx].joinedWarThisGame !== undefined &&
-    nextIdx !== state.currentPlayerIndex
+    guard++ < n &&
+    nextIdx !== state.currentPlayerIndex &&
+    skipEliminatedPlayer(state, nextIdx)
   ) {
     nextIdx = (nextIdx + 1) % n
   }
@@ -269,6 +336,13 @@ export function applyEndOfTurnScarEffects(
   endingPlayerId: string,
   endingIsMutant: boolean,
   falloutZoneId: string | null | undefined,
+  /**
+   * Mercenary comeback power: the ending player's faction holds it, so their
+   * Mercenary scars pay +2 instead of +1. Applied here rather than as a draft
+   * bonus so the troops land ON the scarred territory, and so it resolves
+   * exactly once per turn alongside the scar it upgrades.
+   */
+  mercenaryComeback = false,
 ): { territories: Record<string, Territory>; vacatedNames: string[] } {
   const result = { ...territories }
   const vacatedNames: string[] = []
@@ -298,7 +372,8 @@ export function applyEndOfTurnScarEffects(
       if (endingIsMutant) result[id] = { ...t, troops: t.troops + 1 }
       else applyLoss(id, t)
     } else if (hasMerc) {
-      if (!endingIsMutant) result[id] = { ...t, troops: t.troops + 1 }
+      // Mutants have the scar reversed, so the comeback power cannot rescue it.
+      if (!endingIsMutant) result[id] = { ...t, troops: t.troops + (mercenaryComeback ? 2 : 1) }
       else applyLoss(id, t)
     }
   }
@@ -306,8 +381,13 @@ export function applyEndOfTurnScarEffects(
   if (falloutZoneId) {
     const fzT = result[falloutZoneId]
     if (fzT?.occupyingPlayerId === endingPlayerId) {
+      // Mutants thrive there; everyone else bleeds a troop a turn and, at one
+      // troop, is driven off entirely — the ground itself finishes the job.
+      // Goes through applyLoss so it behaves exactly like a Bio-hazard scar,
+      // including the guard that never takes a player's LAST territory (that
+      // would eliminate them by attrition with no way to respond).
       if (endingIsMutant) result[falloutZoneId] = { ...fzT, troops: fzT.troops + 1 }
-      else if (fzT.troops > 1) result[falloutZoneId] = { ...fzT, troops: fzT.troops - 1 }
+      else applyLoss(falloutZoneId, fzT)
     }
   }
 
@@ -323,7 +403,7 @@ export function applyEndOfTurnScarEffects(
  * @param rng injected randomness (unused by draft actions; reserved so the
  *            signature is stable as later phases are added)
  */
-export function gameReducer(state: GameState, action: Action, _rng: Rng): ReducerResult {
+export function gameReducer(state: GameState, action: Action, rng: Rng): ReducerResult {
   /** Wrap a next-state that produced no effects. */
   const only = (s: GameState): ReducerResult => ({ state: s, effects: [] })
   switch (action.type) {
@@ -367,7 +447,183 @@ export function gameReducer(state: GameState, action: Action, _rng: Rng): Reduce
       return only({ ...state, phase: 'fortify' })
     }
 
-    case 'RESOLVE_COMBAT': {
+    case 'DECLARE_ATTACK': {
+      // The SERVER-AUTHORITATIVE attack. The client declares only its INTENT —
+      // which territory, which target, how many troops advance on a capture —
+      // and the dice are rolled here, through the injected Rng.
+      //
+      // `RESOLVE_COMBAT` below cannot do this: it takes the losses and the
+      // capture flag as INPUTS, because in hotseat the client already rolled.
+      // Running that action on a server grants no dice authority at all — it
+      // faithfully applies whatever result the caller claims. This action is
+      // the one the server accepts; RESOLVE_COMBAT stays for local hotseat.
+      const src0 = state.territories[action.srcId]
+      const tgt0 = state.territories[action.tgtId]
+      if (!src0 || !tgt0) return only(state)
+      if (!canStartAttack(state, action.srcId, action.tgtId, action.playerId)) return only(state)
+
+      const outcome = resolveCombat(src0.troops, tgt0.troops, action.mods, rng)
+      const result = applyCombatOutcome(state, {
+        srcId: action.srcId,
+        tgtId: action.tgtId,
+        totalAtkLoss: outcome.totalAtkLoss,
+        totalDefLoss: outcome.totalDefLoss,
+        captured: outcome.captured,
+        // Never advance more than survived. The client picks the number before
+        // the dice exist, so it can legitimately exceed what is left.
+        troopsToAdvance: Math.min(action.troopsToAdvance, Math.max(1, outcome.atkTroopsAfter - 1)),
+        entryCostTotal: action.entryCostTotal,
+        entryCostFalloutHalf: action.entryCostFalloutHalf,
+        defenderCloningBonus: outcome.defDoublesRounds > 0 ? action.defenderCloningBonus : 0,
+      })
+      // The rounds ride along so clients animate the dice the SERVER rolled
+      // rather than inventing their own.
+      return {
+        state: result.state,
+        effects: [{ kind: 'combat-resolved', srcId: action.srcId, tgtId: action.tgtId, outcome }, ...result.effects],
+      }
+    }
+
+    case 'RESOLVE_COMBAT':
+      // Hotseat only. The caller already rolled; the server must never accept
+      // this action (see SERVER_ACTIONS in the edge function).
+      return applyCombatOutcome(state, action)
+
+    case 'RETREAT':
+      // No GameState change — the attacker simply stops. Selection/modal state
+      // is component-owned UI today.
+      return only(state)
+
+    case 'CONFIRM_FORTIFY': {
+      const src = state.territories[action.srcId]
+      const dst = state.territories[action.dstId]
+      if (!src || !dst) return only(state)
+      return only({
+        ...state,
+        territories: {
+          ...state.territories,
+          [action.srcId]: { ...src, troops: src.troops - action.troopsRemoved },
+          [action.dstId]: { ...dst, troops: dst.troops + action.troopsArriving },
+        },
+      })
+    }
+
+    case 'END_TURN': {
+      // Merge the end-of-turn board FIRST: whether an eliminated player has a
+      // legal re-entry (and so is offered a turn at all) must be judged on the
+      // final map — an end-of-turn scar can vacate a territory and open one up.
+      //
+      // `endTerritories` is computed by the CALLER. On the server that caller is
+      // the client, so the server recomputes it instead of trusting the payload
+      // — see `endTurnTerritories` below.
+      const withEnd: GameState = {
+        ...state,
+        territories: { ...state.territories, ...action.endTerritories },
+      }
+      const { nextIdx, isNewRound } = computeTurnAdvance(withEnd)
+      return only({
+        ...withEnd,
+        phase: 'reinforce',
+        currentPlayerIndex: nextIdx,
+        turnNumber: isNewRound ? state.turnNumber + 1 : state.turnNumber,
+      })
+    }
+
+    default:
+      return only(state)
+  }
+}
+
+// ─── Server-authority guards ─────────────────────────────────────────────────
+//
+// Three of the reducer's actions were designed for a trusted caller and carry
+// values the caller computed. That is fine in hotseat — the caller IS the
+// player's own machine — but on a server each one is a hole:
+//
+//   RESOLVE_COMBAT.totalDefLoss/captured   the whole combat result
+//   END_TURN.endTerritories                an entire replacement board
+//   DECLARE_ATTACK.mods                    the modifier stack
+//
+// The first is closed by refusing the action server-side (DECLARE_ATTACK
+// replaces it). These two close the others.
+
+/**
+ * The end-of-turn board, computed HERE rather than taken from the caller.
+ *
+ * `END_TURN.endTerritories` is a full territory map. A client that sent one of
+ * its own could hand itself the board. The server calls this and substitutes
+ * the result, so the payload it received is never applied.
+ */
+export function endTurnTerritories(
+  state: GameState,
+  /** Legacy-derived inputs the server reads from the campaign row, not the client. */
+  rules: { endingIsMutant: boolean; falloutZoneId: string | null | undefined; mercenaryComeback?: boolean },
+): Record<string, Territory> {
+  const endingPlayerId = state.players[state.currentPlayerIndex]?.id ?? ''
+  return applyEndOfTurnScarEffects(
+    state.territories,
+    endingPlayerId,
+    rules.endingIsMutant,
+    rules.falloutZoneId,
+    rules.mercenaryComeback ?? false,
+  ).territories
+}
+
+/**
+ * Clamp a caller-supplied modifier stack to values the rules can actually
+ * produce.
+ *
+ * The server does not model legacy/scar/faction state yet, so it cannot DERIVE
+ * the modifiers — it can only refuse impossible ones. That bounds the damage a
+ * forged stack can do (no 9-dice defenders, no unbounded die bonuses) without
+ * pretending to full authority over the modifier layer. The raw submission is
+ * logged verbatim so a mismatch is auditable after the fact.
+ */
+export function clampCombatModifiers(m: Partial<CombatModifiers> | null | undefined): CombatModifiers {
+  const clamp = (v: unknown, lo: number, hi: number, dflt = 0) =>
+    typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.trunc(v))) : dflt
+  const override = m?.attackerMaxDiceOverride
+  return {
+    // Never MORE than the standard 3 attacker dice — only ever a restriction.
+    attackerMaxDiceOverride: typeof override === 'number' ? clamp(override, 1, 3, 3) : undefined,
+    attackerBonusAllDice: clamp(m?.attackerBonusAllDice, -5, 5),
+    attackerSubtractLowest: !!m?.attackerSubtractLowest,
+    tripleKillEnabled: !!m?.tripleKillEnabled,
+    defenderDieBonus: m?.defenderDieBonus
+      ? { highest: clamp(m.defenderDieBonus.highest, -5, 5), lowest: clamp(m.defenderDieBonus.lowest, -5, 5) }
+      : undefined,
+    defenderDieBonusSingle: typeof m?.defenderDieBonusSingle === 'number'
+      ? clamp(m.defenderDieBonusSingle, -5, 5) : undefined,
+    // 2 base + at most 2 bonus dice; anything above that is not a rule.
+    defenderBonusDiceCap: clamp(m?.defenderBonusDiceCap, 0, 2),
+    nuclearFallout: !!m?.nuclearFallout,
+    attackerSixesWin: !!m?.attackerSixesWin,
+    attackerRerollOnes: !!m?.attackerRerollOnes,
+  }
+}
+
+/**
+ * Apply a decided combat result to the board.
+ *
+ * Shared by both combat paths so they can never disagree about what a capture
+ * does: `RESOLVE_COMBAT` (hotseat — the client rolled) and `DECLARE_ATTACK`
+ * (server — the server rolled). Only where the dice came from differs.
+ */
+function applyCombatOutcome(
+  state: GameState,
+  action: {
+    srcId: string
+    tgtId: string
+    totalAtkLoss: number
+    totalDefLoss: number
+    captured: boolean
+    troopsToAdvance: number
+    entryCostTotal: number
+    entryCostFalloutHalf: boolean
+    defenderCloningBonus: number
+  },
+): ReducerResult {
+  const only = (s: GameState): ReducerResult => ({ state: s, effects: [] })
       const src0 = state.territories[action.srcId]
       const tgt0 = state.territories[action.tgtId]
       if (!src0 || !tgt0) return only(state)
@@ -386,10 +642,26 @@ export function gameReducer(state: GameState, action: Action, _rng: Rng): Reduce
         // (activeHqPlayerId is preserved via the {...tgt0} spread), so the
         // capturer now controls that HQ — matching current behaviour.
         tgt.occupyingPlayerId = src.occupyingPlayerId
-        tgt.troops = Math.max(1, moving - action.entryCostTotal)
-        if (action.entryCostFalloutHalf) {
-          tgt.troops = Math.max(1, Math.ceil(tgt.troops / 2))
+        // Same rule as an uncontested advance: the entry cost comes out of the
+        // arriving stack in full. The old `Math.max(1, moving - cost)` refunded
+        // it whenever the mover could not quite afford it — 2 troops into a
+        // major city paid 1, and 1 troop paid nothing.
+        const survivors = troopsAfterEntry(moving, {
+          total: action.entryCostTotal,
+          parts: [],
+          falloutHalf: action.entryCostFalloutHalf,
+        })
+        // A captured territory cannot hold 0, so this floor has to exist — but
+        // reaching it means the amount to advance was chosen without checking
+        // affordability (AttackModal clamps it), so say so loudly instead of
+        // quietly discounting the city.
+        if (survivors < 1) {
+          console.warn(
+            `[Combat] ${moving} troops cannot pay the ${action.entryCostTotal}-troop entry at ${action.tgtId}` +
+            ' — capping at 1 survivor; the entry cost was not fully paid.',
+          )
         }
+        tgt.troops = Math.max(1, survivors)
         src.troops -= moving
       } else {
         tgt.troops -= action.totalDefLoss
@@ -421,46 +693,11 @@ export function gameReducer(state: GameState, action: Action, _rng: Rng): Reduce
             if (p.id === attackerId) return { ...p, cards: [...p.cards, ...capturedCards] }
             return p
           })
-          effects.push({ kind: 'players-eliminated', playerIds: eliminatedIds, byPlayerId: attackerId })
+          effects.push({ kind: 'players-eliminated', playerIds: eliminatedIds, byPlayerId: attackerId, capturedCardIds: capturedCards })
         }
       }
 
       return { state: { ...state, territories, players }, effects }
-    }
-
-    case 'RETREAT':
-      // No GameState change — the attacker simply stops. Selection/modal state
-      // is component-owned UI today.
-      return only(state)
-
-    case 'CONFIRM_FORTIFY': {
-      const src = state.territories[action.srcId]
-      const dst = state.territories[action.dstId]
-      if (!src || !dst) return only(state)
-      return only({
-        ...state,
-        territories: {
-          ...state.territories,
-          [action.srcId]: { ...src, troops: src.troops - action.troopsRemoved },
-          [action.dstId]: { ...dst, troops: dst.troops + action.troopsArriving },
-        },
-      })
-    }
-
-    case 'END_TURN': {
-      const { nextIdx, isNewRound } = computeTurnAdvance(state)
-      return only({
-        ...state,
-        territories: { ...state.territories, ...action.endTerritories },
-        phase: 'reinforce',
-        currentPlayerIndex: nextIdx,
-        turnNumber: isNewRound ? state.turnNumber + 1 : state.turnNumber,
-      })
-    }
-
-    default:
-      return only(state)
-  }
 }
 
 // ─── Combat engine (pure) ─────────────────────────────────────────────────────
@@ -474,6 +711,79 @@ export function gameReducer(state: GameState, action: Action, _rng: Rng): Reduce
 // this is called (a die forced to 6, or all modifiers zeroed), exactly as the
 // UI does today, so they need no special handling here.
 
+/** One named defender die modifier, e.g. `{ label: 'Bear Trap', lowest: -1 }`. */
+export interface DefenderDiePart { label?: string; highest?: number; lowest?: number }
+
+/**
+ * How much a single modifier source shifts a lone defender die.
+ *
+ * With one die there is no distinct "highest" and "lowest" — it is both. So a
+ * source that names only the lowest (Bear Trap) DOES apply to it, and a source
+ * naming both (Fortification, Armored Command) applies once rather than twice.
+ */
+export function singleDieDelta(part: DefenderDiePart): number {
+  const { highest, lowest } = part
+  if (highest !== undefined && highest !== 0) return highest
+  return lowest ?? 0
+}
+
+/** Net single-die modifier across every named source. */
+export function singleDieBonus(parts: DefenderDiePart[] | undefined): number {
+  return (parts ?? []).reduce((sum, p) => sum + singleDieDelta(p), 0)
+}
+
+/** A die is only ever 1–6, however the modifiers stack. */
+const clampDie = (v: number) => Math.max(1, Math.min(6, v))
+
+/**
+ * Apply the summed defender die modifiers to a descending-sorted roll.
+ * The highest and lowest dice are shifted by their totals, then clamped ONCE —
+ * clamping between sources would discard a bonus at the 1/6 rails and let an
+ * opposing penalty through unopposed.
+ */
+export function applyDefenderDieBonus(
+  dice: number[],
+  bonus: { highest: number; lowest: number },
+  single?: number,
+): number[] {
+  if (dice.length === 0) return dice
+  const out = [...dice]
+  if (out.length === 1) {
+    // A lone die is both the highest and the lowest, so every source applies to
+    // it — but one naming both (Fortification) applies just once.
+    out[0] = clampDie(out[0] + (single ?? bonus.highest))
+  } else {
+    out[0] = clampDie(out[0] + bonus.highest)
+    out[out.length - 1] = clampDie(out[out.length - 1] + bonus.lowest)
+  }
+  return out
+}
+
+/**
+ * The same modifiers as `applyDefenderDieBonus`, revealed one named source at a
+ * time for the attack animation — one dice snapshot per part, in order.
+ *
+ * Deltas accumulate unclamped and are clamped only for display, so the last
+ * snapshot is exactly what `applyDefenderDieBonus` returns for the summed
+ * modifiers. The manual attack path resolves combat on these dice, so a
+ * mismatch here is a wrong battle result, not a cosmetic glitch.
+ */
+export function defenderDieSteps(rawDef: number[], parts: DefenderDiePart[]): number[][] {
+  const delta = rawDef.map(() => 0)
+  const snapshots: number[][] = []
+  for (const part of parts) {
+    if (rawDef.length === 0) break
+    if (rawDef.length === 1) {
+      delta[0] += singleDieDelta(part)
+    } else {
+      delta[0] += part.highest ?? 0
+      delta[delta.length - 1] += part.lowest ?? 0
+    }
+    snapshots.push(rawDef.map((d, i) => clampDie(d + delta[i])))
+  }
+  return snapshots
+}
+
 /** All combat modifiers for one battle. Mirrors AttackModal's opts object. */
 export interface CombatModifiers {
   /** Cap attacker dice below the usual 3 (wasteland scar, ammo-shortage event). */
@@ -486,6 +796,14 @@ export interface CombatModifiers {
   tripleKillEnabled: boolean
   /** Add to defender's highest / lowest die (Bunker, Fortification; negative = Ammo Shortage). */
   defenderDieBonus?: { highest: number; lowest: number }
+  /**
+   * Net modifier when the defender rolls exactly ONE die — that die is both
+   * their highest and their lowest, so every source applies to it, but a source
+   * naming both (Fortification, Armored Command) still applies only once.
+   * Cannot be derived from `defenderDieBonus`, which is a lossy sum; build it
+   * with `singleDieBonus(parts)`. Falls back to `highest` when absent.
+   */
+  defenderDieBonusSingle?: number
   /** Extra defender dice above the base 2 (HQ, DM abilities). */
   defenderBonusDiceCap: number
   /** Both sides lose +1 extra troop per round (Nuclear Fallout scar). */
@@ -583,13 +901,10 @@ export function resolveCombat(
     }
 
     // Roll and apply defender modifiers (natural doubles counted before bonuses)
-    const rawDef = rollN(rng, numDef).sort((a, b) => b - a)
+    let rawDef = rollN(rng, numDef).sort((a, b) => b - a)
     if (hasDoubles(rawDef)) defDoublesRounds++
-    if (mods.defenderDieBonus && rawDef.length > 0) {
-      rawDef[0] = Math.max(1, Math.min(6, rawDef[0] + mods.defenderDieBonus.highest))
-      if (rawDef.length > 1) {
-        rawDef[rawDef.length - 1] = Math.max(1, Math.min(6, rawDef[rawDef.length - 1] + mods.defenderDieBonus.lowest))
-      }
+    if (mods.defenderDieBonus) {
+      rawDef = applyDefenderDieBonus(rawDef, mods.defenderDieBonus, mods.defenderDieBonusSingle)
     }
 
     const base = compareRolls(finalAtk, rawDef, mods.attackerSixesWin)
