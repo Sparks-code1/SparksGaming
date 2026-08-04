@@ -3968,8 +3968,14 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         nuclearMilestoneTriggered: true,
         nuclearBringerFactionId: bringerFactionId,
         falloutZoneTerritoryId: falloutTerritoryId,
-        // Every sticker on the territory (cities, HQ, fortification) is destroyed
-        stickers: prev.stickers.filter(s => s.targetId !== falloutTerritoryId),
+        // Every sticker on the territory is destroyed — but a fortification is
+        // SPENT, not deleted. It is one of the campaign's five and the count
+        // comes from the stickers themselves, so removing the row hands the
+        // slot back and the campaign gets a sixth. Same rule as the Ruin.
+        stickers: prev.stickers
+          .filter(s => s.targetId !== falloutTerritoryId || s.description.startsWith('fortification:'))
+          .map(s => (s.targetId === falloutTerritoryId && s.description.startsWith('fortification:')
+            ? { ...s, description: 'fortification:0' } : s)),
         scars: prev.scars.filter(s => s.territoryId !== falloutTerritoryId),
         destroyedHqs,
         historyLog: [...prev.historyLog, {

@@ -118,5 +118,54 @@ console.log('\n— a ruin destroys the fortification without freeing the slot �
   check('the other fortification is untouched', isFortified(afterRuin, 'brazil'))
 }
 
+console.log('\n— the Fallout Zone destroys it without freeing the slot either —')
+{
+  // The nuclear device wipes every sticker on its territory. That deleted the
+  // fortification row outright, and the supply is COUNTED from those rows — so
+  // the campaign silently got a sixth. Same rule as the Ruin: spend it to 0,
+  // leave the row.
+  const stickers: any[] = [
+    fort('f1', 'ukraine', 6),
+    fort('f2', 'brazil', 10),
+    city('c1', 'ukraine'),
+    { id: 'hq1', name: 'HQ', description: 'HQ:mutants', placement: 'territory', targetId: 'ukraine', appliedInGame: 2 },
+  ]
+  check('two fortifications are in use', fortificationsPlaced(stickers) === 2)
+
+  const falloutId = 'ukraine'
+  const afterFallout = stickers
+    .filter(s => s.targetId !== falloutId || s.description.startsWith('fortification:'))
+    .map(s => (s.targetId === falloutId && s.description.startsWith('fortification:')
+      ? { ...s, description: 'fortification:0' } : s))
+
+  check('the city sticker IS destroyed', !afterFallout.some(s => s.targetId === falloutId && s.description.startsWith('city:')))
+  check('the HQ sticker IS destroyed', !afterFallout.some(s => s.description.startsWith('HQ:')))
+  check('the fortification stops protecting', !isFortified(afterFallout, falloutId))
+  check('but its row remains', afterFallout.some(s => s.targetId === falloutId && s.description.startsWith('fortification:')))
+  check('so the slot is NOT freed', fortificationsPlaced(afterFallout) === 2)
+  check('the other fortification is untouched', isFortified(afterFallout, 'brazil'))
+
+  // What the old wipe did.
+  const oldWay = stickers.filter(s => s.targetId !== falloutId)
+  check('deleting every sticker handed the slot back', fortificationsPlaced(oldWay) === 1)
+  check('...which is how a campaign reached six', fortificationsPlaced(oldWay) < fortificationsPlaced(afterFallout))
+}
+
+console.log('\n— every removal path spends rather than deletes —')
+{
+  // Three things destroy a fortification. None may reduce the count.
+  const base: any[] = [fort('f1', 'congo', 10)]
+  const spend = (s: any[]) => s.map(x => x.description.startsWith('fortification:')
+    ? { ...x, description: 'fortification:0' } : x)
+  for (const [label, after] of [
+    ['worn out by combat', spend(base)],
+    ['razed to a Ruin', spend(base)],
+    ['nuked into the Fallout Zone', spend(base)],
+  ] as Array<[string, any[]]>) {
+    check(`${label}: still counted`, fortificationsPlaced(after) === 1)
+    check(`${label}: protects nothing`, !isFortified(after, 'congo'))
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)
