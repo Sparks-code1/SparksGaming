@@ -49,6 +49,19 @@ html, body, #root {
 .troop-anim-up   circle.troop-ring { animation: troop-ring-up 0.8s ease-out; }
 .troop-anim-down circle.troop-ring { animation: troop-ring-down 0.8s ease-out; }
 
+/* Draft placement badge — quick fade-in with a slight upward drift, replayed
+   on every increment (the node is re-keyed by its count, so it remounts). */
+@keyframes draft-badge-in {
+  0%   { opacity: 0; transform: translateY(7px) scale(0.75); }
+  55%  { opacity: 1; transform: translateY(-2px) scale(1.14); }
+  100% { opacity: 1; transform: translateY(0)   scale(1); }
+}
+.draft-badge {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: draft-badge-in 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
 /* Territory capture — expanding ripple rings */
 @keyframes capture-ripple {
   0%   { transform: scale(0.3); opacity: 0.9; }
