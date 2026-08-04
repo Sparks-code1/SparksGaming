@@ -4,10 +4,16 @@
 create table if not exists campaigns (
   id          text primary key,
   world_name  text not null default 'New World',
+  -- Short shareable code (see supabase/join-codes.sql for the constraints).
+  -- Nullable: campaigns created before codes existed get one on first open.
+  join_code   text,
   legacy_state jsonb not null,
   created_at  timestamptz default now(),
   updated_at  timestamptz default now()
 );
+
+-- Existing databases: run supabase/join-codes.sql, which adds join_code to an
+-- already-created table along with its uniqueness and shape constraints.
 
 create table if not exists game_sessions (
   id                  uuid primary key default gen_random_uuid(),

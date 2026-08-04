@@ -3,17 +3,55 @@ import type { LegacyState } from '@/types/legacy'
 import type { ScarType } from '@/types/territory'
 import { TERRITORY_DEFINITIONS } from '@/data/territoryData'
 import { getInitialScarDeck } from '@/data/scarCards'
+import { storeGet, storeSet, storeRemove } from './appStore'
+import { generateJoinCode, normalizeJoinCode, isValidJoinCode } from './joinCode'
+import { addRosterMember, claimRosterSeat, getRoster } from './roster'
 
-export const CAMPAIGN_ID = 'default-campaign'
+// ─── Campaign identity ────────────────────────────────────────────────────────
+// Campaigns are keyed by a generated UUID, so any number of them coexist in the
+// `campaigns` and `game_sessions` tables. Which one the app is currently in is
+// a local pointer, not a global constant.
+
+const ACTIVE_CAMPAIGN_KEY = 'riskLegacy:activeCampaignId'
+
+/** A fresh campaign id. */
+export function newCampaignId(): string {
+  const c = globalThis.crypto
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID()
+  // Older webviews: a v4-shaped id from getRandomValues, else timestamp+random.
+  if (c && typeof c.getRandomValues === 'function') {
+    const b = c.getRandomValues(new Uint8Array(16))
+    b[6] = (b[6] & 0x0f) | 0x40
+    b[8] = (b[8] & 0x3f) | 0x80
+    const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('')
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
+  }
+  return `campaign-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
+}
+
+/** The campaign this device was last playing, if any. */
+export function getActiveCampaignId(): Promise<string | null> {
+  return storeGet(ACTIVE_CAMPAIGN_KEY)
+}
+
+export function setActiveCampaignId(id: string): Promise<void> {
+  return storeSet(ACTIVE_CAMPAIGN_KEY, id)
+}
+
+export function clearActiveCampaignId(): Promise<void> {
+  return storeRemove(ACTIVE_CAMPAIGN_KEY)
+}
 
 // ─── Default state ────────────────────────────────────────────────────────────
 
+/** A brand-new campaign, with its own id. */
 export function defaultLegacyState(): LegacyState {
   return {
-    campaignId: CAMPAIGN_ID,
+    campaignId: newCampaignId(),
     currentGameNumber: 1,
     worldName: 'New World',
     campaignEpoch: new Date().toISOString(),
+    roster: [],
     scars: [],
     stickers: [],
     destroyedCities: [],
@@ -39,6 +77,7 @@ export function defaultLegacyState(): LegacyState {
     claimedComebackPowers: [],
     doubleWinnerMilestoneTriggered: false,
     destroyedMissionIds: [],
+    cancelledScars: [],
     factionStartingHistory: [],
     factionHomelands: {},
     ninthCityUnlocked: false,
@@ -100,34 +139,403 @@ export function awardRedStars(
 
 // ─── Load / Save ──────────────────────────────────────────────────────────────
 
-export async function loadLegacyState(): Promise<LegacyState | null> {
-  try {
-    const { data, error } = await supabase
+// ─── join_code column availability ───────────────────────────────────────────
+// The column ships in supabase/join-codes.sql, which has to be run by hand
+// against an existing database. Until it is, every query naming the column
+// fails outright — so the first such failure flips this flag and the code falls
+// back to the copy kept inside legacy_state. Joining still works; what is lost
+// is the DATABASE-level uniqueness guarantee, so the fallback also warns.
+
+let joinCodeColumnMissing = false
+let warnedAboutColumn = false
+
+/** True when this error is Postgres/PostgREST complaining the column is absent. */
+function isMissingJoinCodeColumn(error: { message?: string; code?: string } | null): boolean {
+  if (!error) return false
+  const msg = (error.message ?? '').toLowerCase()
+  return msg.includes('join_code') &&
+    (msg.includes('does not exist') || msg.includes('schema cache') || error.code === '42703' || error.code === 'PGRST204')
+}
+
+function noteMissingColumn() {
+  joinCodeColumnMissing = true
+  if (!warnedAboutColumn) {
+    warnedAboutColumn = true
+    console.warn(
+      '[JoinCode] campaigns.join_code is missing — run supabase/join-codes.sql. ' +
+      'Codes still work, but uniqueness is only checked client-side until then.',
+    )
+  }
+}
+
+/** Whether codes are currently backed by the unique constraint. */
+export function joinCodeConstraintActive(): boolean {
+  return !joinCodeColumnMissing
+}
+
+interface CampaignRow { legacy_state: LegacyState; join_code?: string | null }
+
+/**
+ * Read one campaign, preferring the query that includes the code column and
+ * falling back once if the migration has not been run. The select strings are
+ * literals because supabase-js derives the row type from them — a computed
+ * string types the result as a parser error instead.
+ */
+async function fetchCampaignRow(campaignId: string) {
+  if (!joinCodeColumnMissing) {
+    const res = await supabase
       .from('campaigns')
-      .select('legacy_state')
-      .eq('id', CAMPAIGN_ID)
+      .select('legacy_state, join_code')
+      .eq('id', campaignId)
       .single()
-    if (error || !data) return null
-    const ls = data.legacy_state as LegacyState
+    if (!isMissingJoinCodeColumn(res.error)) {
+      return { data: res.data as unknown as CampaignRow | null, error: res.error }
+    }
+    noteMissingColumn()
+  }
+  const res = await supabase
+    .from('campaigns')
+    .select('legacy_state')
+    .eq('id', campaignId)
+    .single()
+  return { data: res.data as unknown as CampaignRow | null, error: res.error }
+}
+
+export async function loadLegacyState(campaignId: string): Promise<LegacyState | null> {
+  if (!campaignId) return null
+  try {
+    const { data, error } = await fetchCampaignRow(campaignId)
+    if (error || !data) {
+      // A failed LOAD is not the same as "no campaign yet" — returning null for
+      // both makes a transient outage look like a fresh campaign. Surface it on
+      // the connection indicator so the lobby is not silently offering a new
+      // campaign over the top of one that simply could not be read.
+      if (error) {
+        console.error('[LegacyLoad] FAILED to read campaign:', error.message)
+        setConnection({ state: 'error', message: error.message, failures: connection.failures + 1 })
+      }
+      return null
+    }
+    const row = data as { legacy_state: LegacyState; join_code?: string | null }
+    const ls = row.legacy_state
     // Heal saves corrupted by an older duplicate-append bug: scar-card ids are
     // unique, so a card can never legitimately appear twice in the deck.
     if (Array.isArray(ls.scarDeck)) {
       const deduped = [...new Set(ls.scarDeck)]
       if (deduped.length !== ls.scarDeck.length) ls.scarDeck = deduped
     }
+    // The COLUMN is authoritative — a code left behind in old saved JSON must
+    // never be shown as if it were the real one.
+    if (!joinCodeColumnMissing) ls.joinCode = row.join_code ?? null
     return ls
   } catch {
     return null
   }
 }
 
-export async function saveLegacyState(state: LegacyState): Promise<void> {
-  await supabase.from('campaigns').upsert({
-    id: CAMPAIGN_ID,
-    world_name: state.worldName,
-    legacy_state: state,
-    updated_at: new Date().toISOString(),
+// ─── Connection status ───────────────────────────────────────────────────────
+// A legacy game keeps nothing locally: if Supabase is unreachable the whole
+// session runs in memory and vanishes on reload. So the connection is surfaced
+// in the UI rather than left to the console — silence is the dangerous state.
+
+export type ConnectionState =
+  | 'unknown'   // nothing attempted yet this session
+  | 'saving'    // a write is in flight
+  | 'ok'        // the last write succeeded
+  | 'error'     // the last write or read failed
+
+export interface ConnectionStatus {
+  state: ConnectionState
+  /** Failure detail from Supabase, present on 'error'. */
+  message?: string
+  /** ISO time of the last write that actually landed. */
+  lastSavedAt?: string
+  /** Consecutive failures — resets to 0 on any success. */
+  failures: number
+}
+
+let connection: ConnectionStatus = { state: 'unknown', failures: 0 }
+type ConnectionListener = (status: ConnectionStatus) => void
+const connectionListeners = new Set<ConnectionListener>()
+
+/** The most recent payload we tried to write, so a retry can resend it. */
+let lastAttemptedState: LegacyState | null = null
+
+/**
+ * Update the shared status and tell every listener — but never on the caller's
+ * stack.
+ *
+ * `saveLegacyState` is called from all over the app, including from inside React
+ * state updaters, which React runs during the render phase. Delivering
+ * synchronously meant setting state on the ConnectionStatus component in the
+ * middle of another component's render — React's "Cannot update a component
+ * while rendering a different component" warning. A microtask runs as soon as
+ * the current stack unwinds, so the indicator is still effectively immediate.
+ *
+ * Each delivery carries its own snapshot, so rapid updates arrive in order and a
+ * listener never sees a status newer than the one it was notified about.
+ */
+function setConnection(patch: Partial<ConnectionStatus>) {
+  connection = { ...connection, ...patch }
+  const snapshot = connection
+  queueMicrotask(() => {
+    for (const fn of connectionListeners) {
+      try { fn(snapshot) } catch { /* a listener must never break the save path */ }
+    }
   })
+}
+
+export function onLegacyConnection(fn: ConnectionListener): () => void {
+  connectionListeners.add(fn)
+  fn(connection)   // deliver current status immediately
+  return () => { connectionListeners.delete(fn) }
+}
+
+export function getLegacyConnection(): ConnectionStatus {
+  return connection
+}
+
+/** Resend the last attempted write. No-op when nothing has been attempted. */
+export async function retryLastSave(): Promise<void> {
+  if (!lastAttemptedState) return
+  await saveLegacyState(lastAttemptedState)
+}
+
+export async function saveLegacyState(state: LegacyState): Promise<void> {
+  // supabase-js RESOLVES on failure with an `error` field rather than throwing.
+  // Ignoring it — as this did — makes a rejected write indistinguishable from a
+  // successful one, so play continues on state that was never persisted.
+  // The row is keyed by the state's OWN campaign id, so every caller writes to
+  // the campaign it is holding — no ambient "current campaign" to get wrong.
+  if (!state.campaignId) {
+    throw new Error('Campaign save failed: state has no campaignId')
+  }
+  lastAttemptedState = state
+  setConnection({ state: 'saving' })
+  let message: string | null = null
+  try {
+    const { error } = await supabase.from('campaigns').upsert({
+      id: state.campaignId,
+      world_name: state.worldName,
+      legacy_state: state,
+      updated_at: new Date().toISOString(),
+    })
+    if (error) message = error.message || 'Unknown database error'
+  } catch (e) {
+    message = e instanceof Error ? e.message : String(e)
+  }
+  if (message) {
+    console.error('[LegacySave] FAILED — campaign progress was NOT saved:', message)
+    setConnection({ state: 'error', message, failures: connection.failures + 1 })
+    throw new Error(`Campaign save failed: ${message}`)
+  }
+  setConnection({
+    state: 'ok',
+    message: undefined,
+    failures: 0,
+    lastSavedAt: new Date().toISOString(),
+  })
+}
+
+// ─── Join codes: create, backfill, look up, join ─────────────────────────────
+
+/** How many fresh codes to try before giving up on a collision. */
+const CODE_ATTEMPTS = 6
+
+/** Codes already handed out — only consulted on the degraded (no column) path. */
+async function takenCodes(): Promise<Set<string>> {
+  const { data } = await supabase.from('campaigns').select('legacy_state')
+  const out = new Set<string>()
+  for (const row of data ?? []) {
+    const code = ((row.legacy_state ?? {}) as Partial<LegacyState>).joinCode
+    if (code) out.add(code.toUpperCase())
+  }
+  return out
+}
+
+/** Write a code onto a campaign row. Resolves false on a uniqueness collision. */
+async function tryWriteCode(campaignId: string, code: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('campaigns')
+    .update({ join_code: code })
+    .eq('id', campaignId)
+  if (!error) return true
+  if (isMissingJoinCodeColumn(error)) { noteMissingColumn(); return false }
+  // 23505 = unique_violation: someone else took this exact code first.
+  if (error.code === '23505') return false
+  throw new Error(`Could not set the join code: ${error.message}`)
+}
+
+/**
+ * Give a campaign a join code, retrying on collision.
+ *
+ * Idempotent: a campaign that already has one keeps it, so calling this on
+ * every open is safe and quietly backfills campaigns made before codes existed.
+ */
+export async function ensureJoinCode(state: LegacyState): Promise<string> {
+  if (state.joinCode && isValidJoinCode(state.joinCode)) return state.joinCode
+
+  if (joinCodeColumnMissing) {
+    // Degraded path: no constraint to lean on, so check what exists first.
+    // Two people creating a campaign in the same second could still collide —
+    // which is exactly why the real answer is running the migration.
+    const taken = await takenCodes()
+    let code = generateJoinCode()
+    for (let i = 0; i < CODE_ATTEMPTS && taken.has(code); i++) code = generateJoinCode()
+    await saveLegacyState({ ...state, joinCode: code })
+    return code
+  }
+
+  for (let i = 0; i < CODE_ATTEMPTS; i++) {
+    const code = generateJoinCode()
+    if (await tryWriteCode(state.campaignId, code)) {
+      // Mirror into the JSON so the degraded path has something to read later.
+      await saveLegacyState({ ...state, joinCode: code }).catch(() => {})
+      return code
+    }
+    if (joinCodeColumnMissing) return ensureJoinCode(state)   // column vanished mid-flight
+  }
+  throw new Error('Could not generate a unique join code — please try again')
+}
+
+/**
+ * Create a campaign and its join code in one step.
+ *
+ * The row is written BEFORE the code is assigned, because the code is set with
+ * an update keyed on the row's id — a campaign with no row cannot hold a code.
+ */
+export async function createCampaign(worldName: string): Promise<LegacyState> {
+  const fresh: LegacyState = { ...defaultLegacyState(), worldName }
+  await saveLegacyState(fresh)
+  try {
+    const code = await ensureJoinCode(fresh)
+    return { ...fresh, joinCode: code }
+  } catch (e) {
+    // A campaign without a code is still perfectly playable on this machine —
+    // it just cannot be shared yet, and opening it will retry the backfill.
+    console.error('[JoinCode] could not assign a code to the new campaign:', e)
+    return fresh
+  }
+}
+
+/** What a code resolves to, before anyone commits to joining. */
+export interface JoinLookup {
+  campaignId: string
+  worldName: string
+  legacy: LegacyState
+}
+
+/**
+ * Find the campaign a code belongs to.
+ *
+ * Returns null for "no such campaign" and throws for "could not ask", so the
+ * UI can tell a wrong code apart from a dead connection.
+ */
+export async function findCampaignByJoinCode(rawCode: string): Promise<JoinLookup | null> {
+  const code = normalizeJoinCode(rawCode)
+  if (!isValidJoinCode(code)) return null
+
+  if (!joinCodeColumnMissing) {
+    // ilike with no wildcards is a case-insensitive equality test.
+    const { data, error } = await supabase
+      .from('campaigns')
+      .select('id, world_name, legacy_state, join_code')
+      .ilike('join_code', code)
+      .limit(1)
+    if (isMissingJoinCodeColumn(error)) {
+      noteMissingColumn()
+    } else if (error) {
+      throw new Error(`Could not look up that code: ${error.message}`)
+    } else {
+      const row = (data ?? [])[0]
+      if (!row) return null
+      const ls = row.legacy_state as LegacyState
+      ls.joinCode = (row.join_code as string) ?? code
+      return { campaignId: row.id as string, worldName: ls.worldName || (row.world_name as string), legacy: ls }
+    }
+  }
+
+  // Degraded path — match on the copy inside legacy_state.
+  const { data, error } = await supabase.from('campaigns').select('id, world_name, legacy_state')
+  if (error) throw new Error(`Could not look up that code: ${error.message}`)
+  for (const row of data ?? []) {
+    const ls = (row.legacy_state ?? {}) as LegacyState
+    if ((ls.joinCode ?? '').toUpperCase() === code) {
+      return { campaignId: row.id as string, worldName: ls.worldName || (row.world_name as string), legacy: ls }
+    }
+  }
+  return null
+}
+
+/** Who is joining: an account, or a guest taking an unclaimed name. */
+export type JoinAs =
+  /** Add a new roster member. Links to the account when one is supplied. */
+  | { kind: 'new'; name: string; userId?: string; userEmail?: string | null }
+  /** Take an existing roster seat. A signed-in player also links to it. */
+  | { kind: 'existing'; playerId: string; userId?: string; userEmail?: string | null }
+
+export interface JoinResult {
+  legacy: LegacyState
+  /** Roster id the joiner now plays as. */
+  playerId: string
+}
+
+/**
+ * Add a player to a campaign's roster.
+ *
+ * Re-reads the campaign immediately before writing rather than trusting the
+ * copy the lookup returned: between typing a code and pressing Join, someone
+ * else may have taken the last seat or claimed the name being picked.
+ */
+export async function joinCampaign(campaignId: string, joinAs: JoinAs): Promise<JoinResult> {
+  const current = await loadLegacyState(campaignId)
+  if (!current) throw new Error('That campaign could not be loaded — check your connection and try again')
+
+  let roster = getRoster(current)
+  let playerId: string
+
+  if (joinAs.kind === 'new') {
+    const added = addRosterMember(
+      roster,
+      joinAs.name,
+      current.currentGameNumber,
+      joinAs.userId ? { userId: joinAs.userId, userEmail: joinAs.userEmail } : undefined,
+    )
+    if (!added.ok || !added.member) throw new Error(added.reason ?? 'Could not join that campaign')
+    roster = added.roster
+    playerId = added.member.id
+  } else {
+    const seat = roster.find(m => m.id === joinAs.playerId)
+    if (!seat) throw new Error('That player is no longer on the campaign roster')
+    if (joinAs.userId) {
+      const claimed = claimRosterSeat(roster, joinAs.playerId, joinAs.userId, joinAs.userEmail)
+      if (!claimed.ok) throw new Error(claimed.reason ?? 'Could not link that player')
+      roster = claimed.roster
+    } else if (seat.userId) {
+      // A guest cannot take a name someone has already tied to their account.
+      throw new Error(`${seat.name} is claimed by an account — pick an unclaimed name`)
+    }
+    playerId = joinAs.playerId
+  }
+
+  const updated: LegacyState = { ...current, roster }
+  await saveLegacyState(updated)
+  return { legacy: updated, playerId }
+}
+
+// ─── Local identity ──────────────────────────────────────────────────────────
+// Which roster member THIS device is playing as. Only meaningful for guests —
+// a signed-in player is identified by the userId on their roster entry, which
+// travels with the account. Guests have nowhere else to put it.
+
+const localSeatKey = (campaignId: string) => `riskLegacy:seat:${campaignId}`
+
+export function getLocalSeat(campaignId: string): Promise<string | null> {
+  return storeGet(localSeatKey(campaignId))
+}
+
+export function setLocalSeat(campaignId: string, playerId: string): Promise<void> {
+  return storeSet(localSeatKey(campaignId), playerId)
 }
 
 // ─── Game sessions ────────────────────────────────────────────────────────────
@@ -149,13 +557,20 @@ export interface LegacyEvent {
   data?: Record<string, unknown>
 }
 
-export async function loadGameHistory(campaignEpoch?: string): Promise<GameSessionRow[]> {
+export async function loadGameHistory(
+  campaignId: string,
+  campaignEpoch?: string,
+): Promise<GameSessionRow[]> {
+  if (!campaignId) return []
   try {
     let query = supabase
       .from('game_sessions')
       .select('*')
-      .eq('campaign_id', CAMPAIGN_ID)
+      .eq('campaign_id', campaignId)
       .order('game_number', { ascending: true })
+    // Campaigns now have their own ids, so the epoch filter is only needed for
+    // rows written before that — when every campaign shared one id and could
+    // only be told apart by when it started.
     if (campaignEpoch) {
       query = query.gte('created_at', campaignEpoch)
     }
@@ -167,18 +582,100 @@ export async function loadGameHistory(campaignEpoch?: string): Promise<GameSessi
 }
 
 export async function saveGameSession(
+  campaignId: string,
   gameNumber: number,
   winnerPlayerName: string | null,
   winnerFactionId: string | null,
   events: LegacyEvent[],
 ): Promise<void> {
   await supabase.from('game_sessions').insert({
-    campaign_id: CAMPAIGN_ID,
+    campaign_id: campaignId,
     game_number: gameNumber,
     winner_player_name: winnerPlayerName,
     winner_faction_id: winnerFactionId,
     legacy_events: events,
   })
+}
+
+// ─── Campaign list ────────────────────────────────────────────────────────────
+
+/** One row in the campaign picker. */
+export interface CampaignSummary {
+  id: string
+  worldName: string
+  currentGameNumber: number
+  gamesWon: number
+  updatedAt: string
+  gameInProgress: boolean
+  campaignComplete: boolean
+  /** Roster names, for telling similar campaigns apart at a glance. */
+  players: string[]
+  /** Shareable code, or null for a campaign that has not been given one yet. */
+  joinCode: string | null
+}
+
+interface CampaignListRow {
+  id: string
+  world_name: string
+  legacy_state: Partial<LegacyState>
+  updated_at: string
+  join_code?: string | null
+}
+
+/** As fetchCampaignRow, for the whole list. Literal selects for the same reason. */
+async function fetchCampaignRows() {
+  if (!joinCodeColumnMissing) {
+    const res = await supabase
+      .from('campaigns')
+      .select('id, world_name, legacy_state, updated_at, join_code')
+      .order('updated_at', { ascending: false })
+    if (!isMissingJoinCodeColumn(res.error)) {
+      return { data: res.data as unknown as CampaignListRow[] | null, error: res.error }
+    }
+    noteMissingColumn()
+  }
+  const res = await supabase
+    .from('campaigns')
+    .select('id, world_name, legacy_state, updated_at')
+    .order('updated_at', { ascending: false })
+  return { data: res.data as unknown as CampaignListRow[] | null, error: res.error }
+}
+
+/** Every campaign on this database, most recently played first. */
+export async function listCampaigns(): Promise<CampaignSummary[]> {
+  try {
+    const { data, error } = await fetchCampaignRows()
+    if (error) {
+      console.error('[Campaigns] FAILED to list campaigns:', error.message)
+      setConnection({ state: 'error', message: error.message, failures: connection.failures + 1 })
+      return []
+    }
+    return (data ?? []).map(row => {
+      const ls = (row.legacy_state ?? {}) as Partial<LegacyState>
+      return {
+        id: row.id,
+        worldName: ls.worldName || row.world_name || 'Unnamed world',
+        currentGameNumber: ls.currentGameNumber ?? 1,
+        gamesWon: (ls.victoryLog ?? []).length,
+        updatedAt: row.updated_at,
+        gameInProgress: !!ls.gameInProgress,
+        campaignComplete: !!ls.campaignComplete,
+        players: (ls.roster ?? []).map(m => m.name),
+        joinCode: row.join_code ?? ls.joinCode ?? null,
+      }
+    })
+  } catch (e) {
+    console.error('[Campaigns] FAILED to list campaigns:', e)
+    return []
+  }
+}
+
+/** Remove a campaign and its game history. */
+export async function deleteCampaign(campaignId: string): Promise<void> {
+  if (!campaignId) return
+  await supabase.from('game_sessions').delete().eq('campaign_id', campaignId)
+  const { error } = await supabase.from('campaigns').delete().eq('id', campaignId)
+  if (error) throw new Error(`Could not delete campaign: ${error.message}`)
 }
 
 // ─── Scar metadata ────────────────────────────────────────────────────────────
@@ -345,14 +842,6 @@ function hashStr(s: string): number {
   return h
 }
 
-// ─── Rich-land scar bonus ─────────────────────────────────────────────────────
-
-/** Extra troops from rich-land scars for a player. */
-export function richLandBonus(playerId: string, territories: Record<string, import('@/types/territory').Territory>): number {
-  return Object.values(territories).filter(
-    t => t.occupyingPlayerId === playerId && t.scars.some(s => s.type === 'rich-land'),
-  ).length
-}
 
 /** Extra draft troops from cities: +1 per minor city, +2 per major city on owned territories. */
 export function cityBonus(playerId: string, territories: Record<string, import('@/types/territory').Territory>): number {

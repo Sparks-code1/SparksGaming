@@ -1,5 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import type { LegacyState, DealtScar } from '@/types/legacy'
+import SoundSettings from '@/components/SoundSettings'
+import UpdateStatus from '@/components/UpdateStatus'
+import ZoomIndicator from '@/components/ZoomIndicator'
+import ConnectionStatus from '@/components/ConnectionStatus'
 import { FACTION_ABILITY_OPTIONS } from '@/data/factionAbilities'
 import type { GameState } from '@/types/game'
 import BetweenGameScreen from '@/components/BetweenGameScreen'
@@ -9,9 +13,10 @@ import DraftSetupScreen from '@/components/DraftSetupScreen'
 import PlayerSlotsScreen, { type SlotConfig, type PlayerSlotSetup } from '@/components/PlayerSlotsScreen'
 import ScarDealingScreen from '@/components/ScarDealingScreen'
 import GameBoard from '@/components/GameBoard'
-import { loadLegacyState, saveLegacyState } from '@/lib/legacyApi'
+import { loadLegacyState, saveLegacyState, getActiveCampaignId } from '@/lib/legacyApi'
 import { dealScarCards } from '@/data/scarCards'
-import { MOCK_PLAYERS } from '@/data/mockGameState'
+import { MOCK_PLAYERS, applyRosterNames } from '@/data/mockGameState'
+import { hasRoster, getRoster, createRoster } from '@/lib/roster'
 
 type Screen = 'loading' | 'between-games' | 'player-slots' | 'scar-dealing' | 'dice-roll' | 'draft-setup' | 'game-setup' | 'playing'
 
@@ -30,38 +35,56 @@ export default function App() {
   // On mount: check Supabase for an in-progress game and resume it directly,
   // bypassing the between-game / dice-roll / setup screens entirely.
   useEffect(() => {
-    loadLegacyState().then(ls => {
-      if (ls?.gameInProgress && ls.activeGameState) {
-        setLegacy(ls)
-        setRestoredGameState(ls.activeGameState as RestoredGameState)
-        setScreen('playing')
-      } else {
-        setScreen('between-games')
-      }
-    }).catch(() => setScreen('between-games'))
+    // Resume only the campaign this device was last in. With many campaigns
+    // side by side there is no "the" campaign to load, so an absent or stale
+    // pointer simply drops through to the picker.
+    getActiveCampaignId()
+      .then(id => (id ? loadLegacyState(id) : null))
+      .then(ls => {
+        // Seat labels everywhere read from the shared table, so point it at the
+        // campaign roster before any screen renders.
+        if (ls) applyRosterNames(getRoster(ls))
+        if (ls?.gameInProgress && ls.activeGameState) {
+          setLegacy(ls)
+          setRestoredGameState(ls.activeGameState as RestoredGameState)
+          setScreen('playing')
+        } else {
+          setScreen('between-games')
+        }
+      })
+      .catch(() => setScreen('between-games'))
   }, [])
 
   // New-game flow: players (count/names/AI) → scar dealing → dice roll → setup
   function handleReadyForDiceRoll(ls: LegacyState) {
     setLegacy(ls)
+    applyRosterNames(getRoster(ls))
     setRestoredGameState(null)
     setScreen('player-slots')
   }
 
   async function handleSlotsChosen(slots: PlayerSlotSetup[]) {
-    // Apply custom names to the shared roster so every screen shows them
-    for (const s of slots) {
-      const p = MOCK_PLAYERS.find(mp => mp.id === s.playerId)
-      if (p) p.name = s.name
-    }
     setSlotConfig(Object.fromEntries(slots.map(s => [s.playerId, { isAI: s.isAI, difficulty: s.difficulty }])))
     const ids = slots.map(s => s.playerId)
     setRosterIds(ids)
 
     // Deal scar cards to the SELECTED players only (legacy state was
     // normalized by BetweenGameScreen, so scarDeck/dealtScars are arrays)
-    const ls = legacy
+    let ls = legacy
     if (!ls) return
+
+    // First time players are named, that list becomes the permanent campaign
+    // roster. Seat ids are fixed by naming order, so every later game seats
+    // people by id and their campaign record follows them.
+    if (!hasRoster(ls)) {
+      ls = { ...ls, roster: createRoster(slots.map(s => s.name), ls.currentGameNumber) }
+      setLegacy(ls)
+      await saveLegacyState(ls).catch(() => {})
+    }
+    // Refresh the shared seat labels from the roster (identity is unchanged —
+    // seat ids ARE roster ids; only the displayed names are synced).
+    applyRosterNames(getRoster(ls))
+
     const gameNumber = ls.currentGameNumber
     // If this game's cards were already dealt (e.g. reloading before the game
     // started), reuse them — a player may only ever hold ONE scar card at a time
@@ -155,8 +178,24 @@ export default function App() {
     setScreen('between-games')
   }
 
+  /**
+   * Re-enter a game that is still in progress.
+   *
+   * Leaving to the menu does not end a game — the board is autosaved on every
+   * phase boundary and `gameInProgress` stays set — so this drops straight back
+   * into the saved board rather than through the setup flow.
+   */
+  function handleResumeGame(ls: LegacyState) {
+    if (!ls.activeGameState) return
+    setLegacy(ls)
+    applyRosterNames(getRoster(ls))
+    setRestoredGameState(ls.activeGameState as RestoredGameState)
+    setScreen('playing')
+  }
+
+  let content: ReactNode
   if (screen === 'loading') {
-    return (
+    content = (
       <div style={{
         position: 'fixed', inset: 0,
         background: '#0A0500',
@@ -167,23 +206,18 @@ export default function App() {
         RISK LEGACY
       </div>
     )
-  }
-
-  if (screen === 'between-games') {
-    return (
+  } else if (screen === 'between-games') {
+    content = (
       <BetweenGameScreen
         onReadyForDiceRoll={handleReadyForDiceRoll}
+        onResumeGame={handleResumeGame}
         onNewCampaign={() => { setLegacy(null); setScreen('between-games') }}
       />
     )
-  }
-
-  if (screen === 'player-slots') {
-    return <PlayerSlotsScreen onConfirm={handleSlotsChosen} />
-  }
-
-  if (screen === 'scar-dealing' && legacy) {
-    return (
+  } else if (screen === 'player-slots') {
+    content = <PlayerSlotsScreen legacy={legacy} onConfirm={handleSlotsChosen} />
+  } else if (screen === 'scar-dealing' && legacy) {
+    content = (
       <ScarDealingScreen
         legacy={legacy}
         gameDeals={gameDeals}
@@ -191,14 +225,10 @@ export default function App() {
         onContinue={() => setScreen('dice-roll')}
       />
     )
-  }
-
-  if (screen === 'dice-roll') {
-    return <DiceRollScreen playerIds={rosterIds} onOrderDetermined={handleOrderDetermined} />
-  }
-
-  if (screen === 'draft-setup') {
-    return (
+  } else if (screen === 'dice-roll') {
+    content = <DiceRollScreen playerIds={rosterIds} onOrderDetermined={handleOrderDetermined} />
+  } else if (screen === 'draft-setup') {
+    content = (
       <DraftSetupScreen
         playerOrder={playerOrder}
         existingAbilities={legacy?.chosenFactionAbilities ?? {}}
@@ -206,10 +236,8 @@ export default function App() {
         onDraftComplete={handleSetupComplete}
       />
     )
-  }
-
-  if (screen === 'game-setup') {
-    return (
+  } else if (screen === 'game-setup') {
+    content = (
       <GameSetupScreen
         playerOrder={playerOrder}
         existingAbilities={legacy?.chosenFactionAbilities ?? {}}
@@ -218,15 +246,30 @@ export default function App() {
         onSetupComplete={handleSetupComplete}
       />
     )
+  } else {
+    content = (
+      <GameBoard
+        initialLegacy={legacy}
+        playerOrder={playerOrder}
+        playerSetups={playerSetups}
+        restoredGameState={restoredGameState}
+        onReturnToLobby={handleReturnToLobby}
+      />
+    )
   }
 
+  // The in-game board hosts its own volume control inside its top-right toolbar;
+  // every other screen gets the free-floating corner one.
   return (
-    <GameBoard
-      initialLegacy={legacy}
-      playerOrder={playerOrder}
-      playerSetups={playerSetups}
-      restoredGameState={restoredGameState}
-      onReturnToLobby={handleReturnToLobby}
-    />
+    <>
+      {content}
+      {screen !== 'playing' && <SoundSettings />}
+      {/* Mounted at the root so it also covers the lobby and setup screens,
+          which write to Supabase too (roster, scar dealing, new campaign). */}
+      <ConnectionStatus />
+      {/* Desktop-only; render nothing in the browser build. */}
+      <UpdateStatus />
+      <ZoomIndicator />
+    </>
   )
 }

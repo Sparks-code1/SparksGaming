@@ -1,43 +1,116 @@
 import { useEffect, useState } from 'react'
 import type { LegacyState } from '@/types/legacy'
 import {
-  loadLegacyState, loadGameHistory, saveLegacyState,
-  defaultLegacyState, type GameSessionRow, SCAR_META,
+  loadLegacyState, loadGameHistory, saveLegacyState, createCampaign, ensureJoinCode,
+  getActiveCampaignId, setActiveCampaignId, clearActiveCampaignId, setLocalSeat,
+  type GameSessionRow, SCAR_META,
 } from '@/lib/legacyApi'
+import { formatJoinCode } from '@/lib/joinCode'
+import JoinCampaignPanel from './JoinCampaignPanel'
 import { TERRITORY_DEFINITIONS } from '@/data/territoryData'
 import { getScarCard, getInitialScarDeck } from '@/data/scarCards'
 import CampaignVictoryScreen from './CampaignVictoryScreen'
+import CampaignPicker from './CampaignPicker'
+import AuthPanel from './AuthPanel'
+import { getCurrentUser, onAuthChange, type AuthUser } from '@/lib/auth'
+import { claimRosterSeat, getRoster } from '@/lib/roster'
 
 interface Props {
   onReadyForDiceRoll: (legacy: LegacyState) => void
+  /** Drop back into a game that is still in progress. */
+  onResumeGame: (legacy: LegacyState) => void
   onNewCampaign: () => void
 }
 
-type LoadState = 'loading' | 'found' | 'none' | 'error'
+type LoadState =
+  | 'loading'
+  | 'picking'   // choosing among existing campaigns, or starting a new one
+  | 'joining'   // entering someone else's join code
+  | 'found'     // a campaign is open; show its lobby
+  | 'none'      // naming a brand-new campaign
+  | 'error'
 
-export default function BetweenGameScreen({ onReadyForDiceRoll, onNewCampaign }: Props) {
+export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, onNewCampaign }: Props) {
   const [status, setStatus]     = useState<LoadState>('loading')
+  /** Which screen the join panel was opened FROM, so Cancel goes back there. */
+  const [joinReturnTo, setJoinReturnTo] = useState<LoadState>('picking')
   const [legacy, setLegacy]     = useState<LegacyState | null>(null)
   const [sessions, setSessions] = useState<GameSessionRow[]>([])
   const [worldName, setWorldName] = useState('New World')
 
+  // ── Optional account ─────────────────────────────────────────────────────
+  // Signing in is never required. `authDismissed` records that the player chose
+  // to continue without one, which simply hides the panel for this visit.
+  const [user, setUser] = useState<AuthUser | null>(null)
+  const [authDismissed, setAuthDismissed] = useState(false)
+  /** Guards the button that would throw away a game still in progress. */
+  const [confirmRestart, setConfirmRestart] = useState(false)
+
   useEffect(() => {
-    loadLegacyState().then(async ls => {
-      const hist = await loadGameHistory(ls?.campaignEpoch)
-      setSessions(hist)
-      if (ls) {
-        // Dedupe the scar deck on load — heals saves corrupted by an older
-        // duplicate-append bug so the pool display shows unique cards.
-        const healed = Array.isArray(ls.scarDeck)
-          ? { ...ls, scarDeck: [...new Set(ls.scarDeck)] }
-          : ls
-        setLegacy(healed)
-        setWorldName(healed.worldName)
-        setStatus('found')
-      } else {
-        setStatus('none')
+    // A failure here resolves to null rather than throwing, so an unreachable
+    // auth service leaves the campaign screen fully usable.
+    getCurrentUser().then(setUser).catch(() => setUser(null))
+    return onAuthChange(setUser)
+  }, [])
+
+  /** Link the signed-in account to a roster seat. Returns an error, or null. */
+  async function handleClaimSeat(playerId: string): Promise<string | null> {
+    if (!legacy || !user) return 'Not signed in'
+    const result = claimRosterSeat(getRoster(legacy), playerId, user.id, user.email)
+    if (!result.ok) return result.reason ?? 'Could not link that player'
+    const updated: LegacyState = { ...legacy, roster: result.roster }
+    try {
+      await saveLegacyState(updated)
+    } catch (e) {
+      return e instanceof Error ? e.message : 'Could not save the link'
+    }
+    setLegacy(updated)
+    return null
+  }
+
+  /** Load one campaign by id and show its lobby. */
+  async function openCampaign(campaignId: string) {
+    setStatus('loading')
+    try {
+      const ls = await loadLegacyState(campaignId)
+      if (!ls) { setStatus('picking'); return }
+      // Dedupe the scar deck on load — heals saves corrupted by an older
+      // duplicate-append bug so the pool display shows unique cards.
+      let healed = Array.isArray(ls.scarDeck)
+        ? { ...ls, scarDeck: [...new Set(ls.scarDeck)] }
+        : ls
+      // Campaigns made before join codes existed get one the first time they
+      // are opened, so every campaign is shareable without a manual step.
+      if (!healed.joinCode) {
+        try {
+          healed = { ...healed, joinCode: await ensureJoinCode(healed) }
+        } catch (e) {
+          console.error('[JoinCode] backfill failed:', e)
+        }
       }
-    }).catch(() => setStatus('error'))
+      setSessions(await loadGameHistory(campaignId, healed.campaignEpoch))
+      setLegacy(healed)
+      setWorldName(healed.worldName)
+      // Remember which campaign this device is in, so a reload resumes it.
+      await setActiveCampaignId(campaignId)
+      setStatus('found')
+    } catch {
+      setStatus('error')
+    }
+  }
+
+  /** Someone joined with a code — remember who this device is, then open it. */
+  async function handleJoined(campaignId: string, playerId: string) {
+    await setLocalSeat(campaignId, playerId).catch(() => {})
+    await openCampaign(campaignId)
+  }
+
+  useEffect(() => {
+    // Open the campaign this device was last in; otherwise offer the picker.
+    // There is no longer a single implicit campaign to fall back on.
+    getActiveCampaignId()
+      .then(id => (id ? openCampaign(id) : setStatus('picking')))
+      .catch(() => setStatus('picking'))
   }, [])
 
   // Normalize fields that may be missing from legacy Supabase records.
@@ -59,12 +132,17 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onNewCampaign }:
   }
 
   async function handleNewCampaignStart(name: string) {
-    console.log('[Campaign] handleNewCampaignStart called, name=', name)
-    const fresh: LegacyState = { ...defaultLegacyState(), worldName: name }
-    console.log('[Campaign] fresh state built, saving to DB...')
-    await saveLegacyState(fresh).catch(e => console.error('[Campaign] saveLegacyState failed:', e))
-    console.log('[Campaign] save complete, moving to player selection')
-    onReadyForDiceRoll(normalizeLegacy(fresh))
+    // createCampaign mints a fresh id AND a join code, so this never collides
+    // with an existing campaign and is shareable the moment it exists.
+    try {
+      const fresh = await createCampaign(name)
+      console.log('[Campaign] starting new campaign', fresh.campaignId, fresh.joinCode)
+      await setActiveCampaignId(fresh.campaignId)
+      onReadyForDiceRoll(normalizeLegacy(fresh))
+    } catch (e) {
+      console.error('[Campaign] could not create campaign:', e)
+      setStatus('error')
+    }
   }
 
   if (status === 'loading') return <FullScreen><Spinner /></FullScreen>
@@ -75,6 +153,9 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onNewCampaign }:
   }
 
   const lastSession = sessions[sessions.length - 1]
+  // A game is resumable when it was left mid-play rather than finished — the
+  // autosave keeps both the flag and the board, so leaving is never final.
+  const resumable = !!legacy?.gameInProgress && !!legacy?.activeGameState
 
   return (
     <FullScreen>
@@ -106,9 +187,86 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onNewCampaign }:
           )}
         </div>
 
+        {/* Campaign picker — any campaign, not just the most recent */}
+        {status === 'picking' && (
+          <CampaignPicker
+            onOpen={openCampaign}
+            onNew={() => { setWorldName('New World'); setStatus('none') }}
+            onJoin={() => { setJoinReturnTo('picking'); setStatus('joining') }}
+          />
+        )}
+
+        {/* Join someone else's campaign with their code.
+            `cameFrom` is remembered so Cancel returns to the screen the player
+            actually came from — landing them on the picker instead would look
+            like their campaign had been closed. */}
+        {status === 'joining' && (
+          <JoinCampaignPanel
+            user={user}
+            onJoined={handleJoined}
+            onCancel={() => setStatus(joinReturnTo)}
+          />
+        )}
+
+        {/* A campaign is open — offer a way back to the list, and a way IN to
+            someone else's.
+
+            The join path used to live only on the picker, which a returning
+            player never sees: `getActiveCampaignId` opens their last campaign
+            and lands them here. So the screen showed them a code to share and
+            offered no way to use anyone else's — which reads, correctly, as the
+            feature not existing. */}
+        {status === 'found' && legacy && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 14, marginBottom: 10 }}>
+            <button
+              onClick={() => { setJoinReturnTo('found'); setStatus('joining') }}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: '#8a6a30', fontSize: 11, fontFamily: 'Georgia, serif', textDecoration: 'underline',
+              }}>
+              ⤵ Join with a code
+            </button>
+            <button
+              onClick={async () => { await clearActiveCampaignId(); setLegacy(null); setSessions([]); setStatus('picking') }}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: '#6a5030', fontSize: 11, fontFamily: 'Georgia, serif', textDecoration: 'underline',
+              }}>
+              ← All campaigns
+            </button>
+          </div>
+        )}
+
+        {/* Account — optional, and dismissible straight through to the game */}
+        {!authDismissed && (
+          <AuthPanel
+            user={user}
+            legacy={legacy}
+            onAuthed={setUser}
+            onSignedOut={() => setUser(null)}
+            onContinueWithout={() => setAuthDismissed(true)}
+            onClaimSeat={handleClaimSeat}
+          />
+        )}
+        {authDismissed && (
+          <div style={{ textAlign: 'right', marginBottom: 12 }}>
+            <button
+              onClick={() => setAuthDismissed(false)}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: '#6a5030', fontSize: 11, fontFamily: 'Georgia, serif',
+                textDecoration: 'underline',
+              }}>
+              {user ? `Signed in as ${user.email}` : 'Sign in or create an account'}
+            </button>
+          </div>
+        )}
+
         {/* Existing campaign */}
         {(status === 'found' || status === 'error') && legacy && (
           <>
+            {legacy.joinCode && <JoinCodeCard code={legacy.joinCode} />}
+
             {lastSession && (
               <Section title="Last Game">
                 <div style={{ fontSize: 13, color: '#b09060' }}>
@@ -168,17 +326,62 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onNewCampaign }:
               })}
             </Section>
 
-            <button onClick={handleContinue} style={primaryBtn('#C8940A')}>
-              🃏 Deal Scar Cards &amp; Start Game #{legacy.currentGameNumber}
-            </button>
+            {/* A game left mid-play is still saved. Offer it back FIRST — and
+                make starting a fresh one confirm, since that discards it. */}
+            {resumable ? (
+              <>
+                <button onClick={() => onResumeGame(legacy)} style={primaryBtn('#C8940A')}>
+                  ▶ Resume Game #{legacy.currentGameNumber}
+                </button>
+                <div style={{ fontSize: 10.5, color: '#6a5a3a', textAlign: 'center', margin: '7px 0 0', fontStyle: 'italic' }}>
+                  Turn {(legacy.activeGameState as { turnNumber?: number })?.turnNumber ?? 1} — picks up exactly where you left off
+                </div>
+                <div style={{ textAlign: 'center', margin: '14px 0 4px', fontSize: 10, color: '#4a3820' }}>OR</div>
+                <button
+                  onClick={() => setConfirmRestart(true)}
+                  style={{ ...primaryBtn('#C8940A'), background: 'transparent', color: '#9a8060', borderColor: 'rgba(200,148,10,0.30)' }}>
+                  🃏 Abandon it and start Game #{legacy.currentGameNumber} over
+                </button>
+                {confirmRestart && (
+                  <div style={{
+                    marginTop: 10, padding: '10px 12px', borderRadius: 7,
+                    background: 'rgba(192,57,43,0.10)', border: '1px solid rgba(192,57,43,0.40)',
+                  }}>
+                    <div style={{ fontSize: 11.5, color: '#e08070', lineHeight: 1.5, marginBottom: 9 }}>
+                      The game in progress will be discarded and Game #{legacy.currentGameNumber} restarted
+                      from setup. Campaign history is untouched.
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button onClick={handleContinue} style={{
+                        padding: '6px 13px', borderRadius: 6, fontSize: 11.5, cursor: 'pointer',
+                        border: '1px solid rgba(192,57,43,0.7)', background: 'rgba(192,57,43,0.22)',
+                        color: '#FFE8E0', fontFamily: 'Georgia, serif',
+                      }}>Discard &amp; restart</button>
+                      <button onClick={() => setConfirmRestart(false)} style={{
+                        padding: '6px 13px', borderRadius: 6, fontSize: 11.5, cursor: 'pointer',
+                        border: '1px solid rgba(200,148,10,0.30)', background: 'transparent',
+                        color: '#9a8060', fontFamily: 'Georgia, serif',
+                      }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <button onClick={handleContinue} style={primaryBtn('#C8940A')}>
+                🃏 Deal Scar Cards &amp; Start Game #{legacy.currentGameNumber}
+              </button>
+            )}
             <div style={{ textAlign: 'center', margin: '14px 0 4px', fontSize: 10, color: '#4a3820' }}>OR</div>
+            {/* Starting another campaign no longer destroys this one — each has
+                its own id, so they sit side by side in the picker. The row is
+                written by handleNewCampaignStart once it has been named. */}
             <button onClick={async () => {
-              const fresh = defaultLegacyState()
-              await saveLegacyState(fresh).catch(() => {})
+              await clearActiveCampaignId()
               setLegacy(null)
               setSessions([])
+              setWorldName('New World')
               setStatus('none')
-            }} style={ghostBtnStyle}>Start New Campaign (clears all legacy)</button>
+            }} style={ghostBtnStyle}>Start a Separate Campaign</button>
           </>
         )}
 
@@ -240,6 +443,57 @@ function Section({ title, children }: { title: string; children: React.ReactNode
         {title}
       </div>
       {children}
+    </div>
+  )
+}
+
+/**
+ * The campaign's join code, shown large enough to read across a room.
+ *
+ * Copy is best-effort: the clipboard API is unavailable on insecure origins and
+ * the Electron build's ephemeral-port origin is one, so the code is always
+ * rendered as selectable text rather than hidden behind a button that may fail.
+ */
+function JoinCodeCard({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false)
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(code)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1600)
+    } catch {
+      setCopied(false)
+    }
+  }
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 14,
+      border: '1px solid rgba(200,148,10,0.40)', borderRadius: 10,
+      background: 'rgba(200,148,10,0.06)', padding: '12px 15px', marginBottom: 18,
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 9.5, color: '#6a5030', letterSpacing: 1.5, textTransform: 'uppercase' }}>
+          Join Code
+        </div>
+        <div style={{
+          fontSize: 26, color: '#E8DCC8', letterSpacing: 6, marginTop: 3,
+          fontFamily: 'Menlo, Consolas, monospace', userSelect: 'all',
+        }}>
+          {formatJoinCode(code)}
+        </div>
+        <div style={{ fontSize: 10.5, color: '#6a5030', marginTop: 3 }}>
+          Share this so others can join the campaign
+        </div>
+      </div>
+      <button onClick={copy} style={{
+        padding: '8px 14px', borderRadius: 7, fontSize: 11.5, flexShrink: 0,
+        border: `1px solid ${copied ? 'rgba(39,174,96,0.6)' : 'rgba(200,148,10,0.45)'}`,
+        background: copied ? 'rgba(39,174,96,0.15)' : 'rgba(200,148,10,0.10)',
+        color: copied ? '#27AE60' : '#b09060',
+        cursor: 'pointer', fontFamily: 'Georgia, serif',
+      }}>
+        {copied ? '✓ Copied' : 'Copy'}
+      </button>
     </div>
   )
 }

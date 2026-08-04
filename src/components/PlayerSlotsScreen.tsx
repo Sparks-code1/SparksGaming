@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { MOCK_PLAYERS } from '@/data/mockGameState'
+import type { LegacyState } from '@/types/legacy'
 import type { AIDifficulty } from '@/types/ai'
 import { AI_DIFFICULTY_LABEL } from '@/types/ai'
+import { ROSTER_IDS, MAX_ROSTER, hasRoster, getRoster, validateSeats } from '@/lib/roster'
 
 export interface SlotConfig { isAI: boolean; difficulty: AIDifficulty }
 
@@ -14,27 +15,70 @@ export interface PlayerSlotSetup {
 }
 
 interface Props {
+  /** Campaign state — supplies the roster once it has been locked in. */
+  legacy?: LegacyState | null
   onConfirm: (slots: PlayerSlotSetup[]) => void
 }
 
 const DIFFS: AIDifficulty[] = ['easy', 'medium', 'hard']
-const COUNTS = [2, 3, 4, 5]
 
-/** FIRST new-game screen: pick how many players (2–5), name each one, and
- *  choose which slots are human or computer — all before the dice roll. */
-export default function PlayerSlotsScreen({ onConfirm }: Props) {
-  const [count, setCount] = useState(Math.min(4, MOCK_PLAYERS.length))
-  const [slots, setSlots] = useState<PlayerSlotSetup[]>(() =>
-    MOCK_PLAYERS.map(p => ({ playerId: p.id, name: p.name, isAI: false, difficulty: 'medium' as AIDifficulty })),
+const GOLD = '#C8940A'
+
+/** FIRST new-game screen: pick how many players (2–5), fill each seat, and
+ *  choose which slots are human or computer — all before the dice roll.
+ *
+ *  The first game of a campaign names the players freely and those names become
+ *  the permanent roster. Every game after picks seats from that roster instead:
+ *  names cannot be edited or added, and nobody can take two seats. The headcount
+ *  may still change — a 5-player campaign can run a 4-player game. */
+export default function PlayerSlotsScreen({ legacy = null, onConfirm }: Props) {
+  const roster = getRoster(legacy)
+  const locked = hasRoster(legacy)
+  // With a roster, you can seat at most as many players as the campaign has.
+  const maxCount = locked ? roster.length : MAX_ROSTER
+  const counts = [2, 3, 4, 5].filter(n => n <= maxCount)
+
+  const [count, setCount] = useState(Math.min(4, maxCount))
+  // Free-naming seats (first setup only): name typed per seat.
+  const [names, setNames] = useState<string[]>(() => Array.from({ length: MAX_ROSTER }, () => ''))
+  // Roster seats (every later game): which roster member sits in each seat.
+  const [seatIds, setSeatIds] = useState<Array<string | null>>(() =>
+    Array.from({ length: MAX_ROSTER }, (_, i) => roster[i]?.id ?? null),
+  )
+  const [ai, setAi] = useState<Array<{ isAI: boolean; difficulty: AIDifficulty }>>(() =>
+    Array.from({ length: MAX_ROSTER }, () => ({ isAI: false, difficulty: 'medium' as AIDifficulty })),
   )
 
-  const active = slots.slice(0, count)
-  const humanCount = active.filter(s => !s.isAI).length
-  const allNamed = active.every(s => s.name.trim().length > 0)
-  const canConfirm = humanCount >= 1 && allNamed
+  const activeSeats = Array.from({ length: count }, (_, i) => i)
+  const humanCount = activeSeats.filter(i => !ai[i].isAI).length
 
-  const update = (playerId: string, patch: Partial<PlayerSlotSetup>) =>
-    setSlots(prev => prev.map(s => (s.playerId === playerId ? { ...s, ...patch } : s)))
+  // Validity differs by mode: free naming needs non-blank unique names, roster
+  // seating needs every seat filled by a distinct roster member.
+  const trimmed = activeSeats.map(i => names[i].trim())
+  const seatCheck = locked
+    ? validateSeats(legacy, activeSeats.map(i => seatIds[i]))
+    : trimmed.every(n => n.length > 0)
+      ? (new Set(trimmed.map(n => n.toLowerCase())).size === trimmed.length
+          ? { ok: true as const }
+          : { ok: false as const, reason: 'Each player needs a different name' })
+      : { ok: false as const, reason: 'Every player needs a name' }
+
+  const canConfirm = humanCount >= 1 && seatCheck.ok
+
+  const setAiAt = (i: number, patch: Partial<{ isAI: boolean; difficulty: AIDifficulty }>) =>
+    setAi(prev => prev.map((s, j) => (j === i ? { ...s, ...patch } : s)))
+
+  function confirm() {
+    if (!canConfirm) return
+    const slots: PlayerSlotSetup[] = activeSeats.map(i => {
+      const playerId = locked ? seatIds[i]! : ROSTER_IDS[i]
+      const name = locked
+        ? (roster.find(m => m.id === playerId)?.name ?? '')
+        : names[i].trim()
+      return { playerId, name, isAI: ai[i].isAI, difficulty: ai[i].difficulty }
+    })
+    onConfirm(slots)
+  }
 
   return (
     <div style={{
@@ -50,16 +94,33 @@ export default function PlayerSlotsScreen({ onConfirm }: Props) {
         color: '#E8DCC8', boxShadow: '0 16px 60px rgba(0,0,0,0.90)',
       }}>
         <div style={{ textAlign: 'center', marginBottom: 20 }}>
-          <div style={{ fontSize: 22, fontWeight: 'bold', color: '#C8940A', letterSpacing: 1.5 }}>🎮 PLAYERS</div>
+          <div style={{ fontSize: 22, fontWeight: 'bold', color: GOLD, letterSpacing: 1.5 }}>🎮 PLAYERS</div>
           <div style={{ fontSize: 11, color: '#7a6040', marginTop: 4 }}>
-            Choose how many are playing, name each player, and set who is human or computer
+            {locked
+              ? 'Choose how many are playing and seat them from the campaign roster'
+              : 'Name each player — these names become the permanent campaign roster'}
           </div>
         </div>
+
+        {/* Roster banner — makes it obvious the names are now fixed */}
+        {locked && (
+          <div style={{
+            padding: '8px 12px', borderRadius: 7, marginBottom: 16,
+            background: 'rgba(200,148,10,0.08)', border: '1px solid rgba(200,148,10,0.30)',
+            fontSize: 10.5, color: '#9a8060', lineHeight: 1.5,
+          }}>
+            <strong style={{ color: GOLD }}>Campaign roster</strong> — {roster.map(m => m.name).join(' · ')}
+            <div style={{ marginTop: 3 }}>
+              Names are locked for the rest of the campaign. Anyone can sit out a game; their
+              stars, signatures, cities and naming rights are waiting when they return.
+            </div>
+          </div>
+        )}
 
         {/* Player count picker */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginBottom: 20 }}>
           <span style={{ fontSize: 11, color: '#7a6040', letterSpacing: 1, textTransform: 'uppercase' }}>Players:</span>
-          {COUNTS.map(n => {
+          {counts.map(n => {
             const activeBtn = count === n
             return (
               <button key={n}
@@ -67,9 +128,9 @@ export default function PlayerSlotsScreen({ onConfirm }: Props) {
                 style={{
                   width: 42, height: 42, borderRadius: 9, fontSize: 17, fontWeight: 'bold',
                   fontFamily: 'Georgia, serif', cursor: 'pointer',
-                  border: `2px solid ${activeBtn ? '#C8940A' : 'rgba(200,148,10,0.25)'}`,
+                  border: `2px solid ${activeBtn ? GOLD : 'rgba(200,148,10,0.25)'}`,
                   background: activeBtn ? 'rgba(200,148,10,0.22)' : 'rgba(0,0,0,0.25)',
-                  color: activeBtn ? '#C8940A' : '#6a5030',
+                  color: activeBtn ? GOLD : '#6a5030',
                   boxShadow: activeBtn ? '0 0 10px rgba(200,148,10,0.30)' : 'none',
                   transition: 'all 0.15s',
                 }}>
@@ -80,78 +141,109 @@ export default function PlayerSlotsScreen({ onConfirm }: Props) {
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 18 }}>
-          {active.map((s, i) => (
-            <div key={s.playerId} style={{
-              display: 'flex', alignItems: 'center', gap: 12,
-              padding: '11px 14px', borderRadius: 8,
-              background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(200,148,10,0.20)',
-            }}>
-              <div style={{ fontSize: 11, color: '#6a5030', width: 16, textAlign: 'center', flexShrink: 0 }}>{i + 1}</div>
-              {/* Editable player name */}
-              <input
-                value={s.name}
-                onChange={e => update(s.playerId, { name: e.target.value })}
-                maxLength={20}
-                placeholder={`Player ${i + 1}`}
-                style={{
-                  flex: 1, minWidth: 0, padding: '8px 12px', borderRadius: 6,
-                  border: `1.5px solid ${s.name.trim() ? 'rgba(200,148,10,0.35)' : 'rgba(231,76,60,0.55)'}`,
-                  background: 'rgba(0,0,0,0.40)', color: '#E8DCC8',
-                  fontSize: 14, fontWeight: 'bold', fontFamily: 'Georgia, serif',
-                  outline: 'none',
-                }}
-              />
-              {/* Human / AI toggle */}
-              <div style={{ display: 'flex', borderRadius: 7, overflow: 'hidden', border: '1px solid rgba(200,148,10,0.30)', flexShrink: 0 }}>
-                {(['human', 'ai'] as const).map(kind => {
-                  const activeKind = (kind === 'ai') === s.isAI
-                  return (
-                    <button key={kind}
-                      onClick={() => update(s.playerId, { isAI: kind === 'ai' })}
-                      style={{
-                        padding: '7px 14px', fontSize: 12, fontFamily: 'Georgia, serif', cursor: 'pointer', border: 'none',
-                        background: activeKind ? (kind === 'ai' ? 'rgba(52,152,219,0.30)' : 'rgba(39,174,96,0.28)') : 'transparent',
-                        color: activeKind ? '#E8DCC8' : '#7a6040', fontWeight: activeKind ? 'bold' : 'normal',
-                      }}>
-                      {kind === 'ai' ? '🤖 AI' : '🧑 Human'}
-                    </button>
-                  )
-                })}
+          {activeSeats.map(i => {
+            // A roster member seated elsewhere cannot be picked again here.
+            const takenElsewhere = new Set(
+              activeSeats.filter(j => j !== i).map(j => seatIds[j]).filter(Boolean) as string[],
+            )
+            const nameOk = locked ? !!seatIds[i] : names[i].trim().length > 0
+            return (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', gap: 12,
+                padding: '11px 14px', borderRadius: 8,
+                background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(200,148,10,0.20)',
+              }}>
+                <div style={{ fontSize: 11, color: '#6a5030', width: 16, textAlign: 'center', flexShrink: 0 }}>{i + 1}</div>
+
+                {locked ? (
+                  /* Roster dropdown — no free text, no additions */
+                  <select
+                    value={seatIds[i] ?? ''}
+                    onChange={e => setSeatIds(prev => prev.map((v, j) => (j === i ? (e.target.value || null) : v)))}
+                    style={{
+                      flex: 1, minWidth: 0, padding: '8px 12px', borderRadius: 6,
+                      border: `1.5px solid ${nameOk ? 'rgba(200,148,10,0.35)' : 'rgba(231,76,60,0.55)'}`,
+                      background: 'rgba(0,0,0,0.40)', color: '#E8DCC8',
+                      fontSize: 14, fontWeight: 'bold', fontFamily: 'Georgia, serif',
+                      outline: 'none', cursor: 'pointer',
+                    }}
+                  >
+                    <option value="">— choose player —</option>
+                    {roster.map(m => (
+                      <option key={m.id} value={m.id} disabled={takenElsewhere.has(m.id)}>
+                        {m.name}{takenElsewhere.has(m.id) ? ' (seated)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  /* First setup — names typed here become the roster */
+                  <input
+                    value={names[i]}
+                    onChange={e => setNames(prev => prev.map((v, j) => (j === i ? e.target.value : v)))}
+                    maxLength={20}
+                    placeholder={`Player ${i + 1}`}
+                    style={{
+                      flex: 1, minWidth: 0, padding: '8px 12px', borderRadius: 6,
+                      border: `1.5px solid ${nameOk ? 'rgba(200,148,10,0.35)' : 'rgba(231,76,60,0.55)'}`,
+                      background: 'rgba(0,0,0,0.40)', color: '#E8DCC8',
+                      fontSize: 14, fontWeight: 'bold', fontFamily: 'Georgia, serif',
+                      outline: 'none',
+                    }}
+                  />
+                )}
+
+                {/* Human / AI toggle */}
+                <div style={{ display: 'flex', borderRadius: 7, overflow: 'hidden', border: '1px solid rgba(200,148,10,0.30)', flexShrink: 0 }}>
+                  {(['human', 'ai'] as const).map(kind => {
+                    const activeKind = (kind === 'ai') === ai[i].isAI
+                    return (
+                      <button key={kind}
+                        onClick={() => setAiAt(i, { isAI: kind === 'ai' })}
+                        style={{
+                          padding: '7px 14px', fontSize: 12, fontFamily: 'Georgia, serif', cursor: 'pointer', border: 'none',
+                          background: activeKind ? (kind === 'ai' ? 'rgba(52,152,219,0.30)' : 'rgba(39,174,96,0.28)') : 'transparent',
+                          color: activeKind ? '#E8DCC8' : '#7a6040', fontWeight: activeKind ? 'bold' : 'normal',
+                        }}>
+                        {kind === 'ai' ? '🤖 AI' : '🧑 Human'}
+                      </button>
+                    )
+                  })}
+                </div>
+                {/* Difficulty — only when AI */}
+                <div style={{ display: 'flex', gap: 4, width: 196, justifyContent: 'flex-end', flexShrink: 0, opacity: ai[i].isAI ? 1 : 0.25, pointerEvents: ai[i].isAI ? 'auto' : 'none' }}>
+                  {DIFFS.map(d => {
+                    const activeDiff = ai[i].difficulty === d
+                    return (
+                      <button key={d}
+                        onClick={() => setAiAt(i, { difficulty: d })}
+                        style={{
+                          padding: '6px 11px', fontSize: 11, borderRadius: 6, fontFamily: 'Georgia, serif', cursor: 'pointer',
+                          border: `1px solid ${activeDiff ? 'rgba(52,152,219,0.7)' : 'rgba(100,80,40,0.3)'}`,
+                          background: activeDiff ? 'rgba(52,152,219,0.20)' : 'transparent',
+                          color: activeDiff ? '#7fb3d3' : '#6a5030',
+                        }}>
+                        {AI_DIFFICULTY_LABEL[d]}
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
-              {/* Difficulty — only when AI */}
-              <div style={{ display: 'flex', gap: 4, width: 196, justifyContent: 'flex-end', flexShrink: 0, opacity: s.isAI ? 1 : 0.25, pointerEvents: s.isAI ? 'auto' : 'none' }}>
-                {DIFFS.map(d => {
-                  const activeDiff = s.difficulty === d
-                  return (
-                    <button key={d}
-                      onClick={() => update(s.playerId, { difficulty: d })}
-                      style={{
-                        padding: '6px 11px', fontSize: 11, borderRadius: 6, fontFamily: 'Georgia, serif', cursor: 'pointer',
-                        border: `1px solid ${activeDiff ? 'rgba(52,152,219,0.7)' : 'rgba(100,80,40,0.3)'}`,
-                        background: activeDiff ? 'rgba(52,152,219,0.20)' : 'transparent',
-                        color: activeDiff ? '#7fb3d3' : '#6a5030',
-                      }}>
-                      {AI_DIFFICULTY_LABEL[d]}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
 
-        {humanCount === 0 && (
+        {(humanCount === 0 || !seatCheck.ok) && (
           <div style={{
             padding: '8px 12px', borderRadius: 6, marginBottom: 12, fontSize: 11,
             background: 'rgba(231,76,60,0.10)', border: '1px solid rgba(231,76,60,0.40)',
             color: '#e08070', textAlign: 'center',
           }}>
-            At least one player must be human
+            {humanCount === 0 ? 'At least one player must be human' : seatCheck.reason}
           </div>
         )}
 
         <button
-          onClick={() => canConfirm && onConfirm(active.map(s => ({ ...s, name: s.name.trim() })))}
+          onClick={confirm}
           disabled={!canConfirm}
           style={{
             width: '100%', padding: '13px', borderRadius: 8, fontSize: 14, fontWeight: 'bold',
