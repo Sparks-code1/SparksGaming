@@ -1,5 +1,6 @@
 node_modules
 dist
+release
 .env
 .env.local
 *.local
@@ -9,3 +10,7 @@ dist
 
 # Stray dev-time data dump (mangled C:\Temp\ path that landed in the repo root)
 *legacy_raw.json
+
+# Supabase CLI local state — records which project this checkout is linked to,
+# which is per-machine and not part of the project.
+supabase/.temp/
