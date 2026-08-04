@@ -14,3 +14,6 @@ release
 # Supabase CLI local state — records which project this checkout is linked to,
 # which is per-machine and not part of the project.
 supabase/.temp/
+
+# Test runner build output
+node_modules/.test-build/

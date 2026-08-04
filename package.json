@@ -15,7 +15,8 @@
     "release": "vite build && electron-builder --win --publish always",
     "dist:dir": "vite build && electron-builder --win --dir",
     "build:edge": "node scripts/build-edge-shared.mjs",
-    "verify:edge": "node scripts/build-edge-shared.mjs --check"
+    "verify:edge": "node scripts/build-edge-shared.mjs --check",
+    "test": "node scripts/run-tests.mjs"
   },
   "dependencies": {
     "@pixi/react": "^7.1.2",
