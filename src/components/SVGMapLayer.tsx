@@ -116,7 +116,6 @@ const SCAR_ICON: Record<string, string> = {
   'wasteland':     '💀',
   'biological':    '☣',
   'nuclear-fallout': '☢',
-  'rich-land':     '⚜',
   'mercenary':     '🧍',
 }
 
@@ -179,10 +178,15 @@ const CONTINENT_PLATES = [
 interface Props {
   territories: Record<string, Territory>
   players: Player[]
-  legacy?: Pick<LegacyState, 'namedContinents' | 'alienIsland' | 'ruinTerritoryIds' | 'falloutZoneTerritoryId' | 'stickers' | 'continentBonusModifiers' | 'customSeaLines' | 'worldCapitalTerritoryId'>
+  legacy?: Pick<LegacyState, 'namedContinents' | 'alienIsland' | 'ruinTerritoryIds' | 'falloutZoneTerritoryId' | 'stickers' | 'continentBonusModifiers' | 'customSeaLines' | 'worldCapitalTerritoryId' | 'roster'>
+  /** Troops placed per territory during the current draft phase — drives the
+   *  "+N" badges. Omitted outside the draft phase, which hides them. */
+  draftPlaced?: Record<string, number>
+  /** Placing player's faction color, as a CSS hex string. */
+  draftColor?: string
 }
 
-export default function SVGMapLayer({ territories, players, legacy }: Props) {
+export default function SVGMapLayer({ territories, players, legacy, draftPlaced, draftColor = '#C8940A' }: Props) {
   // ── Change detection for animations ─────────────────────────────────────
   // Troop count changes → bubble bounce + green/red flash
   // Ownership changes  → capture ripple in the new owner's color
@@ -241,6 +245,18 @@ export default function SVGMapLayer({ territories, players, legacy }: Props) {
   const falloutZoneTerritoryId = legacy?.falloutZoneTerritoryId ?? null
   const customSeaLines = legacy?.customSeaLines ?? []
   const worldCapitalTerritoryId = legacy?.worldCapitalTerritoryId ?? null
+
+  /**
+   * Display name for whoever named a continent — they collect +1 troop for it,
+   * and they may not be in this game, so the roster is the reliable source with
+   * the current players as a fast path.
+   */
+  function namerName(playerId: string): string {
+    return players.find(p => p.id === playerId)?.name
+      ?? (legacy?.roster ?? []).find(m => m.id === playerId)?.name
+      ?? playerId
+  }
+
   return (
     <svg
       viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
@@ -346,6 +362,17 @@ export default function SVGMapLayer({ territories, players, legacy }: Props) {
               fontSize="9" fontFamily="Georgia, serif" fontWeight="bold"
               fill={isModified ? '#F1C40F' : 'white'}
             >+{bonus}{entry ? '★' : ''}</text>
+            {/* Who named it, under the plate. The ★ on the pill means "someone
+                gets +1 here"; this says who, so the extra troop is not a mystery
+                at draft time. */}
+            {entry && (
+              <text x={x + totalW / 2} y={y + h + 7}
+                textAnchor="middle" dominantBaseline="central"
+                fontSize="7" fontFamily="Georgia, serif"
+                fill="#F1C40F"
+                stroke="rgba(0,0,0,0.85)" strokeWidth="1.4" paintOrder="stroke"
+              >★ {namerName(entry.namedByPlayerId)}</text>
+            )}
           </g>
         )
       })}
@@ -459,6 +486,38 @@ export default function SVGMapLayer({ territories, players, legacy }: Props) {
                     stroke="rgba(0,0,0,0.55)" strokeWidth="0.7" paintOrder="stroke"
                   >
                     {t.troops}
+                  </text>
+                </g>
+              )
+            })()}
+
+            {/* Draft placement badge — running total placed here this draft
+                phase. Sits to the RIGHT of the bubble; the vertical stack
+                (crown / city / scars) is already spoken for. Keyed by the count
+                so each increment remounts the node and replays the animation. */}
+            {(draftPlaced?.[def.id] ?? 0) > 0 && (() => {
+              const n = draftPlaced![def.id]
+              const w = n > 9 ? 22 : 18
+              // Anchor by the LEFT edge, not the centre — otherwise a wider
+              // two-digit badge grows back over the troop bubble. The gap also
+              // has to clear the fortification ring when one is drawn.
+              const leftX = cx + bubbleR + (isFortified ? 9 : 5)
+              const bx = leftX + w / 2
+              const by = cy - 5
+              return (
+                <g key={`dp-${n}`} className="draft-badge" pointerEvents="none">
+                  <rect
+                    x={leftX} y={by - 7} width={w} height={14} rx={7}
+                    fill={draftColor} fillOpacity={0.94}
+                    stroke="rgba(0,0,0,0.65)" strokeWidth="1.2"
+                  />
+                  <text
+                    x={bx} y={by}
+                    textAnchor="middle" dominantBaseline="central"
+                    fontSize="9" fontFamily="Georgia, serif" fontWeight="bold"
+                    fill="white" stroke="rgba(0,0,0,0.5)" strokeWidth="0.6" paintOrder="stroke"
+                  >
+                    +{n}
                   </text>
                 </g>
               )

@@ -4,6 +4,7 @@ import type { Player } from '@/types/player'
 import { FACTION_COLORS } from '@/data/mockGameState'
 import { TERRITORY_DEFINITIONS, MAP_WIDTH, MAP_HEIGHT, CONTINENT_COLORS } from '@/data/territoryData'
 import { SCAR_META } from '@/lib/legacyApi'
+import { legalJoinWarTerritoryIds } from '@/lib/gameLogic'
 import BulletIcon from './BulletIcon'
 
 interface Props {
@@ -27,22 +28,15 @@ export default function JoinTheWarModal({ player, territories, hqTerritoryIds, f
   const col = FACTION_COLORS[player.factionId] ?? 0x888888
   const playerColor = hexToRgba(col, 1)
 
-  // Territories adjacent to (or holding) any active HQ are off-limits
-  const hqBlocked = new Set<string>(hqTerritoryIds)
-  for (const hqId of hqTerritoryIds) {
-    const def = TERRITORY_DEFINITIONS.find(d => d.id === hqId)
-    if (def) def.adjacentIds.forEach(id => hqBlocked.add(id))
-  }
+  // Legal starting territory: unowned, no cities, not adjacent to any HQ, and
+  // not the Fallout Zone. Shared with the AI picker and the turn-advance skip
+  // so the board can never offer a re-entry those would disagree with.
+  const legalIds = new Set(
+    legalJoinWarTerritoryIds(territories, hqTerritoryIds, falloutZoneTerritoryId),
+  )
 
-  // Legal starting territory: unowned, no cities, not adjacent to any HQ,
-  // and not the Fallout Zone
   function isLegal(t: Territory | undefined): boolean {
-    if (!t) return false
-    if (t.occupyingPlayerId) return false
-    if (t.cities.some(c => !c.isDestroyed)) return false
-    if (hqBlocked.has(t.id)) return false
-    if (falloutZoneTerritoryId && t.id === falloutZoneTerritoryId) return false
-    return true
+    return !!t && legalIds.has(t.id)
   }
 
   const anyLegal = TERRITORY_DEFINITIONS.some(d => isLegal(territories[d.id]))

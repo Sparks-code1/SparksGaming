@@ -1,7 +1,8 @@
 import type { Territory } from '@/types/territory'
 import type { GameState } from '@/types/game'
-import { CONTINENT_BONUSES, TERRITORY_DEFINITIONS } from '@/data/territoryData'
+import { TERRITORY_DEFINITIONS } from '@/data/territoryData'
 import { ISLAND_TERRITORY_IDS } from '@/data/seaLines'
+import { totalContinentBonus, continentsHeldInFull, countCitiesOn, livingCities } from '@/lib/gameLogic'
 
 const CONTINENT_SIZES: Record<string, number> = TERRITORY_DEFINITIONS.reduce(
   (acc, d) => ({ ...acc, [d.continentId]: (acc[d.continentId] ?? 0) + 1 }),
@@ -23,34 +24,40 @@ export function checkMission(
   missionId: string,
   playerId: string,
   territories: Record<string, Territory>,
-  _gameState: GameState,
+  gameState: GameState,
   conquest: TurnConquestState,
   /** cardState.resourceDeck.length — used for world-capital check */
   resourceDeckCount: number,
+  /** Campaign context: what the World Capital is, and what continents are worth. */
+  opts?: {
+    worldCapitalTerritoryId?: string | null
+    namedContinents?: Record<string, { namedByPlayerId: string }>
+    continentBonusModifiers?: Array<{ continentId: string; bonusDelta: number }>
+  },
 ): boolean {
   const owned = Object.values(territories).filter(t => t.occupyingPlayerId === playerId)
+  const turn = gameState?.turn
 
   switch (missionId) {
     // ── Standard missions ────────────────────────────────────────────────────
 
     case 'mc-6-cities': {
-      let cityCount = 0
-      for (const t of owned) {
-        for (const c of t.cities) {
-          if (!c.isDestroyed && !c.headquartersFactionId) cityCount++
-        }
-      }
+      // The World Capital counts as one city — it replaced the city it sits on,
+      // so not counting it made this mission HARDER to complete after founding it.
+      const wcId = opts?.worldCapitalTerritoryId ?? null
+      const cityCount = owned.reduce((n, t) => n + countCitiesOn(t, wcId), 0)
       return cityCount >= 6
     }
 
     case 'mc-4-cities-turn': {
-      // Count cities on territories conquered this turn
+      // Cities on territories conquered this turn. Counted with the same helper
+      // as every other city mission: an HQ sticker also lives in `t.cities`, and
+      // filtering only `!isDestroyed` let four captured enemy HQs complete this.
+      const wcId = opts?.worldCapitalTerritoryId ?? null
       let citiesConquered = 0
       for (const id of conquest.conqueredIds) {
         const t = territories[id]
-        if (t?.occupyingPlayerId === playerId) {
-          citiesConquered += t.cities.filter(c => !c.isDestroyed).length
-        }
+        if (t?.occupyingPlayerId === playerId) citiesConquered += countCitiesOn(t, wcId)
       }
       return citiesConquered >= 4
     }
@@ -79,34 +86,86 @@ export function checkMission(
       )
     }
 
-    case 'mc-7-continent-bonus': {
-      const continentCount: Record<string, number> = {}
-      for (const t of owned) {
-        continentCount[t.continentId] = (continentCount[t.continentId] ?? 0) + 1
-      }
-      let total = 0
-      for (const [cId, count] of Object.entries(continentCount)) {
-        if (count >= (CONTINENT_SIZES[cId] ?? Infinity)) {
-          total += (CONTINENT_BONUSES as Record<string, number>)[cId] ?? 0
-        }
-      }
-      return total >= 7
-    }
+    case 'mc-7-continent-bonus':
+      // Judged on the troops the player actually collects, which is what the
+      // board shows: printed bonus + the campaign's winner-reward and unlock
+      // modifiers + 1 for a continent they named. Same helper as
+      // `calcReinforcements`, so the mission can never disagree with the payout.
+      return totalContinentBonus(playerId, territories, {
+        namedContinents: opts?.namedContinents,
+        continentBonusModifiers: opts?.continentBonusModifiers,
+      }) >= 7
 
     // ── Special missions ─────────────────────────────────────────────────────
 
     case 'mc-world-capital': {
-      // Eligible for 4+ coin resource card means resourceDeck has a card whose
-      // value is ≥ 4. In this implementation the resource cards are generic so we
-      // check that there are ≥ 4 resource cards remaining in the deck (proxy: deck length ≥ 4).
-      // The actual "eligible to draw" condition matches the existing card draw rule.
-      return resourceDeckCount >= 4 && owned.length > 0
+      // "Be ELIGIBLE to take a resource card worth 4 or more coins." Territory
+      // cards are the resource cards here and carry their coin value, so the
+      // condition is real eligibility — evaluated when the card draw is earned,
+      // against live (upgraded) coin values.
+      //
+      // The player never takes that card: qualifying consumes the draw, and the
+      // red stars plus the World Capital are the reward instead. The Capital is
+      // founded on THAT card's territory — GameBoard records the qualifying
+      // territories in `turn.richCardTerritoryIds` at the same moment this flag
+      // is set, because the face-up row has moved on by the time it is claimed.
+      //
+      // (Previously this only checked that 4+ cards remained in the deck — a
+      // proxy that let the mission complete with no rich card in sight.)
+      void resourceDeckCount
+      return !!turn?.eligibleForRichCard && owned.length > 0
     }
 
     case 'mc-7-islands': {
       const islandCount = owned.filter(t => ISLAND_TERRITORY_IDS.has(t.id)).length
       return islandCount >= 7
     }
+
+    // ── Private missions (unlocked with the World Capital) ───────────────────
+    // The first three fire on an ACTION taken earlier in the turn, so they read
+    // the per-turn counters rather than the board.
+
+    case 'pm-advanced-tactics':
+      // 2+ territory cards, each worth 4 or more resources, turned in this turn.
+      return (turn?.richCardsTradedIn ?? 0) >= 2
+
+    case 'pm-advanced-training':
+      // 10+ total resources turned in this turn.
+      return (turn?.resourcesTradedIn ?? 0) >= 10
+
+    case 'pm-forced-occupation':
+      // Eliminated a player holding a 3+ resource card this turn.
+      return !!turn?.knockedOutRichPlayer
+
+    case 'pm-guerrilla-warfare': {
+      // Every Bunker (fortified) and Mercenary territory on the board is yours.
+      // Vacuously true if none exist, so require at least one to be on the map.
+      const marked = Object.values(territories).filter(t =>
+        (t.scars ?? []).some(s => s.type === 'fortified' || s.type === 'mercenary'),
+      )
+      if (marked.length === 0) return false
+      return marked.every(t => t.occupyingPlayerId === playerId)
+    }
+
+    case 'pm-urban-troop-surge': {
+      // The World Capital PLUS 3 separate major cities. The Capital's own
+      // stickers don't count toward the 3 — same no-double-dip rule it uses
+      // for population and entry cost.
+      const wcId = opts?.worldCapitalTerritoryId ?? null
+      if (!wcId) return false
+      if (territories[wcId]?.occupyingPlayerId !== playerId) return false
+      let majors = 0
+      for (const t of owned) {
+        if (t.id === wcId) continue
+        majors += livingCities(t).filter(c => c.isMajor).length
+      }
+      return majors >= 3
+    }
+
+    case 'pm-wide-border':
+      // 2 whole continents held at the START of the turn (snapshot taken then,
+      // so conquering a second continent mid-turn does not count until next turn).
+      return (turn?.continentsAtTurnStart ?? 0) >= 2
 
     // ── Legacy missions (backward compatibility) ─────────────────────────────
 
@@ -176,4 +235,55 @@ export function isHomelandTerritory(
   const homeland = factionHomelands[factionId]
   if (!homeland) return false
   return territories[territoryId]?.continentId === homeland
+}
+
+/** How many WHOLE continents a player controls right now (Wide Border). */
+export function wholeContinentsControlled(
+  playerId: string,
+  territories: Record<string, Territory>,
+): number {
+  return continentsHeldInFull(playerId, territories).length
+}
+
+/** The slice of LegacyState the homeland rules read. */
+export interface HomelandLegacyInfo {
+  doubleWinnerMilestoneTriggered?: boolean
+  factionHomelands?: Record<string, string | null>
+}
+
+/**
+ * A faction's homeland continent, or null if they have none.
+ *
+ * Returns null until the double-winner milestone unlocks the feature, even
+ * though the start tally itself runs from game 1 — so a campaign that has not
+ * yet seen a repeat champion behaves exactly as before.
+ */
+export function homelandContinentFor(
+  legacy: HomelandLegacyInfo | null | undefined,
+  factionId: string,
+): string | null {
+  if (!legacy?.doubleWinnerMilestoneTriggered) return null
+  return (legacy.factionHomelands ?? {})[factionId] ?? null
+}
+
+/**
+ * May this player claim the face-up territory card for `territoryId`?
+ *
+ * The base rule is "only cards for territories you occupy". A faction with a
+ * homeland may ALSO claim any card in that whole continent, held or not.
+ *
+ * Shared by every eligibility check (the draw modal, the two GameBoard
+ * backstops and the AI picker) so they cannot drift apart — if they disagree,
+ * the modal offers a card the backstop then refuses.
+ */
+export function canClaimTerritoryCard(
+  playerId: string,
+  territoryId: string,
+  territories: Record<string, Territory>,
+  homelandContinentId: string | null,
+): boolean {
+  const t = territories[territoryId]
+  if (!t) return false
+  if (t.occupyingPlayerId === playerId) return true
+  return !!homelandContinentId && t.continentId === homelandContinentId
 }

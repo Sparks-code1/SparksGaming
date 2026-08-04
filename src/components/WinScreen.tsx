@@ -12,6 +12,8 @@ function scarLabel(type: string): string {
   return SCAR_META.find(m => m.type === type)?.label ?? type
 }
 import { FACTION_COLORS, MOCK_PLAYERS } from '@/data/mockGameState'
+import { victoryWinnerId } from '@/lib/roster'
+import { FORTIFICATION_SUPPLY, fortificationsPlaced, SCAR_CANCEL_LIMIT, scarCancelsLeft, canCancelScar } from '@/lib/gameLogic'
 import { playCity } from '@/lib/sounds'
 import { CONTINENT_BONUSES, TERRITORY_DEFINITIONS, MAP_WIDTH, MAP_HEIGHT } from '@/data/territoryData'
 import { TERRITORY_CARDS } from '@/data/cards'
@@ -66,7 +68,12 @@ interface Props {
   legacyState: LegacyState
   legacyEvents: LegacyEvent[]
   unlockOptions?: unknown[]
-  onComplete: (newLegacy: LegacyState) => void
+  /**
+   * `baseline` is the campaign state this screen opened with. The caller needs
+   * it to tell which fields were actually edited here — this screen is long
+   * lived, and anything written elsewhere in the meantime must not be reverted.
+   */
+  onComplete: (newLegacy: LegacyState, baseline: LegacyState) => void
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -110,6 +117,9 @@ export default function WinScreen({
   const [signedName, setSignedName] = useState(winner.name)
   const [saving, setSaving]       = useState(false)
   const [workingLegacy, setWorkingLegacy] = useState<LegacyState>(legacyState)
+  /** What this screen opened with — never updated, so it can serve as the
+   *  baseline the caller diffs against on completion. */
+  const baselineRef = useRef<LegacyState>(legacyState)
 
   // Winner city step
   const [winCityTerrId, setWinCityTerrId] = useState<string | null>(null)
@@ -181,7 +191,9 @@ export default function WinScreen({
     newPlayerWins[winner.id] = (newPlayerWins[winner.id] ?? 0) + 1
     const newVictoryLog = [
       ...(workingLegacy.victoryLog ?? []),
-      { gameNumber, winnerName: winName, factionId: winner.factionId, winCondition },
+      // winnerPlayerId is the durable link: the signature is free text and the
+      // faction changes between games, so only the roster id identifies who won.
+      { gameNumber, winnerName: winName, winnerPlayerId: winner.id, factionId: winner.factionId, winCondition },
     ]
     const entry = `${winName} (${factionName}) won Game #${gameNumber} by ${winCondition === 'mission' ? 'completing their mission' : 'last faction standing'}`
     const updated: LegacyState = {
@@ -193,7 +205,7 @@ export default function WinScreen({
   }
 
   function commitWinnerCity() {
-    if (!winCityTerrId) { setStep(unnamedContinents.length > 0 ? 'winner-continent' : 'winner-cancel-scar'); return }
+    if (!winCityTerrId) { setStep(unnamedContinents.length > 0 ? 'winner-continent' : cancelScarStep()); return }
     playCity()
     const label = winCityName.trim() || (territories[winCityTerrId]?.name ?? '') + ' City'
     let newStickers = [...workingLegacy.stickers]
@@ -212,11 +224,11 @@ export default function WinScreen({
       { ...workingLegacy, stickers: newStickers },
     )
     setWorkingLegacy(updated)
-    setStep(unnamedContinents.length > 0 ? 'winner-continent' : 'winner-cancel-scar')
+    setStep(unnamedContinents.length > 0 ? 'winner-continent' : cancelScarStep())
   }
 
   function commitWinnerContinent() {
-    if (!contId || !contName.trim()) { setStep('winner-cancel-scar'); return }
+    if (!contId || !contName.trim()) { setStep(cancelScarStep()); return }
     const newNamedConts = {
       ...(workingLegacy.namedContinents ?? {}),
       [contId]: { customName: contName.trim(), namedByPlayerId: winner.id, namedInGame: gameNumber },
@@ -226,7 +238,7 @@ export default function WinScreen({
       { ...workingLegacy, namedContinents: newNamedConts },
     )
     setWorkingLegacy(updated)
-    setStep('winner-cancel-scar')
+    setStep(cancelScarStep())
   }
 
   // Winner-reward bonus modifiers are campaign-limited: one +1 and one −1 total.
@@ -235,16 +247,43 @@ export default function WinScreen({
   const plusBonusUsed  = winnerBonusMods.some(m => m.bonusDelta > 0)
   const minusBonusUsed = winnerBonusMods.some(m => m.bonusDelta < 0)
 
+  /** The step after cancelling — skips the bonus step once both mods are spent. */
+  const afterCancelStep = () =>
+    (plusBonusUsed && minusBonusUsed) ? 'winner-fortify-city' as const : 'winner-modify-bonus' as const
+
+  /**
+   * Where to go when the cancel step would come next.
+   *
+   * Once the campaign has spent all `SCAR_CANCEL_LIMIT` cancellations the step
+   * is skipped outright rather than shown greyed out — it is no longer a reward
+   * this campaign offers, the same way the bonus step disappears once both
+   * modifiers are placed.
+   */
+  const cancelScarStep = () =>
+    canCancelScar(workingLegacy) ? 'winner-cancel-scar' as const : afterCancelStep()
+
   function commitCancelScar(scarIdx: number | null) {
-    // Both campaign bonus modifiers already placed — skip the modify step entirely
-    const afterCancel = (plusBonusUsed && minusBonusUsed) ? 'winner-fortify-city' : 'winner-modify-bonus'
+    const afterCancel = afterCancelStep()
     if (scarIdx === null) { setStep(afterCancel); return }
+    // Re-checked here, not just in the UI: the button is the only other guard,
+    // and a campaign limit that lives only in a disabled attribute is not one.
+    if (!canCancelScar(workingLegacy)) { setStep(afterCancel); return }
     const scar = workingLegacy.scars[scarIdx]
-    if (scar?.type === 'fortification') { setStep(afterCancel); return }  // never cancellable
-    const terrName = TERRITORY_DEFINITIONS.find(d => d.id === scar?.territoryId)?.name ?? scar?.territoryId
+    if (!scar) { setStep(afterCancel); return }
+    if (scar.type === 'fortification') { setStep(afterCancel); return }  // never cancellable
+    const terrName = TERRITORY_DEFINITIONS.find(d => d.id === scar.territoryId)?.name ?? scar.territoryId
+    const cancelled = [...(workingLegacy.cancelledScars ?? []), {
+      type: scar.type,
+      territoryId: scar.territoryId,
+      appliedInGame: scar.appliedInGame,
+      cancelledInGame: gameNumber,
+      cancelledByPlayerId: winner.id,
+    }]
+    const left = SCAR_CANCEL_LIMIT - cancelled.length
     const updated = logEntry(
-      `${signedName.trim() || winner.name} cancelled a ${scar ? scarLabel(scar.type) : 'scar'} on ${terrName}`,
-      { ...workingLegacy, scars: workingLegacy.scars.filter((_, i) => i !== scarIdx) },
+      `${signedName.trim() || winner.name} cancelled a ${scarLabel(scar.type)} on ${terrName}`
+      + ` — ${left} of ${SCAR_CANCEL_LIMIT} scar cancellations left in the campaign`,
+      { ...workingLegacy, scars: workingLegacy.scars.filter((_, i) => i !== scarIdx), cancelledScars: cancelled },
     )
     setWorkingLegacy(updated)
     setCancelScarIdx(null)
@@ -274,6 +313,11 @@ export default function WinScreen({
 
   function commitFortifyCity(terrId: string | null) {
     if (!terrId) { setStep('winner-destroy-card'); return }
+    // The supply is finite and spent ones never return, so guard the write as
+    // well as the button — the step is skippable and re-enterable.
+    if (fortificationsPlaced(workingLegacy.stickers) >= FORTIFICATION_SUPPLY) {
+      setStep('winner-destroy-card'); return
+    }
     const updated = logEntry(
       `${signedName.trim() || winner.name} fortified ${territories[terrId]?.name ?? terrId} (10 charges)`,
       {
@@ -382,10 +426,13 @@ export default function WinScreen({
     const winName = signedName.trim() || winner.name
     await Promise.all([
       saveLegacyState(cleaned),
-      saveGameSession(gameNumber, winName, winner.factionId, legacyEvents),
+      saveGameSession(cleaned.campaignId, gameNumber, winName, winner.factionId, legacyEvents),
     ]).catch(() => {})
     setSaving(false)
-    onComplete(cleaned)
+    // The caller merges this against the baseline before saving again, so its
+    // write is the one that lands last — the save above is only a safety net if
+    // the app dies between here and there.
+    onComplete(cleaned, baselineRef.current)
   }
 
   // ── Rendering ─────────────────────────────────────────────────────────────
@@ -424,7 +471,7 @@ export default function WinScreen({
           onChangeName={setWinCityName}
           stepLabel={stepLabel(2)}
           onNext={commitWinnerCity}
-          onSkip={() => setStep(unnamedContinents.length > 0 ? 'winner-continent' : 'winner-cancel-scar')}
+          onSkip={() => setStep(unnamedContinents.length > 0 ? 'winner-continent' : cancelScarStep())}
         />
       )}
 
@@ -436,7 +483,7 @@ export default function WinScreen({
           setContName={setContName}
           stepLabel={stepLabel(continentStepNum)}
           onNext={commitWinnerContinent}
-          onSkip={() => setStep('winner-cancel-scar')}
+          onSkip={() => setStep(cancelScarStep())}
         />
       )}
 
@@ -704,12 +751,23 @@ function CancelScarStep({ factionColor, legacyState, cancelScarIdx, setCancelSca
     .map((scar, i) => ({ scar, i }))
     .filter(({ scar }) => scar.type !== 'fortification')
   const hasScars = removableScars.length > 0
+  // The campaign gets SCAR_CANCEL_LIMIT of these in total. Spending one here is
+  // spending it for every future winner, so say how many are left before they
+  // choose — the step vanishes entirely once they run out.
+  const left = scarCancelsLeft(legacyState)
   return (
     <Card title="✂ CANCEL A SCAR" subtitle={stepLabel}>
-      <div style={{ fontSize: 11, color: '#7a6040', marginBottom: 14, textAlign: 'center' }}>
+      <div style={{ fontSize: 11, color: '#7a6040', marginBottom: 8, textAlign: 'center' }}>
         {hasScars
           ? 'Permanently remove any scar from the board, or skip. Fortifications cannot be cancelled.'
           : 'No removable scars are on the board — skip to continue.'}
+      </div>
+      <div style={{
+        fontSize: 10, marginBottom: 14, textAlign: 'center',
+        color: left === 1 ? '#d08040' : '#6a5030', letterSpacing: 0.3,
+      }}>
+        {left} of {SCAR_CANCEL_LIMIT} campaign scar cancellations remaining
+        {left === 1 ? ' — this is the last one' : ''}
       </div>
       {hasScars && (
         <div style={detailPanel}>
@@ -838,13 +896,19 @@ function FortifyCityStep({ factionColor, legacyState, territories, fortifyTerrId
   if (wcId && territories[wcId] && !targets.some(t => t.territoryId === wcId)) {
     targets.push({ key: `wc-${wcId}`, name: '⌃ World Capital', territoryId: wcId })
   }
-  const hasCities = targets.length > 0
+  // Five in the campaign box, and a worn-out one is never recycled — spent
+  // stickers stay on the board at 0 charges and still count against the supply.
+  const used = fortificationsPlaced(legacyState.stickers)
+  const supplyLeft = Math.max(0, FORTIFICATION_SUPPLY - used)
+  const hasCities = targets.length > 0 && supplyLeft > 0
   return (
     <Card title="🏰 FORTIFY A CITY" subtitle={stepLabel}>
       <div style={{ fontSize: 11, color: '#7a6040', marginBottom: 14, textAlign: 'center' }}>
-        {hasCities
-          ? 'Add a Fortification (+1 to defender\'s highest and lowest die, 10 uses) to any city or the World Capital, or skip.'
-          : 'No cities on the board yet — skip to continue.'}
+        {supplyLeft === 0
+          ? `All ${FORTIFICATION_SUPPLY} fortifications have been used this campaign — there are no more. Skip to continue.`
+          : targets.length === 0
+          ? 'No cities on the board yet — skip to continue.'
+          : `Add a Fortification (+1 to defender's highest and lowest die, 10 uses) to any city or the World Capital, or skip. ${supplyLeft} of ${FORTIFICATION_SUPPLY} left.`}
       </div>
       {hasCities && (
         <div style={detailPanel}>
@@ -872,7 +936,10 @@ function FortifyCityStep({ factionColor, legacyState, territories, fortifyTerrId
           disabled={hasCities && !fortifyTerrId}
           style={{ ...((fortifyTerrId || !hasCities) ? primaryBtn(factionColor) : { ...primaryBtn('#555'), cursor: 'not-allowed', opacity: 0.4 }), flex: 2 }}
         >
-          {!hasCities ? 'No Cities — Continue →' : fortifyTerrId ? `Fortify ${territories[fortifyTerrId]?.name ?? ''} →` : 'Select a city above'}
+          {supplyLeft === 0 ? 'None Left — Continue →'
+            : !hasCities ? 'No Cities — Continue →'
+            : fortifyTerrId ? `Fortify ${territories[fortifyTerrId]?.name ?? ''} →`
+            : 'Select a city above'}
         </button>
       </div>
     </Card>
@@ -1203,6 +1270,11 @@ function CityMapPicker({ playerId, legacyState, cityType, factionId, selectedId,
   function isEligible(id: string) {
     // The Fallout Zone is destroyed ground — no city may be built there
     if (id === legacyState.falloutZoneTerritoryId) return false
+    // The World Capital already IS the city on its territory — nothing may be
+    // founded under it. (A city it replaced still has its sticker here, so that
+    // case is covered by the check below too; this catches a Capital placed on
+    // open ground.)
+    if (id === legacyState.worldCapitalTerritoryId) return false
     return !legacyState.stickers.some(s => s.targetId === id && s.description.startsWith('city:'))
   }
 
@@ -1211,8 +1283,8 @@ function CityMapPicker({ playerId, legacyState, cityType, factionId, selectedId,
   // fallback for old major cities, then the "-p1"-style id suffix.
   const winnerPlayerByGame = new Map<number, string>()
   for (const v of (legacyState.victoryLog ?? [])) {
-    const p = MOCK_PLAYERS.find(pl => pl.name === v.winnerName)
-    if (p) winnerPlayerByGame.set(v.gameNumber, p.id)
+    const id = victoryWinnerId(legacyState, v) ?? MOCK_PLAYERS.find(pl => pl.name === v.winnerName)?.id
+    if (id) winnerPlayerByGame.set(v.gameNumber, id)
   }
   function cityPlacedBy(sticker: { id: string; description: string; appliedInGame: number; placedByPlayerId?: string }): string | null {
     if (sticker.placedByPlayerId) return sticker.placedByPlayerId

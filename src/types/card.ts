@@ -9,6 +9,14 @@ export type MissionType =
   | 'continent-bonus'
   | 'world-capital'
   | 'island-territories'
+  // Private missions — shuffled into the deck once the World Capital is placed.
+  // Completing one grants the faction a permanent star power (1 ★ per game).
+  | 'private-rich-trade'
+  | 'private-bulk-trade'
+  | 'private-knockout'
+  | 'private-scar-control'
+  | 'private-urban-surge'
+  | 'private-two-continents'
   // legacy types kept for backward compatibility with existing saved games
   | 'control-continent'
   | 'control-territories'

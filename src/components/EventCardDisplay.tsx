@@ -1,5 +1,6 @@
 import type { EventCard } from '@/types/card'
 import type { EventEffect } from '@/data/cards'
+import DraggableResizable from './DraggableResizable'
 
 interface Props {
   card: EventCard
@@ -79,20 +80,15 @@ export default function EventCardDisplay({ card, effect, roundNumber, onDismiss 
   const icon  = EFFECT_ICON[effect.kind] ?? '🃏'
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0,
-      background: 'rgba(5,2,0,0.82)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      zIndex: 1050, fontFamily: 'Georgia, serif',
-    }}>
-      <div style={{
-        background: 'linear-gradient(155deg, #1A0E02 0%, #0A0600 100%)',
-        border: `2px solid ${color}88`,
-        borderRadius: 14, padding: '32px 34px 28px',
-        width: 460, maxWidth: '92vw', color: '#E8DCC8',
-        boxShadow: `0 0 60px ${color}22, 0 12px 50px rgba(0,0,0,0.85)`,
-        textAlign: 'center',
-      }}>
+    <DraggableResizable
+      title={`🃏 ${card.name}`}
+      accentColor={color}
+      width={460}
+      storageKey="event-card"
+      zIndex={1050}
+      onClose={onDismiss}
+    >
+      <div style={{ textAlign: 'center' }}>
         {/* Round indicator */}
         <div style={{ fontSize: 10, color: '#5a4020', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 16 }}>
           Round {roundNumber} · Global Event
@@ -258,7 +254,7 @@ export default function EventCardDisplay({ card, effect, roundNumber, onDismiss 
           Acknowledge &amp; Continue
         </button>
       </div>
-    </div>
+    </DraggableResizable>
   )
 }
 

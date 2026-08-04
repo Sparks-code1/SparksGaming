@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { MOCK_PLAYERS, FACTION_COLORS } from '@/data/mockGameState'
-import { needsWeaknessPower, WEAKNESS_POWERS } from '@/data/weaknessPowers'
-import { getAbilitiesForFaction, getAbility } from '@/data/factionAbilities'
-import { COMEBACK_POWERS } from './ComebackPowerModal'
+import { needsWeaknessPower } from '@/data/weaknessPowers'
+import { factionPowers } from '@/lib/factionPowers'
+import { leadFactionId, factionWinCounts, LEAD_FACTION_WORLD_CAPITAL_TROOPS } from '@/lib/gameLogic'
 import type { FactionId } from '@/types/faction'
 import type { LegacyState } from '@/types/legacy'
 import type { PlayerSetup } from './GameSetupScreen'
@@ -70,86 +70,6 @@ function hexToRgb(hex: number): string {
   return `rgb(${(hex >> 16) & 0xff},${(hex >> 8) & 0xff},${hex & 0xff})`
 }
 
-// ── Faction power descriptions (shown when a faction chip is expanded) ────────
-interface PowerLine { label: string; name: string; description: string; color: string }
-
-const BLUE = '#2980b9', GREEN = '#27ae60', RED = '#e74c3c'
-
-/** Powers to show on a faction card: claimed comeback powers, weakness powers,
- *  and the ACTIVE (chosen) starting power. The inactive/unchosen starting power
- *  is never shown — it can no longer be claimed. */
-function factionPowers(
-  fid: string,
-  legacy: LegacyState | null | undefined,
-  existingAbilities: Record<string, string>,
-): PowerLine[] {
-  // Bringer of Nuclear Fire — permanent campaign mark, shown atop the card
-  const bringer: PowerLine[] = fid === legacy?.nuclearBringerFactionId ? [{
-    label: '☢ Bringer of Nuclear Fire',
-    name: 'Marked Forever',
-    description: 'This faction unleashed the nuclear device. In games where the Mutants are playing, it receives 2 bonus missiles.',
-    color: '#e74c3c',
-  }] : []
-  if (fid === 'aliens') {
-    return [...bringer,
-      { label: '★ Star Power',     name: 'Domination',           description: 'Controlling every city on the board earns you 2 Red Stars instantly.', color: RED },
-      { label: '↺ Comeback',       name: 'Alien Reinforcements', description: 'When recruiting, gain +2 troops if you control Alien Island and +1 troop for each Ruin you control.', color: BLUE },
-      { label: '⊕ Starting Power', name: 'Alien Form',           description: 'You do not lose troops when expanding into empty cities.', color: GREEN },
-    ]
-  }
-  if (fid === 'mutants') {
-    return [...bringer,
-      { label: '★ Star Power',     name: 'Wasteland Kings', description: 'Controlling all bio-hazard territories and the Fallout Zone earns you a Red Star.', color: RED },
-      { label: '↺ Comeback',       name: 'Nuclear Fury',    description: "When attacking the Bringer of Nuclear Fire's troops, re-roll 1's on all attack dice until they are no longer 1's.", color: BLUE },
-      { label: '↺ Comeback',       name: 'Twisted Biology', description: 'Bio-hazard and Mercenary scar effects are reversed for you.', color: BLUE },
-      { label: '⊕ Starting Power', name: 'Radiation Born',  description: "You don't lose troops in the Fallout Zone or from Mutant event cards.", color: GREEN },
-    ]
-  }
-
-  const lines: PowerLine[] = [...bringer]
-
-  // Claimed comeback power (blue)
-  const cbId = (legacy?.comebackPowers ?? {})[fid]
-  if (cbId) {
-    const cb = COMEBACK_POWERS.find(c => c.id === cbId)
-    if (cb) lines.push({ label: '↺ Comeback', name: cb.name, description: cb.desc, color: BLUE })
-  }
-
-  // Weakness power (its own accent color)
-  const wpId = (legacy?.alienWeaknessPowers ?? {})[fid]
-  if (wpId) {
-    const wp = WEAKNESS_POWERS.find(w => w.id === wpId)
-    if (wp) lines.push({ label: '⚠ Weakness', name: wp.name, description: wp.description, color: wp.color })
-  }
-
-  // Alien Collaborator weakness power (yellow) — a dedicated field, not in alienWeaknessPowers
-  if (fid === legacy?.alienCollaboratorFactionId) {
-    lines.push({
-      label: '⚠ Weakness',
-      name: 'Alien Collaborator',
-      description: 'Gain +1 troop when trading in cards, but lose 2 extra troops when expanding into empty cities.',
-      color: '#f0c000',
-    })
-  }
-
-  // Active starting power (green): the chosen ability. If none chosen yet,
-  // show the options still claimable (removed/inactive ones are filtered out).
-  const chosenId = existingAbilities[fid]
-  if (chosenId) {
-    const ab = getAbility(chosenId)
-    if (ab) lines.push({ label: '⊕ Starting Power', name: ab.name, description: ab.description, color: GREEN })
-  } else {
-    const removed = new Set(legacy?.removedAbilityIds ?? [])
-    const [a, b] = getAbilitiesForFaction(fid as FactionId)
-    for (const opt of [a, b]) {
-      if (opt && !removed.has(opt.id)) {
-        lines.push({ label: '⊕ Starting Power (choose in setup)', name: opt.name, description: opt.description, color: GREEN })
-      }
-    }
-  }
-
-  return lines
-}
 
 export default function DraftSetupScreen({ playerOrder, existingAbilities, legacy = null, onDraftComplete }: Props) {
   const players = playerOrder.map(id => MOCK_PLAYERS.find(p => p.id === id)!).filter(Boolean)
@@ -161,6 +81,11 @@ export default function DraftSetupScreen({ playerOrder, existingAbilities, legac
   const [picks, setPicks] = useState<Record<string, PlayerDraft>>({})
   const [pickerIdx, setPickerIdx] = useState(0)
   const [expandedFaction, setExpandedFaction] = useState<string | null>(null)
+  // Lead faction — most campaign wins, none when two or more tie. Worth knowing
+  // while drafting: it picks the starting mission and opens holding the World
+  // Capital, so taking it (or denying it) is a real draft decision.
+  const leadFaction = leadFactionId(legacy?.victoryLog)
+  const factionWins = factionWinCounts(legacy?.victoryLog)
   const [weaknessPicks, setWeaknessPicks] = useState<Record<string, string>>({})  // factionId → powerId
   const [weaknessPendingId, setWeaknessPendingId] = useState<string | null>(null) // playerId choosing a weakness
   const [phase, setPhase] = useState<'draft' | 'territory'>('draft')
@@ -422,6 +347,18 @@ export default function DraftSetupScreen({ playerOrder, existingAbilities, legac
                           {FACTION_NAMES[fid]}
                           {fid === legacy?.nuclearBringerFactionId && (
                             <span title="Bringer of Nuclear Fire" style={{ fontSize: 12, color: '#c0392b', fontWeight: 'bold' }}>☢</span>
+                          )}
+                          {fid === leadFaction && (
+                            <span
+                              title={`Lead faction — the most campaign wins (${factionWins[fid] ?? 0}). Picks the starting face-up mission, and begins each game owning the World Capital with ${LEAD_FACTION_WORLD_CAPITAL_TROOPS} troops.`}
+                              style={{
+                                fontSize: 9, fontWeight: 'bold', letterSpacing: 0.5,
+                                color: '#7a5c00', background: 'rgba(212,175,55,0.55)',
+                                border: '1px solid rgba(140,110,20,0.75)', borderRadius: 4,
+                                padding: '1px 5px', flexShrink: 0,
+                              }}>
+                              ⌃ LEAD
+                            </span>
                           )}
                           {claimedBy ? claimTag(claimedBy) : (
                             <span style={{ marginLeft: 'auto', fontSize: 10, color: '#6a5a3a' }}>{expanded ? '▲' : 'ⓘ powers'}</span>

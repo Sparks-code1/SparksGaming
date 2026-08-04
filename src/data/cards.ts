@@ -64,7 +64,7 @@ export const MISSION_CARDS: MissionCard[] = [
     kind: 'mission', id: 'mc-world-capital',
     name: 'World Capital',
     type: 'world-capital',
-    description: 'Be eligible to draw a resource card worth 4 or more coins, then place the World Capital on any territory you control.',
+    description: 'Earn a card draw while eligible to take a card worth 4 or more coins. You forgo that card — instead take 2 Red Stars and found the World Capital on that card’s territory, replacing any city there.',
     stars: 2, singleUse: true, completed: false,
   },
   {
@@ -75,6 +75,92 @@ export const MISSION_CARDS: MissionCard[] = [
     stars: 2, singleUse: true, completed: false,
   },
 ]
+
+/**
+ * Private missions — sealed until the World Capital is placed, then shuffled
+ * into the same mission deck as the standard ones (so the face-up card may be
+ * either kind).
+ *
+ * Each awards 1 red star AND permanently grants the completing faction that
+ * mission as a STAR POWER, after which the card is destroyed so no other
+ * faction can ever claim it. A faction holding a star power may re-complete
+ * that same mission for 1 extra red star once per game.
+ */
+export const PRIVATE_MISSION_CARDS: MissionCard[] = [
+  {
+    kind: 'mission', id: 'pm-advanced-tactics',
+    name: 'Advanced Tactics',
+    type: 'private-rich-trade',
+    description: 'When recruiting troops, turn in at least 2 territory cards that each have 4 or more resources.',
+    stars: 1, singleUse: true, completed: false,
+  },
+  {
+    kind: 'mission', id: 'pm-advanced-training',
+    name: 'Advanced Training',
+    type: 'private-bulk-trade',
+    description: 'When recruiting troops, turn in 10 or more total resources for troops.',
+    stars: 1, singleUse: true, completed: false,
+  },
+  {
+    kind: 'mission', id: 'pm-forced-occupation',
+    name: 'Forced Occupation',
+    type: 'private-knockout',
+    description: 'Knock out or eliminate a player who holds a card with 3 or more resources.',
+    stars: 1, singleUse: true, completed: false,
+  },
+  {
+    kind: 'mission', id: 'pm-guerrilla-warfare',
+    name: 'Guerrilla Warfare',
+    type: 'private-scar-control',
+    description: 'Control every Bunker and Mercenary territory on the board.',
+    stars: 1, singleUse: true, completed: false,
+  },
+  {
+    kind: 'mission', id: 'pm-urban-troop-surge',
+    name: 'Urban Troop Surge',
+    type: 'private-urban-surge',
+    description: 'Control the World Capital and 3 major cities.',
+    stars: 1, singleUse: true, completed: false,
+  },
+  {
+    kind: 'mission', id: 'pm-wide-border',
+    name: 'Wide Border',
+    type: 'private-two-continents',
+    description: 'Control 2 whole continents at the start of your turn.',
+    stars: 1, singleUse: true, completed: false,
+  },
+]
+
+export const PRIVATE_MISSION_IDS = PRIVATE_MISSION_CARDS.map(m => m.id)
+export const isPrivateMission = (id: string) => PRIVATE_MISSION_IDS.includes(id)
+
+/**
+ * Factions that already own a built-in star power (the red slot on their
+ * faction card) and therefore cannot claim one from a private mission.
+ * They may still COMPLETE the mission for its red star — the card is then
+ * reshuffled into the deck rather than destroyed, so another faction can
+ * still claim the power.
+ */
+export const STAR_POWER_EXCLUDED_FACTIONS = new Set(['aliens', 'mutants'])
+export const canClaimStarPower = (factionId: string) => !STAR_POWER_EXCLUDED_FACTIONS.has(factionId)
+
+/**
+ * Shuffle the private missions into an existing mission deck — called once,
+ * when the World Capital is placed. Already-destroyed missions (claimed as a
+ * star power in an earlier game) are never re-added.
+ */
+export function seedPrivateMissions(
+  deck: string[],
+  destroyedMissionIds: string[],
+  seedText: string,
+): string[] {
+  const destroyed = new Set(destroyedMissionIds)
+  const additions = PRIVATE_MISSION_IDS.filter(id => !destroyed.has(id) && !deck.includes(id))
+  if (additions.length === 0) return deck
+  let seed = 0
+  for (let i = 0; i < seedText.length; i++) seed = (seed * 31 + seedText.charCodeAt(i)) >>> 0
+  return seededShuffle([...deck, ...additions], seed)
+}
 
 // ─── Event cards (8 base + 7 unlocked after 9th minor city) ─────────────────
 export const EVENT_CARDS: EventCard[] = [
@@ -361,7 +447,7 @@ export const EVENT_EFFECTS: Record<string, EventEffect> = {
 }
 
 // ─── Lookup ───────────────────────────────────────────────────────────────────
-const _all: Card[] = [...TERRITORY_CARDS, ...MISSION_CARDS, ...EVENT_CARDS, ...NINTH_CITY_EVENT_CARDS, ...DOUBLE_WINNER_EVENT_CARDS, ...ALIEN_INVASION_EVENT_CARDS, ...NUCLEAR_EVENT_CARDS, ...COIN_CARDS, ALIEN_ISLAND_COIN_CARD]
+const _all: Card[] = [...TERRITORY_CARDS, ...MISSION_CARDS, ...PRIVATE_MISSION_CARDS, ...EVENT_CARDS, ...NINTH_CITY_EVENT_CARDS, ...DOUBLE_WINNER_EVENT_CARDS, ...ALIEN_INVASION_EVENT_CARDS, ...NUCLEAR_EVENT_CARDS, ...COIN_CARDS, ALIEN_ISLAND_COIN_CARD]
 export const CARD_LOOKUP = new Map<string, Card>(_all.map(c => [c.id, c]))
 
 export function getCard(id: string): Card | undefined {
@@ -396,6 +482,41 @@ function seededShuffle<T>(arr: T[], seed: number): T[] {
   return out
 }
 
+/**
+ * Unbiased Fisher–Yates shuffle on a fresh array.
+ *
+ * Use this rather than `sort(() => Math.random() - 0.5)`: an inconsistent
+ * comparator gives a badly skewed distribution, so cards near where they started
+ * tend to stay there — the discard pile comes back in almost the order it went in.
+ */
+export function shuffle<T>(arr: readonly T[]): T[] {
+  const out = [...arr]
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]]
+  }
+  return out
+}
+
+/**
+ * A fresh unpredictable seed for one game's deal.
+ *
+ * Deck order used to come from the game number alone, which meant game 5 dealt
+ * the same events, missions and face-up cards in every campaign and again on
+ * every restart — the cards were effectively face up to anyone who had played
+ * that game before. The seed is generated once per deal and stored on the card
+ * state, so the deal survives a reload without ever being guessable in advance.
+ */
+export function newDealSeed(): number {
+  const c = (globalThis as { crypto?: Crypto }).crypto
+  if (c?.getRandomValues) {
+    const buf = new Uint32Array(1)
+    c.getRandomValues(buf)
+    return buf[0] >>> 0
+  }
+  return (Math.random() * 0x100000000) >>> 0
+}
+
 export function buildTerritoryDeck(seed: number): string[] {
   return seededShuffle(TERRITORY_CARDS.map(c => c.id), seed)
 }
@@ -421,13 +542,35 @@ export function buildEventDeck(
   return seededShuffle(pool, seed)
 }
 
+/**
+ * The mission deck for a new game.
+ *
+ * Once the World Capital has been placed, the six private missions are part of
+ * the deck for the REST of the campaign — not just the game they were unlocked
+ * in. `seedPrivateMissions` shuffles them into the live deck at the moment the
+ * World Capital lands, and `privateMissionsSeeded` then blocks it from ever
+ * running again; but every new game rebuilds the deck from here, and this only
+ * knew about MISSION_CARDS. So the private missions appeared for the remainder
+ * of one game and silently vanished from the campaign at the next new game.
+ *
+ * Claimed ones are already recorded in `destroyedMissionIds`, so the same
+ * filter that retires a used single-use mission keeps them out.
+ */
 export function buildMissionDeck(
   seed: number,
-  opts?: { doubleWinnerMilestoneTriggered?: boolean; destroyedMissionIds?: string[] },
+  opts?: {
+    doubleWinnerMilestoneTriggered?: boolean
+    destroyedMissionIds?: string[]
+    /** True once the World Capital has been placed — unlocks the private missions. */
+    privateMissionsSeeded?: boolean
+  },
 ): string[] {
   if (!opts?.doubleWinnerMilestoneTriggered) return []
   const destroyed = new Set(opts?.destroyedMissionIds ?? [])
-  const pool = MISSION_CARDS.filter(m => !destroyed.has(m.id)).map(m => m.id)
+  const cards = opts?.privateMissionsSeeded
+    ? [...MISSION_CARDS, ...PRIVATE_MISSION_CARDS]
+    : MISSION_CARDS
+  const pool = cards.filter(m => !destroyed.has(m.id)).map(m => m.id)
   return seededShuffle(pool, seed)
 }
 
@@ -581,6 +724,15 @@ export interface ActiveGameCards {
   resourceDeck: string[]
   /** Legacy alias kept for migration; prefer resourceDeck */
   coinDeck?: string[]
+  /** Set once the pile has emptied and the Red Star been resolved. Traded-in
+   *  coins return to the pile, so it can empty more than once in a game — but
+   *  the star is claimed only on the first emptying. Absent on old saves,
+   *  which is correct: they predate any award. */
+  resourceStarAwarded?: boolean
+  /** Seed this game's decks were shuffled from. Stored so a migration that has to
+   *  rebuild a missing pile reproduces THIS deal instead of dealing a new one.
+   *  Absent on saves made before deals became random. */
+  dealSeed?: number
 }
 
 export function buildInitialGameCards(
@@ -593,9 +745,11 @@ export function buildInitialGameCards(
     nuclearMilestoneTriggered?: boolean
     destroyedEventCardIds?: string[]
     destroyedMissionIds?: string[]
+    privateMissionsSeeded?: boolean
   },
+  /** Omit for a fresh random deal; pass a stored `dealSeed` to reproduce one. */
+  seed: number = newDealSeed(),
 ): ActiveGameCards {
-  const seed = (gameNumber * 0x9e3779b9 + 0xdeadbeef) >>> 0
   const deck = buildTerritoryDeck(seed)
   const sideboard = deck.splice(0, 4)
   const resourceDeck = [
@@ -614,6 +768,7 @@ export function buildInitialGameCards(
     currentMissionId: null,
     sideboard,
     resourceDeck,
+    dealSeed: seed,
   }
 }
 

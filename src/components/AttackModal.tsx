@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, type CSSProperties } from 'react'
 import type { Territory } from '@/types/territory'
 import type { Player } from '@/types/player'
 import { playDice } from '@/lib/sounds'
-import { resolveCombat, createMathRng, type CombatModifiers, type CombatOutcome } from '@/lib/gameReducer'
+import { resolveCombat, createMathRng, singleDieDelta, singleDieBonus, defenderDieSteps, type CombatModifiers, type CombatOutcome } from '@/lib/gameReducer'
+import { troopsAfterEntry, minTroopsToEnter, type EntryCost } from '@/lib/gameLogic'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -109,7 +110,7 @@ interface Props {
   attackerRerollOnes?: boolean
   /** Troops lost on capture (cities, fortification, milestone modifiers) —
    *  shown up front so the attacker isn't surprised */
-  entryCost?: { total: number; parts: string[]; falloutHalf?: boolean }
+  entryCost?: EntryCost
   /** AI mode: auto-resolve the whole battle and confirm, with short delays so
    *  humans can follow it. Uses the identical combat math as manual play. */
   autoPlay?: boolean
@@ -374,12 +375,12 @@ export default function AttackModal({
   onClose,
   onApplyResult,
 }: Props) {
-  // Troops that survive entry after capture penalties (and Fallout Zone halving)
-  const arriveAfterEntry = (n: number) => {
-    let v = Math.max(1, n - (entryCost?.total ?? 0))
-    if (entryCost?.falloutHalf) v = Math.max(1, Math.ceil(v / 2))
-    return v
-  }
+  // Troops that survive entry after capture penalties (and Fallout Zone halving).
+  // Shared with the uncontested Advance panel and the reducer, so the cost is
+  // charged identically however the territory is taken.
+  const arriveAfterEntry = (n: number) => troopsAfterEntry(n, entryCost)
+  /** Fewest troops that can be sent in and still pay the entry cost. */
+  const minAdvance = minTroopsToEnter(entryCost)
   const hasEntryCost = !!entryCost && (entryCost.total > 0 || !!entryCost.falloutHalf)
   // Cumulative losses across multi-round attacks
   const [cumulAtkLoss, setCumulAtkLoss] = useState(0)
@@ -445,6 +446,10 @@ export default function AttackModal({
 
   // Advance troops slider (normal combat capture)
   const [advanceTroops, setAdvanceTroops] = useState(0)
+
+  // Set when an outside click is refused mid-battle, so the refusal is visible
+  // rather than the click seeming to do nothing at all.
+  const [dismissBlocked, setDismissBlocked] = useState(false)
 
   // Keep dice count clamped to valid range when troops change
   const safeAtkDice = Math.min(atkDiceCount, maxAtkDice)
@@ -525,13 +530,11 @@ export default function AttackModal({
         ? [{ label: 'Defense modifiers', highest: defenderDieBonus.highest, lowest: defenderDieBonus.lowest }]
         : []
     )
-    for (const part of defParts) {
-      if (curDef.length === 0) break
-      const next = [...curDef]
-      if (part.highest) next[0] = Math.max(1, Math.min(6, next[0] + part.highest))
-      if (part.lowest && next.length > 1) next[next.length - 1] = Math.max(1, Math.min(6, next[next.length - 1] + part.lowest))
-      pushStep(part.label, 'def', curAtk, next)
-    }
+    // Shared with the engine: the last snapshot equals what `resolveCombat`
+    // computes from the summed modifiers, so the animation cannot drift from
+    // the maths the battle resolves on.
+    const defSnapshots = defenderDieSteps(rawDef, defParts)
+    defSnapshots.forEach((snapshot, i) => pushStep(defParts[i].label, 'def', curAtk, snapshot))
 
     finalAtkRef.current = curAtk
     finalDefRef.current = curDef
@@ -606,6 +609,11 @@ export default function AttackModal({
       attackerSubtractLowest,
       tripleKillEnabled,
       defenderDieBonus,
+      // Derived from the named parts so a lone defender die gets every
+      // modifier (notably Bear Trap's lowest −1) exactly once.
+      defenderDieBonusSingle: defenderDieBonusParts
+        ? singleDieBonus(defenderDieBonusParts)
+        : defenderDieBonus && singleDieDelta(defenderDieBonus),
       defenderBonusDiceCap,
       nuclearFallout,
       attackerSixesWin,
@@ -755,7 +763,18 @@ export default function AttackModal({
         zIndex: 1000,
         fontFamily: 'Georgia, serif',
       }}
-      onClick={e => e.target === e.currentTarget && onClose()}
+      // Dismissing by clicking outside is only safe BEFORE anything is rolled.
+      // Once dice are thrown the losses live in this component (cumulAtkLoss /
+      // cumulDefLoss) and ONLY handleClose hands them to the board — so an
+      // outside click used to throw away a fought battle and leave the
+      // territory looking untouched. A battle in progress can only be ended
+      // through the buttons that actually report the result.
+      onClick={e => {
+        if (e.target !== e.currentTarget) return
+        if (phase === 'setup' && roundsFoughtRef.current === 0) { onClose(); return }
+        setDismissBlocked(true)
+        setTimeout(() => setDismissBlocked(false), 2200)
+      }}
     >
       <div
         style={{
@@ -817,6 +836,18 @@ export default function AttackModal({
             )}
           </div>
         </div>
+
+        {/* Why an outside click did nothing — see the backdrop handler above. */}
+        {dismissBlocked && (
+          <div style={{
+            marginBottom: 14, padding: '8px 12px', borderRadius: 7,
+            background: 'rgba(231,76,60,0.12)', border: '1px solid rgba(231,76,60,0.45)',
+            color: '#e8a090', fontSize: 11.5, textAlign: 'center', lineHeight: 1.45,
+          }}>
+            This battle has already been fought — troops have been lost. Finish it
+            with the buttons below so the result is recorded.
+          </div>
+        )}
 
         {/* ── Troop counts ── */}
         <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
@@ -1048,8 +1079,11 @@ export default function AttackModal({
                             Advance troops into {defender.name}
                           </div>
                           {(() => {
-                            const minAdv = Math.min(autoResult.maxAtkDiceUsed, Math.max(1, autoResult.atkTroopsAfter - 1))
                             const maxAdv = Math.max(1, autoResult.atkTroopsAfter - 1)
+                            // Whichever floor is higher: the dice-used rule, or
+                            // enough to pay the entry cost — capped by what is
+                            // actually available to move.
+                            const minAdv = Math.min(maxAdv, Math.max(Math.min(autoResult.maxAtkDiceUsed, maxAdv), minAdvance))
                             return (
                               <>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1343,8 +1377,10 @@ export default function AttackModal({
                       ⚑ Advance Troops
                     </div>
                     {atkTroopsAfter > 1 && (() => {
-                      const minAdv = Math.min(maxAtkDiceUsedRef.current, Math.max(1, atkTroopsAfter - 1))
                       const maxAdv = Math.max(1, atkTroopsAfter - 1)
+                      // Whichever floor is higher: the dice-used rule, or enough
+                      // to pay the entry cost — capped by what is available.
+                      const minAdv = Math.min(maxAdv, Math.max(Math.min(maxAtkDiceUsedRef.current, maxAdv), minAdvance))
                       return (
                         <>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>

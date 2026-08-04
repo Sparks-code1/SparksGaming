@@ -1,25 +1,29 @@
 import { useState } from 'react'
 import type { Territory } from '@/types/territory'
+import { troopsAfterEntry, minTroopsToEnter, type EntryCost } from '@/lib/gameLogic'
 
 interface Props {
   src: Territory
   dst: Territory
   /** Troops lost on entry (cities, fortification, milestone modifiers) */
-  entryCost?: { total: number; parts: string[]; falloutHalf?: boolean }
+  entryCost?: EntryCost
   onConfirm: (troops: number) => void
   onCancel: () => void
 }
 
 export default function AdvancePanel({ src, dst, entryCost, onConfirm, onCancel }: Props) {
   const max = src.troops - 1
+  // The cost has to be payable out of what moves in, so the slider cannot go
+  // below it — otherwise the arriving stack was rounded up to 1 and the city
+  // charged less than it should (a major city taken with 2 troops cost 1).
+  const min = minTroopsToEnter(entryCost)
+  const affordable = max >= min
   const [amount, setAmount] = useState(max)
+  // When the cost cannot be paid the slider is disabled, so its floor stays at 1
+  // rather than jumping above `max` and reading as an impossible range.
+  const sliderMin = affordable ? min : 1
 
-  // Troops that survive entry after capture penalties (and Fallout Zone halving)
-  const arriveAfterEntry = (n: number) => {
-    let v = Math.max(1, n - (entryCost?.total ?? 0))
-    if (entryCost?.falloutHalf) v = Math.max(1, Math.ceil(v / 2))
-    return v
-  }
+  const arriveAfterEntry = (n: number) => troopsAfterEntry(n, entryCost)
   const hasEntryCost = !!entryCost && (entryCost.total > 0 || !!entryCost.falloutHalf)
 
   return (
@@ -69,13 +73,25 @@ export default function AdvancePanel({ src, dst, entryCost, onConfirm, onCancel 
           <div style={{ color: '#E67E22', fontSize: 22, fontWeight: 'bold' }}>→</div>
           <TroopCard label={dst.name} troops={0} after={hasEntryCost ? arriveAfterEntry(amount) : amount} color="#F39C12" />
         </div>
-        {hasEntryCost && (
+        {hasEntryCost && affordable && (
           <div style={{ textAlign: 'center', fontSize: 11, color: '#e8a838', marginTop: -14, marginBottom: 18 }}>
             {amount} advancing → <strong>{arriveAfterEntry(amount)}</strong> will survive entry
           </div>
         )}
 
-        <div style={{ marginBottom: 20 }}>
+        {!affordable && (
+          <div style={{
+            textAlign: 'center', fontSize: 11.5, color: '#e08070', lineHeight: 1.5,
+            padding: '9px 12px', borderRadius: 7, marginBottom: 18,
+            background: 'rgba(231,76,60,0.10)', border: '1px solid rgba(231,76,60,0.40)',
+          }}>
+            Not enough troops to take <strong>{dst.name}</strong>. Entry costs{' '}
+            {entryCost!.total} troop{entryCost!.total !== 1 ? 's' : ''}, so you need{' '}
+            <strong>{min + 1}</strong> here to move {min} in and leave one behind.
+          </div>
+        )}
+
+        <div style={{ marginBottom: 20, opacity: affordable ? 1 : 0.4 }}>
           <div style={{
             display: 'flex', justifyContent: 'space-between',
             fontSize: 11, color: '#7a5a3a', marginBottom: 8,
@@ -85,20 +101,21 @@ export default function AdvancePanel({ src, dst, entryCost, onConfirm, onCancel 
           </div>
           <input
             type="range"
-            min={1}
+            min={sliderMin}
             max={max}
             value={amount}
+            disabled={!affordable}
             onChange={e => setAmount(Number(e.target.value))}
-            style={{ width: '100%', accentColor: '#E67E22', cursor: 'pointer' }}
+            style={{ width: '100%', accentColor: '#E67E22', cursor: affordable ? 'pointer' : 'not-allowed' }}
           />
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#5a3a1a', marginTop: 3 }}>
-            <span>1</span>
+            <span>{sliderMin}</span>
             <span>{max}</span>
           </div>
         </div>
 
         <div style={{ display: 'flex', gap: 6, marginBottom: 20, justifyContent: 'center' }}>
-          {[1, Math.ceil(max / 2), max].filter((v, i, a) => v >= 1 && a.indexOf(v) === i).map(v => (
+          {[sliderMin, Math.ceil(max / 2), max].filter((v, i, a) => v >= sliderMin && v <= max && a.indexOf(v) === i).map(v => (
             <button
               key={v}
               onClick={() => setAmount(v)}
@@ -128,16 +145,20 @@ export default function AdvancePanel({ src, dst, entryCost, onConfirm, onCancel 
             Cancel
           </button>
           <button
-            onClick={() => onConfirm(amount)}
+            onClick={() => affordable && onConfirm(amount)}
+            disabled={!affordable}
             style={{
               flex: 2, padding: '10px', borderRadius: 6,
-              border: '2px solid rgba(230,126,34,0.75)',
-              background: 'rgba(230,126,34,0.22)',
-              color: '#F0B27A', cursor: 'pointer',
+              border: `2px solid ${affordable ? 'rgba(230,126,34,0.75)' : 'rgba(230,126,34,0.20)'}`,
+              background: affordable ? 'rgba(230,126,34,0.22)' : 'transparent',
+              color: affordable ? '#F0B27A' : '#6a4a2a',
+              cursor: affordable ? 'pointer' : 'not-allowed',
               fontSize: 13, fontWeight: 'bold', fontFamily: 'Georgia, serif',
             }}
           >
-            ⚔ Advance {amount} Troop{amount !== 1 ? 's' : ''}
+            {affordable
+              ? `⚔ Advance ${amount} Troop${amount !== 1 ? 's' : ''}`
+              : 'Cannot afford entry'}
           </button>
         </div>
       </div>

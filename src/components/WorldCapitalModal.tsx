@@ -6,8 +6,15 @@ import { FACTION_COLORS } from '@/data/mockGameState'
 interface Props {
   /** Player who completed the world-capital mission */
   completingPlayer: Player
-  players: Player[]
   territories: Record<string, Territory>
+  /**
+   * Where the Capital may go: the territories of the 4+ coin cards that made
+   * this player eligible. Normally one — the destination is decided by the card,
+   * not chosen. Several only when more than one claimable face-up card was worth
+   * 4+. Empty on a save from before this rule, which falls back to a free pick
+   * among the player's own territories.
+   */
+  candidateTerritoryIds: string[]
   onPlace: (territoryId: string) => void
 }
 
@@ -38,21 +45,24 @@ function CrownIcon({ size = 64, color = GOLD }: { size?: number; color?: string 
   )
 }
 
-export default function WorldCapitalModal({ completingPlayer, players, territories, onPlace }: Props) {
+export default function WorldCapitalModal({ completingPlayer, territories, candidateTerritoryIds, onPlace }: Props) {
   const [phase, setPhase] = useState<Phase>('announce')
-  const [selectedId, setSelectedId] = useState<string | null>(null)
 
   const playerColor = hexToRgb(FACTION_COLORS[completingPlayer.factionId as keyof typeof FACTION_COLORS] ?? 0xaaaaaa)
 
-  // Territories the completing player controls (for placement)
-  const ownedTerritories = Object.values(territories)
-    .filter(t => t.occupyingPlayerId === completingPlayer.id)
-    .sort((a, b) => {
-      // Sort: territories with cities first
-      const aCities = a.cities.filter(c => !c.isDestroyed && !c.headquartersFactionId).length
-      const bCities = b.cities.filter(c => !c.isDestroyed && !c.headquartersFactionId).length
-      return bCities - aCities || a.name.localeCompare(b.name)
-    })
+  // The card decides the destination. Only a pre-rule save reaches the fallback,
+  // which lets the player pick any territory they control as the old rule did.
+  const candidates = candidateTerritoryIds.map(id => territories[id]).filter(Boolean)
+  const fallback = candidates.length === 0
+  const options = fallback
+    ? Object.values(territories)
+        .filter(t => t.occupyingPlayerId === completingPlayer.id)
+        .sort((a, b) => a.name.localeCompare(b.name))
+    : candidates
+
+  // One candidate is the normal case — nothing to choose, so pre-select it.
+  const [selectedId, setSelectedId] = useState<string | null>(
+    options.length === 1 ? options[0].id : null)
 
   const containerStyle: React.CSSProperties = {
     position: 'fixed', inset: 0, zIndex: 8000,
@@ -97,8 +107,9 @@ export default function WorldCapitalModal({ completingPlayer, players, territori
           }}>
             <div style={{ fontSize: 12, color: GOLD, letterSpacing: 2, marginBottom: 8 }}>WORLD CAPITAL RULES</div>
             <ul style={{ margin: 0, padding: '0 0 0 18px', color: '#c8b888', fontSize: 13, lineHeight: 1.8 }}>
-              <li>Placed on a territory the completing player controls — <strong>replaces any existing city</strong></li>
+              <li>Placed on the territory of the <strong>4+ coin card</strong> that earned it — <strong>replacing any city there, minor or major</strong></li>
               <li>Adds <strong>+5 to population</strong> (for Join the Cause and similar effects)</li>
+              <li>Counts as <strong>one city</strong> for missions that count cities</li>
               <li>Any player who conquers it must <strong>sacrifice 5 troops</strong> (permanently lost) before advancing</li>
               <li>Only <strong>one World Capital</strong> can ever exist in this campaign</li>
             </ul>
@@ -124,35 +135,46 @@ export default function WorldCapitalModal({ completingPlayer, players, territori
     <div style={containerStyle}>
       <div style={{ ...cardStyle, maxWidth: 640, maxHeight: '85vh', overflowY: 'auto' }}>
         <CrownIcon size={48} color={GOLD} />
-        <h2 style={{ color: GOLD, margin: '8px 0 4px' }}>Place the World Capital</h2>
+        <h2 style={{ color: GOLD, margin: '8px 0 4px' }}>
+          {options.length === 1 ? 'The World Capital Rises' : 'Place the World Capital'}
+        </h2>
         <p style={{ color: '#c8b060', fontSize: 14, margin: '0 0 16px' }}>
-          Choose a territory <span style={{ color: playerColor, fontWeight: 'bold' }}>{completingPlayer.name}</span> controls.
-          Any existing city there is replaced.
+          {fallback ? (
+            <>Choose a territory <span style={{ color: playerColor, fontWeight: 'bold' }}>{completingPlayer.name}</span> controls.
+              Any city there is replaced.</>
+          ) : options.length === 1 ? (
+            <>The Capital goes to the territory of the 4+ coin card that earned it.
+              Any city there is replaced.</>
+          ) : (
+            <>Several 4+ coin cards were within reach — choose which one&rsquo;s territory
+              becomes the Capital. Any city there is replaced.</>
+          )}
         </p>
         <div style={{
-          display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8,
+          display: 'grid', gridTemplateColumns: options.length === 1 ? '1fr' : '1fr 1fr', gap: 8,
           maxHeight: 340, overflowY: 'auto', marginBottom: 20,
         }}>
-          {ownedTerritories.map(t => {
+          {options.map(t => {
             const isSelected = selectedId === t.id
             const cities = t.cities.filter(c => !c.isDestroyed && !c.headquartersFactionId)
+            const locked = options.length === 1
             return (
               <button
                 key={t.id}
-                onClick={() => setSelectedId(t.id)}
+                onClick={() => !locked && setSelectedId(t.id)}
                 style={{
                   background: isSelected ? `rgba(200,148,10,0.25)` : 'rgba(255,255,255,0.04)',
                   border: isSelected ? `2px solid ${GOLD}` : '1px solid rgba(200,148,10,0.2)',
-                  borderRadius: 8, padding: '10px 12px', cursor: 'pointer',
+                  borderRadius: 8, padding: '10px 12px', cursor: locked ? 'default' : 'pointer',
                   textAlign: 'left', color: '#fff', transition: 'all 0.15s',
                 }}
               >
                 <div style={{ fontWeight: 700, fontSize: 13, color: isSelected ? GOLD : '#e8d888' }}>
                   👑 {t.name}
                 </div>
-                <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>
+                <div style={{ fontSize: 11, color: cities.length > 0 ? '#c07050' : '#888', marginTop: 2 }}>
                   {cities.length > 0
-                    ? cities.map(c => c.isMajor ? '★ Major City' : '● Minor City').join(' · ')
+                    ? `Replaces ${cities.map(c => c.isMajor ? `★ ${c.name}` : `● ${c.name}`).join(' · ')}`
                     : 'No cities'}
                 </div>
               </button>

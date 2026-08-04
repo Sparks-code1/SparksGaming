@@ -1,75 +1,37 @@
 import { useEffect, useState } from 'react'
 import type { LegacyState } from '@/types/legacy'
-import { SCAR_META, loadGameHistory, type GameSessionRow } from '@/lib/legacyApi'
-import { CONTINENT_BONUSES } from '@/data/territoryData'
-import { TERRITORY_DEFINITIONS } from '@/data/territoryData'
+import { loadGameHistory, type GameSessionRow } from '@/lib/legacyApi'
 import { FACTION_ABILITY_OPTIONS } from '@/data/factionAbilities'
-import { FACTION_COLORS, MOCK_PLAYERS } from '@/data/mockGameState'
+import { FACTION_COLORS } from '@/data/mockGameState'
 import { COMEBACK_POWERS } from './ComebackPowerModal'
+import RulesTab from './RulesTab'
 import { MUTANT_EVOLVE_POWERS, MISSILE_POWERS, MISSILE_POWER_COLOR } from '@/data/missilePowers'
 import { WEAKNESS_POWERS } from '@/data/weaknessPowers'
+import { MILESTONES } from '@/data/milestones'
+import { CARD_LOOKUP } from '@/data/cards'
+import { leadFactionId, factionWinCounts } from '@/lib/gameLogic'
+import type { MissionCard } from '@/types/card'
 
 interface Props {
   legacy: LegacyState
+  /**
+   * factionId → playerId for THIS game. Who plays which faction changes every
+   * game, so the per-game red-star tally can only be read through this map;
+   * without it a faction shows no stars rather than someone else's.
+   */
+  factionPlayerIds?: Record<string, string>
   onClose: () => void
 }
 
-type Tab = 'history' | 'milestones' | 'scars' | 'cities' | 'unlocks' | 'factions'
+type Tab = 'history' | 'milestones' | 'factions' | 'rules'
 
-// ─── Campaign milestones (sealed envelopes) ──────────────────────────────────
-interface Milestone {
-  name: string
-  subtitle: string
-  unlock: string
-  reward: string
-  isUnlocked: (l: LegacyState) => boolean
-}
-
-const MILESTONES: Milestone[] = [
-  {
-    name: 'First Blood',
-    subtitle: 'The first to fall',
-    unlock: 'When the first player is eliminated from a game.',
-    reward: 'Unlocks Comeback Powers (blue slot) and the 3 Mercenary scar cards.',
-    isUnlocked: l => !!l.firstEliminationTriggered,
-  },
-  {
-    name: 'The Second Victory',
-    subtitle: 'A repeat champion',
-    unlock: 'When any player signs the board for their 2nd win.',
-    reward: 'Unlocks Missions and the Join the Cause events.',
-    isUnlocked: l => !!l.doubleWinnerMilestoneTriggered,
-  },
-  {
-    name: 'The Ninth City',
-    subtitle: 'A crowded world',
-    unlock: 'When the 9th minor city is placed on the board.',
-    reward: 'Unlocks Biohazard scars and the drafted turn order.',
-    isUnlocked: l => !!l.ninthCityUnlocked,
-  },
-  {
-    name: 'They Live Among Us',
-    subtitle: 'The War Progresses',
-    unlock: 'When a player is about to place 30+ troops while holding at least 1 missile.',
-    reward: 'Unlocks the Aliens faction, Alien Island, Weakness Powers and Alien events.',
-    isUnlocked: l => !!l.alienMilestoneTriggered,
-  },
-  {
-    name: 'The Unthinkable',
-    subtitle: 'The War Progresses',
-    unlock: 'When 3 missiles are placed on a single combat roll.',
-    reward: 'Unlocks the Mutants faction, the Fallout Zone, Missile Powers and Nuclear events.',
-    isUnlocked: l => !!l.nuclearMilestoneTriggered,
-  },
-]
-
-export default function LegacyPanel({ legacy, onClose }: Props) {
+export default function LegacyPanel({ legacy, factionPlayerIds = {}, onClose }: Props) {
   const [tab, setTab] = useState<Tab>('history')
   const [sessions, setSessions] = useState<GameSessionRow[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    loadGameHistory(legacy.campaignEpoch).then(rows => { setSessions(rows); setLoading(false) })
+    loadGameHistory(legacy.campaignId, legacy.campaignEpoch).then(rows => { setSessions(rows); setLoading(false) })
   }, [])
 
   return (
@@ -110,7 +72,7 @@ export default function LegacyPanel({ legacy, onClose }: Props) {
 
           {/* Tabs */}
           <div style={{ display: 'flex', gap: 0 }}>
-            {(['history', 'milestones', 'factions', 'scars', 'cities', 'unlocks'] as Tab[]).map(t => (
+            {(['history', 'milestones', 'factions', 'rules'] as Tab[]).map(t => (
               <button key={t} onClick={() => setTab(t)} style={{
                 padding: '7px 18px', fontSize: 11, letterSpacing: 1,
                 background: 'none', border: 'none',
@@ -129,61 +91,80 @@ export default function LegacyPanel({ legacy, onClose }: Props) {
         <div style={{ flex: 1, overflowY: 'auto', padding: '18px 24px' }}>
 
           {/* ── HISTORY TAB ── */}
-          {tab === 'history' && (
-            <div>
-              <SectionHead>Game Log</SectionHead>
-              {loading && <Muted>Loading…</Muted>}
-              {!loading && sessions.length === 0 && <Muted>No completed games yet.</Muted>}
-              {sessions.map(s => (
-                <div key={s.id} style={{
-                  padding: '12px 14px', borderRadius: 7, marginBottom: 8,
-                  background: 'rgba(200,148,10,0.06)',
-                  border: '1px solid rgba(200,148,10,0.18)',
-                }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-                    <span style={{ fontSize: 13, fontWeight: 'bold', color: '#C8940A' }}>
-                      Game #{s.game_number}
-                    </span>
-                    <span style={{ fontSize: 10, color: '#5a4020' }}>
-                      {new Date(s.created_at).toLocaleDateString()}
-                    </span>
+          {/* The campaign story: milestone unlocks and game victories only.
+              Deliberately NOT a play-by-play — troop placements, combat rolls,
+              scar/city placements and other per-turn events are excluded. */}
+          {tab === 'history' && (() => {
+            // One entry per milestone that has unlocked, plus one per completed
+            // game, ordered by game number so it reads as a chronicle.
+            const unlockGames = legacy.milestoneUnlockGames ?? {}
+            const milestoneEntries = MILESTONES
+              .filter(m => m.isUnlocked(legacy))
+              .map(m => ({
+                kind: 'milestone' as const,
+                // Milestones unlocked before the game number was recorded sort
+                // last within their group rather than claiming to be Game 0.
+                game: unlockGames[m.id],
+                name: m.name,
+                reward: m.reward,
+              }))
+            const gameEntries = sessions.map(s => ({
+              kind: 'victory' as const,
+              game: s.game_number,
+              winner: s.winner_player_name,
+              faction: s.winner_faction_id,
+              date: s.created_at,
+            }))
+            const story = [...milestoneEntries, ...gameEntries]
+              .sort((a, b) => (a.game ?? Infinity) - (b.game ?? Infinity))
+
+            return (
+              <div>
+                <SectionHead>Campaign Story</SectionHead>
+                <div style={{ fontSize: 10, color: '#5a4020', marginBottom: 14, fontStyle: 'italic' }}>
+                  Major moments only — milestone unlocks and game victories.
+                </div>
+                {loading && <Muted>Loading…</Muted>}
+                {!loading && story.length === 0 && (
+                  <Muted>Nothing yet — win a game or unlock a milestone to begin the story.</Muted>
+                )}
+                {story.map((e, i) => e.kind === 'milestone' ? (
+                  <div key={`m-${i}`} style={{
+                    padding: '11px 14px', borderRadius: 7, marginBottom: 8,
+                    background: 'rgba(52,152,219,0.08)',
+                    border: '1px solid rgba(52,152,219,0.28)',
+                  }}>
+                    <div style={{ fontSize: 13, fontWeight: 'bold', color: '#5DADE2' }}>
+                      {e.game !== undefined ? `Game ${e.game} — ` : ''}✉ {e.name} Unlocked
+                    </div>
+                    <div style={{ fontSize: 11, color: '#7a94a8', marginTop: 4 }}>{e.reward}</div>
                   </div>
-                  {s.winner_player_name ? (
-                    <div style={{ fontSize: 12, color: '#b09060' }}>
-                      🏆 <strong style={{ color: '#E8DCC8' }}>{s.winner_player_name}</strong>
-                      {s.winner_faction_id && (
-                        <span style={{ color: '#7a6040' }}> ({s.winner_faction_id.replace(/-/g, ' ')})</span>
+                ) : (
+                  <div key={`v-${i}`} style={{
+                    padding: '11px 14px', borderRadius: 7, marginBottom: 8,
+                    background: 'rgba(200,148,10,0.06)',
+                    border: '1px solid rgba(200,148,10,0.18)',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 13, fontWeight: 'bold', color: '#C8940A' }}>
+                        Game {e.game} — {e.winner ? `🏆 ${e.winner} won` : 'no winner recorded'}
+                      </span>
+                      {e.date && (
+                        <span style={{ fontSize: 10, color: '#5a4020' }}>
+                          {new Date(e.date).toLocaleDateString()}
+                        </span>
                       )}
                     </div>
-                  ) : (
-                    <div style={{ fontSize: 12, color: '#5a4020' }}>No winner recorded</div>
-                  )}
-                  {s.legacy_events?.length > 0 && (
-                    <div style={{ marginTop: 7 }}>
-                      {s.legacy_events.map((ev, i) => (
-                        <div key={i} style={{ fontSize: 11, color: '#7a6040', marginTop: 3 }}>
-                          · {ev.description}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-
-              {/* Inline history log from legacy state */}
-              {legacy.historyLog.length > 0 && (
-                <>
-                  <SectionHead style={{ marginTop: 16 }}>Event Log</SectionHead>
-                  {legacy.historyLog.slice().reverse().map((entry, i) => (
-                    <div key={i} style={{ fontSize: 11, color: '#7a6040', padding: '4px 0', borderBottom: '1px solid rgba(200,148,10,0.08)' }}>
-                      <span style={{ color: '#5a4020', marginRight: 8 }}>G{entry.gameNumber}</span>
-                      {entry.entry}
-                    </div>
-                  ))}
-                </>
-              )}
-            </div>
-          )}
+                    {e.winner && e.faction && (
+                      <div style={{ fontSize: 11, color: '#7a6040', marginTop: 3 }}>
+                        {e.faction.replace(/-/g, ' ')}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )
+          })()}
 
           {/* ── MILESTONES TAB ── */}
           {tab === 'milestones' && (
@@ -269,97 +250,10 @@ export default function LegacyPanel({ legacy, onClose }: Props) {
             </div>
           )}
 
-          {/* ── SCARS TAB ── */}
-          {tab === 'scars' && (
-            <div>
-              <SectionHead>Permanent Scars ({legacy.scars.length})</SectionHead>
-              {legacy.scars.length === 0 && <Muted>No scars placed yet.</Muted>}
-              {legacy.scars.map((s, i) => {
-                const meta = SCAR_META.find(m => m.type === s.type)!
-                const def = TERRITORY_DEFINITIONS.find(d => d.id === s.territoryId)
-                return (
-                  <div key={i} style={{
-                    display: 'flex', alignItems: 'flex-start', gap: 12,
-                    padding: '10px 12px', borderRadius: 7, marginBottom: 6,
-                    background: `${meta.color}0C`,
-                    border: `1px solid ${meta.color}30`,
-                  }}>
-                    <span style={{ fontSize: 20, flexShrink: 0 }}>{meta.icon}</span>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13, color: meta.color, fontWeight: 'bold' }}>
-                        {meta.label}
-                      </div>
-                      <div style={{ fontSize: 11, color: '#9a8060' }}>
-                        {def?.name ?? s.territoryId}
-                        <span style={{ color: '#5a4020', marginLeft: 8 }}>· Game {s.appliedInGame}</span>
-                      </div>
-                      <div style={{ fontSize: 10, color: '#6a5030', marginTop: 2 }}>{meta.effect}</div>
-                    </div>
-                  </div>
-                )
-              })}
-
-              {/* Continent bonus modifiers */}
-              {legacy.continentBonusModifiers.length > 0 && (
-                <>
-                  <SectionHead style={{ marginTop: 16 }}>Continent Bonus Modifiers</SectionHead>
-                  {legacy.continentBonusModifiers.map((m, i) => {
-                    const base = CONTINENT_BONUSES[m.continentId as keyof typeof CONTINENT_BONUSES] ?? 0
-                    return (
-                      <div key={i} style={{ fontSize: 12, color: '#b09060', padding: '5px 0', borderBottom: '1px solid rgba(200,148,10,0.10)' }}>
-                        <strong style={{ color: '#E8DCC8', textTransform: 'capitalize' }}>
-                          {m.continentId.replace(/-/g, ' ')}
-                        </strong>
-                        {' '}{base} → <strong style={{ color: '#F39C12' }}>{base + m.bonusDelta}</strong>
-                        <span style={{ fontSize: 10, color: '#5a4020', marginLeft: 8 }}>{m.reason}</span>
-                      </div>
-                    )
-                  })}
-                </>
-              )}
-            </div>
-          )}
-
-          {/* ── CITIES TAB ── */}
-          {tab === 'cities' && (
-            <div>
-              <SectionHead>Cities & Headquarters</SectionHead>
-              {legacy.stickers.filter(s => s.placement === 'territory').length === 0 && (
-                <Muted>No cities or HQs placed yet.</Muted>
-              )}
-              {legacy.stickers
-                .filter(s => s.placement === 'territory')
-                .map((sticker, i) => {
-                  const def = TERRITORY_DEFINITIONS.find(d => d.id === sticker.targetId)
-                  const destroyed = legacy.destroyedCities.find(d => d.cityId === sticker.id)
-                  const isHQ = sticker.description.startsWith('HQ:')
-                  return (
-                    <div key={i} style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      padding: '9px 12px', borderRadius: 7, marginBottom: 6,
-                      background: destroyed ? 'rgba(80,20,20,0.20)' : isHQ ? 'rgba(243,156,18,0.08)' : 'rgba(41,128,185,0.08)',
-                      border: `1px solid ${destroyed ? 'rgba(192,57,43,0.30)' : isHQ ? 'rgba(243,156,18,0.30)' : 'rgba(41,128,185,0.25)'}`,
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <span style={{ fontSize: 18 }}>{destroyed ? '☠' : isHQ ? '★' : '●'}</span>
-                        <div>
-                          <div style={{ fontSize: 13, color: destroyed ? '#804040' : isHQ ? '#F39C12' : '#AED6F1' }}>
-                            {sticker.name}
-                          </div>
-                          <div style={{ fontSize: 10, color: '#5a4020' }}>
-                            {def?.name ?? sticker.targetId} · Game {sticker.appliedInGame}
-                          </div>
-                          {isHQ && <div style={{ fontSize: 10, color: '#7a5020' }}>HQ: {sticker.description.slice(3).replace(/-/g, ' ')}</div>}
-                          {destroyed && <div style={{ fontSize: 10, color: '#804040' }}>Destroyed game {destroyed.destroyedInGame}</div>}
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-            </div>
-          )}
-
           {/* ── FACTIONS TAB ── */}
+          {/* ── RULES TAB ── */}
+          {tab === 'rules' && <RulesTab legacy={legacy} />}
+
           {tab === 'factions' && (
             <div>
               <SectionHead>Faction Abilities — Permanent Campaign Choices</SectionHead>
@@ -404,6 +298,9 @@ export default function LegacyPanel({ legacy, onClose }: Props) {
                       </div>
                       {legacy.nuclearBringerFactionId === id && <BringerBadge />}
                     </div>
+
+                    <FactionWinsRow legacy={legacy} factionId={id} />
+                    <FactionHomelandRow legacy={legacy} factionId={id} />
 
                     {/* Ability content */}
                     <div style={{ padding: '12px 16px 0' }}>
@@ -609,11 +506,18 @@ export default function LegacyPanel({ legacy, onClose }: Props) {
                       )
                     })()}
 
-                    {/* Red slot — Star Power */}
+                    {/* Red slot — Star Power. The ONLY way a faction fills this
+                        is by permanently claiming a private mission (Aliens and
+                        Mutants have their own, rendered on their own cards).
+                        Anything else leaves the slot empty: red stars earned in
+                        the current game are a per-game tally that resets, and
+                        showing them here read as a star power the faction had
+                        not earned — and could not have, before private missions
+                        are even unlocked. */}
                     {(() => {
-                      const player = MOCK_PLAYERS.find(p => p.factionId === id)
-                      const stars = player ? (legacy.purchasedStars ?? {})[player.id] ?? 0 : 0
-                      return stars > 0 ? (
+                      const spId = (legacy.factionStarPowerMissions ?? {})[id]
+                      const sp = spId ? (CARD_LOOKUP.get(spId) as MissionCard | undefined) : undefined
+                      if (sp) return (
                         <div style={{
                           margin: '0 16px 14px',
                           padding: '10px 14px', borderRadius: 7,
@@ -628,16 +532,16 @@ export default function LegacyPanel({ legacy, onClose }: Props) {
                             }}>
                               ★ STAR POWER
                             </div>
-                            <div style={{ fontSize: 9, color: '#E74C3C', letterSpacing: 1 }}>STARS THIS GAME</div>
+                            <div style={{ fontSize: 9, color: '#27AE60', letterSpacing: 1 }}>✓ CLAIMED</div>
                           </div>
-                          <div style={{ fontSize: 22, color: '#E74C3C', letterSpacing: 4 }}>
-                            {'★'.repeat(stars)}
-                          </div>
-                          <div style={{ fontSize: 11, color: 'rgba(231,76,60,0.70)', marginTop: 4 }}>
-                            {stars} red star{stars !== 1 ? 's' : ''} earned this game — 4 wins the game
+                          <div style={{ fontSize: 14, fontWeight: 'bold', color: '#E74C3C', marginBottom: 3 }}>{sp.name}</div>
+                          <div style={{ fontSize: 11, color: '#c0665a', lineHeight: 1.5 }}>{sp.description}</div>
+                          <div style={{ fontSize: 10, color: '#8a5a50', marginTop: 4, fontStyle: 'italic' }}>
+                            Complete it again to earn 1 Red Star — once per game.
                           </div>
                         </div>
-                      ) : (
+                      )
+                      return (
                         <div style={{
                           margin: '0 16px 14px',
                           padding: '10px 14px', borderRadius: 7,
@@ -651,7 +555,7 @@ export default function LegacyPanel({ legacy, onClose }: Props) {
                               Star Power
                             </div>
                             <div style={{ fontSize: 12, color: 'rgba(231,76,60,0.40)', fontStyle: 'italic' }}>
-                              No red stars earned yet
+                              Red slot empty — earned by completing a private mission
                             </div>
                           </div>
                         </div>
@@ -665,6 +569,7 @@ export default function LegacyPanel({ legacy, onClose }: Props) {
               {legacy.alienMilestoneTriggered && (
                 <MilestoneFactionCard
                   legacy={legacy}
+                  factionPlayerIds={factionPlayerIds}
                   factionId="aliens"
                   name="Aliens"
                   icon="👽"
@@ -679,6 +584,7 @@ export default function LegacyPanel({ legacy, onClose }: Props) {
               {legacy.nuclearMilestoneTriggered && (
                 <MilestoneFactionCard
                   legacy={legacy}
+                  factionPlayerIds={factionPlayerIds}
                   factionId="mutants"
                   name="Mutants"
                   icon="🧟"
@@ -695,46 +601,6 @@ export default function LegacyPanel({ legacy, onClose }: Props) {
             </div>
           )}
 
-          {/* ── UNLOCKS TAB ── */}
-          {tab === 'unlocks' && (
-            <div>
-              <SectionHead>Unlocked Content ({legacy.unlockedContent.length})</SectionHead>
-              {legacy.unlockedContent.length === 0 && <Muted>No content unlocked yet — win a game to unlock.</Muted>}
-              {legacy.unlockedContent.map((u, i) => (
-                <div key={i} style={{
-                  padding: '11px 14px', borderRadius: 7, marginBottom: 7,
-                  background: 'rgba(142,68,173,0.08)',
-                  border: '1px solid rgba(142,68,173,0.25)',
-                }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                    <span style={{ fontSize: 13, color: '#C39BD3', fontWeight: 'bold' }}>{u.name}</span>
-                    <span style={{ fontSize: 10, color: '#5a3a6a' }}>Game {u.unlockedInGame}</span>
-                  </div>
-                  <div style={{ fontSize: 11, color: '#7a5a8a' }}>{u.description}</div>
-                  <div style={{ fontSize: 9, color: '#4a3050', marginTop: 3, textTransform: 'uppercase', letterSpacing: 1 }}>
-                    {u.contentType}
-                  </div>
-                </div>
-              ))}
-
-              {/* Renamed territories */}
-              {legacy.renamedTerritories.length > 0 && (
-                <>
-                  <SectionHead style={{ marginTop: 16 }}>Renamed Territories</SectionHead>
-                  {legacy.renamedTerritories.map((r, i) => (
-                    <div key={i} style={{ fontSize: 12, color: '#9a8060', padding: '5px 0' }}>
-                      <span style={{ color: '#5a4020' }}>{r.originalName}</span>
-                      {' → '}
-                      <strong style={{ color: '#E8DCC8' }}>{r.newName}</strong>
-                      <span style={{ fontSize: 10, color: '#4a3010', marginLeft: 8 }}>
-                        by {r.renamedByPlayerId} · Game {r.renamedInGame}
-                      </span>
-                    </div>
-                  ))}
-                </>
-              )}
-            </div>
-          )}
         </div>
       </div>
     </div>
@@ -742,6 +608,80 @@ export default function LegacyPanel({ legacy, onClose }: Props) {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Campaign wins, and the lead-faction badge when this faction holds it alone.
+ *
+ * Shared by the starter factions and the milestone ones (Aliens, Mutants) —
+ * those used to render neither, so a faction that had won games showed no
+ * record of it at all.
+ */
+function FactionWinsRow({ legacy, factionId }: { legacy: LegacyState; factionId: string }) {
+  const wins = factionWinCounts(legacy.victoryLog)[factionId] ?? 0
+  const isLead = leadFactionId(legacy.victoryLog) === factionId
+  const unlocked = !!legacy.worldCapitalTerritoryId
+  if (!isLead && wins === 0) return null
+  return (
+    <div style={{
+      margin: '0 16px 10px', padding: '8px 12px', borderRadius: 7,
+      background: isLead ? 'rgba(212,175,55,0.12)' : 'rgba(120,90,40,0.06)',
+      border: `1px solid ${isLead ? 'rgba(212,175,55,0.55)' : 'rgba(160,120,50,0.22)'}`,
+    }}>
+      <div style={{ fontSize: 11, fontWeight: 'bold', color: isLead ? '#D4AF37' : '#8a7050' }}>
+        {isLead ? '⌃ LEAD FACTION' : '🏆 Campaign wins'} · {wins} win{wins !== 1 ? 's' : ''}
+      </div>
+      {isLead && (
+        <div style={{ fontSize: 9, color: unlocked ? '#a08840' : '#6a5a40', marginTop: 3, lineHeight: 1.45 }}>
+          {unlocked
+            ? 'Chooses the starting face-up mission, and begins each game owning the World Capital with 3 troops.'
+            : 'Lead-faction rules activate once the World Capital is placed.'}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Homeland — unlocked by the double-winner milestone. The start tally runs from
+ * game 1, so it can already be decided (or tied) before the feature switches on.
+ *
+ * Homelands are computed from `factionStartHistory` and are faction-agnostic, so
+ * the Aliens and Mutants have always had one; it simply was not displayed.
+ */
+function FactionHomelandRow({ legacy, factionId }: { legacy: LegacyState; factionId: string }) {
+  if (!legacy.doubleWinnerMilestoneTriggered) return null
+  const homeland = (legacy.factionHomelands ?? {})[factionId] ?? null
+  const starts = (legacy.factionStartHistory ?? []).filter(h => h.factionId === factionId)
+  const tally: Record<string, number> = {}
+  for (const s of starts) tally[s.continentId] = (tally[s.continentId] ?? 0) + 1
+  const tallyText = Object.entries(tally)
+    .sort((a, b) => b[1] - a[1])
+    .map(([c, n]) => `${c.replace(/-/g, ' ')} ×${n}`)
+    .join(' · ')
+  return (
+    <div style={{
+      margin: '10px 16px 0', padding: '8px 12px', borderRadius: 7,
+      background: homeland ? 'rgba(93,173,226,0.10)' : 'rgba(120,90,40,0.08)',
+      border: `1px solid ${homeland ? 'rgba(93,173,226,0.40)' : 'rgba(160,120,50,0.25)'}`,
+    }}>
+      <div style={{ fontSize: 11, color: homeland ? '#5DADE2' : '#8a7050', fontWeight: 'bold' }}>
+        ✦ Homeland: {homeland
+          ? homeland.replace(/-/g, ' ').toUpperCase()
+          : starts.length === 0 ? 'NO STARTS RECORDED' : 'NONE (TIED)'}
+      </div>
+      {tallyText && (
+        <div style={{ fontSize: 9, color: '#6a5a40', marginTop: 3 }}>
+          Starts: {tallyText}
+        </div>
+      )}
+      {homeland && (
+        <div style={{ fontSize: 9, color: '#5a7a8a', marginTop: 3 }}>
+          May claim any face-up territory card in this continent.
+        </div>
+      )}
+    </div>
+  )
+}
 
 function SectionHead({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
@@ -781,7 +721,8 @@ function BringerBadge() {
   )
 }
 
-function MilestoneFactionCard({ legacy, factionId, name, icon, flavor, powers, evolvePowerIds }: {
+function MilestoneFactionCard({ legacy, factionPlayerIds = {}, factionId, name, icon, flavor, powers, evolvePowerIds }: {
+  factionPlayerIds?: Record<string, string>
   legacy: LegacyState
   factionId: string
   name: string
@@ -793,8 +734,8 @@ function MilestoneFactionCard({ legacy, factionId, name, icon, flavor, powers, e
   const hex = FACTION_COLORS[factionId] ?? 0x888888
   const r = (hex >> 16) & 0xff, g = (hex >> 8) & 0xff, b = hex & 0xff
   const color = `rgb(${r},${g},${b})`
-  const player = MOCK_PLAYERS.find(p => p.factionId === factionId)
-  const stars = player ? (legacy.purchasedStars ?? {})[player.id] ?? 0 : 0
+  const holderId = factionPlayerIds[factionId]
+  const stars = holderId ? (legacy.purchasedStars ?? {})[holderId] ?? 0 : 0
   const evolved = (evolvePowerIds ?? [])
     .map(id => MUTANT_EVOLVE_POWERS.find(p => p.id === id))
     .filter((p): p is typeof MUTANT_EVOLVE_POWERS[0] => !!p)
@@ -827,6 +768,13 @@ function MilestoneFactionCard({ legacy, factionId, name, icon, flavor, powers, e
             </div>
           )}
         </div>
+      </div>
+
+      {/* Same campaign record the starter factions show — these factions win
+          games and earn homelands too. */}
+      <div style={{ paddingTop: 10 }}>
+        <FactionWinsRow legacy={legacy} factionId={factionId} />
+        <FactionHomelandRow legacy={legacy} factionId={factionId} />
       </div>
 
       {/* Fixed powers */}

@@ -71,8 +71,8 @@ export const FACTION_ABILITY_OPTIONS: FactionAbilityOption[] = [
     id: 'khan-hq-troops',
     factionId: 'khan-industries',
     name: 'Strategic Reserve',
-    tagline: '+1 troop per HQ you control at draft',
-    description: 'During your draft phase gain +1 bonus troop for each HQ token on a territory you control.',
+    tagline: '+1 troop placed on each HQ you control',
+    description: 'At the start of your turn, 1 troop is placed directly onto each HQ territory you control — your own HQ and any you have captured. These troops are placed automatically, not added to your draft pool.',
     phase: 'draft',
   },
   {

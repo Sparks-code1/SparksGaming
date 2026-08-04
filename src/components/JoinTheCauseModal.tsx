@@ -10,12 +10,29 @@ interface Props {
   territories: Record<string, Territory>
   /** Mission card IDs still in the mission deck (available to pick) */
   availableMissionIds: string[]
-  /** Current mission assignments: playerId → missionCardId */
-  playerMissions: Record<string, string>
+  /**
+   * The shared face-up mission this would replace, if there is one.
+   *
+   * Missions have been one shared card for a while; this used to be handed a
+   * playerId→missionId map built by copying that single id across every player.
+   */
+  currentMissionId: string | null
   /** Territory ID of the World Capital (adds +5 population) */
   worldCapitalTerritoryId?: string
+  /**
+   * Who won the population count. Decided by the board, not recomputed here.
+   *
+   * This screen used to work it out for itself off the rendered snapshot while
+   * the AI drivers used the live ref — two answers to one question, and the one
+   * on screen was not the one that got the troops.
+   */
+  leaderId: string
+  /** How many territories the leader could actually put the troops in. */
+  reinforceTargets: number
   onChooseTroops: (playerId: string) => void
   onChooseMission: (playerId: string, missionId: string) => void
+  /** Neither reward is available — close without one. */
+  onDecline: () => void
 }
 
 type Phase = 'population' | 'choice' | 'mission-pick'
@@ -47,17 +64,20 @@ function calcPopulation(
 }
 
 export default function JoinTheCauseModal({
-  players, territories, availableMissionIds, playerMissions,
-  worldCapitalTerritoryId,
-  onChooseTroops, onChooseMission,
+  players, territories, availableMissionIds, currentMissionId,
+  worldCapitalTerritoryId, leaderId, reinforceTargets,
+  onChooseTroops, onChooseMission, onDecline,
 }: Props) {
   const [phase, setPhase] = useState<Phase>('population')
   const [selectedMission, setSelectedMission] = useState<string | null>(null)
 
-  // Calculate population for all players, find the winner
-  const scores = players.map(p => ({ player: p, score: calcPopulation(p.id, territories, worldCapitalTerritoryId) }))
-  const maxScore = Math.max(...scores.map(s => s.score))
-  const leader = scores.find(s => s.score === maxScore)!
+  // Populations are shown here; who WON is handed in, so this screen and the
+  // code that pays out the reward can never name two different players.
+  const scores = players
+    .filter(p => !p.isEliminated)
+    .map(p => ({ player: p, score: calcPopulation(p.id, territories, worldCapitalTerritoryId) }))
+  const leader = scores.find(s => s.player.id === leaderId)
+  if (!leader) return null
 
   const availableMissions = MISSION_CARDS.filter(m => availableMissionIds.includes(m.id))
 
@@ -102,8 +122,10 @@ export default function JoinTheCauseModal({
             leader={leader.player}
             accentColor={accentColor}
             hasMissions={availableMissions.length > 0}
+            reinforceTargets={reinforceTargets}
             onChooseTroops={() => onChooseTroops(leader.player.id)}
             onChooseMission={() => setPhase('mission-pick')}
+            onDecline={onDecline}
           />
         )}
 
@@ -111,7 +133,7 @@ export default function JoinTheCauseModal({
           <MissionPickPhase
             leader={leader.player}
             availableMissions={availableMissions}
-            currentMissionId={playerMissions[leader.player.id]}
+            currentMissionId={currentMissionId ?? undefined}
             selectedMission={selectedMission}
             onSelect={setSelectedMission}
             accentColor={accentColor}
@@ -182,12 +204,16 @@ function PopulationPhase({
 }
 
 function ChoicePhase({
-  leader, accentColor, hasMissions, onChooseTroops, onChooseMission,
+  leader, accentColor, hasMissions, reinforceTargets, onChooseTroops, onChooseMission, onDecline,
 }: {
-  leader: Player; accentColor: string; hasMissions: boolean
-  onChooseTroops: () => void; onChooseMission: () => void
+  leader: Player; accentColor: string; hasMissions: boolean; reinforceTargets: number
+  onChooseTroops: () => void; onChooseMission: () => void; onDecline: () => void
 }) {
   const col = hexToRgb(FACTION_COLORS[leader.factionId as FactionId] ?? NEUTRAL_COLOR)
+  // Both rewards can be unavailable at once — no city to garrison and an empty
+  // mission deck. Without a way out that is a modal with two dead buttons and
+  // no close, which ends the game where it stands.
+  const nothingToClaim = reinforceTargets === 0 && !hasMissions
   return (
     <div>
       <div style={{
@@ -200,11 +226,17 @@ function ChoicePhase({
         <span style={{ fontSize: 12, color: '#8a6a9a' }}>— choose your reward</span>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {/* Reinforce is refused up front when there is nowhere legal to put the
+            troops. Taking it and finding out afterwards looked exactly like the
+            reward silently failing. */}
         <ChoiceCard
           icon="⚔"
           title="Reinforce"
-          description="Gain 3 troops to place in any cities you control."
-          color={accentColor}
+          description={reinforceTargets > 0
+            ? `Gain 3 troops to place in any cities you control (${reinforceTargets} to choose from).`
+            : 'You control no city, so there is nowhere to put them.'}
+          color={reinforceTargets > 0 ? accentColor : '#4a4a4a'}
+          disabled={reinforceTargets === 0}
           onClick={onChooseTroops}
         />
         <ChoiceCard
@@ -218,6 +250,16 @@ function ChoicePhase({
           onClick={onChooseMission}
         />
       </div>
+      {nothingToClaim && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 11, color: '#8a6a9a', textAlign: 'center', marginBottom: 10 }}>
+            Neither reward can be taken — {leader.name} controls no city and the mission deck is empty.
+          </div>
+          <ActionButton color={accentColor} onClick={onDecline}>
+            Continue →
+          </ActionButton>
+        </div>
+      )}
     </div>
   )
 }

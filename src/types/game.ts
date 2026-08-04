@@ -41,6 +41,42 @@ export interface TurnState {
   attackedTerritoryIds: string[]
   /** Territories shielded from further attack this turn (DM Iron Shield double-6). */
   shieldedTerritoryIds: string[]
+  /** An uncontested expansion into an unoccupied territory holding a standing
+   *  city happened this turn. Such a move is NOT a conquest, so it normally
+   *  earns no card — the Resourceful comeback power grants one for it. */
+  expandedIntoCity: boolean
+
+  // ── Private-mission bookkeeping ──────────────────────────────────────────
+  // Three private missions trigger on an ACTION rather than on board state, so
+  // the action has to be remembered until the mission is claimed at turn end.
+  /** Territory cards worth 4+ resources each turned in this turn (Advanced Tactics needs 2). */
+  richCardsTradedIn: number
+  /** Total resources across everything turned in this turn (Advanced Training needs 10). */
+  resourcesTradedIn: number
+  /** Knocked out a player holding a 3+ resource card this turn (Forced Occupation). */
+  knockedOutRichPlayer: boolean
+  /** Whole continents controlled at the START of this turn (Wide Border needs 2). */
+  continentsAtTurnStart: number
+  /**
+   * The current player earned a card draw this turn AND was eligible to take one
+   * worth 4+ coins — the World Capital mission's condition.
+   *
+   * They do NOT take that card: completing the mission costs them the draw, and
+   * they get the red stars and the World Capital instead. Upgraded cards count,
+   * because eligibility is evaluated against the live coin values.
+   */
+  eligibleForRichCard: boolean
+  /**
+   * Territories of the 4+ coin cards that made them eligible, captured at the
+   * moment eligibility was checked.
+   *
+   * The World Capital is placed on the territory matching the card that earned
+   * it, so the qualifying card has to be remembered — by the time the mission is
+   * claimed the face-up row may already have moved on. Normally one entry; more
+   * than one only when several claimable face-up cards are worth 4+, and then the
+   * player picks between them.
+   */
+  richCardTerritoryIds: string[]
 }
 
 /** A fresh per-turn state, used at game start and reset at end of turn. */
@@ -48,6 +84,9 @@ export function initialTurnState(): TurnState {
   return {
     captured: false, captureCount: 0, conqueredIds: [], conqueredViaSeaIds: [],
     bearTrapTerritoryId: null, attackedTerritoryIds: [], shieldedTerritoryIds: [],
+    expandedIntoCity: false,
+    richCardsTradedIn: 0, resourcesTradedIn: 0, knockedOutRichPlayer: false,
+    continentsAtTurnStart: 0, eligibleForRichCard: false, richCardTerritoryIds: [],
   }
 }
 

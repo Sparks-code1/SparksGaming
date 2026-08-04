@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react'
 import { motion } from 'framer-motion'
 import type { GameState, GamePhase } from '@/types/game'
 import { FACTION_COLORS, NEUTRAL_COLOR } from '@/data/mockGameState'
-import { calcReinforcements } from '@/lib/gameLogic'
+import { calcReinforcements, totalContinentBonus } from '@/lib/gameLogic'
 
 interface Props {
   gameState: GameState
@@ -16,6 +16,8 @@ interface Props {
   primitiveWeakness?: boolean
   /** Campaign continent bonus modifiers (winner rewards, unlocks) */
   continentBonusModifiers?: Array<{ continentId: string; bonusDelta: number }>
+  /** Who named each continent — its namer collects +1 troop for holding it. */
+  namedContinents?: Record<string, { namedByPlayerId: string }>
   onNextPhase: () => void
   onUndoPlacement: () => void
   onUndoFortify: () => void
@@ -64,7 +66,7 @@ function hexToRgb(hex: number) {
   return `${r},${g},${b}`
 }
 
-export default function TurnControls({ gameState, troopsToPlace, placementsCount, fortifyDone, pendingCardDraws, balkRoundUp = false, worldCapitalTerritoryId = null, primitiveWeakness = false, continentBonusModifiers = [], onNextPhase, onUndoPlacement, onUndoFortify, canUndoFortify }: Props) {
+export default function TurnControls({ gameState, troopsToPlace, placementsCount, fortifyDone, pendingCardDraws, balkRoundUp = false, worldCapitalTerritoryId = null, primitiveWeakness = false, continentBonusModifiers = [], namedContinents = {}, onNextPhase, onUndoPlacement, onUndoFortify, canUndoFortify }: Props) {
   const phase = gameState.phase as GamePhase
   const cfg = PHASE_CONFIG[phase]
   if (!cfg) return null
@@ -75,13 +77,30 @@ export default function TurnControls({ gameState, troopsToPlace, placementsCount
 
   const isDisabled = cfg.nextDisabled?.({ gameState, troopsToPlace, fortifyDone, pendingCardDraws, onNextPhase, onUndoPlacement, onUndoFortify, canUndoFortify, placementsCount }) ?? false
 
-  // Reinforce details
-  const ownedCount = Object.values(gameState.territories).filter(
+  // ── Reinforce breakdown ──────────────────────────────────────────────────
+  // Every line here is read from the same helpers the payout uses. The continent
+  // bonus used to be inferred by subtracting a territories-only base from the
+  // total, which folded the troops your CITIES earn into a figure labelled
+  // "continent bonus" — a player holding three continents worth 11 and 15
+  // population was told they had a +16 continent bonus.
+  const ownedTerritories = Object.values(gameState.territories).filter(
     t => t.occupyingPlayerId === currentPlayer?.id,
-  ).length
+  )
+  const ownedCount = ownedTerritories.length
+  const cityPopulation = primitiveWeakness ? 0 : ownedTerritories.reduce((sum, t) => {
+    // The World Capital IS the city on its territory — worth exactly 5, and its
+    // own stickers are not counted on top (same no-double-dip rule as the payout).
+    if (worldCapitalTerritoryId && t.id === worldCapitalTerritoryId) return sum + 5
+    return sum + t.cities.reduce(
+      (n, c) => n + (c.isDestroyed || c.headquartersFactionId ? 0 : (c.isMajor ? 2 : 1)), 0)
+  }, 0)
+  const effectiveCount = ownedCount + cityPopulation
+  const baseTroops = Math.max(3, balkRoundUp ? Math.ceil(effectiveCount / 3) : Math.floor(effectiveCount / 3))
   const bonus = currentPlayer
-    ? calcReinforcements(currentPlayer.id, gameState.territories, balkRoundUp, {}, worldCapitalTerritoryId, primitiveWeakness, continentBonusModifiers) -
-      Math.max(3, balkRoundUp ? Math.ceil(ownedCount / 3) : Math.floor(ownedCount / 3))
+    ? totalContinentBonus(currentPlayer.id, gameState.territories, { namedContinents, continentBonusModifiers })
+    : 0
+  const total = currentPlayer
+    ? calcReinforcements(currentPlayer.id, gameState.territories, balkRoundUp, namedContinents, worldCapitalTerritoryId, primitiveWeakness, continentBonusModifiers)
     : 0
 
   return (
@@ -218,8 +237,11 @@ export default function TurnControls({ gameState, troopsToPlace, placementsCount
             minWidth: 100,
           }}
         >
-          <span>{ownedCount} territories → {Math.max(3, Math.floor(ownedCount / 3))} troops</span>
+          <span>
+            {ownedCount} territories{cityPopulation > 0 ? ` + ${cityPopulation} city population` : ''} → {baseTroops} troops
+          </span>
           {bonus > 0 && <span style={{ color: '#27AE60' }}>+{bonus} continent bonus</span>}
+          {bonus > 0 && <span style={{ color: '#6a7a60' }}>= {total} total</span>}
         </div>
       )}
 

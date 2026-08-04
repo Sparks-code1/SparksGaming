@@ -3,6 +3,7 @@ import type { Player } from '@/types/player'
 import { getTerritoryCard, getMissionCard, getCoinCard, checkMissionComplete, coinTradeInTroops } from '@/data/cards'
 import type { GameState } from '@/types/game'
 import { TERRITORY_DEFINITIONS } from '@/data/territoryData'
+import DraggableResizable from './DraggableResizable'
 
 interface Props {
   player: Player
@@ -95,37 +96,20 @@ export default function CardHand({ player, gameState, cardResources, canTradeIn,
   const hasCards = territoryCards.length > 0 || coinCards.length > 0
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0,
-      background: 'rgba(5,2,0,0.78)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      zIndex: 1000, fontFamily: 'Georgia, serif',
-    }}
-      onClick={e => e.target === e.currentTarget && onClose()}
+    <DraggableResizable
+      title={`🃏 ${player.name}'s Cards`}
+      accentColor="#C8940A"
+      width={560}
+      height={560}
+      storageKey="card-hand"
+      zIndex={1000}
+      onClose={onClose}
     >
-      <div style={{
-        background: 'linear-gradient(155deg, #1A0E02 0%, #0A0600 100%)',
-        border: '2px solid rgba(200,148,10,0.60)',
-        borderRadius: 13, padding: '24px 28px 20px',
-        width: 560, maxWidth: '94vw', maxHeight: '88vh', overflowY: 'auto',
-        color: '#E8DCC8', boxShadow: '0 12px 50px rgba(0,0,0,0.85)',
-      }}>
-        {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-          <div>
-            <div style={{ fontSize: 17, fontWeight: 'bold', color: '#C8940A', letterSpacing: 1 }}>
-              🃏 {player.name}'s Cards
-            </div>
-            <div style={{ fontSize: 11, color: '#6a5030', marginTop: 2 }}>
-              {territoryCards.length} territory card{territoryCards.length !== 1 ? 's' : ''}
-              {coinCards.length > 0 ? ` · ${coinCards.length} coin card${coinCards.length !== 1 ? 's' : ''}` : ''}
-              {mission ? ' · 1 mission' : ''}
-            </div>
-          </div>
-          <button onClick={onClose} style={{
-            background: 'none', border: 'none', color: '#6a5030',
-            fontSize: 22, cursor: 'pointer', lineHeight: 1,
-          }}>×</button>
+        {/* Subtitle */}
+        <div style={{ fontSize: 11, color: '#6a5030', marginBottom: 16 }}>
+          {territoryCards.length} territory card{territoryCards.length !== 1 ? 's' : ''}
+          {coinCards.length > 0 ? ` · ${coinCards.length} coin card${coinCards.length !== 1 ? 's' : ''}` : ''}
+          {mission ? ' · 1 mission' : ''}
         </div>
 
         {/* Mission card */}
@@ -371,8 +355,7 @@ export default function CardHand({ player, gameState, cardResources, canTradeIn,
             Card trade-ins are only available during the Draft phase
           </div>
         )}
-      </div>
-    </div>
+    </DraggableResizable>
   )
 }
 

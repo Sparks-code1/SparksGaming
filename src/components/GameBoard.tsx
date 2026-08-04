@@ -7,6 +7,7 @@ import type { LegacyState } from '@/types/legacy'
 import type { Player } from '@/types/player'
 import { TERRITORY_DEFINITIONS, MAP_WIDTH, MAP_HEIGHT, buildTerritory } from '@/data/territoryData'
 import { FACTION_COLORS, NEUTRAL_COLOR } from '@/data/mockGameState'
+import { playerSignatureCount, doubleSigners, rosterName } from '@/lib/roster'
 import type { FactionId } from '@/types/faction'
 import TerritoryPanel from './TerritoryPanel'
 import SVGMapLayer from './SVGMapLayer'
@@ -18,10 +19,12 @@ import ScarModal from './ScarModal'
 import CityModal from './CityModal'
 import WinScreen from './WinScreen'
 import LegacyPanel from './LegacyPanel'
-import { calcReinforcements, connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALIEN_ISLAND_TERRITORY_ID } from '@/lib/gameLogic'
+import CampaignCompleteScreen from './CampaignCompleteScreen'
+import { campaignOutcome, applyCampaignCompletion, championLabel, type CampaignOutcome } from '@/lib/campaign'
+import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALIEN_ISLAND_TERRITORY_ID, calcDraftTroops, applyHqReserveTroops, expandClickAction, legalJoinWarTerritoryIds, cardCoinValue, leadFactionId, resolveResourceDepletion, type ResourceDepletion, troopsAfterEntry, minTroopsToEnter, LEAD_FACTION_WORLD_CAPITAL_TROOPS, worldCapitalReplacedCities, citiesLostOn, mergeLegacyEdits, countCitiesOn } from '@/lib/gameLogic'
 import {
-  defaultLegacyState, saveLegacyState, awardRedStars,
-  applyLegacyToTerritories, richLandBonus, cityBonus, pickUnlocks, SCAR_META,
+  defaultLegacyState, saveLegacyState, loadLegacyState, awardRedStars,
+  applyLegacyToTerritories, cityBonus, pickUnlocks, SCAR_META,
   type LegacyEvent, type UnlockOption,
 } from '@/lib/legacyApi'
 import { getScarCard, type ScarCard, MERCENARY_CARD_IDS, BIOHAZARD_CARD_IDS } from '@/data/scarCards'
@@ -29,7 +32,9 @@ import CardHand from './CardHand'
 import JoinTheWarModal from './JoinTheWarModal'
 import CardDrawModal from './CardDrawModal'
 import EventCardDisplay from './EventCardDisplay'
+import SoundSettings from './SoundSettings'
 import ComebackPowerModal, { COMEBACK_POWERS } from './ComebackPowerModal'
+import { MILESTONES } from '@/data/milestones'
 import NinthCityUnlockModal from './NinthCityUnlockModal'
 import FirstEliminationMilestoneModal from './FirstEliminationMilestoneModal'
 import BiohazardIcon from './BiohazardIcon'
@@ -48,13 +53,14 @@ import {
   buildInitialGameCards, findBestTradeIn,
   getEventCard, checkMissionComplete, getTerritoryCard, getCoinCard, COIN_CARDS,
   TERRITORY_CARDS, EVENT_EFFECTS, CARD_LOOKUP, type ActiveGameCards,
-  CARD_TRADE_IN_VALUES,
+  CARD_TRADE_IN_VALUES, isPrivateMission, seedPrivateMissions, canClaimStarPower,
+  shuffle,
 } from '@/data/cards'
-import { checkMission, computeHomelands, type TurnConquestState } from '@/lib/missionLogic'
+import { checkMission, computeHomelands, homelandContinentFor, canClaimTerritoryCard, wholeContinentsControlled, type TurnConquestState } from '@/lib/missionLogic'
 import { isSeaLine, registerCustomSeaLines } from '@/data/seaLines'
 import SeaLinePlacementModal from './SeaLinePlacementModal'
 import { AI_DIFFICULTY_LABEL, AI_DIFFICULTY_BADGE } from '@/types/ai'
-import { aiReinforcePlacements, aiAttackPlan, aiFortifyMove } from '@/lib/ai'
+import { aiReinforcePlacements, aiAttackPlan, aiFortifyMove, aiTradeInDecision, rivalsOnMatchPoint, aiBonusTroopTarget } from '@/lib/ai'
 import { playVictory, playElimination, playCoin, playCity, playMilestone, playTroop, startAmbient, stopAmbient } from '@/lib/sounds'
 import ConfettiBurst from './ConfettiBurst'
 import TurnBanner, { type TurnBannerInfo } from './TurnBanner'
@@ -110,10 +116,6 @@ function drawIndicators(g: PIXI.Graphics, t: Territory, lx: number, ly: number) 
       case 'fortified':       break
       case 'fortification':  break  // rendered as SVG ring in SVGMapLayer
       case 'biological':      break  // rendered as ☣ icon in SVGMapLayer
-      case 'rich-land':
-        g.beginFill(0xFFD700, 0.9)
-        g.moveTo(sx, sy-4.5); g.lineTo(sx+3.5, sy); g.lineTo(sx, sy+4.5); g.lineTo(sx-3.5, sy); g.closePath()
-        g.endFill(); break
       case 'wasteland':       break  // rendered as 💀 icon in SVGMapLayer — no canvas dot
       case 'mercenary':       break  // rendered as 🧍 icon in SVGMapLayer
     }
@@ -322,7 +324,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         id,
         name: s.name,
         factionId: s.factionId as FactionId,
-        userId: null as null,
+        // The account that claimed this roster seat, if any. Null for
+        // unclaimed seats and AI — accounts are optional.
+        userId: (initialLegacy?.roster ?? []).find(m => m.id === id)?.userId ?? null,
         isAI: s.isAI ?? false,
         aiDifficulty: s.aiDifficulty,
         troops: 0,
@@ -361,6 +365,42 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         }
         activeHqs[s.playerId] = s.startingTerritoryId
       }
+    }
+
+    // ── Lead faction claims the World Capital ────────────────────────────
+    // The faction with the most campaign wins (none if 2+ tie) starts owning
+    // the World Capital with 3 troops, ON TOP of their normal starting troops
+    // and HQ placement. No HQ sits there — the Capital is marked ground and is
+    // never a starting location — so the "no HQ adjacent to another" rule does
+    // not apply to it, and the lead faction keeps these troops even if another
+    // player started next door.
+    const leadFaction = leadFactionId(initialLegacy?.victoryLog)
+    const wcId = initialLegacy?.worldCapitalTerritoryId
+    if (leadFaction && wcId && territories[wcId]) {
+      const leadPlayer = players.find(p => p.factionId === leadFaction)
+      // Only if nobody's HQ landed there (it is blocked in the picker, but a
+      // legacy save could still carry one — never overwrite an HQ).
+      if (leadPlayer && !territories[wcId].activeHqPlayerId) {
+        territories[wcId] = {
+          ...territories[wcId],
+          occupyingPlayerId: leadPlayer.id,
+          troops: LEAD_FACTION_WORLD_CAPITAL_TROOPS,
+        }
+      }
+    }
+
+    // Khan Industries — Strategic Reserve for the player taking turn 1. Every
+    // later turn gets this at the END_TURN hand-off, but the first player never
+    // passes through one. Safe to do here: this branch builds a FRESH game, so
+    // a reload takes the `restoredGameState` path above and never re-applies.
+    const firstPlayer = players[0]
+    if (firstPlayer) {
+      const reserve = applyHqReserveTroops(
+        territories,
+        firstPlayer.id,
+        (initialLegacy?.chosenFactionAbilities ?? {})[firstPlayer.factionId] ?? null,
+      )
+      Object.assign(territories, reserve.territories)
     }
 
     return {
@@ -410,6 +450,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
   const [showWinScreen,    setShowWinScreen]    = useState(false)
   const [showNinthCityUnlock,     setShowNinthCityUnlock]     = useState(false)
   const [pendingReturnLegacy,     setPendingReturnLegacy]     = useState<LegacyState | null>(null)
+  // Set when the final game of the campaign has been decided. Drives the
+  // celebration overlay; once dismissed it leaves the finished board on screen.
+  const [campaignOutcomeState,    setCampaignOutcome]         = useState<CampaignOutcome | null>(null)
+  const [campaignCelebrated,      setCampaignCelebrated]      = useState(false)
   const [showDoubleWinnerModal,   setShowDoubleWinnerModal]   = useState(false)
   const [doubleWinnerName,        setDoubleWinnerName]        = useState<string>('')
   const [showAlienMilestone,      setShowAlienMilestone]      = useState(false)
@@ -424,6 +468,14 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
   // Resistance event: the player with the fewest territories places bonus troops
   const [resistancePlacement, setResistancePlacement] = useState<{ playerId: string; troopsLeft: number } | null>(null)
   const resistancePlacementRef = useRef<{ playerId: string; troopsLeft: number } | null>(null)
+  /**
+   * Join the Cause troop reward: the LARGEST-POPULATION player places 3 troops
+   * in cities they control. That player is often not the one taking the turn,
+   * and the troops are restricted to cities, so it cannot just be added to the
+   * current player's draft pool.
+   */
+  const [joinCausePlacement, setJoinCausePlacement] = useState<{ playerId: string; troopsLeft: number } | null>(null)
+  const joinCausePlacementRef = useRef<{ playerId: string; troopsLeft: number } | null>(null)
   // Fortify event: the drawer places 2 troops on ONE territory they control
   const [fortifyEventPlayerId, setFortifyEventPlayerId] = useState<string | null>(null)
   const fortifyEventRef = useRef<string | null>(null)
@@ -443,6 +495,27 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
   const riotRemovalRef = useRef<string | null>(null)
   // Players who drew a card this turn — they cannot claim the shared mission
   const drewCardPlayerIdsRef = useRef<Set<string>>(new Set())
+  /**
+   * Draws granted by an EVENT rather than earned by conquest — currently only
+   * Mysterious Island, which hands the Alien Island's controller a card the
+   * moment the event fires.
+   *
+   * These are a separate grant from the card you collect for conquering, so they
+   * do not forfeit the mission and are not cancelled when one is earned. Counted
+   * rather than flagged, because a player can have an event draw and a normal
+   * draw queued at the same time.
+   */
+  const eventDrawCreditsRef = useRef<Map<string, number>>(new Map())
+  function grantEventDrawCredit(playerId: string) {
+    eventDrawCreditsRef.current.set(playerId, (eventDrawCreditsRef.current.get(playerId) ?? 0) + 1)
+  }
+  /** Spends a credit if the player has one; true means this draw was an event's. */
+  function consumeEventDrawCredit(playerId: string): boolean {
+    const n = eventDrawCreditsRef.current.get(playerId) ?? 0
+    if (n <= 0) return false
+    eventDrawCreditsRef.current.set(playerId, n - 1)
+    return true
+  }
   const [mutantsEvolvePendingCardId, setMutantsEvolvePendingCardId] = useState<string | null>(null)
   // Missile power activations (each discards a missile; one use per power per turn)
   const [usedMissilePowersThisTurn, setUsedMissilePowersThisTurn] = useState<Set<string>>(new Set())
@@ -472,7 +545,20 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
   const [unlockOptions,    setUnlockOptions]    = useState<UnlockOption[]>([])
   const [winnerPlayerId,   setWinnerPlayerId]   = useState<string | null>(null)
   const [winCondition,     setWinCondition]     = useState<'mission' | 'elimination'>('elimination')
-  const [coinDeckStarWinner, setCoinDeckStarWinner] = useState<{ name: string; count: number } | null>(null)
+  /** Set the moment the game is finalised — stops the in-progress autosave. */
+  const gameFinishedRef = useRef(false)
+  // "← Menu" sits beside Legacy in the toolbar and is easy to hit by accident,
+  // so it confirms first. The game is never lost either way — it autosaves on
+  // every phase boundary and can be resumed from the campaign screen.
+  const [showMenuConfirm, setShowMenuConfirm] = useState(false)
+
+  // Resource-deck depletion notice: either a star awarded to the territory
+  // leader, or a shared lead in which case no star is given.
+  const [coinDeckStarWinner, setCoinDeckStarWinner] = useState<
+    | { kind: 'award'; name: string; count: number }
+    | { kind: 'tie'; names: string[]; count: number }
+    | null
+  >(null)
 
   // Canvas map system: grey base PNG; SVG overlay for ownership colors + interaction tints
   const greyCanvasRef   = useRef<HTMLCanvasElement>(null)
@@ -541,16 +627,24 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
       nuclearMilestoneTriggered: ls.nuclearMilestoneTriggered,
       destroyedEventCardIds: ls.destroyedEventCardIds,
       destroyedMissionIds: ls.destroyedMissionIds,
+      // The World Capital has been placed, so the private missions belong in
+      // every deck from here on — not only the game that unlocked them.
+      privateMissionsSeeded: ls.privateMissionsSeeded,
     }
     if (ls.activeGameCards && ls.activeGameCards.gameNumber === ls.currentGameNumber) {
       let cards = ls.activeGameCards
-      // Migrate older saves that lack sideboard/resourceDeck
+      // Migrate older saves that lack sideboard/resourceDeck. Rebuild from the
+      // deal seed this game was dealt with so the backfill matches the rest of
+      // the save rather than dealing an unrelated hand.
       if (!cards.sideboard || !cards.resourceDeck) {
-        const fresh = buildInitialGameCards(ls.currentGameNumber, legacyOpts)
+        const fresh = buildInitialGameCards(ls.currentGameNumber, legacyOpts, cards.dealSeed)
         cards = {
           ...cards,
           sideboard: cards.sideboard ?? fresh.sideboard,
           resourceDeck: cards.resourceDeck ?? cards.coinDeck ?? fresh.resourceDeck,
+          // Record the seed the backfill came from, so the effect below persists
+          // it and a later reload cannot deal a different one.
+          dealSeed: cards.dealSeed ?? fresh.dealSeed,
         }
       }
       // Strip base event cards — they've been removed from the game
@@ -580,10 +674,38 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
   const [currentEventCardId, setCurrentEventCardId] = useState<string | null>(null)
   const [showEventCard, setShowEventCard] = useState(false)
   const [showCardHand, setShowCardHand] = useState(false)
+  /** Board-cards table blown up to a centre-screen overlay. */
+  const [cardsExpanded, setCardsExpanded] = useState(false)
+
+  /** An AI turn that has stopped making progress. */
+  const [aiStalled, setAiStalled] = useState(false)
+  /** Bumped by the Nudge button; any re-render re-enters the (dep-free) driver. */
+  const [aiNudge, setAiNudge] = useState(0)
+
+  // Escape closes the blown-up board cards. Bound only while it is open so the
+  // key stays free for everything else.
+  useEffect(() => {
+    if (!cardsExpanded) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setCardsExpanded(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [cardsExpanded])
   // Pending card draws: queue of playerIds waiting to draw from sideboard
-  const [pendingCardDraws, setPendingCardDraws] = useState<string[]>([])
+  const [pendingCardDrawsState, setPendingCardDrawsState] = useState<string[]>([])
+  // Mirrored synchronously: a capture and the end of the attack phase can land
+  // in the same tick (AI fast-forward), and the mission check that cancels a
+  // draw has to see the queue as it stands right now, not last render's copy.
+  const pendingCardDrawsRef = useRef<string[]>([])
+  const pendingCardDraws = pendingCardDrawsState
+  const setPendingCardDraws = (update: string[] | ((prev: string[]) => string[])) => {
+    const next = typeof update === 'function' ? update(pendingCardDrawsRef.current) : update
+    pendingCardDrawsRef.current = next
+    setPendingCardDrawsState(next)
+  }
   // Join the War: playerId of eliminated player whose turn it is to choose
   const [joinTheWarPlayerId, setJoinTheWarPlayerId] = useState<string | null>(null)
+  // Lead faction rule: that faction picks which mission starts face-up.
+  const [leadMissionPick, setLeadMissionPick] = useState<{ playerId: string; options: string[] } | null>(null)
   // Round-long active effects (ceasefire, ammo-shortage, nuclear-fallout-round, forced-march)
   const [activeEffects, setActiveEffects] = useState<Set<string>>(new Set())
   const activeEffectsRef = useRef<Set<string>>(new Set())
@@ -593,17 +715,35 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
   const [isFirstElimination, setIsFirstElimination] = useState(false)
   // First Blood milestone screen — shown before the comeback power choice
   const [firstElimInfo, setFirstElimInfo] = useState<{ eliminatedName: string; factionId: string; conquerorName: string } | null>(null)
-  // Mobile HQ: one move per turn
+  // Mobile HQ comeback power: one HQ move per turn, at any point in the turn.
+  // Refs mirror the state because the PIXI click handler is a long-lived
+  // closure and must read the live values (same pattern as fortify/expand).
   const [mobileHqUsed, setMobileHqUsed] = useState(false)
+  const mobileHqUsedRef = useRef(false)
+  const [mobileHqMode, setMobileHqMode] = useState(false)
+  const mobileHqModeRef = useRef(false)
   const [mobileHqSrcId, setMobileHqSrcId] = useState<string | null>(null)
-  // Expand comeback power: target territory for troop placement during reinforce
+  const mobileHqSrcRef = useRef<string | null>(null)
+  // Expand comeback power: target territory for troop placement during reinforce.
+  // `expandUsedRef` locks the choice once a troop lands — the power grants ONE
+  // territory per turn, so the target must not be switchable afterwards.
   const [expandTargetId, setExpandTargetId] = useState<string | null>(null)
   const expandTargetRef = useRef<string | null>(null)
+  const expandUsedRef = useRef(false)
   // Balkania 4th-capture bonus: show card pick modal immediately during attack phase
   const [balkExpansionPending, setBalkExpansionPending] = useState<string | null>(null)
   // Special mission completion modals
   const [showWorldCapitalModal,      setShowWorldCapitalModal]      = useState(false)
   const [worldCapitalCompletingId,   setWorldCapitalCompletingId]   = useState<string | null>(null)
+  /** Territories the Capital may go to — the 4+ coin cards that earned it. */
+  const [worldCapitalCandidates,     setWorldCapitalCandidates]     = useState<string[]>([])
+  /**
+   * The win screen snapshots campaign state the moment it mounts, so it must not
+   * mount while a mission reward is still unplaced — the Island Empire sea line
+   * and the World Capital both open modals ABOVE it. Latched once armed, so a
+   * later modal can never unmount it and lose the winner's choices.
+   */
+  const [winScreenArmed, setWinScreenArmed] = useState(false)
   const [showSeaLinePlacement,       setShowSeaLinePlacement]       = useState(false)
   const [seaLineMissionPlayerId,     setSeaLineMissionPlayerId]     = useState<string | null>(null)
 
@@ -663,18 +803,33 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     // bonus). (troopsToPlace isn't persisted, so a reload mid-placement still
     // grants the full amount again — fixed later by moving it into GameState.)
     const cp = initialState.players[initialState.currentPlayerIndex] ?? initialState.players[0]
-    const cpAbility = cp ? (initialLegacy?.chosenFactionAbilities ?? {})[cp.factionId] ?? null : null
-    const cpRoundUp = cpAbility === 'balk-round-up'
-    const cpPrimitive = cp ? (initialLegacy?.alienWeaknessPowers ?? {})[cp.factionId] === 'wp-primitive' : false
-    const cpAlienBonus = cp?.factionId === 'aliens'
-      ? (initialState.territories[ALIEN_ISLAND_TERRITORY_ID]?.occupyingPlayerId === cp.id ? 2 : 0)
-        + (initialLegacy?.ruinTerritoryIds ?? []).filter(tid => initialState.territories[tid]?.occupyingPlayerId === cp.id).length
-      : 0
-    return calcReinforcements(cp?.id ?? '', initialState.territories, cpRoundUp, initialLegacy?.namedContinents ?? {}, initialLegacy?.worldCapitalTerritoryId ?? null, cpPrimitive, initialLegacy?.continentBonusModifiers ?? [])
-      + richLandBonus(cp?.id ?? '', initialState.territories)
-      + cpAlienBonus
+    if (!cp) return 0
+    return calcDraftTroops({
+      playerId: cp.id,
+      factionId: cp.factionId,
+      territories: initialState.territories,
+      legacy: initialLegacy ?? null,
+      ability: (initialLegacy?.chosenFactionAbilities ?? {})[cp.factionId] ?? null,
+    })
   })
   const [placementHistory, setPlacementHistory] = useState<string[]>([])
+  // Draft placement badges: territoryId → troops placed there this draft phase.
+  // Kept separate from placementHistory because that array only records the
+  // placements Undo can reverse (Expand/Stealthy drops are excluded), whereas
+  // the badge must show every troop that went down.
+  const [draftPlaced, setDraftPlaced] = useState<Record<string, number>>({})
+  /** Adjust a territory's draft badge. Safe from stale closures — the setter is
+   *  stable and the update is functional. */
+  const bumpDraftPlaced = (territoryId: string, delta = 1) => {
+    setDraftPlaced(prev => {
+      const n = (prev[territoryId] ?? 0) + delta
+      if (n <= 0) {
+        const { [territoryId]: _removed, ...rest } = prev
+        return rest
+      }
+      return { ...prev, [territoryId]: n }
+    })
+  }
   const placementHistoryRef = useRef<string[]>([])
   // Weakness power enforcement feedback (auto-clearing banner)
   const [weaknessNotice, setWeaknessNotice] = useState<string | null>(null)
@@ -831,6 +986,11 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
   const _saveKey = `${gameState.phase}:${gameState.currentPlayerIndex}:${gameState.turnNumber}`
   useEffect(() => {
     if (gameState.phase === 'game-over') return  // handled at game end
+    // Once the game has been finalised, this autosave must never run again: it
+    // writes gameInProgress:true with the whole board, and landing after the
+    // finalise write would resurrect the finished game — the app would then
+    // resume it on next load instead of opening the lobby.
+    if (gameFinishedRef.current) return
     const { legacySnapshot: _snap, ...saved } = gameState
     // Use updater so we never overwrite purchasedStars or other fields written concurrently
     setLegacyState(prev => {
@@ -841,6 +1001,13 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [_saveKey])
+
+  /** A player's homeland continent, or null. Null until the double-winner
+   *  milestone unlocks homelands, and null for a faction with a tied tally. */
+  function playerHomeland(playerId: string): string | null {
+    const faction = gameStateRef.current.players.find(p => p.id === playerId)?.factionId ?? ''
+    return homelandContinentFor(legacyStateRef.current, faction)
+  }
 
   /** Returns the chosen ability id for a player (by their factionId). */
   function playerAbility(playerId: string): AbilityId | null {
@@ -932,6 +1099,59 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         const t         = state.territories[def.id]
         const isOwn     = t.occupyingPlayerId === currentPlayerId
 
+        // ── MOBILE HQ (comeback power) ────────────────────────────────────────
+        // Move one HQ token you control to an ADJACENT territory you control,
+        // once per turn, at any point during the turn. First click picks the HQ,
+        // second click picks the destination.
+        if (mobileHqModeRef.current && !mobileHqUsedRef.current) {
+          const srcId = mobileHqSrcRef.current
+          if (!srcId) {
+            if (isOwn && t.activeHqPlayerId) {
+              mobileHqSrcRef.current = def.id; setMobileHqSrcId(def.id)
+            } else {
+              showWeaknessNotice('🏰 Pick one of your HQ territories to move')
+            }
+            return
+          }
+          if (def.id === srcId) {
+            // Clicking the HQ again de-selects it
+            mobileHqSrcRef.current = null; setMobileHqSrcId(null)
+            return
+          }
+          const src = state.territories[srcId]
+          if (!isOwn) {
+            showWeaknessNotice('🏰 The HQ can only move to a territory you control')
+            return
+          }
+          if (!(src?.adjacentIds ?? []).includes(def.id)) {
+            showWeaknessNotice('🏰 The HQ can only move to an ADJACENT territory')
+            return
+          }
+          if (t.activeHqPlayerId) {
+            showWeaknessNotice('🏰 That territory already holds an HQ')
+            return
+          }
+          const hqOwnerId = src.activeHqPlayerId!
+          setGameState(prev => {
+            const next: GameState = {
+              ...prev,
+              territories: {
+                ...prev.territories,
+                [srcId]:  { ...prev.territories[srcId],  activeHqPlayerId: undefined },
+                [def.id]: { ...prev.territories[def.id], activeHqPlayerId: hqOwnerId },
+              },
+              activeHqs: { ...prev.activeHqs, [hqOwnerId]: def.id },
+            }
+            gameStateRef.current = next
+            return next
+          })
+          mobileHqUsedRef.current = true;  setMobileHqUsed(true)
+          mobileHqModeRef.current = false; setMobileHqMode(false)
+          mobileHqSrcRef.current = null;   setMobileHqSrcId(null)
+          showWeaknessNotice(`🏰 HQ moved to ${t.name}`)
+          return
+        }
+
         // ── CARD PLACEMENT MODE (immediate / eliminate trigger) ───────────────
         if (activeCardIdRef.current) {
           const card = getScarCard(activeCardIdRef.current)
@@ -983,6 +1203,38 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
           return
         }
 
+        // ── JOIN THE CAUSE: 3 troops, in CITIES the winner controls ──────────
+        const joinCause = joinCausePlacementRef.current
+        if (joinCause && joinCause.troopsLeft > 0) {
+          const jp = state.players.find(p => p.id === joinCause.playerId)
+          if (t.occupyingPlayerId !== joinCause.playerId) {
+            showWeaknessNotice(`🫂 Join the Cause — ${jp?.name ?? 'the winner'} must place in their OWN cities`)
+            return
+          }
+          // Asked of the same function that builds the eligible list, so a
+          // territory can never be highlighted as legal and then refused.
+          if (!ownedCityIds(joinCause.playerId).includes(def.id)) {
+            showWeaknessNotice(`🫂 Join the Cause — troops go in a CITY; ${t.name} has none`)
+            return
+          }
+          setGameState(prev => ({
+            ...prev,
+            territories: {
+              ...prev.territories,
+              [def.id]: { ...prev.territories[def.id], troops: prev.territories[def.id].troops + 1 },
+            },
+          }))
+          const remaining = joinCause.troopsLeft - 1
+          if (remaining <= 0) {
+            joinCausePlacementRef.current = null
+            setJoinCausePlacement(null)
+          } else {
+            joinCausePlacementRef.current = { ...joinCause, troopsLeft: remaining }
+            setJoinCausePlacement({ ...joinCause, troopsLeft: remaining })
+          }
+          return
+        }
+
         // ── FORTIFY EVENT: place 2 troops on ONE owned territory ─────────────
         const fortifyEvId = fortifyEventRef.current
         if (fortifyEvId) {
@@ -1013,8 +1265,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
             showWeaknessNotice(`🏛 Control the People — ${cp?.name ?? 'the player'} must choose a city they control`)
             return
           }
-          const hasCity = (t.cities ?? []).some(c => !c.isDestroyed && !c.headquartersFactionId)
-          if (!hasCity) {
+          // Same eligible list the modal offered, so a territory can never be
+          // counted as a city there and refused here.
+          if (!ownedCityIds(ctrlTroopsPid).includes(def.id)) {
             showWeaknessNotice('🏛 Control the People — that territory has no city; choose a city you control')
             return
           }
@@ -1127,22 +1380,27 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
           const currentFaction = state.players.find(p => p.id === currentPId)?.factionId ?? ''
           const hasComebackExpand = (legacyStateRef.current?.comebackPowers ?? {})[currentFaction] === 'expand'
 
-          // Expand power: click unoccupied unmarked territory to designate as expand target
+          // Expand power: designate ONE unoccupied unmarked territory, then drop
+          // recruits into it. Decision logic lives in `expandClickAction` — see
+          // the note there on why "place" must be tested before "select".
           const isUnoccupied = !t.occupyingPlayerId
           const isUnmarked = !t.scars?.length && !t.cities?.length
-          if (!isOwn && isUnoccupied && isUnmarked && hasComebackExpand && troopsRef.current > 0) {
-            if (expandTargetRef.current === def.id) {
-              // Deselect expand target
-              expandTargetRef.current = null; setExpandTargetId(null)
-            } else {
-              expandTargetRef.current = def.id; setExpandTargetId(def.id)
-            }
+          const expandAction = expandClickAction({
+            hasPower: hasComebackExpand,
+            troopsLeft: troopsRef.current,
+            alreadyPlaced: expandUsedRef.current,
+            isOwn, isUnoccupied, isUnmarked,
+            isCurrentTarget: def.id === expandTargetRef.current,
+          })
+          if (expandAction === 'select') {
+            expandTargetRef.current = def.id; setExpandTargetId(def.id)
             return
           }
-          // Place troop on expand target
-          if (def.id === expandTargetRef.current && troopsRef.current > 0) {
+          if (expandAction === 'place') {
             dispatch({ type: 'PLACE_REINFORCEMENT', playerId: currentPId!, territoryId: def.id })
             setTroopsToPlace(prev => prev - 1)
+            bumpDraftPlaced(def.id)
+            expandUsedRef.current = true
             return
           }
 
@@ -1157,6 +1415,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
             if (def.id === stealthyTargetRef.current) {
               dispatch({ type: 'PLACE_REINFORCEMENT', playerId: currentPId!, territoryId: def.id })
               setTroopsToPlace(prev => prev - 1)
+              bumpDraftPlaced(def.id)
               return
             }
           }
@@ -1175,6 +1434,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
             dispatch({ type: 'PLACE_REINFORCEMENT', playerId: currentPId!, territoryId: def.id })
             setTroopsToPlace(prev => prev - 1)
             setPlacementHistory(prev => [...prev, def.id])
+            bumpDraftPlaced(def.id)
           } else {
             selectedIdRef.current = def.id; setSelectedId(def.id)
           }
@@ -1416,7 +1676,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     const isFirstInit = Object.keys(existing).length === 0
     const twoCoinsSet = new Set<string>()
     if (isFirstInit && missing.length >= 12) {
-      const shuffled = [...missing].sort(() => Math.random() - 0.5)
+      const shuffled = shuffle(missing)
       for (let i = 0; i < 12; i++) twoCoinsSet.add(shuffled[i].id)
     }
     setLegacyState(prev => {
@@ -1431,12 +1691,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
 
   // ── Unsigned-player bonus star (game 2+) ─────────────────────────────────
   // Any player who has never won a previous game starts with 1 purchased red star.
-  // Uses victoryLog winner names (player-stable) rather than factionId (changes per game).
+  // Keys off the roster id, so signing the board follows the person across
+  // faction changes, seat changes, and games they sat out.
   useEffect(() => {
     if (!initialLegacy || initialLegacy.currentGameNumber < 2) return
-    const signedPlayerNames = new Set((initialLegacy.victoryLog ?? []).map(v => v.winnerName))
     const bonusPlayerIds = playerSetups
-      .filter(s => !signedPlayerNames.has(s.name))
+      .filter(s => playerSignatureCount(initialLegacy, s.playerId) === 0)
       .map(s => s.playerId)
     if (bonusPlayerIds.length === 0) return
     setLegacyState(prev => {
@@ -1462,25 +1722,61 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     // Missions are locked until any player has signed the board twice
     if (!legacyState.doubleWinnerMilestoneTriggered) return
     if (cardState.currentMissionId) return
-    setCardState(prev => {
-      if (prev.currentMissionId) return prev
-      // Older saves dealt missions secretly per player — reclaim those into
-      // the shared deck (skipping destroyed ones) before flipping one face up
-      const destroyed = new Set(legacyStateRef.current.destroyedMissionIds ?? [])
-      const deck = [...new Set([
-        ...(prev.missionDeck ?? []),
-        ...Object.values(prev.playerMissions ?? {}),
-      ])].filter(id => !destroyed.has(id))
-      if (deck.length === 0) return prev
-      const first = deck.shift() ?? null
-      const next: ActiveGameCards = { ...prev, missionDeck: deck, currentMissionId: first, playerMissions: {} }
-      const newLegacy = { ...legacyStateRef.current, activeGameCards: next }
-      setLegacyState(newLegacy)
+    // Older saves dealt missions secretly per player — reclaim those into
+    // the shared deck (skipping destroyed ones) before flipping one face up
+    const destroyed = new Set(legacyStateRef.current.destroyedMissionIds ?? [])
+    const deck = [...new Set([
+      ...(cardState.missionDeck ?? []),
+      ...Object.values(cardState.playerMissions ?? {}),
+    ])].filter(id => !destroyed.has(id))
+    if (deck.length === 0) return
+    // Lead faction rule: the faction with the most campaign wins CHOOSES which
+    // mission starts face-up. Defer the flip and open the picker instead; the
+    // normal "first card off the deck" applies when there is no lead faction
+    // (or its faction is not in this game).
+    const lead = leadFactionId(legacyStateRef.current?.victoryLog)
+    const leadPlayer = lead
+      ? gameStateRef.current.players.find(p => p.factionId === lead)
+      : undefined
+    if (leadPlayer) {
+      setCardState({ ...cardState, missionDeck: deck, playerMissions: {} })
+      setLeadMissionPick({ playerId: leadPlayer.id, options: deck })
+      return
+    }
+    const first = deck.shift() ?? null
+    const next: ActiveGameCards = { ...cardState, missionDeck: deck, currentMissionId: first, playerMissions: {} }
+    setCardState(next)
+    setLegacyState(prev => {
+      const newLegacy: LegacyState = { ...prev, activeGameCards: next }
+      legacyStateRef.current = newLegacy
       saveLegacyState(newLegacy).catch(() => {})
+      return newLegacy
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // ── Persist the deal as soon as it is made ───────────────────────────────
+  // Deals are random now, so an unsaved one is a different deal after a reload:
+  // the four face-up cards would change, and reloading until you like them would
+  // be a free re-roll. Writing it on mount pins the shuffle to this game.
+  useEffect(() => {
+    const stored = legacyStateRef.current.activeGameCards
+    if (stored?.gameNumber === cardState.gameNumber && stored?.dealSeed === cardState.dealSeed) return
+    setLegacyState(prev => {
+      const next: LegacyState = { ...prev, activeGameCards: cardState }
+      legacyStateRef.current = next
+      saveLegacyState(next).catch(() => {})
       return next
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Hold the win screen back until every mission reward has been placed.
+  useEffect(() => {
+    if (!showWinScreen) { setWinScreenArmed(false); return }
+    if (showSeaLinePlacement || showWorldCapitalModal) return
+    setWinScreenArmed(true)
+  }, [showWinScreen, showSeaLinePlacement, showWorldCapitalModal])
 
   // Mysterious Island: clear the immediate-draw flag once the queued draw resolves
   useEffect(() => {
@@ -1556,6 +1852,86 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showNinthCityUnlock, showDoubleWinnerModal, showAlienMilestone, !!pendingNuclear, !!firstElimInfo])
 
+  // ── Faction homelands ────────────────────────────────────────────────────
+  // Record where each faction's starting HQ landed this game, then re-derive
+  // every faction's homeland (most-started continent; a tie means none).
+  // Runs once per game: entries are keyed by gameNumber+factionId, so a reload
+  // re-derives the same result instead of double-counting a start.
+  useEffect(() => {
+    const ls = legacyStateRef.current
+    const history = ls.factionStartHistory ?? []
+    const already = new Set(history.map(h => `${h.gameNumber}:${h.factionId}`))
+
+    const additions: Array<{ gameNumber: number; factionId: string; continentId: string }> = []
+    for (const p of gameState.players) {
+      const key = `${gameState.gameNumber}:${p.factionId}`
+      if (already.has(key)) continue
+      // The starting HQ territory — recorded at setup and never moved by the
+      // Mobile HQ power, which only relocates the token, not the origin.
+      const hqId = gameState.activeHqs[p.id]
+      const continentId = hqId ? gameState.territories[hqId]?.continentId : undefined
+      if (!continentId) continue
+      additions.push({ gameNumber: gameState.gameNumber, factionId: p.factionId, continentId })
+      already.add(key)
+    }
+
+    const nextHistory = additions.length > 0 ? [...history, ...additions] : history
+    const nextHomelands = computeHomelands(nextHistory)
+    const unchanged =
+      additions.length === 0 &&
+      JSON.stringify(nextHomelands) === JSON.stringify(ls.factionHomelands ?? {})
+    if (unchanged) return
+
+    setLegacyState(prev => {
+      const next: LegacyState = {
+        ...prev,
+        factionStartHistory: nextHistory,
+        factionHomelands: nextHomelands,
+      }
+      legacyStateRef.current = next
+      saveLegacyState(next).catch(() => {})
+      return next
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState.gameNumber, gameState.players.length])
+
+  // ── Milestone unlock log ─────────────────────────────────────────────────
+  // Milestone flags are set from ~8 different places; rather than tag each one,
+  // watch the flags and stamp the game number the first time each flips. That
+  // stamp is what lets the Legacy history read "Game 3 — The Ninth City".
+  useEffect(() => {
+    const ls = legacyStateRef.current
+    const recorded = ls.milestoneUnlockGames ?? {}
+    const newly = MILESTONES.filter(m => m.isUnlocked(ls) && recorded[m.id] === undefined)
+    if (newly.length === 0) return
+    setLegacyState(prev => {
+      const games = { ...(prev.milestoneUnlockGames ?? {}) }
+      let changed = false
+      for (const m of newly) {
+        if (games[m.id] === undefined) { games[m.id] = gameState.gameNumber; changed = true }
+      }
+      if (!changed) return prev
+      const next: LegacyState = { ...prev, milestoneUnlockGames: games }
+      legacyStateRef.current = next
+      saveLegacyState(next).catch(() => {})
+      return next
+    })
+  }, [
+    legacyState.firstEliminationTriggered,
+    legacyState.doubleWinnerMilestoneTriggered,
+    legacyState.ninthCityUnlocked,
+    legacyState.alienMilestoneTriggered,
+    legacyState.nuclearMilestoneTriggered,
+    gameState.gameNumber,
+  ])
+
+  // Draft badges live only for the duration of a draft phase. Clearing them on
+  // the phase leaving 'reinforce' covers every exit (human, AI, end of turn)
+  // from one place, so no new exit path can forget to reset them.
+  useEffect(() => {
+    if (gameState.phase !== 'reinforce') setDraftPlaced({})
+  }, [gameState.phase])
+
   // Turn-change banner — announces whose turn it is at the start of each draft phase
   const [turnBanner, setTurnBanner] = useState<TurnBannerInfo | null>(null)
   useEffect(() => {
@@ -1594,6 +1970,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
   // modals; pauses (does nothing) whenever a human-owned modal is open.
   const aiBusyRef = useRef(false)
   const aiAttacksThisTurnRef = useRef(0)
+  /** One trade-in evaluation per AI draft phase (reset at end of turn). */
+  const aiTradedThisTurnRef = useRef(false)
 
   // AI pacing — slow enough to follow by default; ⏩ fast-forward shrinks all
   // delays (button shown in the header whenever an AI is taking its turn)
@@ -1619,19 +1997,222 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     flightTimerRef.current = window.setTimeout(() => setAttackFlight(null), durMs + 150)
   }
 
+  /**
+   * A choice a HUMAN has to make before the AI can move, described for display,
+   * or null when nothing is blocking.
+   *
+   * The AI driver stands down on exactly this condition. Sharing it with the
+   * on-screen notice matters: a stuck human modal used to freeze every later AI
+   * turn with no explanation, which reads as "the AI turned into a human player
+   * and won't play". Now the board says which of the two it is.
+   */
+  function humanBlockingChoice(): string | null {
+    const st = gameStateRef.current
+    const isHumanId = (pid: string | null | undefined) => {
+      if (!pid) return false
+      const p = st.players.find(x => x.id === pid)
+      return !!p && !p.isAI
+    }
+    if (comebackEliminatedPlayer && !comebackEliminatedPlayer.isAI) return 'a comeback power'
+    if (leadMissionPick && isHumanId(leadMissionPick.playerId)) return 'a mission pick'
+    if (joinTheWarPlayerId && isHumanId(joinTheWarPlayerId)) return 'a Join the War placement'
+    if (missilePowerPendingPlayerId && isHumanId(missilePowerPendingPlayerId)) return 'a missile power'
+    if (isHumanId(pendingCardDraws[0])) return 'a card draw'
+    // Event follow-ups belong to a FACTION, not to whoever's turn it is, so any
+    // of these can be a human's while an AI is playing. The AI must wait rather
+    // than carry on around an open choice it cannot make.
+    const factionPlayer = (fid: string) => st.players.find(p => p.factionId === fid && !p.isEliminated)?.id
+    if (dieHumansPendingCardId && isHumanId(factionPlayer('aliens'))) return 'a Die Humans choice'
+    if (beamDownActive && isHumanId(factionPlayer('aliens'))) return 'a Beam Down placement'
+    if (mutantsEvolvePendingCardId && isHumanId(factionPlayer('mutants'))) return 'a Mutants Evolve choice'
+    if (showJoinTheCause && isHumanId(largestPopulationPlayerId())) return 'a Join the Cause choice'
+    if (joinCausePlacement && isHumanId(joinCausePlacement.playerId)) return 'a Join the Cause placement'
+    return null
+  }
+
+  /**
+   * Append one line to the campaign history log.
+   *
+   * Functional update plus a synchronous ref assignment — a replacement write
+   * built from a captured copy drops whatever else landed in the same tick,
+   * which is how the World Capital went missing once already.
+   */
+  function logHistory(entry: string) {
+    setLegacyState(prev => {
+      const next: LegacyState = {
+        ...prev,
+        historyLog: [...prev.historyLog, {
+          gameNumber: gameStateRef.current.gameNumber,
+          entry,
+          timestamp: new Date().toISOString(),
+        }],
+      }
+      legacyStateRef.current = next
+      saveLegacyState(next).catch(() => {})
+      return next
+    })
+  }
+
+  /**
+   * Territories this player holds that have a city on them.
+   *
+   * The one answer for every "in a city you control" reward — Join the Cause's
+   * 3 troops and Control the People's 5. Counted with `countCitiesOn`, so the
+   * World Capital is a city here exactly as it is everywhere else.
+   *
+   * These checks used to read raw city stickers, and the World Capital COVERS
+   * the sticker it replaced — so the one territory worth 5 population, the very
+   * thing that usually wins the population count both rewards are handed out
+   * for, was not a legal place to put the winnings. A leader whose only city
+   * was the World Capital was told they controlled none and forfeited it.
+   */
+  function ownedCityIds(playerId: string): string[] {
+    const wcId = legacyStateRef.current?.worldCapitalTerritoryId ?? null
+    return Object.values(gameStateRef.current.territories)
+      .filter(t => t.occupyingPlayerId === playerId && countCitiesOn(t, wcId) > 0)
+      .map(t => t.id)
+  }
+
+  /**
+   * Begin the Join the Cause troop reward for the largest-population player.
+   *
+   * The 3 troops go in CITIES that player controls — not into the current
+   * player's draft pool, which is where they used to land regardless of who won
+   * the choice.
+   */
+  function startJoinCauseTroops(playerId: string) {
+    const name = gameStateRef.current.players.find(p => p.id === playerId)?.name ?? 'Player'
+    if (ownedCityIds(playerId).length === 0) {
+      showWeaknessNotice(`🫂 Join the Cause — ${name} controls no cities, so the troops are forfeit`)
+      logHistory(`🫂 Join the Cause — ${name} had the largest population but controlled no city; the 3 troops were forfeit`)
+      return
+    }
+    const next = { playerId, troopsLeft: 3 }
+    joinCausePlacementRef.current = next
+    setJoinCausePlacement(next)
+    logHistory(`🫂 Join the Cause — ${name} had the largest population and takes 3 troops in their cities`)
+  }
+
+  /**
+   * One troop of an AI's Join the Cause reward, and one of an AI's Resistance
+   * reward.
+   *
+   * Both drivers call these rather than each carrying a copy: the turn-gated AI
+   * loop, and the turn-agnostic one below that covers the case where the player
+   * owed the troops is an AI but the turn belongs to someone else.
+   */
+  function stepAiJoinCausePlacement(jc: { playerId: string; troopsLeft: number }) {
+    // Restricted to cities, so the border heuristic runs over those only.
+    const cityIds = new Set(ownedCityIds(jc.playerId))
+    const targetId = aiBonusTroopTarget(gameStateRef.current, jc.playerId, t => cityIds.has(t.id))
+    if (targetId) setGameState(prev => ({ ...prev, territories: { ...prev.territories, [targetId]: { ...prev.territories[targetId], troops: prev.territories[targetId].troops + 1 } } }))
+    const left = targetId ? jc.troopsLeft - 1 : 0
+    if (left <= 0) { joinCausePlacementRef.current = null; setJoinCausePlacement(null) }
+    else { const n = { ...jc, troopsLeft: left }; joinCausePlacementRef.current = n; setJoinCausePlacement(n) }
+  }
+
+  /**
+   * An AI won the population count, so it takes the troops.
+   *
+   * Troops over a mission swap: always valid, and the AI has no way to judge
+   * which face-up mission suits it better. It goes through the same
+   * `startJoinCauseTroops` a human's click does — it used to add 3 to
+   * `troopsToPlace` instead, which is the CURRENT player's draft pool. The
+   * winner is usually not the current player, so those troops were handed to
+   * whoever happened to be taking the turn, unrestricted by cities, and were
+   * overwritten outright at the next turn's reinforcement count.
+   */
+  function resolveAiJoinCauseChoice(leaderId: string) {
+    setShowJoinTheCause(false)
+    startJoinCauseTroops(leaderId)
+  }
+
+  /** An AI took the Control the People reward: 5 troops in its best city. */
+  function resolveAiControlPeople(playerId: string) {
+    const eligible = new Set(ownedCityIds(playerId))
+    const cityId = aiBonusTroopTarget(gameStateRef.current, playerId, t => eligible.has(t.id))
+    if (cityId) setGameState(prev => ({ ...prev, territories: { ...prev.territories, [cityId]: { ...prev.territories[cityId], troops: prev.territories[cityId].troops + 5 } } }))
+    setControlPeopleChoice(null)
+  }
+
+  /**
+   * An AI rolled lowest in a Riot: it pays from its own deepest stack.
+   *
+   * Says where, because a human watching the modal is otherwise told a player
+   * lost 2 troops and never shown from where. The AI picks its own casualties —
+   * the loss used to be routed through the same click-to-choose hint bar a human
+   * gets, which handed the human the job of deciding where an opponent bleeds.
+   */
+  function resolveAiRiot(loserId: string) {
+    const st = gameStateRef.current
+    const loser = st.players.find(p => p.id === loserId)
+    const loseFrom = Object.values(st.territories)
+      .filter(t => t.occupyingPlayerId === loserId && t.troops > 1)
+      .sort((a, b) => b.troops - a.troops)[0]
+    if (loseFrom) {
+      const rm = Math.min(2, loseFrom.troops - 1)
+      setGameState(prev => ({ ...prev, territories: { ...prev.territories, [loseFrom.id]: { ...prev.territories[loseFrom.id], troops: prev.territories[loseFrom.id].troops - rm } } }))
+      showWeaknessNotice(`🔥 Riot — ${loser?.name ?? 'Player'} lost ${rm} troop${rm !== 1 ? 's' : ''} at ${loseFrom.name}`)
+    } else {
+      showWeaknessNotice(`🔥 Riot — ${loser?.name ?? 'the loser'} has no territory above 1 troop; no loss`)
+    }
+    riotRemovalRef.current = null
+    setRiotRemovalPlayerId(null)
+    setRiotResult(null)
+  }
+
+  function stepAiResistancePlacement(rp: { playerId: string; troopsLeft: number }) {
+    // One troop per tick onto the most threatened border, recomputed each time
+    // so the troops spread across the front instead of stacking on one spot
+    // once the first has relieved the pressure there.
+    const targetId = aiBonusTroopTarget(gameStateRef.current, rp.playerId)
+    if (targetId) setGameState(prev => ({ ...prev, territories: { ...prev.territories, [targetId]: { ...prev.territories[targetId], troops: prev.territories[targetId].troops + 1 } } }))
+    const left = rp.troopsLeft - 1
+    if (left <= 0) { resistancePlacementRef.current = null; setResistancePlacement(null) }
+    else { const n = { ...rp, troopsLeft: left }; resistancePlacementRef.current = n; setResistancePlacement(n) }
+  }
+
+  /** Ruinable minor city for an AI Die Humans: an enemy's first, then any. */
+  function aiPickRuinTarget(alienPlayerId: string): string | null {
+    const ls = legacyStateRef.current
+    const destroyedCityIds = new Set((ls.destroyedCities ?? []).map(d => d.cityId))
+    const ruinIds = new Set(ls.ruinTerritoryIds ?? [])
+    const candidates = ls.stickers.filter(s =>
+      s.placement === 'territory' &&
+      s.description === 'city:minor' &&
+      !destroyedCityIds.has(s.id) &&
+      !ruinIds.has(s.targetId) &&
+      !!gameStateRef.current.territories[s.targetId],
+    ).map(s => s.targetId)
+    const enemyHeld = candidates.find(
+      tid => gameStateRef.current.territories[tid]?.occupyingPlayerId !== alienPlayerId)
+    return enemyHeld ?? candidates[0] ?? null
+  }
+
+  /** Unoccupied city for an AI Beam Down — mirrors hasBeamDownTarget's filter. */
+  function aiPickBeamDownTarget(): string | null {
+    const ls = legacyStateRef.current
+    const destroyedCityIds = new Set((ls.destroyedCities ?? []).map(d => d.cityId))
+    const ruinIds = new Set(ls.ruinTerritoryIds ?? [])
+    const s = ls.stickers.find(st =>
+      st.placement === 'territory' &&
+      st.description.startsWith('city:') &&
+      !destroyedCityIds.has(st.id) &&
+      !ruinIds.has(st.targetId) &&
+      !gameStateRef.current.territories[st.targetId]?.occupyingPlayerId,
+    )
+    return s?.targetId ?? null
+  }
+
   function aiPickLegalJoinTerritory(playerId: string): string | null {
     const st = gameStateRef.current
-    const hqIds = new Set(Object.values(st.activeHqs ?? {}))
-    const hqAdj = new Set<string>()
-    for (const hqId of hqIds) TERRITORY_DEFINITIONS.find(d => d.id === hqId)?.adjacentIds.forEach(a => hqAdj.add(a))
-    const fzId = legacyStateRef.current?.falloutZoneTerritoryId
-    const legal = Object.values(st.territories).filter(t =>
-      !t.occupyingPlayerId &&
-      !(t.cities ?? []).some(c => !c.isDestroyed) &&
-      !hqIds.has(t.id) && !hqAdj.has(t.id) && t.id !== fzId,
-    )
     void playerId
-    return legal.length > 0 ? legal[Math.floor(Math.random() * legal.length)].id : null
+    const legal = legalJoinWarTerritoryIds(
+      st.territories,
+      Object.values(st.activeHqs ?? {}),
+      legacyStateRef.current?.falloutZoneTerritoryId,
+    )
+    return legal.length > 0 ? legal[Math.floor(Math.random() * legal.length)] : null
   }
 
   useEffect(() => {
@@ -1639,16 +2220,15 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     if (!cp?.isAI || cp.isEliminated || gameState.phase === 'game-over' || showWinScreen) return
     if (aiBusyRef.current) return
 
-    // Pause for any HUMAN-owned choice modal (the AI can't act through it).
     const isHuman = (pid: string | null | undefined) => {
       if (!pid) return false
       const p = gameState.players.find(pl => pl.id === pid)
       return !!p && !p.isAI
     }
-    if (comebackEliminatedPlayer && !comebackEliminatedPlayer.isAI) return
-    if (joinTheWarPlayerId && isHuman(joinTheWarPlayerId)) return
-    if (missilePowerPendingPlayerId && isHuman(missilePowerPendingPlayerId)) return
-    if (isHuman(pendingCardDraws[0])) return
+    // Stand down while a HUMAN owns an open choice — the AI cannot act through
+    // it. Shared with the stall banner so the two can never disagree about
+    // whether the AI is stuck or simply waiting on you.
+    if (humanBlockingChoice()) return
 
     const diff = cp.aiDifficulty ?? 'medium'
     const run = (fn: () => void, delay = aiMs(1400, 220)) => {
@@ -1674,6 +2254,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
       })
       return
     }
+    // Lead faction mission pick belonging to an AI — take the first option.
+    if (leadMissionPick && !isHuman(leadMissionPick.playerId)) {
+      const first = leadMissionPick.options[0]
+      run(() => { if (first) handleLeadMissionPick(first); else setLeadMissionPick(null) })
+      return
+    }
     if (joinTheWarPlayerId && !isHuman(joinTheWarPlayerId)) {
       const tid = aiPickLegalJoinTerritory(joinTheWarPlayerId)
       run(() => { if (tid) handleJoinWar(tid); else handleForfeitWar() })
@@ -1687,38 +2273,68 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     }
     // AI never plays scar cards — skip any pending scar placement
     if (scarTarget || activeCardId) { run(() => { setScarTarget(null); setTriggeredCard(null); setActiveCardId(null); activeCardIdRef.current = null }); return }
-    if (showEventCard) { run(() => setShowEventCard(false)); return }
+    // Closing the card is what RESOLVES most events, so the AI has to go
+    // through the same handler a human's click does — not just hide the modal.
+    if (showEventCard) { run(() => resolveEventCardDismiss(currentEventCardId)); return }
     // AI-owned event choices — resolve simply
     if (resistancePlacement && !isHuman(resistancePlacement.playerId)) {
-      const own = Object.values(gameState.territories).find(t => t.occupyingPlayerId === resistancePlacement.playerId)
-      run(() => {
-        if (own) setGameState(prev => ({ ...prev, territories: { ...prev.territories, [own.id]: { ...prev.territories[own.id], troops: prev.territories[own.id].troops + 1 } } }))
-        const left = resistancePlacement.troopsLeft - 1
-        if (left <= 0) { resistancePlacementRef.current = null; setResistancePlacement(null) }
-        else { const n = { ...resistancePlacement, troopsLeft: left }; resistancePlacementRef.current = n; setResistancePlacement(n) }
-      })
+      run(() => stepAiResistancePlacement(resistancePlacement))
+      return
+    }
+    if (joinCausePlacement && !isHuman(joinCausePlacement.playerId)) {
+      run(() => stepAiJoinCausePlacement(joinCausePlacement))
       return
     }
     if (fortifyEventPlayerId && !isHuman(fortifyEventPlayerId)) {
-      const own = Object.values(gameState.territories).find(t => t.occupyingPlayerId === fortifyEventPlayerId)
-      run(() => { if (own) setGameState(prev => ({ ...prev, territories: { ...prev.territories, [own.id]: { ...prev.territories[own.id], troops: prev.territories[own.id].troops + 2 } } })); fortifyEventRef.current = null; setFortifyEventPlayerId(null) })
+      // Both troops go on ONE territory, so there is nothing to recompute —
+      // pick the most threatened border and put them there.
+      const targetId = aiBonusTroopTarget(gameStateRef.current, fortifyEventPlayerId)
+      run(() => { if (targetId) setGameState(prev => ({ ...prev, territories: { ...prev.territories, [targetId]: { ...prev.territories[targetId], troops: prev.territories[targetId].troops + 2 } } })); fortifyEventRef.current = null; setFortifyEventPlayerId(null) })
       return
     }
     if (controlPeopleChoice && !isHuman(controlPeopleChoice)) {
-      // AI takes 5 troops in a city if it holds one, else the maneuver (skipped simply)
-      const city = Object.values(gameState.territories).find(t => t.occupyingPlayerId === controlPeopleChoice && (t.cities ?? []).some(c => !c.isDestroyed && !c.headquartersFactionId))
-      run(() => {
-        if (city) setGameState(prev => ({ ...prev, territories: { ...prev.territories, [city.id]: { ...prev.territories[city.id], troops: prev.territories[city.id].troops + 5 } } }))
-        setControlPeopleChoice(null)
-      })
+      // Troops over the maneuver: always valid, and worth more than a move the
+      // AI has no way to plan around.
+      run(() => resolveAiControlPeople(controlPeopleChoice))
       return
     }
+    // ── Event follow-ups owned by an AI faction ──
+    // These open only now that the AI resolves event dismissals properly; without
+    // them an AI-owned Die Humans or Beam Down would sit unanswered forever.
+    if (dieHumansPendingCardId) {
+      const alienId = gameState.players.find(p => p.factionId === 'aliens' && !p.isEliminated)?.id
+      if (alienId && !isHuman(alienId)) {
+        const target = aiPickRuinTarget(alienId)
+        run(() => { if (target) handleDieHumansRuin(target); else handleDieHumansDecline() })
+        return
+      }
+    }
+    if (beamDownActive) {
+      const alienId = gameState.players.find(p => p.factionId === 'aliens' && !p.isEliminated)?.id
+      if (alienId && !isHuman(alienId)) {
+        const target = aiPickBeamDownTarget()
+        run(() => { if (target) handleBeamDown(target); else setBeamDownActive(false) })
+        return
+      }
+    }
+    if (mutantsEvolvePendingCardId) {
+      const mutantId = gameState.players.find(p => p.factionId === 'mutants' && !p.isEliminated)?.id
+      if (mutantId && !isHuman(mutantId)) {
+        // The pairing reveals a HIDDEN permanent power — there is nothing to
+        // choose on merit, so the AI declines and the card returns to the deck.
+        run(() => { returnEventCardToDiscard(mutantsEvolvePendingCardId); setMutantsEvolvePendingCardId(null) })
+        return
+      }
+    }
+    if (showJoinTheCause) {
+      const leaderId = largestPopulationPlayerId()
+      if (leaderId && !isHuman(leaderId)) {
+        run(() => resolveAiJoinCauseChoice(leaderId))
+        return
+      }
+    }
     if (riotResult && !isHuman(riotResult.loserId)) {
-      const loseFrom = Object.values(gameState.territories).filter(t => t.occupyingPlayerId === riotResult.loserId && t.troops > 1).sort((a, b) => b.troops - a.troops)[0]
-      run(() => {
-        if (loseFrom) { const rm = Math.min(2, loseFrom.troops - 1); setGameState(prev => ({ ...prev, territories: { ...prev.territories, [loseFrom.id]: { ...prev.territories[loseFrom.id], troops: prev.territories[loseFrom.id].troops - rm } } })) }
-        setRiotResult(null)
-      })
+      run(() => resolveAiRiot(riotResult.loserId))
       return
     }
 
@@ -1726,21 +2342,37 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     if (pendingCardDraws[0] && !isHuman(pendingCardDraws[0])) {
       const drawerId = pendingCardDraws[0]
       const sideboard = cardState.sideboard ?? []
+      const drawerHomeland = playerHomeland(drawerId)
       const ownedFaceUp = sideboard.find(id => {
         const tId = getTerritoryCard(id)?.territoryId
-        return tId && gameState.territories[tId]?.occupyingPlayerId === drawerId
+        return !!tId && canClaimTerritoryCard(drawerId, tId, gameState.territories, drawerHomeland)
       })
       const resource = (cardState.resourceDeck ?? cardState.coinDeck ?? [])[0]
       run(() => {
-        if (ownedFaceUp) handleCardDrawSelect(ownedFaceUp, false)
-        else if (resource) handleCardDrawSelect(resource, true)
+        // Never offer a pick the draw rules reject — the handler would bounce it
+        // and the queue would never advance. A Purist already holding 2 coins
+        // with nothing face-up to claim has no legal draw, so it skips.
+        if (ownedFaceUp && !cardDrawBlockReason(drawerId, ownedFaceUp, false, false)) handleCardDrawSelect(ownedFaceUp, false)
+        else if (resource && !cardDrawBlockReason(drawerId, resource, true, false)) handleCardDrawSelect(resource, true)
         else setPendingCardDraws(prev => prev.slice(1))
       })
       return
     }
     if (balkExpansionPending && !isHuman(balkExpansionPending)) {
+      const balkId = balkExpansionPending
+      const balkHomeland = playerHomeland(balkId)
+      // Face-up cards it controls come first, exactly as in a normal AI draw —
+      // taking the coin instead is now an illegal pick, not just a poor one.
+      const balkFaceUp = (cardState.sideboard ?? []).find(id => {
+        const tId = getTerritoryCard(id)?.territoryId
+        return !!tId && canClaimTerritoryCard(balkId, tId, gameState.territories, balkHomeland)
+      })
       const resource = (cardState.resourceDeck ?? cardState.coinDeck ?? [])[0]
-      run(() => { if (resource) handleBalkExpansionSelect(resource, true); else setBalkExpansionPending(null) })
+      run(() => {
+        if (balkFaceUp && !cardDrawBlockReason(balkId, balkFaceUp, false, false)) handleBalkExpansionSelect(balkFaceUp, false)
+        else if (resource && !cardDrawBlockReason(balkId, resource, true, false)) handleBalkExpansionSelect(resource, true)
+        else setBalkExpansionPending(null)
+      })
       return
     }
 
@@ -1749,6 +2381,22 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
 
     // ── Phase loop ──
     if (gameState.phase === 'reinforce') {
+      // Cash cards in BEFORE placing — the troops from a trade-in join this
+      // draft. Uses the same coin math as the human hand, so upgraded and
+      // multi-coin territory cards are priced identically.
+      if (!aiTradedThisTurnRef.current) {
+        const decision = aiTradeInDecision(cp.cards, legacyState.cardResources, diff, {
+          rivalOnMatchPoint: rivalsOnMatchPoint(gameState, legacyState, cp.id).length > 0,
+        })
+        aiTradedThisTurnRef.current = true
+        if (decision) {
+          run(() => {
+            console.log(`[AI] ${cp.name} trades ${decision.cardIds.length} cards / ${decision.totalCoins} coins for ${decision.troops} troops — ${decision.reason}`)
+            handleTradeIn(decision.cardIds, decision.troops)
+          }, aiMs(700, 130))
+          return
+        }
+      }
       if (troopsToPlace > 0) {
         const plan = aiReinforcePlacements(gameState, legacyState, cp.id, 1, diff)
         const tid = plan[0] ?? Object.values(gameState.territories).find(t => t.occupyingPlayerId === cp.id)?.id
@@ -1757,6 +2405,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
           dispatch({ type: 'PLACE_REINFORCEMENT', playerId: cp.id, territoryId: tid })
           setTroopsToPlace(prev => prev - 1)
           setPlacementHistory(prev => [...prev, tid])
+          bumpDraftPlaced(tid)
         }, aiMs(600, 110))
       } else {
         aiAttacksThisTurnRef.current = 0
@@ -1789,9 +2438,20 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         window.setTimeout(() => {
           aiBusyRef.current = false
           if (uncontested) {
-            // Uncontested move — resolve directly (no interactive panel for AI)
-            advanceSrcRef.current = order.srcId; advanceTgtRef.current = order.tgtId
-            handleAdvanceConfirm(Math.max(1, (src?.troops ?? 1) - 1))
+            // Uncontested move — resolve directly (no interactive panel for AI).
+            // The AI has no slider to clamp, so the entry cost is checked here:
+            // moving in fewer troops than the cost used to be rounded back up to
+            // 1 survivor, letting an AI walk into a major city for 1 troop or
+            // even none. Expand only when the cost can actually be paid.
+            const moving = Math.max(1, (src?.troops ?? 1) - 1)
+            const aiFaction = gameStateRef.current.players[gameStateRef.current.currentPlayerIndex]?.factionId ?? ''
+            const aiCost = entryCostBreakdown(order.tgtId, tgt, aiFaction, true)
+            if (moving >= minTroopsToEnter(aiCost)) {
+              advanceSrcRef.current = order.srcId; advanceTgtRef.current = order.tgtId
+              handleAdvanceConfirm(moving)
+            } else {
+              console.log(`[AI] skipping ${order.tgtId} — ${moving} troops cannot pay the ${aiCost.total}-troop entry cost`)
+            }
           } else {
             attackTgtRef.current = order.tgtId; setAttackTgtId(order.tgtId); setShowCombat(true)
           }
@@ -1812,11 +2472,116 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
             return { ...prev, territories: { ...prev.territories, [move.srcId]: { ...s, troops: s.troops - n }, [move.dstId]: { ...d, troops: d.troops + n } } }
           })
         }
-        window.setTimeout(() => handleNextPhase(), aiMs(600, 130))
+        // Stay "busy" across the inner delay. `run` clears the flag before this
+        // callback, and the setGameState above re-renders — without re-arming it
+        // the (dependency-free) driver would re-enter the still-'fortify' phase
+        // and queue a SECOND handleNextPhase, ending the next player's turn too.
+        aiBusyRef.current = true
+        window.setTimeout(() => {
+          aiBusyRef.current = false
+          handleNextPhase()
+        }, aiMs(600, 130))
       })
       return
     }
   })
+
+  // ── AI stall watchdog ──────────────────────────────────────────────────────
+  // The driver is dependency-free, so it re-enters on every render and normally
+  // cannot get wedged. What CAN wedge it is `aiBusyRef` left set, or a state it
+  // has no branch for. Either way the turn silently stops and the board looks
+  // like an unresponsive human seat. Notice that and offer a nudge rather than
+  // leaving the game apparently broken.
+  //
+  // Progress is judged from the board itself, not just the phase, because the
+  // whole attack phase happens without the phase changing.
+  // Derived locally: `currentPlayer` is declared further down the component.
+  const aiTurnPlayer = gameState.players[gameState.currentPlayerIndex]
+  const aiTurnActive = !!aiTurnPlayer?.isAI
+    && !aiTurnPlayer.isEliminated
+    && gameState.phase !== 'game-over'
+    && !showWinScreen
+  let troopSum = 0, ownerSum = 0
+  for (const t of Object.values(gameState.territories)) {
+    troopSum += t.troops
+    ownerSum += t.occupyingPlayerId ? t.occupyingPlayerId.length + t.occupyingPlayerId.charCodeAt(1) : 0
+  }
+  const aiProgressKey = [
+    gameState.turnNumber, gameState.phase, gameState.currentPlayerIndex,
+    troopsToPlace, troopSum, ownerSum, aiNudge,
+    // Waiting behind a human is not a stall, and the modals below animate
+    // themselves — treat any change in those as progress too.
+    humanBlockingChoice() ?? '', showCombat, showAdvance,
+  ].join('|')
+
+  useEffect(() => {
+    setAiStalled(false)
+    if (!aiTurnActive) return
+    // Generous: a multi-round auto-resolve with animations can run for seconds.
+    const timer = window.setTimeout(() => setAiStalled(true), 20000)
+    return () => window.clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiTurnActive, aiProgressKey])
+
+  /**
+   * Drives the board-picked event rewards when the player they belong to is an
+   * AI but the turn belongs to someone else.
+   *
+   * Resistance, Join the Cause, Control the People and Riot are handed to a
+   * player the BOARD picks — fewest territories, largest population, lowest
+   * roll — not to whoever is taking the turn. The main AI loop only runs while
+   * an AI is the current player, so an AI owed one of these on a human's turn
+   * had nobody to resolve it: the hint bar sat there naming a player whose
+   * territories the human cannot click.
+   *
+   * END_TURN used to sweep them away, which hid this. Now that they survive the
+   * turn — they must, or the human winner loses the reward — an unresolved
+   * AI-owned one would sit forever, so this closes that door.
+   *
+   * Runs only while the main loop is standing down, and shares `aiBusyRef` with
+   * it, so exactly one of the two ever acts.
+   */
+  useEffect(() => {
+    const cp = gameState.players[gameState.currentPlayerIndex]
+    if (cp?.isAI && !cp.isEliminated) return          // the main loop has it
+    if (gameState.phase === 'game-over' || showWinScreen) return
+    if (aiBusyRef.current) return
+
+    const isAiOwned = (pid: string | null | undefined) => {
+      if (!pid) return false
+      const p = gameState.players.find(x => x.id === pid)
+      return !!p && !!p.isAI && !p.isEliminated
+    }
+    const step = (fn: () => void) => {
+      aiBusyRef.current = true
+      window.setTimeout(() => { aiBusyRef.current = false; fn() }, aiMs(900, 180))
+    }
+
+    if (showJoinTheCause) {
+      const leaderId = largestPopulationPlayerId()
+      if (isAiOwned(leaderId)) { step(() => resolveAiJoinCauseChoice(leaderId!)); return }
+    }
+    if (joinCausePlacement && isAiOwned(joinCausePlacement.playerId)) {
+      step(() => stepAiJoinCausePlacement(joinCausePlacement)); return
+    }
+    if (resistancePlacement && isAiOwned(resistancePlacement.playerId)) {
+      step(() => stepAiResistancePlacement(resistancePlacement)); return
+    }
+    if (controlPeopleChoice && isAiOwned(controlPeopleChoice)) {
+      step(() => resolveAiControlPeople(controlPeopleChoice)); return
+    }
+    // Riot is deliberately absent. Its modal is the only place the rolls are
+    // ever shown, so on YOUR turn it waits for you to read it — the button
+    // resolves an AI loser itself. Auto-dismissing here would flash the dice
+    // past you and settle an event you never saw.
+    if (riotRemovalPlayerId && isAiOwned(riotRemovalPlayerId)) {
+      // Only reachable from a save written before the modal took this over.
+      step(() => resolveAiRiot(riotRemovalPlayerId)); return
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showJoinTheCause, joinCausePlacement, resistancePlacement, controlPeopleChoice,
+      riotRemovalPlayerId, showWinScreen, gameState.currentPlayerIndex, gameState.phase,
+      gameState.players])
 
   // ── Missile replenishment: every game starts with one missile per career win ──
   useEffect(() => {
@@ -1829,9 +2594,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
       const missiles = { ...(prev.missiles ?? {}) }
       const granted: string[] = []
       for (const p of gameState.players) {
-        // Career wins; fall back to victory-log name matches for pre-existing campaigns
-        const wins = (prev.playerWins ?? {})[p.id]
-          ?? (prev.victoryLog ?? []).filter(v => v.winnerName === p.name).length
+        // Career wins; fall back to signatures on the board for campaigns that
+        // predate playerWins (resolved by roster id, not by name)
+        const wins = (prev.playerWins ?? {})[p.id] ?? playerSignatureCount(prev, p.id)
         missiles[p.id] = wins
         if (wins > 0) granted.push(`${p.name} ×${wins}`)
       }
@@ -2084,10 +2849,190 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     weaknessNoticeTimer.current = setTimeout(() => setWeaknessNotice(null), 3500)
   }
 
+  /**
+   * The cards `playerId` would legally be allowed to take on a draw right now:
+   * the face-up cards they can claim (territory they hold, or anywhere in their
+   * homeland), or — if they can claim none — the top of the resource pile.
+   *
+   * Mirrors the draw rules enforced in handleCardDrawSelect and the draw modal.
+   */
+  function eligibleDrawCardIds(playerId: string): string[] {
+    const st = gameStateRef.current
+    const homeland = playerHomeland(playerId)
+    const claimable = (cardState.sideboard ?? []).filter(id => {
+      const tId = getTerritoryCard(id)?.territoryId
+      return !!tId && canClaimTerritoryCard(playerId, tId, st.territories, homeland)
+    })
+    if (claimable.length > 0) return claimable
+    const resource = (cardState.resourceDeck ?? cardState.coinDeck ?? [])[0]
+    return resource ? [resource] : []
+  }
+
+  /**
+   * World Capital mission: the territories of the 4+ coin cards this player is
+   * ELIGIBLE to take right now. Empty means the mission's condition is not met.
+   *
+   * Eligibility is the whole condition — they never actually take the card.
+   * Coin values are read live, so a card raised to 4 by the runner-up upgrade
+   * qualifies at its upgraded value. The territories come back because the
+   * Capital is placed on the one matching the card that earned it; only face-up
+   * territory cards can reach 4 coins (resource-pile cards are always worth 1),
+   * so a qualifying card always has a territory.
+   */
+  function richCardTerritoryIds(playerId: string): string[] {
+    const res = legacyStateRef.current?.cardResources
+    const ids: string[] = []
+    for (const cardId of eligibleDrawCardIds(playerId)) {
+      if (cardCoinValue(res, cardId) < 4) continue
+      const tId = getTerritoryCard(cardId)?.territoryId
+      if (tId && !ids.includes(tId)) ids.push(tId)
+    }
+    return ids
+  }
+
+  /**
+   * Commit the World Capital to `territoryId` and close out the milestone.
+   *
+   * The Capital sticker goes ON TOP of whatever city is already there, so any
+   * city on that territory is covered — recorded in `destroyedCities`, which is
+   * what every city reader consults. The sticker stays in `stickers`: it has been
+   * spent, so it must keep counting against the 5-major / 9-minor limits.
+   *
+   * Everything lands in ONE legacy write. Splitting it (deck seed in a
+   * setCardState updater, Capital in a separate setLegacyState) is what used to
+   * lose the Capital: the updater rebuilt legacy from a `legacyStateRef` that had
+   * not yet seen the Capital, and React applied that stale copy last.
+   */
+  function placeWorldCapital(
+    territoryId: string,
+    completingPlayer: Player,
+    /**
+     * Card state to build on. `cardState` is a render-scoped value, so a caller
+     * that has ALREADY queued a card update this tick must hand its own newer
+     * copy in — completeMission does exactly that when it flips the next mission
+     * face up, and passing its `cardState` here would undo that flip.
+     */
+    baseCards: ActiveGameCards = cardState,
+  ) {
+    const gameNumber = gameStateRef.current.gameNumber
+    const territoryName = gameStateRef.current.territories[territoryId]?.name ?? territoryId
+
+    // Placing the World Capital unlocks the private missions: shuffle them into
+    // the SAME deck as the standard ones, so the face-up card may be either kind
+    // from here on.
+    const seedPrivate = !legacyStateRef.current?.privateMissionsSeeded
+    const nextCards: ActiveGameCards = seedPrivate
+      ? { ...baseCards, missionDeck: seedPrivateMissions(
+          baseCards.missionDeck ?? [],
+          legacyStateRef.current?.destroyedMissionIds ?? [],
+          `${gameNumber}:${territoryId}`,
+        ) }
+      : baseCards
+    if (seedPrivate) setCardState(nextCards)
+
+    const replaced = worldCapitalReplacedCities(
+      legacyStateRef.current?.stickers, legacyStateRef.current?.destroyedCities,
+      territoryId, completingPlayer.id, gameNumber)
+    const replacedNames = replaced.replacedNames
+    const stamp = new Date().toISOString()
+    const log = [{ gameNumber, timestamp: stamp,
+      entry: `${completingPlayer.name} placed the World Capital at ${territoryName}` }]
+    if (replacedNames.length > 0) {
+      log.push({ gameNumber, timestamp: stamp,
+        entry: `The World Capital covers ${replacedNames.join(' and ')} — that city is gone` })
+    }
+    setLegacyState(prev => {
+      const next: LegacyState = {
+        ...prev,
+        privateMissionsSeeded: true,
+        worldCapitalTerritoryId: territoryId,
+        activeGameCards: nextCards,
+        destroyedCities: [...(prev.destroyedCities ?? []), ...replaced.replaced],
+        historyLog: [...prev.historyLog, ...log],
+      }
+      legacyStateRef.current = next
+      saveLegacyState(next).catch(() => {})
+      return next
+    })
+
+    // The board reads cities off gameState, so drop the covered ones there too —
+    // otherwise the old city keeps paying population until the next game rebuild.
+    const covered = new Set(replaced.replaced.map(r => r.cityId))
+    if (covered.size > 0) {
+      const t = gameStateRef.current.territories[territoryId]
+      if (t) {
+        const patched = {
+          ...t,
+          cities: t.cities.map(c => covered.has(c.id)
+            ? { ...c, isDestroyed: true, destroyedInGame: gameNumber }
+            : c),
+        }
+        const territories = { ...gameStateRef.current.territories, [territoryId]: patched }
+        gameStateRef.current = { ...gameStateRef.current, territories }
+        setGameState(prev => ({ ...prev, territories: { ...prev.territories, [territoryId]: patched } }))
+      }
+    }
+
+    showWeaknessNotice(
+      replacedNames.length > 0
+        ? `⌃ The World Capital rises at ${territoryName}, burying ${replacedNames.join(' and ')}`
+        : `⌃ The World Capital rises at ${territoryName}`)
+
+    setShowWorldCapitalModal(false)
+    setWorldCapitalCompletingId(null)
+  }
+
+  /** Lead faction picks the starting face-up mission; the rest stay in the deck. */
+  function handleLeadMissionPick(missionId: string) {
+    const deck = (cardState.missionDeck ?? []).filter(id => id !== missionId)
+    const next: ActiveGameCards = { ...cardState, missionDeck: deck, currentMissionId: missionId }
+    setCardState(next)
+    setLegacyState(prev => {
+      const newLegacy: LegacyState = { ...prev, activeGameCards: next }
+      legacyStateRef.current = newLegacy
+      saveLegacyState(newLegacy).catch(() => {})
+      return newLegacy
+    })
+    setLeadMissionPick(null)
+  }
+
   // ── Territory card award: queue a sideboard draw for the player ──────────
-  function awardTerritoryCard(playerId: string) {
+  /** Returns false when the draw was declined in favour of a mission. */
+  function awardTerritoryCard(playerId: string): boolean {
+    // World Capital mission: if it is face-up and this player could take a 4+
+    // coin card, they FORGO the draw and complete the mission instead — the
+    // red stars and the World Capital replace the card. Because no card is
+    // drawn, the normal "drawing forfeits your mission" rule is satisfied
+    // rather than bypassed.
+    const richTerritoryIds = cardState.currentMissionId === 'mc-world-capital'
+      ? richCardTerritoryIds(playerId)
+      : []
+    if (richTerritoryIds.length > 0
+        && playerId === gameStateRef.current.players[gameStateRef.current.currentPlayerIndex]?.id) {
+      console.log(`[CardAward] World Capital — ${playerId} forgoes the draw to claim the mission`
+        + ` (Capital goes to ${richTerritoryIds.join(' / ')})`)
+      setTurn({ eligibleForRichCard: true, richCardTerritoryIds: richTerritoryIds })
+      const name = gameStateRef.current.players.find(p => p.id === playerId)?.name ?? 'Player'
+      showWeaknessNotice(`⌃ ${name} could claim a 4+ coin card — forgoing the draw to take the World Capital instead`)
+      return false
+    }
+    // Any other mission already earned: same deal. The player is not offered the
+    // choice between a card and the mission — the mission is worth more, so the
+    // card is never queued and the red star is the reward. (A mission earned
+    // LATER in the turn is caught when the attack phase ends; see
+    // dropCardDrawForMission.)
+    if (playerId === gameStateRef.current.players[gameStateRef.current.currentPlayerIndex]?.id
+        && missionEarnedBy(playerId)) {
+      const name = gameStateRef.current.players.find(p => p.id === playerId)?.name ?? 'Player'
+      const md = CARD_LOOKUP.get(cardState.currentMissionId ?? '') as import('@/types/card').MissionCard | undefined
+      console.log(`[CardAward] Mission already earned by ${playerId} — no card queued`)
+      showWeaknessNotice(
+        `🎯 ${name} completed ${md?.name ?? 'the mission'} — no card this turn; the red star is awarded as the turn ends`)
+      return false
+    }
     console.log(`[CardAward] awardTerritoryCard — queuing draw for ${playerId}`)
     setPendingCardDraws(prev => [...prev, playerId])
+    return true
   }
 
   // ── Called when player selects a card from the sideboard modal ────────────
@@ -2096,72 +3041,79 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
   // slides into spot 1 shows an EVEN coin value. Draws the top event card, shows
   // it, and applies its effect. (The interactive milestone events are resolved by
   // the EventCardDisplay's onDismiss handler.)
-  function triggerEventCard() {
-    setCardState(prev => {
-      let deck = [...prev.eventDeck]
-      let discard = [...prev.eventDiscard]
-      if (deck.length === 0) {
-        deck = [...discard].sort(() => Math.random() - 0.5)
-        discard = []
-      }
-      if (deck.length === 0) return prev  // no events left to trigger
-      const cardId = deck.shift()!
-      const evCard = getEventCard(cardId)
-      if (evCard && !evCard.removeAfterUse) discard = [...discard, cardId]
-      setCurrentEventCardId(cardId)
-      setShowEventCard(true)
+  function triggerEventCard(
+    /** The caller has usually just committed a card change (the draw that fired
+     *  this event); it must pass that copy, because `cardState` still holds the
+     *  pre-draw render value. */
+    baseCards: ActiveGameCards = cardState,
+  ) {
+    let deck = [...baseCards.eventDeck]
+    let discard = [...baseCards.eventDiscard]
+    if (deck.length === 0) {
+      // Properly shuffled — a random comparator barely moves the discard pile,
+      // so the events would come back round in nearly the order they went in.
+      deck = shuffle(discard)
+      discard = []
+    }
+    if (deck.length === 0) return  // no events left to trigger
+    const cardId = deck.shift()!
+    const evCard = getEventCard(cardId)
+    if (evCard && !evCard.removeAfterUse) discard = [...discard, cardId]
+    setCurrentEventCardId(cardId)
+    setShowEventCard(true)
 
-      const effect = EVENT_EFFECTS[cardId]
-      if (effect) {
-        // Round-scoped active effects
-        const nextEffects = new Set(activeEffectsRef.current)
-        if (effect.kind === 'ceasefire') nextEffects.add('ceasefire')
-        if (effect.kind === 'ammunition-shortage') nextEffects.add('ammunition-shortage')
-        if (effect.kind === 'nuclear-fallout-round') nextEffects.add('nuclear-fallout-round')
-        if (effect.kind === 'forced-march') { nextEffects.add('forced-march'); setFortifyMovesLeft(2) }
-        activeEffectsRef.current = nextEffects
-        setActiveEffects(nextEffects)
-        // Immediate troop effects
-        if (effect.kind === 'population-boom') setTroopsToPlace(t => t + effect.bonusTroops)
-        // Resistance: the player with the FEWEST territories immediately places bonus troops
-        if (effect.kind === 'resistance') {
-          const state = gameStateRef.current
-          const counts = state.players
-            .filter(p => !p.isEliminated)
-            .map(p => ({ p, count: Object.values(state.territories).filter(t => t.occupyingPlayerId === p.id).length }))
-          if (counts.length > 0) {
-            const min = Math.min(...counts.map(c => c.count))
-            const target = counts.find(c => c.count === min)!.p
-            resistancePlacementRef.current = { playerId: target.id, troopsLeft: effect.troops }
-            setResistancePlacement({ playerId: target.id, troopsLeft: effect.troops })
-          }
+    const effect = EVENT_EFFECTS[cardId]
+    if (effect) {
+      // Round-scoped active effects
+      const nextEffects = new Set(activeEffectsRef.current)
+      if (effect.kind === 'ceasefire') nextEffects.add('ceasefire')
+      if (effect.kind === 'ammunition-shortage') nextEffects.add('ammunition-shortage')
+      if (effect.kind === 'nuclear-fallout-round') nextEffects.add('nuclear-fallout-round')
+      if (effect.kind === 'forced-march') { nextEffects.add('forced-march'); setFortifyMovesLeft(2) }
+      activeEffectsRef.current = nextEffects
+      setActiveEffects(nextEffects)
+      // Immediate troop effects
+      if (effect.kind === 'population-boom') setTroopsToPlace(t => t + effect.bonusTroops)
+      // Resistance: the player with the FEWEST territories immediately places bonus troops
+      if (effect.kind === 'resistance') {
+        const state = gameStateRef.current
+        const counts = state.players
+          .filter(p => !p.isEliminated)
+          .map(p => ({ p, count: Object.values(state.territories).filter(t => t.occupyingPlayerId === p.id).length }))
+        if (counts.length > 0) {
+          const min = Math.min(...counts.map(c => c.count))
+          const target = counts.find(c => c.count === min)!.p
+          resistancePlacementRef.current = { playerId: target.id, troopsLeft: effect.troops }
+          setResistancePlacement({ playerId: target.id, troopsLeft: effect.troops })
         }
-        if (effect.kind === 'epidemic' || effect.kind === 'famine') {
-          setGameState(gs => {
-            let territories = { ...gs.territories }
-            if (effect.kind === 'epidemic') {
-              for (const [id, t] of Object.entries(territories)) {
-                if (t.scars.some(s => s.type === 'biological')) {
-                  const ownerIsMutant = gs.players.find(p => p.id === t.occupyingPlayerId)?.factionId === 'mutants'
-                  territories = { ...territories, [id]: { ...t, troops: ownerIsMutant ? t.troops + 1 : Math.max(1, t.troops - 1) } }
-                }
-              }
-            } else {
-              for (const [id, t] of Object.entries(territories)) {
-                if (t.continentId === 'africa') territories = { ...territories, [id]: { ...t, troops: Math.max(1, t.troops - 1) } }
+      }
+      if (effect.kind === 'epidemic' || effect.kind === 'famine') {
+        setGameState(gs => {
+          let territories = { ...gs.territories }
+          if (effect.kind === 'epidemic') {
+            for (const [id, t] of Object.entries(territories)) {
+              if (t.scars.some(s => s.type === 'biological')) {
+                const ownerIsMutant = gs.players.find(p => p.id === t.occupyingPlayerId)?.factionId === 'mutants'
+                territories = { ...territories, [id]: { ...t, troops: ownerIsMutant ? t.troops + 1 : Math.max(1, t.troops - 1) } }
               }
             }
-            return { ...gs, territories }
-          })
-        }
+          } else {
+            for (const [id, t] of Object.entries(territories)) {
+              if (t.continentId === 'africa') territories = { ...territories, [id]: { ...t, troops: Math.max(1, t.troops - 1) } }
+            }
+          }
+          return { ...gs, territories }
+        })
       }
+    }
 
-      const next = { ...prev, eventDeck: deck, eventDiscard: discard }
-      const newLegacy = { ...legacyStateRef.current, activeGameCards: next }
+    const next: ActiveGameCards = { ...baseCards, eventDeck: deck, eventDiscard: discard }
+    setCardState(next)
+    setLegacyState(prev => {
+      const newLegacy: LegacyState = { ...prev, activeGameCards: next }
       legacyStateRef.current = newLegacy
-      setLegacyState(newLegacy)
       saveLegacyState(newLegacy).catch(() => {})
-      return next
+      return newLegacy
     })
   }
 
@@ -2172,46 +3124,146 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     return coins % 2 === 0
   }
 
+  /**
+   * Why this player may not take this card, or null when the draw is legal.
+   *
+   * A backstop — the modal greys the same cards out — but every path that can
+   * draw a card has to apply it, so it lives here rather than inline in one
+   * handler. Two rules:
+   *
+   *  - If any face-up card is yours to claim you MUST take a face-up card; the
+   *    resource pile is only for players who control none. A homeland (the
+   *    double-winner unlock) widens "yours to claim" to the whole continent.
+   *  - Purist (alien weakness) caps a hand at 2 coin cards.
+   *
+   * `anyFaceUp` lifts the first rule for Recon, the missile power that opens
+   * every face-up card.
+   */
+  function cardDrawBlockReason(playerId: string, cardId: string, isCoin: boolean, anyFaceUp: boolean): string | null {
+    const homeland = playerHomeland(playerId)
+    const claimable = (tId: string | undefined) =>
+      !!tId && canClaimTerritoryCard(playerId, tId, gameStateRef.current.territories, homeland)
+
+    if (isCoin && (cardState.sideboard ?? []).some(id => claimable(getTerritoryCard(id)?.territoryId))) {
+      return homeland
+        ? '⚠ A face-up card is yours to claim (controlled or in your homeland) — you must take it'
+        : '⚠ You control a face-up territory — you must take that territory card'
+    }
+    if (!isCoin && !anyFaceUp) {
+      const tId = getTerritoryCard(cardId)?.territoryId
+      if (tId && !claimable(tId)) {
+        return homeland
+          ? '⚠ You can only take a face-up card you control or one inside your homeland'
+          : '⚠ You can only take a face-up card whose territory you control'
+      }
+    }
+    if (isCoin) {
+      const faction = gameStateRef.current.players.find(p => p.id === playerId)?.factionId ?? ''
+      if (factionWeaknessOf(faction) === 'wp-purist') {
+        const coinCount = (cardState.playerHands[playerId] ?? []).filter(id => !!getCoinCard(id)).length
+        if (coinCount >= 2) return '⚠ Purist — you cannot hold more than 2 coin cards'
+      }
+    }
+    return null
+  }
+
+  /**
+   * Commit a card-state change together with any Red Star the emptied resource
+   * pile owes, in a SINGLE setLegacyState call — two calls would let the card
+   * update's stale closure overwrite the star.
+   *
+   * Returns the winner's purchased-star count *after* this award. The updater
+   * runs asynchronously, so a caller reading the ref afterwards would miss it
+   * and a 4th star would fail to end the game.
+   */
+  function commitCardsAndStar(newCardState: ActiveGameCards, depletion: ResourceDepletion): number {
+    const winnerId = depletion.kind === 'award' ? depletion.playerId : null
+    const purchasedAfter = winnerId
+      ? ((legacyStateRef.current.purchasedStars ?? {})[winnerId] ?? 0) + 1
+      : 0
+
+    setLegacyState(prev => {
+      let next = { ...prev, activeGameCards: newCardState }
+      if (winnerId) {
+        const purchased = { ...(next.purchasedStars ?? {}), [winnerId]: ((next.purchasedStars ?? {})[winnerId] ?? 0) + 1 }
+        next = { ...next, purchasedStars: purchased }
+      }
+      legacyStateRef.current = next
+      saveLegacyState(next)
+        .then(() => {
+          if (winnerId) console.log('[CoinDeck] Red star + card state saved to Supabase ✓')
+        })
+        .catch(err => console.error('[CoinDeck] Save failed:', err))
+
+      if (winnerId) {
+        console.log('[CoinDeck] purchasedStars after award:', Object.fromEntries(
+          gameStateRef.current.players.map(p => [p.name, (next.purchasedStars ?? {})[p.id] ?? 0])
+        ))
+      }
+      return next
+    })
+    setCardState(() => newCardState)
+    return purchasedAfter
+  }
+
+  /**
+   * Raise the depletion notice and end the game if the star was the winner's
+   * fourth. A no-op for `kind: 'none'`, so every coin-draw path can call it.
+   */
+  function announceDepletion(depletion: ResourceDepletion, purchasedAfter: number) {
+    if (!depletion.depleted) return
+    const state = gameStateRef.current
+    console.log('[CoinDeck] Territory counts at depletion:', Object.fromEntries(
+      state.players.map(p => [
+        p.name,
+        Object.values(state.territories).filter(t => t.occupyingPlayerId === p.id).length,
+      ])
+    ))
+    if (depletion.kind === 'award') {
+      const winner = state.players.find(p => p.id === depletion.playerId)
+      if (!winner) return
+      const hqStars = Object.values(state.territories).filter(
+        t => t.occupyingPlayerId === depletion.playerId && !!t.activeHqPlayerId,
+      ).length
+      const newStarTotal = hqStars + purchasedAfter
+      console.log(`[CoinDeck] ${winner.name} final star total: ${newStarTotal} (hq=${hqStars} purchased=${purchasedAfter})`)
+      if (newStarTotal >= 4) {
+        console.log(`[CoinDeck] 4-star victory triggered for ${winner.name}!`)
+        setWinnerPlayerId(winner.id)
+        setWinCondition('mission')
+        setUnlockOptions(pickUnlocks(state.gameNumber))
+        setGameState(prev => ({ ...prev, phase: 'game-over', winnerId: winner.id }))
+        setTimeout(() => setShowWinScreen(true), 300)
+      }
+      setCoinDeckStarWinner({ kind: 'award', name: winner.name, count: depletion.count })
+    } else if (depletion.kind === 'tie') {
+      // Tied for most territories: NOBODY takes the star. Awarding it to one of
+      // them would be decided by map data order, not by play — and could
+      // silently end the game on someone's 4th star.
+      const names = depletion.playerIds.map(id => state.players.find(p => p.id === id)?.name ?? id)
+      console.log(`[CoinDeck] Tie at ${depletion.count} territories (${names.join(', ')}) — no star awarded`)
+      setCoinDeckStarWinner({ kind: 'tie', names, count: depletion.count })
+    }
+  }
+
   function handleCardDrawSelect(cardId: string, isCoin: boolean) {
     const playerId = pendingCardDraws[0]
     if (!playerId) return
 
     console.log(`[CardAward] handleCardDrawSelect — player=${playerId} card=${cardId} isCoin=${isCoin}`)
 
-    // Draw rules (backstop — the modal enforces these too): if you control the
-    // territory of a face-up card you MUST take a face-up card you control;
-    // the coin pile is only for players controlling none. Recon (missile
-    // power) is the one exception — it opens every face-up card.
-    const controlsFaceUp = (cardState.sideboard ?? []).some(id => {
-      const tId = getTerritoryCard(id)?.territoryId
-      return tId && gameStateRef.current.territories[tId]?.occupyingPlayerId === playerId
-    })
-    if (isCoin && controlsFaceUp) {
-      showWeaknessNotice('⚠ You control a face-up territory — you must take that territory card')
+    // Recon (missile power) opens every face-up card for this draw.
+    const blocked = cardDrawBlockReason(playerId, cardId, isCoin, reconDrawActive)
+    if (blocked) {
+      showWeaknessNotice(blocked)
       return
     }
-    if (!isCoin && !reconDrawActive) {
-      const tId = getTerritoryCard(cardId)?.territoryId
-      if (tId && gameStateRef.current.territories[tId]?.occupyingPlayerId !== playerId) {
-        showWeaknessNotice('⚠ You can only take a face-up card whose territory you control')
-        return
-      }
-    }
 
-    // Purist weakness power: hard cap of 2 coin cards in hand
-    if (isCoin) {
-      const drawFaction = gameStateRef.current.players.find(p => p.id === playerId)?.factionId ?? ''
-      if (factionWeaknessOf(drawFaction) === 'wp-purist') {
-        const coinCount = (cardState.playerHands[playerId] ?? []).filter(id => !!getCoinCard(id)).length
-        if (coinCount >= 2) {
-          showWeaknessNotice('⚠ Purist — you cannot hold more than 2 coin cards')
-          return
-        }
-      }
-    }
-
-    // Drawing a card forfeits the shared mission for this turn
-    drewCardPlayerIdsRef.current.add(playerId)
+    // Drawing a card forfeits the shared mission for this turn — but only the
+    // card you collect for conquering. A Mysterious Island draw is a separate
+    // grant from the event, resolved the moment it fires rather than after
+    // fortifying, so it leaves the mission claimable.
+    if (!consumeEventDrawCredit(playerId)) drewCardPlayerIdsRef.current.add(playerId)
 
     // ── 1. Compute new card state synchronously from current snapshot ──────
     const prevCards = cardState
@@ -2231,74 +3283,27 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         sideboard = [newSpot1Id, ...sideboard]
       }
     }
-    const newCardState = { ...prevCards, sideboard, territoryDeck: deck, resourceDeck, playerHands }
+    // ── 2. Detect depletion and resolve the star ───────────────────────────
+    // Coins turned in go back into the pile, so it can empty more than once in
+    // a game — the star is claimed on the FIRST emptying only, guarded by the
+    // flag carried on the card state.
+    const alreadyResolved = prevCards.resourceStarAwarded ?? false
+    const depletion = resolveResourceDepletion(isCoin, resourceDeck, alreadyResolved, gameStateRef.current.territories)
+    console.log(`[CoinDeck] isCoin=${isCoin} deckAfter=${resourceDeck.length} alreadyResolved=${alreadyResolved} outcome=${depletion.kind}`)
 
-    // ── 2. Detect depletion from the updated deck ──────────────────────────
-    const resourceDepleted = isCoin && resourceDeck.length === 0
-    console.log(`[CoinDeck] isCoin=${isCoin} deckAfter=${resourceDeck.length} depleted=${resourceDepleted}`)
-
-    // ── 3. Compute star award if depleted ──────────────────────────────────
-    let starAwardPlayerId: string | null = null
-    let starAwardCount = 0
-    let starAwardPlayer: typeof gameStateRef.current.players[0] | undefined
-    if (resourceDepleted) {
-      const state = gameStateRef.current
-      const ownerCounts = new Map<string, number>()
-      for (const t of Object.values(state.territories)) {
-        if (t.occupyingPlayerId) ownerCounts.set(t.occupyingPlayerId, (ownerCounts.get(t.occupyingPlayerId) ?? 0) + 1)
-      }
-      console.log('[CoinDeck] Territory counts at depletion:', Object.fromEntries(
-        state.players.map(p => [p.name, ownerCounts.get(p.id) ?? 0])
-      ))
-      let topPId = '', topCount = 0
-      for (const [pid, count] of ownerCounts) {
-        if (count > topCount) { topCount = count; topPId = pid }
-      }
-      if (topPId) {
-        starAwardPlayerId = topPId
-        starAwardCount = topCount
-        starAwardPlayer = state.players.find(p => p.id === topPId)
-        console.log(`[CoinDeck] Will award red star to ${starAwardPlayer?.name} (${topCount} territories)`)
-      }
+    const newCardState = {
+      ...prevCards, sideboard, territoryDeck: deck, resourceDeck, playerHands,
+      resourceStarAwarded: alreadyResolved || depletion.depleted,
     }
-    // Post-award purchased count, computed HERE from the pre-award value — the
-    // setLegacyState updater below runs asynchronously, so reading the ref in
-    // step 6 would miss the just-awarded star (a 4th star wouldn't end the game)
-    const starAwardPurchasedAfter = starAwardPlayerId
-      ? ((legacyStateRef.current.purchasedStars ?? {})[starAwardPlayerId] ?? 0) + 1
-      : 0
 
-    // ── 4. Single setLegacyState call — merges card update + star award ────
-    // This is the ONLY call to setLegacyState in this handler, preventing any
-    // stale-closure overwrite of the star by the card state update.
-    setLegacyState(prev => {
-      let next = { ...prev, activeGameCards: newCardState }
-      if (starAwardPlayerId) {
-        const purchased = { ...(next.purchasedStars ?? {}), [starAwardPlayerId]: ((next.purchasedStars ?? {})[starAwardPlayerId] ?? 0) + 1 }
-        next = { ...next, purchasedStars: purchased }
-      }
-      legacyStateRef.current = next
-      saveLegacyState(next)
-        .then(() => {
-          if (starAwardPlayerId) console.log('[CoinDeck] Red star + card state saved to Supabase ✓')
-        })
-        .catch(err => console.error('[CoinDeck] Save failed:', err))
-
-      // Debug: log all player star counts after update
-      if (starAwardPlayerId) {
-        const gs = gameStateRef.current
-        console.log('[CoinDeck] purchasedStars after award:', Object.fromEntries(
-          gs.players.map(p => [p.name, (next.purchasedStars ?? {})[p.id] ?? 0])
-        ))
-      }
-      return next
-    })
-    setCardState(() => newCardState)
+    // ── 3. Commit cards + any star owed, in one write ──────────────────────
+    const starAwardPurchasedAfter = commitCardsAndStar(newCardState, depletion)
 
     // ── Event trigger: even-coin card revealed on spot 1 ───────────────────
-    if (spot1TriggersEvent(newSpot1Id)) triggerEventCard()
+    // Built on newCardState, not `cardState` — the draw above has not rendered yet.
+    if (spot1TriggersEvent(newSpot1Id)) triggerEventCard(newCardState)
 
-    // ── 5. Khan Supply Lines bonus ─────────────────────────────────────────
+    // ── 4. Khan Supply Lines bonus ─────────────────────────────────────────
     const gs = gameStateRef.current
     let troops = troopsRef.current
     if (!isCoin && playerAbility(playerId) === 'khan-card-bonus') {
@@ -2319,24 +3324,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
       ),
     }))
 
-    // ── 6. Post-award effects ──────────────────────────────────────────────
-    if (starAwardPlayerId && starAwardPlayer) {
-      const state = gameStateRef.current
-      const hqStars = Object.values(state.territories).filter(
-        t => t.occupyingPlayerId === starAwardPlayerId && !!t.activeHqPlayerId,
-      ).length
-      const newStarTotal = hqStars + starAwardPurchasedAfter
-      console.log(`[CoinDeck] ${starAwardPlayer.name} final star total: ${newStarTotal} (hq=${hqStars} purchased=${starAwardPurchasedAfter})`)
-      if (newStarTotal >= 4) {
-        console.log(`[CoinDeck] 4-star victory triggered for ${starAwardPlayer.name}!`)
-        setWinnerPlayerId(starAwardPlayerId)
-        setWinCondition('mission')
-        setUnlockOptions(pickUnlocks(state.gameNumber))
-        setGameState(prev => ({ ...prev, phase: 'game-over', winnerId: starAwardPlayerId! }))
-        setTimeout(() => setShowWinScreen(true), 300)
-      }
-      setCoinDeckStarWinner({ name: starAwardPlayer.name, count: starAwardCount })
-    }
+    // ── 5. Post-award effects ──────────────────────────────────────────────
+    announceDepletion(depletion, starAwardPurchasedAfter)
 
     setPendingCardDraws(prev => prev.slice(1))
 
@@ -2359,34 +3348,50 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
   function handleBalkExpansionSelect(cardId: string, isCoin: boolean) {
     const playerId = balkExpansionPending
     if (!playerId) return
+
+    // Same draw rules as a normal card draw. Recon is not offered on this
+    // bonus draw, so face-up cards you don't control stay closed.
+    const blocked = cardDrawBlockReason(playerId, cardId, isCoin, false)
+    if (blocked) {
+      showWeaknessNotice(blocked)
+      return
+    }
+
     setBalkExpansionPending(null)
     // Drawing a card forfeits the shared mission for this turn
     drewCardPlayerIdsRef.current.add(playerId)
 
+    // Computed synchronously from the current snapshot, like handleCardDrawSelect
+    // — the depletion check has to see the deck this draw leaves behind.
+    const prevCards = cardState
+    let sideboard = [...prevCards.sideboard]
+    let deck = [...prevCards.territoryDeck]
+    let resourceDeck = [...(prevCards.resourceDeck ?? prevCards.coinDeck ?? [])]
+    const playerHands = { ...prevCards.playerHands, [playerId]: [...(prevCards.playerHands[playerId] ?? []), cardId] }
+
     let newSpot1Id: string | null = null
-    setCardState(prev => {
-      let sideboard = [...prev.sideboard]
-      let deck = [...prev.territoryDeck]
-      let resourceDeck = [...(prev.resourceDeck ?? prev.coinDeck ?? [])]
-      const playerHands = { ...prev.playerHands, [playerId]: [...(prev.playerHands[playerId] ?? []), cardId] }
-
-      if (isCoin) {
-        resourceDeck = resourceDeck.filter(id => id !== cardId)
-      } else {
-        // Taking a card shifts the row toward spot 4; a fresh card slides into spot 1
-        sideboard = sideboard.filter(id => id !== cardId)
-        if (deck.length > 0) {
-          newSpot1Id = deck.shift()!
-          sideboard = [newSpot1Id, ...sideboard]
-        }
+    if (isCoin) {
+      resourceDeck = resourceDeck.filter(id => id !== cardId)
+    } else {
+      // Taking a card shifts the row toward spot 4; a fresh card slides into spot 1
+      sideboard = sideboard.filter(id => id !== cardId)
+      if (deck.length > 0) {
+        newSpot1Id = deck.shift()!
+        sideboard = [newSpot1Id, ...sideboard]
       }
+    }
 
-      const next = { ...prev, sideboard, territoryDeck: deck, resourceDeck, playerHands }
-      const newLegacy = { ...legacyState, activeGameCards: next }
-      setLegacyState(newLegacy)
-      saveLegacyState(newLegacy).catch(() => {})
-      return next
-    })
+    // This draw can empty the resource pile just like a normal one, so it owes
+    // the same Red Star — same helper, same once-per-game guard.
+    const alreadyResolved = prevCards.resourceStarAwarded ?? false
+    const depletion = resolveResourceDepletion(isCoin, resourceDeck, alreadyResolved, gameStateRef.current.territories)
+    console.log(`[CoinDeck] balkExpansion isCoin=${isCoin} deckAfter=${resourceDeck.length} alreadyResolved=${alreadyResolved} outcome=${depletion.kind}`)
+
+    const newCardState = {
+      ...prevCards, sideboard, territoryDeck: deck, resourceDeck, playerHands,
+      resourceStarAwarded: alreadyResolved || depletion.depleted,
+    }
+    const purchasedAfter = commitCardsAndStar(newCardState, depletion)
 
     setGameState(prev => ({
       ...prev,
@@ -2395,8 +3400,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
       ),
     }))
 
+    announceDepletion(depletion, purchasedAfter)
+
     // Event trigger: even-coin card revealed on spot 1
-    if (spot1TriggersEvent(newSpot1Id)) triggerEventCard()
+    if (spot1TriggersEvent(newSpot1Id)) triggerEventCard(newCardState)
   }
 
   // ── Card trade-in ─────────────────────────────────────────────────────────
@@ -2405,22 +3412,37 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     if (!playerId) return
     playCoin()
     const tradedSet = new Set(cardIds)
-    setCardState(prev => {
-      const playerHands = {
-        ...prev.playerHands,
-        [playerId]: (prev.playerHands[playerId] ?? []).filter(id => !tradedSet.has(id)),
-      }
-      // Territory cards go to the discard pile; coin cards return to the bottom
-      // of the resource deck — spending them stretches out the depletion star
-      const tradedTerritory = cardIds.filter(id => !!getTerritoryCard(id))
-      const tradedCoins = cardIds.filter(id => !getTerritoryCard(id))
-      const territoryDiscard = [...prev.territoryDiscard, ...tradedTerritory]
-      const resourceDeck = [...(prev.resourceDeck ?? prev.coinDeck ?? []), ...tradedCoins]
-      const next = { ...prev, playerHands, territoryDiscard, resourceDeck }
-      const newLegacy = { ...legacyState, activeGameCards: next }
-      setLegacyState(newLegacy)
+
+    // Private missions Advanced Tactics / Advanced Training both trigger on the
+    // act of trading in, so record the totals now — by the time the mission is
+    // claimed at end of turn the cards are long gone from the hand.
+    const resourcesOf = (id: string) => cardCoinValue(legacyStateRef.current?.cardResources, id)
+    const richCount = cardIds.filter(id => !!getTerritoryCard(id) && resourcesOf(id) >= 4).length
+    const resourceTotal = cardIds.reduce((sum, id) => sum + resourcesOf(id), 0)
+    setTurn({
+      richCardsTradedIn: gameStateRef.current.turn.richCardsTradedIn + richCount,
+      resourcesTradedIn: gameStateRef.current.turn.resourcesTradedIn + resourceTotal,
+    })
+    const playerHands = {
+      ...cardState.playerHands,
+      [playerId]: (cardState.playerHands[playerId] ?? []).filter(id => !tradedSet.has(id)),
+    }
+    // Territory cards go to the discard pile; coin cards return to the bottom
+    // of the resource deck — spending them stretches out the depletion star
+    const tradedTerritory = cardIds.filter(id => !!getTerritoryCard(id))
+    const tradedCoins = cardIds.filter(id => !getTerritoryCard(id))
+    const nextCards: ActiveGameCards = {
+      ...cardState,
+      playerHands,
+      territoryDiscard: [...cardState.territoryDiscard, ...tradedTerritory],
+      resourceDeck: [...(cardState.resourceDeck ?? cardState.coinDeck ?? []), ...tradedCoins],
+    }
+    setCardState(nextCards)
+    setLegacyState(prev => {
+      const newLegacy: LegacyState = { ...prev, activeGameCards: nextCards }
+      legacyStateRef.current = newLegacy
       saveLegacyState(newLegacy).catch(() => {})
-      return next
+      return newLegacy
     })
     setGameState(prev => ({
       ...prev,
@@ -2541,13 +3563,89 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
 
   /** Return an event card to the discard pile (used when Die Humans is declined or unusable). */
   function returnEventCardToDiscard(cardId: string) {
-    setCardState(prev => {
-      const next = { ...prev, eventDiscard: [...prev.eventDiscard, cardId] }
-      const newLegacy = { ...legacyStateRef.current, activeGameCards: next }
-      setLegacyState(newLegacy)
+    const next: ActiveGameCards = { ...cardState, eventDiscard: [...cardState.eventDiscard, cardId] }
+    setCardState(next)
+    setLegacyState(prev => {
+      const newLegacy: LegacyState = { ...prev, activeGameCards: next }
+      legacyStateRef.current = newLegacy
       saveLegacyState(newLegacy).catch(() => {})
-      return next
+      return newLegacy
     })
+  }
+
+  /**
+   * Everything an event card does when its display is closed.
+   *
+   * Ten of the event kinds resolve HERE rather than at trigger time, because
+   * they need a target picked or a follow-up modal opened. This used to live
+   * inline in the display's `onDismiss`, which the AI driver never called — it
+   * closed the card with a bare `setShowEventCard(false)`, so on an AI turn
+   * Riot, Fallout, Agent of Chaos, Fortify City, Control the People, the
+   * Mysterious Island draw and the rest simply never happened.
+   *
+   * Reads through the refs so it is correct whether it runs from a click or
+   * from the AI driver's timer.
+   */
+  function resolveEventCardDismiss(cardId: string | null) {
+    setShowEventCard(false)
+    if (!cardId) return
+    const effect = EVENT_EFFECTS[cardId]
+    if (!effect) return
+    const state = gameStateRef.current
+
+    if (effect.kind === 'join-the-cause') setShowJoinTheCause(true)
+    if (effect.kind === 'die-humans') {
+      const alienPlayer = state.players.find(p => p.factionId === 'aliens' && !p.isEliminated)
+      if (alienPlayer && hasRuinableCity()) {
+        setDieHumansPendingCardId(cardId)
+      } else {
+        // No Alien player in the game or no minor city to ruin — the card is
+        // only destroyed if used, so return it to the discard
+        returnEventCardToDiscard(cardId)
+      }
+    }
+    if (effect.kind === 'beam-down') {
+      const alienPlayer = state.players.find(p => p.factionId === 'aliens' && !p.isEliminated)
+      if (alienPlayer && hasBeamDownTarget()) setBeamDownActive(true)
+    }
+    if (effect.kind === 'mysterious-island') {
+      const controllerId = state.territories[ALIEN_ISLAND_TERRITORY_ID]?.occupyingPlayerId
+      const anyCards = (cardState.sideboard?.length ?? 0) > 0 ||
+        ((cardState.resourceDeck ?? cardState.coinDeck ?? []).length > 0)
+      if (controllerId && anyCards) {
+        setPendingCardDraws(prev => [controllerId, ...prev])
+        // Granted by the event, not earned by conquest: it neither forfeits the
+        // mission nor gets cancelled by one.
+        grantEventDrawCredit(controllerId)
+        setEventDrawActive(true)
+      }
+    }
+    if (effect.kind === 'fallout-event') applyFalloutEvent(cardId)
+    if (effect.kind === 'fortify-city') {
+      // The drawer (current player) places 2 troops on one owned territory
+      const drawerId = state.players[state.currentPlayerIndex]?.id ?? null
+      const ownsAny = drawerId && Object.values(state.territories).some(t => t.occupyingPlayerId === drawerId)
+      if (drawerId && ownsAny) {
+        fortifyEventRef.current = drawerId
+        setFortifyEventPlayerId(drawerId)
+      }
+    }
+    if (effect.kind === 'control-the-people') {
+      // The largest-population player chooses their reward
+      const leaderId = largestPopulationPlayerId()
+      if (leaderId) setControlPeopleChoice(leaderId)
+    }
+    if (effect.kind === 'riot') applyRiotEvent()
+    if (effect.kind === 'agent-of-chaos') applyAgentOfChaos()
+    if (effect.kind === 'mutants-evolve') {
+      const mutantPlayer = state.players.find(p => p.factionId === 'mutants' && !p.isEliminated)
+      if (mutantPlayer) {
+        setMutantsEvolvePendingCardId(cardId)
+      } else {
+        // Only destroyed if used — return to the discard when no Mutants are playing
+        returnEventCardToDiscard(cardId)
+      }
+    }
   }
 
   /** Whether the board has a minor city that can still be ruined. */
@@ -2596,13 +3694,27 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
             destroyedByPlayerId: alienPlayer?.id ?? 'aliens',
           }]
         : (prev.destroyedHqs ?? [])
+      // The ruined minor city is DESTROYED, not un-founded. Its sticker stays in
+      // `stickers` — there are only 9 minor city stickers in the campaign and a
+      // ruined one is spent, so the board is down to 8 for good. Deleting it
+      // handed the slot back and let a 10th city be founded over the campaign.
+      const ruined = citiesLostOn(
+        prev.stickers, prev.destroyedCities, territoryId,
+        alienPlayer?.id ?? 'aliens', gameStateRef.current.gameNumber,
+        { minorOnly: true })
       const next: LegacyState = {
         ...prev,
-        // Remove the minor city, any HQ, and any fortification sticker from the territory
-        stickers: prev.stickers.filter(s => !(
-          s.targetId === territoryId &&
-          (s.description === 'city:minor' || s.description.startsWith('HQ:') || s.description.startsWith('fortification:'))
-        )),
+        // The HQ sticker comes off — it is not a limited supply and its loss is
+        // recorded in destroyedHqs. The FORTIFICATION does not: there are only
+        // five in the campaign and a destroyed one is never recycled, so it is
+        // spent down to 0 charges and left in place to keep counting against the
+        // supply. At 0 it protects nothing — every reader tests the charges.
+        stickers: prev.stickers
+          .filter(s => !(s.targetId === territoryId && s.description.startsWith('HQ:')))
+          .map(s => (s.targetId === territoryId && s.description.startsWith('fortification:'))
+            ? { ...s, description: 'fortification:0' }
+            : s),
+        destroyedCities: [...(prev.destroyedCities ?? []), ...ruined.replaced],
         // Remove any fortification scar too
         scars: prev.scars.filter(s => !(s.territoryId === territoryId && s.type === 'fortification')),
         destroyedHqs,
@@ -3078,7 +4190,84 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
   /** Shared mission: at the end of their turn, the current player claims the
    *  face-up mission if they meet it. One mission per turn, and never on a
    *  turn where they drew a card. Returns true when the claim won the game. */
-  function completeSharedMissionIfEarned(playerId: string | undefined): boolean {
+  /**
+   * Star power payout: a faction that permanently owns a private mission may
+   * re-complete it for 1 extra red star, ONCE per game.
+   *
+   * Runs before the face-up mission check and counts as that player's one
+   * mission for the turn — so it carries the same restrictions: no card drawn
+   * this turn, and no second mission afterwards.
+   * Returns true when the claim ended the game.
+   */
+  function claimStarPowerIfEarned(playerId: string | undefined): 'none' | 'claimed' | 'won' {
+    if (!playerId) return 'none'
+    const ls = legacyStateRef.current
+    const player = gameStateRef.current.players.find(p => p.id === playerId)
+    if (!player || player.isEliminated) return 'none'
+
+    const missionId = (ls?.factionStarPowerMissions ?? {})[player.factionId]
+    if (!missionId) return 'none'
+    // One payout per game.
+    if ((ls?.starPowerClaimedGames ?? {})[player.factionId] === gameStateRef.current.gameNumber) return 'none'
+    if (drewCardPlayerIdsRef.current.has(playerId)) return 'none'
+
+    const met = checkMission(
+      missionId, playerId, gameStateRef.current.territories, gameStateRef.current,
+      { conqueredIds: gameStateRef.current.turn.conqueredIds, conqueredViaSeaIds: gameStateRef.current.turn.conqueredViaSeaIds },
+      cardState.resourceDeck?.length ?? 0,
+      {
+        worldCapitalTerritoryId: ls?.worldCapitalTerritoryId ?? null,
+        namedContinents: ls?.namedContinents,
+        continentBonusModifiers: ls?.continentBonusModifiers,
+      },
+    )
+    if (!met) return 'none'
+
+    const missionDef = CARD_LOOKUP.get(missionId) as import('@/types/card').MissionCard | undefined
+    const purchasedAfter = ((ls?.purchasedStars ?? {})[playerId] ?? 0) + 1
+    setLegacyState(prev => {
+      let next: LegacyState = {
+        ...prev,
+        starPowerClaimedGames: {
+          ...(prev.starPowerClaimedGames ?? {}),
+          [player.factionId]: gameStateRef.current.gameNumber,
+        },
+        historyLog: [...prev.historyLog, {
+          gameNumber: gameStateRef.current.gameNumber,
+          entry: `⭐ ${player.name} used the ${missionDef?.name ?? missionId} star power (+1 ★)`,
+          timestamp: new Date().toISOString(),
+        }],
+      }
+      next = awardRedStars(next, playerId, 1, player.name, gameStateRef.current.gameNumber)
+      legacyStateRef.current = next
+      saveLegacyState(next).catch(() => {})
+      return next
+    })
+    showWeaknessNotice(`⭐ ${player.name} used their ${missionDef?.name ?? 'star power'} — +1 red star (once per game)`)
+
+    const hqStars = Object.values(gameStateRef.current.territories).filter(
+      t => t.occupyingPlayerId === playerId && !!t.activeHqPlayerId,
+    ).length
+    if (hqStars + purchasedAfter >= 4) {
+      setWinnerPlayerId(playerId)
+      setWinCondition('mission')
+      setUnlockOptions(pickUnlocks(gameStateRef.current.gameNumber))
+      setGameState(prev => ({ ...prev, phase: 'game-over', winnerId: playerId }))
+      setTimeout(() => setShowWinScreen(true), 300)
+      return 'won'
+    }
+    return 'claimed'
+  }
+
+  /**
+   * Has this player earned the face-up mission?
+   *
+   * Everything `completeSharedMissionIfEarned` requires EXCEPT the card-draw
+   * gate — because this is what decides whether a card is offered at all. A
+   * player who has earned the mission is never given the choice: the draw is
+   * dropped and the red star is the reward.
+   */
+  function missionEarnedBy(playerId: string | undefined): boolean {
     if (!playerId) return false
     const ls = legacyStateRef.current
     if (!ls?.doubleWinnerMilestoneTriggered) return false
@@ -3087,12 +4276,67 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     const player = gameStateRef.current.players.find(p => p.id === playerId)
     if (!player || player.isEliminated) return false
 
-    const completed = checkMission(
+    // A faction may hold only ONE star power. If they already have one they
+    // cannot claim a private mission — it stays face-up for someone else,
+    // rather than being destroyed for no benefit. This does NOT apply to the
+    // Aliens/Mutants, who never take the power at all and instead recycle the
+    // card back into the deck (see completeSharedMissionIfEarned).
+    const heldStarPower = (ls.factionStarPowerMissions ?? {})[player.factionId]
+    if (isPrivateMission(missionId) && canClaimStarPower(player.factionId)
+        && heldStarPower && heldStarPower !== missionId) {
+      return false
+    }
+
+    return checkMission(
       missionId, playerId, gameStateRef.current.territories, gameStateRef.current,
       { conqueredIds: gameStateRef.current.turn.conqueredIds, conqueredViaSeaIds: gameStateRef.current.turn.conqueredViaSeaIds },
       cardState.resourceDeck?.length ?? 0,
+      {
+        worldCapitalTerritoryId: ls.worldCapitalTerritoryId ?? null,
+        namedContinents: ls.namedContinents,
+        continentBonusModifiers: ls.continentBonusModifiers,
+      },
     )
-    if (!completed) return false
+  }
+
+  /**
+   * Drop a queued card draw for a player who has earned the mission, and say so.
+   *
+   * A mission and a card are mutually exclusive, and the mission is worth more,
+   * so the choice is not offered — the card simply never arrives. Called when
+   * the attack phase ends, which is the last moment the board can change and
+   * therefore the first moment the answer is final.
+   */
+  function dropCardDrawForMission(playerId: string | undefined): void {
+    if (!playerId) return
+    // Event draws are not the turn's card and are never taken away — only the
+    // ones earned by conquest are on the table here.
+    const queued = pendingCardDrawsRef.current.filter(id => id === playerId).length
+    let droppable = queued - (eventDrawCreditsRef.current.get(playerId) ?? 0)
+    if (droppable <= 0) return
+    if (!missionEarnedBy(playerId)) return
+    const name = gameStateRef.current.players.find(p => p.id === playerId)?.name ?? 'Player'
+    const missionDef = CARD_LOOKUP.get(cardState.currentMissionId ?? '') as import('@/types/card').MissionCard | undefined
+    console.log(`[CardAward] Mission earned by ${playerId} — dropping ${droppable} queued card draw(s)`)
+    setPendingCardDraws(prev => prev.filter(id => {
+      if (id === playerId && droppable > 0) { droppable--; return false }
+      return true
+    }))
+    showWeaknessNotice(
+      `🎯 ${name} completed ${missionDef?.name ?? 'the mission'} — no card this turn; the red star is awarded as the turn ends`)
+  }
+
+  function completeSharedMissionIfEarned(playerId: string | undefined): boolean {
+    if (!playerId) return false
+    const ls = legacyStateRef.current
+    const missionId = cardState.currentMissionId
+    const player = gameStateRef.current.players.find(p => p.id === playerId)
+    if (!missionId || !player) return false
+    if (!missionEarnedBy(playerId)) return false
+    // Drawing a card forfeits the turn's mission — no exceptions. The World
+    // Capital mission works WITH this rule rather than around it: qualifying
+    // consumes the card draw itself (see awardTerritoryCard), so the player
+    // never draws and this guard never trips for them.
     if (drewCardPlayerIdsRef.current.has(playerId)) {
       showWeaknessNotice('🎯 Mission conditions met — but you drew a card this turn, so the mission cannot be claimed')
       return false
@@ -3101,9 +4345,18 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     const missionDef = CARD_LOOKUP.get(missionId) as import('@/types/card').MissionCard | undefined
     const stars = missionDef?.stars ?? 1
 
+    // The Aliens and Mutants already own a built-in star power, so they can
+    // never take one from a private mission. They still earn its red star, but
+    // the card returns to the deck instead of being destroyed — another faction
+    // can still claim the power later.
+    const claimsStarPower = isPrivateMission(missionId) && canClaimStarPower(player.factionId)
+    const recycles = isPrivateMission(missionId) && !claimsStarPower
+
     // Discard the completed mission and flip the next one face up
     const deck = [...(cardState.missionDeck ?? [])]
     const nextMissionId = deck.shift() ?? null
+    // Recycled private missions go back to the BOTTOM of the deck.
+    if (recycles) deck.push(missionId)
     const newCards: ActiveGameCards = { ...cardState, missionDeck: deck, currentMissionId: nextMissionId }
     setCardState(newCards)
 
@@ -3118,20 +4371,56 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
           timestamp: new Date().toISOString(),
         }],
       }
-      if (missionDef?.singleUse) {
+      // A recycled private mission must NOT be destroyed — it went back into
+      // the deck above and stays claimable by another faction.
+      if (missionDef?.singleUse && !recycles) {
         next.destroyedMissionIds = [...(next.destroyedMissionIds ?? []), missionId]
+      }
+      // Private mission → the faction keeps it permanently as a STAR POWER.
+      // The card is destroyed above, so no other faction can ever claim it.
+      if (claimsStarPower) {
+        next.factionStarPowerMissions = {
+          ...(next.factionStarPowerMissions ?? {}),
+          [player.factionId]: missionId,
+        }
+        next.historyLog = [...next.historyLog, {
+          gameNumber: gameStateRef.current.gameNumber,
+          entry: `⭐ ${player.name} (${player.factionId.replace(/-/g, ' ')}) claimed the ${missionDef?.name ?? missionId} star power — that mission is destroyed`,
+          timestamp: new Date().toISOString(),
+        }]
       }
       // awardRedStars adds the stars to this game's totals (purchasedStars)
       next = awardRedStars(next, playerId, stars, player.name, gameStateRef.current.gameNumber)
       saveLegacyState(next).catch(() => {})
       return next
     })
-    showWeaknessNotice(`🎯 ${player.name} completed the mission — +${stars} red star${stars !== 1 ? 's' : ''}! A new mission is revealed.`)
+    showWeaknessNotice(
+      claimsStarPower
+        ? `⭐ ${player.name} completed ${missionDef?.name ?? 'a private mission'} — +${stars} red star and the STAR POWER is theirs permanently!`
+        : recycles
+        ? `🎯 ${player.name} completed ${missionDef?.name ?? 'a private mission'} — +${stars} red star. ${player.factionId === 'mutants' ? 'The Mutants' : 'The Aliens'} already have a star power, so the mission returns to the deck.`
+        : `🎯 ${player.name} completed the mission — +${stars} red star${stars !== 1 ? 's' : ''}! A new mission is revealed.`)
 
     // Special mission side effects
     if (missionId === 'mc-world-capital') {
-      setWorldCapitalCompletingId(playerId)
-      setShowWorldCapitalModal(true)
+      // The Capital goes on the territory of the 4+ coin card that earned it, so
+      // the destination is already decided — the modal only announces it. More
+      // than one candidate means several claimable face-up cards were worth 4+,
+      // and then the player chooses between them. A save from before this rule
+      // has no candidates recorded; those fall back to a free pick.
+      const candidates = gameStateRef.current.turn.richCardTerritoryIds ?? []
+      if (player.isAI) {
+        // No modal for an AI — it would sit unanswered and stall the turn. With
+        // no candidates (pre-rule save) fall back to its biggest holding.
+        const target = candidates[0] ?? Object.values(gameStateRef.current.territories)
+          .filter(t => t.occupyingPlayerId === playerId)
+          .sort((a, b) => b.troops - a.troops)[0]?.id
+        if (target) placeWorldCapital(target, player, newCards)
+      } else {
+        setWorldCapitalCandidates(candidates)
+        setWorldCapitalCompletingId(playerId)
+        setShowWorldCapitalModal(true)
+      }
     }
     if (missionId === 'mc-7-islands') {
       setSeaLineMissionPlayerId(playerId)
@@ -3192,6 +4481,15 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         const currentPId = e.byPlayerId
         const state = gameStateRef.current
         const eliminated = state.players.filter(p => e.playerIds.includes(p.id))
+        // Forced Occupation private mission: did anyone knocked out here hold a
+        // card worth 3+ resources? Read from the effect, since their hand has
+        // already been transferred to the capturer.
+        {
+          const res = legacyStateRef.current?.cardResources ?? {}
+          if (e.capturedCardIds.some(id => (res[id] ?? 0) >= 3)) {
+            setTurn({ knockedOutRichPlayer: true })
+          }
+        }
         // Eliminate-trigger scar card held by the conqueror
         const elimCard = heldCards.find(
           c => c.playerId === currentPId && getScarCard(c.cardId)?.trigger === 'eliminate',
@@ -3232,6 +4530,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     const srcId = attackSrcRef.current
     const tgtId = attackTgtRef.current
     if (!srcId || !tgtId) return
+
+    // Troops have now fought — an earlier Mobile Forces fortify is locked in.
+    sealFortifyUndo()
 
     // Mark the defender territory as having had combat this turn — blocks bunker/ammo shortage scar placement
     {
@@ -3283,17 +4584,25 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     const fortUses = Math.max(1, r.roundsFought ?? 1)
 
     // Fortification scar: track uses, remove at 10
-    const fortIdx = legacyStateRef.current?.scars.findIndex(s => s.territoryId === tgtId && s.type === 'fortification') ?? -1
-    if (fortIdx >= 0) {
-      const ls = legacyStateRef.current!
-      const scar = ls.scars[fortIdx]
-      const newCount = (scar.attackCount ?? 0) + fortUses
-      const newScars = newCount >= 10
-        ? ls.scars.filter((_, i) => i !== fortIdx)
-        : ls.scars.map((s, i) => i === fortIdx ? { ...s, attackCount: newCount } : s)
-      const newLs = { ...ls, scars: newScars }
-      setLegacyState(newLs)
-      saveLegacyState(newLs).catch(() => {})
+    // Functional, not a replacement built from the ref: one combat resolution
+    // runs several effects in the same tick and more than one of them writes
+    // legacy state. A `setLegacyState(newLs)` here would land last and wipe
+    // whatever a sibling had just set — how the World Capital was lost.
+    if ((legacyStateRef.current?.scars ?? []).some(s => s.territoryId === tgtId && s.type === 'fortification')) {
+      setLegacyState(prev => {
+        const idx = prev.scars.findIndex(s => s.territoryId === tgtId && s.type === 'fortification')
+        if (idx < 0) return prev
+        const newCount = (prev.scars[idx].attackCount ?? 0) + fortUses
+        const next: LegacyState = {
+          ...prev,
+          scars: newCount >= 10
+            ? prev.scars.filter((_, i) => i !== idx)
+            : prev.scars.map((s, i) => i === idx ? { ...s, attackCount: newCount } : s),
+        }
+        legacyStateRef.current = next
+        saveLegacyState(next).catch(() => {})
+        return next
+      })
     }
 
     setShowCombat(false)
@@ -3303,7 +4612,13 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     attackTgtRef.current = null
 
     // Fortification sticker: deplete one charge per combat roll fought;
-    // the fortification is destroyed when all 10 charges are spent
+    // the fortification stops protecting once all 10 charges are spent.
+    //
+    // The spent sticker STAYS at `fortification:0`. There are only five in the
+    // campaign and a worn-out one is not recycled, so it has to keep counting
+    // against the supply — deleting it handed the slot back. Every reader
+    // ("is this fortified?", the map ring, the defender die bonus, the entry
+    // cost) already tests the remaining charges, so a spent one protects nothing.
     if (tgtId) {
       setLegacyState(prev => {
         const newStickers = prev.stickers.map(s => {
@@ -3312,7 +4627,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
             return { ...s, description: `fortification:${Math.max(0, charges - fortUses)}` }
           }
           return s
-        }).filter(s => !(s.targetId === tgtId && s.description === 'fortification:0'))
+        })
         if (JSON.stringify(newStickers) === JSON.stringify(prev.stickers)) return prev
         const next = { ...prev, stickers: newStickers }
         saveLegacyState(next).catch(() => {})
@@ -3402,6 +4717,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     const srcId = advanceSrcRef.current
     const tgtId = advanceTgtRef.current
     if (!srcId || !tgtId) return
+    // Troops have moved on — an earlier Mobile Forces fortify is locked in.
+    sealFortifyUndo()
     playVictory()
     // Animate the troop bubble moving into the new territory
     showAttackFlight(srcId, tgtId, 'advance', String(troops))
@@ -3413,12 +4730,15 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
       const tgt = prev.territories[tgtId]
       // Unoccupied expansion — the ONLY path where city/fortification entry losses apply
       const cost = entryCostBreakdown(tgtId, tgt, factionId2, true)
-      let finalTroops = Math.max(1, troops - cost.total)
-      if (cost.falloutHalf) {
-        finalTroops = Math.max(1, Math.ceil(finalTroops / 2))
+      // The World Capital's −5 entry cost is already folded into cost.total,
+      // like a city. A 0 here means the cost could not be paid, which the
+      // Advance panel and the AI both refuse upstream — leave the board alone
+      // rather than rounding the survivors up and refunding the cost.
+      const finalTroops = troopsAfterEntry(troops, cost)
+      if (finalTroops < 1) {
+        console.warn(`[Advance] ${troops} troops cannot pay the ${cost.total}-troop entry at ${tgtId} — move refused`)
+        return prev
       }
-      // The World Capital's −5 entry cost is already folded into cost.total
-      // (deducted from the arriving troops above), like a city.
       territories[tgtId] = { ...territories[tgtId], occupyingPlayerId: currentPlayerId, troops: finalTroops }
       territories[srcId] = { ...territories[srcId], troops: Math.max(1, territories[srcId].troops - troops) }
       return { ...prev, territories }
@@ -3428,6 +4748,15 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     // Expansion triggers on the 4th expansion of the turn, conquest or not
     const newCount = gameStateRef.current.turn.captureCount + 1
     setTurn({ captureCount: newCount })
+
+    // Resourceful comeback power: remember that this turn's expansion landed on
+    // a city territory. This path is the ONLY way to take an unoccupied
+    // territory, and it deliberately does not set `turn.captured` — so no card
+    // is awarded here; the end-of-turn check grants one.
+    const advTgt = gameStateRef.current.territories[tgtId]
+    if ((advTgt?.cities ?? []).some(c => !c.isDestroyed)) {
+      setTurn({ expandedIntoCity: true })
+    }
     if (newCount === 4 && currentPlayerId && playerAbility(currentPlayerId) === 'balk-expansion-card') {
       console.log(`[CardAward] Balkania 4th expansion (uncontested advance) — showing immediate card pick for ${currentPlayerId}`)
       setBalkExpansionPending(currentPlayerId)
@@ -3457,9 +4786,16 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     const moverFaction = gameState.players[gameState.currentPlayerIndex]?.factionId
     const intoFallout = dstId === legacyState.falloutZoneTerritoryId && moverFaction !== 'mutants'
     const arriving = intoFallout ? Math.max(1, Math.ceil(troops / 2)) : troops
+    // A Mobile Forces move made before the fortify phase is FINAL the moment it
+    // is confirmed — the player goes on to attack and expand with those troops,
+    // so it is a committed decision, not something to walk back. Recording no
+    // undo leaves the button greyed out. The normal end-of-turn fortify still
+    // keeps its undo as a misclick safety net; nothing can follow it.
+    // Read before dispatching, so this is the phase the move was made in.
+    const earlyMobileForcesMove = gameStateRef.current.phase !== 'fortify'
     dispatch({ type: 'CONFIRM_FORTIFY', srcId, dstId, troopsRemoved: troops, troopsArriving: arriving })
     // Undo restores only survivors — troops lost to radiation stay lost
-    setLastFortify({ srcId, dstId, troops: arriving })
+    setLastFortify(earlyMobileForcesMove ? null : { srcId, dstId, troops: arriving })
     setShowFortify(false)
     setFortifySrcId(null)
     setFortifyDstId(null)
@@ -3469,6 +4805,19 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
       return remaining
     })
     fortifySrcRef.current = null
+  }
+
+  /**
+   * Seal the last fortification so it can no longer be reversed.
+   *
+   * A Mobile Forces move never records an undo in the first place, so in
+   * practice this only backstops the normal end-of-turn fortify: the undo dies
+   * the moment ANYTHING else happens, whatever route got us there. Keeping the
+   * guard means a future change that allows action after a fortify cannot
+   * silently reopen the rewind.
+   */
+  function sealFortifyUndo() {
+    setLastFortify(null)
   }
 
   function handleUndoFortify() {
@@ -3492,11 +4841,16 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     dispatch({ type: 'UNDO_PLACEMENT', territoryId: lastId })
     setTroopsToPlace(prev => prev + 1)
     setPlacementHistory(prev => prev.slice(0, -1))
+    bumpDraftPlaced(lastId, -1)
   }
 
   // ── Phase advancement ─────────────────────────────────────────────────────
   function handleNextPhase() {
     const phase = gameState.phase
+    // Leaving a phase seals any fortification made during it. A normal fortify
+    // happens in the fortify phase itself and is unaffected; only a Mobile
+    // Forces move made earlier in the turn is closed off here.
+    sealFortifyUndo()
     if (phase === 'reinforce') {
       setPlacementHistory([])
       dispatch({ type: 'END_REINFORCE_PHASE' })
@@ -3504,32 +4858,98 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
       // Clear attack state
       setAttackSrcId(null); attackSrcRef.current = null
       console.log(`[CardAward] Attack phase ended — capturedThisTurn=${gameStateRef.current.turn.captured} pendingCardDraws=${JSON.stringify(pendingCardDraws)}`)
+
+      // ── Resourceful comeback power ────────────────────────────────────────
+      // Expanding into an unoccupied city territory earns the same end-of-turn
+      // card a conquest would. NOT an extra card: a player who conquered has
+      // already been awarded one on their first capture, so this only fires
+      // when nothing was conquered this turn.
+      //
+      // Awarded HERE, leaving the attack phase, and not at the fortify exit
+      // where it used to be. Queuing a draw as the turn ends stranded it: the
+      // draw modal only renders during fortify, so by the time React applied
+      // the state the phase had already advanced to the next player and the
+      // card was silently never drawn — while the queued entry sat there
+      // blocking the AI driver, which stands down for a human-owned draw.
+      // Queuing it now puts the modal up during fortify, and the existing
+      // "Pick a Card First" guard stops the turn ending until it is taken —
+      // exactly how a conquest card already behaves.
+      const attackEndP = gameState.players[gameState.currentPlayerIndex]
+      const attackTurn = gameStateRef.current.turn
+      if (attackEndP
+        && (legacyState.comebackPowers ?? {})[attackEndP.factionId] === 'resourceful'
+        && attackTurn.expandedIntoCity
+        && !attackTurn.captured) {
+        console.log(`[CardAward] Resourceful — expanded into a city without conquering; awarding a card to ${attackEndP.id}`)
+        // Only announce the card if one was actually queued — a mission earned
+        // this turn declines it, and says so itself.
+        if (awardTerritoryCard(attackEndP.id)) {
+          showWeaknessNotice(`📦 Resourceful — ${attackEndP.name} expanded into a city and claims a card`)
+        }
+      }
+
+      // The board is final once attacking stops, so this is the first moment the
+      // mission answer cannot change — and the last before the draw modal would
+      // appear in fortify. A player who has earned the mission never sees it.
+      dropCardDrawForMission(attackEndP?.id)
+
       dispatch({ type: 'END_ATTACK_PHASE' })
     } else if (phase === 'fortify') {
-      // Shared mission — claimed once, at the end of the turn, BEFORE the
-      // per-turn conquest lists reset. If the claim wins the game, stop here.
-      if (completeSharedMissionIfEarned(gameState.players[gameState.currentPlayerIndex]?.id)) return
+      // Re-entrancy guard. `phase` comes from this render's closure, so a call
+      // queued on a timer before the turn ended still reads 'fortify' and would
+      // end the NEXT player's turn as well — skipping them. END_TURN goes
+      // through dispatch, which mirrors gameStateRef synchronously, so the live
+      // phase is the reliable check that this turn hasn't already ended.
+      if (gameStateRef.current.phase !== 'fortify') return
 
-      // Advance to next player (skip permanently eliminated/forfeited players).
-      // Pure logic lives in computeTurnAdvance — END_TURN recomputes the same.
-      const { nextIdx, isNewRound } = computeTurnAdvance(gameState)
-      const nextPlayerId = gameState.players[nextIdx].id
-      const nextPlayer = gameState.players[nextIdx]
+      // Missions resolve at the end of the turn, BEFORE the per-turn conquest
+      // lists reset. A player may complete only ONE mission per turn, so the
+      // star-power payout and the face-up mission are mutually exclusive; if
+      // either wins the game, stop here.
+      const endingPlayerId = gameState.players[gameState.currentPlayerIndex]?.id
+      const starPowerResult = claimStarPowerIfEarned(endingPlayerId)
+      if (starPowerResult === 'won') return
+      if (starPowerResult === 'none' && completeSharedMissionIfEarned(endingPlayerId)) return
 
       // ── END-OF-TURN scar effects for the ENDING player ────────────────────
       // Mercenary +1 and Bio-hazard −1 resolve at the END of the owner's turn
       // (Mutants reversed); a territory at 1 troop can be VACATED (never the
       // last). Now a pure helper in the reducer; endTerritories is committed by
       // END_TURN (and by the Join the War early-exit below).
+      //
+      // This runs BEFORE the turn advance because the advance now depends on
+      // the final board: a vacated territory can become a legal Join the War
+      // spot, which decides whether an eliminated player is offered a turn.
+      // END_TURN merges the same map before recomputing, so the two agree.
       const endingPlayer = gameState.players[gameState.currentPlayerIndex]
       const endingIsMutant = endingPlayer?.factionId === 'mutants'
+      // Mercenary comeback power upgrades this player's Mercenary scars to +2
+      const endingMercComeback = (legacyState.comebackPowers ?? {})[endingPlayer?.factionId ?? ''] === 'mercenary'
       const scarResult = endingPlayer
-        ? applyEndOfTurnScarEffects(gameState.territories, endingPlayer.id, endingIsMutant, legacyStateRef.current?.falloutZoneTerritoryId)
+        ? applyEndOfTurnScarEffects(gameState.territories, endingPlayer.id, endingIsMutant, legacyStateRef.current?.falloutZoneTerritoryId, endingMercComeback)
         : { territories: { ...gameState.territories }, vacatedNames: [] }
-      const endTerritories = scarResult.territories
       const vacatedNames = scarResult.vacatedNames
       if (vacatedNames.length > 0) {
         showWeaknessNotice(`☣ ${endingPlayer?.name ?? 'Player'} abandoned ${vacatedNames.join(', ')} at end of turn — the scar wiped out the last troop`)
+      }
+
+      // Advance to the next player, skipping eliminated players with no Join
+      // the War decision left to make. Computed on the post-scar board so it
+      // matches what END_TURN will decide.
+      const { nextIdx, isNewRound } = computeTurnAdvance({ ...gameState, territories: scarResult.territories })
+      const nextPlayerId = gameState.players[nextIdx].id
+      const nextPlayer = gameState.players[nextIdx]
+
+      // ── START-OF-TURN Strategic Reserve for the INCOMING player ───────────
+      // Khan Industries places +1 troop directly on each HQ they control. This
+      // is the ONE turn hand-off, so the troops land exactly once: both the
+      // normal path and the Join the War early-return below commit
+      // `endTerritories`, and a reload never re-runs it.
+      const hqReserve = applyHqReserveTroops(scarResult.territories, nextPlayerId, playerAbility(nextPlayerId))
+      const endTerritories = hqReserve.territories
+      if (hqReserve.grantedTerritoryIds.length > 0) {
+        const names = hqReserve.grantedTerritoryIds.map(id => endTerritories[id]?.name ?? id)
+        showWeaknessNotice(`⚙ Strategic Reserve — ${nextPlayer.name} reinforces ${names.join(', ')} with +1 troop each`)
       }
 
       // Clear fortify state — runs BEFORE the Join the War early-return so
@@ -3539,7 +4959,17 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
       setShowFortify(false); fortifySrcRef.current = null; setLastFortify(null)
       setSaharaFortifyMode(false); saharaFortifyModeRef.current = false
       console.log(`[CardAward] Turn ended — pendingCardDraws at fortify exit: ${JSON.stringify(pendingCardDraws)}`)
-      setTurn({ captured: false, captureCount: 0, conqueredIds: [], conqueredViaSeaIds: [] })
+      // Reset from initialTurnState rather than naming the fields: this list was
+      // hand-maintained and had already fallen behind, leaving
+      // `eligibleForRichCard` stuck true for the rest of the game once the World
+      // Capital mission was claimed. Anything added to TurnState now clears here
+      // automatically, and only the fields that carry a computed value are named.
+      setTurn({
+        ...initialTurnState(),
+        // Wide Border is judged at the START of a turn, so snapshot the incoming
+        // player's whole-continent count here, off the end-of-turn board.
+        continentsAtTurnStart: wholeContinentsControlled(nextPlayerId, endTerritories),
+      })
       setBalkExpansionPending(null)
       conqueredFromPlayerIdsRef.current = new Set()
       // Mass Hypnosis expires at the beginning of the protector's next turn
@@ -3547,20 +4977,35 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         hypnosisProtectedRef.current = null
         setHypnosisProtected(null)
       }
-      setTurn({ bearTrapTerritoryId: null })
-      setTurn({ shieldedTerritoryIds: [], attackedTerritoryIds: [] })
       drewCardPlayerIdsRef.current = new Set()
-      // Clear any unresolved immediate-event pickers so they don't leak turns
-      resistancePlacementRef.current = null; setResistancePlacement(null)
+      eventDrawCreditsRef.current = new Map()
+      // Fortify City belongs to the DRAWER, who is the player whose turn this
+      // is — so it expires with the turn, as it should.
       fortifyEventRef.current = null; setFortifyEventPlayerId(null)
-      setControlPeopleChoice(null)
-      controlTroopsRef.current = null; setControlTroopsPlayerId(null)
-      controlManeuverRef.current = null; setControlManeuver(null); setControlManeuverDstId(null)
-      riotRemovalRef.current = null; setRiotRemovalPlayerId(null)
+      // Everything below used to be cleared here too, and must not be. Each one
+      // belongs to a player the BOARD picks — fewest territories, largest
+      // population, lowest roll — who is usually NOT the one taking the turn and
+      // has no reason to be racing someone else's clock. Wiping them at END_TURN
+      // silently destroyed the reward: the winner clicked their choice, the hint
+      // bar appeared, and the AI's turn ended a second later and took it away.
+      //
+      //   resistancePlacement   +N troops, fewest territories
+      //   joinCausePlacement    3 troops, largest population
+      //   controlPeopleChoice   the reward pick itself
+      //   controlTroopsPlayerId 5 troops in one city
+      //   controlManeuver       the immediate maneuver
+      //   riotRemovalPlayerId   the 2-troop penalty — a debt, not a prize
+      //
+      // All of them self-clear the moment they resolve, and every click handler
+      // re-checks ownership against the live board, so carrying them across a
+      // turn boundary cannot leak a move to the wrong player.
       setFortifyMovesLeft(1)
-      setMobileHqUsed(false)
-      setMobileHqSrcId(null)
+      aiTradedThisTurnRef.current = false
+      mobileHqUsedRef.current = false; setMobileHqUsed(false)
+      mobileHqModeRef.current = false; setMobileHqMode(false)
+      mobileHqSrcRef.current = null;   setMobileHqSrcId(null)
       expandTargetRef.current = null
+      expandUsedRef.current = false
       setExpandTargetId(null)
       // Missile power per-turn state
       usedMissilePowersRef.current = new Set()
@@ -3571,8 +5016,16 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
       stealthyTargetRef.current = null
       setStealthyTargetId(null)
 
-      // If next player is eliminated and hasn't had their Join the War choice yet, show modal
-      if (nextPlayer.isEliminated && nextPlayer.joinedWarThisGame === undefined) {
+      // If the next player is eliminated and still undecided, offer Join the War
+      // — but only when there is somewhere legal to re-enter. With nowhere to
+      // go the only "choice" would be to forfeit, so computeTurnAdvance has
+      // already skipped past them and this never fires.
+      if (nextPlayer.isEliminated && nextPlayer.joinedWarThisGame === undefined
+          && legalJoinWarTerritoryIds(
+               endTerritories,
+               Object.values(gameState.activeHqs ?? {}),
+               legacyStateRef.current?.falloutZoneTerritoryId,
+             ).length > 0) {
         setGameState(prev => ({ ...prev, territories: { ...prev.territories, ...endTerritories }, currentPlayerIndex: nextIdx }))
         setJoinTheWarPlayerId(nextPlayerId)
         return
@@ -3591,30 +5044,15 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
       // Reinforcements for the next player, computed from the end-of-turn map
       // (endTerritories already reflects the previous players' scar changes;
       // the next player's own scar effect happened at the end of THEIR last turn)
-      const nextPlayerAbility = playerAbility(nextPlayerId)
-      const balkRoundUp = nextPlayerAbility === 'balk-round-up'
-      const khanHqBonus = nextPlayerAbility === 'khan-hq-troops'
-        ? Object.values(gameState.activeHqs).filter(
-            tId => endTerritories[tId]?.occupyingPlayerId === nextPlayerId,
-          ).length
-        : 0
       const nextFactionId = gameState.players.find(p => p.id === nextPlayerId)?.factionId ?? ''
-      const nextComebackPower = (legacyState.comebackPowers ?? {})[nextFactionId]
-      const mercenaryBonus = nextComebackPower === 'mercenary'
-        ? Object.values(endTerritories).filter(t => !t.occupyingPlayerId).length
-        : 0
-      const nextIsPrimitive = (legacyState.alienWeaknessPowers ?? {})[nextFactionId] === 'wp-primitive'
-      // Aliens faction power: +2 troops if they control Alien Island, +1 per Ruin they control
-      const alienRecruitBonus = nextFactionId === 'aliens'
-        ? (endTerritories[ALIEN_ISLAND_TERRITORY_ID]?.occupyingPlayerId === nextPlayerId ? 2 : 0)
-          + (legacyState.ruinTerritoryIds ?? []).filter(tid => endTerritories[tid]?.occupyingPlayerId === nextPlayerId).length
-        : 0
-      const nextTroops = calcReinforcements(nextPlayerId, endTerritories, balkRoundUp, legacyState.namedContinents ?? {}, legacyState.worldCapitalTerritoryId ?? null, nextIsPrimitive, legacyState.continentBonusModifiers ?? [])
-        + richLandBonus(nextPlayerId, endTerritories)
-        + eventBonus
-        + khanHqBonus
-        + mercenaryBonus
-        + alienRecruitBonus
+      const nextTroops = calcDraftTroops({
+        playerId: nextPlayerId,
+        factionId: nextFactionId,
+        territories: endTerritories,
+        legacy: legacyState,
+        ability: playerAbility(nextPlayerId),
+        eventBonus,
+      })
       setTroopsToPlace(nextTroops)
       setPlacementHistory([])
 
@@ -3694,27 +5132,70 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
   }
 
   // ── Finalize game and return to lobby ────────────────────────────────────
-  function finalizeAndReturnToLobby(working: LegacyState) {
+  // The lobby RE-READS the campaign from Supabase the moment it mounts, so this
+  // save must land before we navigate. Firing it off unawaited let the read beat
+  // the write, and the lobby would show the campaign as it was before the game.
+  /**
+   * Write the finished campaign and confirm it stuck.
+   *
+   * An autosave issued moments earlier can still be in flight, and two
+   * concurrent upserts have no ordering guarantee — the older one landing last
+   * would restore gameInProgress:true and the finished board. Reading back and
+   * re-writing once closes that window, which is worth a round trip given the
+   * alternative is the table replaying a game they already finished.
+   */
+  async function saveFinishedCampaign(finished: LegacyState) {
+    await saveLegacyState(finished)
+    const stored = await loadLegacyState(finished.campaignId).catch(() => null)
+    if (stored?.gameInProgress || stored?.activeGameState) {
+      console.warn('[Finalize] A late autosave resurrected the finished game — rewriting')
+      await saveLegacyState(finished)
+    }
+  }
+
+  async function finalizeAndReturnToLobby(working: LegacyState) {
+    gameFinishedRef.current = true
     const completed = { ...working, gameInProgress: false, activeGameState: null, purchasedStars: {} }
-    saveLegacyState(completed).catch(() => {})
+
+    // The campaign ends after 15 games — or the moment the lead is unassailable.
+    // Crown the champion here rather than returning to the lobby.
+    const outcome = campaignOutcome(completed)
+    if (outcome.decided && !completed.campaignComplete) {
+      const finished = applyCampaignCompletion(completed, outcome)
+      setLegacyState(finished)
+      setCampaignOutcome(outcome)
+      await saveFinishedCampaign(finished).catch(() => {})  // failure surfaces via the save-failure banner
+      return
+    }
+
     setLegacyState(completed)
+    try {
+      await saveFinishedCampaign(completed)
+    } catch {
+      // Do NOT advance to the lobby on a failed write: the lobby would reload
+      // the pre-game row and silently discard everything this game produced.
+      // Keep the player here so the banner is visible and the result is intact.
+      return
+    }
     onReturnToLobby()
   }
 
-  function handleWinScreenComplete(newLegacy: LegacyState) {
-    setLegacyState(newLegacy)
+  function handleWinScreenComplete(editedLegacy: LegacyState, baseline: LegacyState) {
+    // The win screen is long lived and edits a copy it took when it opened. A
+    // reward modal can sit ON TOP of it — the Island Empire sea line does — so
+    // writing that copy back wholesale reverted whatever was placed meanwhile.
+    // Apply only what the win screen actually changed.
+    let working = mergeLegacyEdits(legacyStateRef.current, baseline, editedLegacy)
+    legacyStateRef.current = working
+    setLegacyState(working)
     setShowWinScreen(false)
 
-    let working = newLegacy
-
-    // Check double-winner milestone: any player has signed the board twice
+    // Check double-winner milestone: any player has signed the board twice.
+    // Counted by roster id — two different people signing the same name must
+    // not trip it, and one person signing differently each time must.
     if (!working.doubleWinnerMilestoneTriggered) {
-      const nameCounts: Record<string, number> = {}
-      for (const v of working.victoryLog ?? []) {
-        nameCounts[v.winnerName] = (nameCounts[v.winnerName] ?? 0) + 1
-      }
-      const doubleWinner = Object.entries(nameCounts).find(([, count]) => count >= 2)
-      if (doubleWinner) {
+      const [doubleSignerId] = doubleSigners(working)
+      if (doubleSignerId) {
         working = {
           ...working,
           doubleWinnerMilestoneTriggered: true,
@@ -3722,7 +5203,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
           // (they will be included in buildEventDeck when the flag is set)
         }
         setLegacyState(working)
-        setDoubleWinnerName(doubleWinner[0])
+        setDoubleWinnerName(rosterName(working, doubleSignerId))
         setPendingReturnLegacy(working)
         setShowDoubleWinnerModal(true)
         return
@@ -3775,13 +5256,15 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
           worldCapitalTerritoryId={legacyState.worldCapitalTerritoryId ?? null}
           primitiveWeakness={(legacyState.alienWeaknessPowers ?? {})[gameState.players[gameState.currentPlayerIndex]?.factionId ?? ''] === 'wp-primitive'}
           continentBonusModifiers={legacyState.continentBonusModifiers ?? []}
+          namedContinents={legacyState.namedContinents ?? {}}
           onNextPhase={handleNextPhase}
           onUndoPlacement={handleUndoPlacement}
           onUndoFortify={handleUndoFortify}
           canUndoFortify={!!lastFortify}
         />
         {/* Legacy Panel button — top-right */}
-        <div style={{ position: 'absolute', top: 8, right: 12, display: 'flex', gap: 6 }}>
+        <div style={{ position: 'absolute', top: 8, right: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <SoundSettings inline />
           {currentPlayer?.isAI && (
             <button
               onClick={() => setAiFast(f => !f)}
@@ -3811,7 +5294,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
             📜 Legacy
           </button>
           <button
-            onClick={onReturnToLobby}
+            onClick={() => setShowMenuConfirm(true)}
             style={{
               padding: '5px 13px', borderRadius: 5, fontSize: 11,
               border: '1px solid rgba(120,80,20,0.40)', background: 'rgba(15,8,0,0.72)',
@@ -3841,7 +5324,16 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
       {/* PixiJS canvas — border rings and hit areas only */}
       <div ref={containerRef} style={{ position: 'absolute', inset: 0, zIndex: 3 }} />
       {/* SVG layer — troop bubbles, city markers, fortification rings */}
-      <SVGMapLayer territories={applyLegacyToTerritories(gameState.territories, legacyState)} players={gameState.players} legacy={legacyState} />
+      <SVGMapLayer
+        territories={applyLegacyToTerritories(gameState.territories, legacyState)}
+        players={gameState.players}
+        legacy={legacyState}
+        draftPlaced={gameState.phase === 'reinforce' ? draftPlaced : undefined}
+        draftColor={(() => {
+          const hex = FACTION_COLORS[currentPlayer?.factionId ?? ''] ?? NEUTRAL_COLOR
+          return `#${hex.toString(16).padStart(6, '0')}`
+        })()}
+      />
 
       {/* Attack flight overlay — bubble travelling attacker → defender */}
       {attackFlight && (() => {
@@ -4107,6 +5599,20 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
                   letterSpacing: 0.3,
                 }}>
                   {player.name}
+                  {/* Card count — same source as the Cards button, so the two
+                      always agree. Shown for every player (hand contents stay
+                      secret; only the total is public). */}
+                  <span
+                    title={`${player.cards.length} card${player.cards.length !== 1 ? 's' : ''} in hand (territory + resource)`}
+                    style={{
+                      marginLeft: 5, fontSize: 9, fontWeight: 'bold',
+                      color: player.cards.length > 0 ? '#C8940A' : 'rgba(200,148,10,0.40)',
+                      border: `1px solid rgba(200,148,10,${player.cards.length > 0 ? 0.5 : 0.22})`,
+                      borderRadius: 4, padding: '0 4px', whiteSpace: 'nowrap',
+                    }}
+                  >
+                    🃏 {player.cards.length}
+                  </span>
                   {player.isAI && (
                     <span
                       title={`Computer opponent — ${player.aiDifficulty ? AI_DIFFICULTY_LABEL[player.aiDifficulty] : 'AI'}`}
@@ -4170,7 +5676,14 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
       </div>
 
 
-      {/* ── Face-up territory sideboard — right side of map (right of Asia) ── */}
+      {/* ── Board cards — docked in the right margin, plus a blown-up view ────
+          Two rows: Event · Mission · Coin pile across the top, the four face-up
+          territory cards horizontally across the bottom.
+
+          ONE renderer draws both sizes. Cards divide their row with flex rather
+          than fixed widths, so the same markup fills a 300px margin panel and a
+          near-full-screen overlay; `s` scales type and spacing with it. A second
+          copy of this markup would drift the moment either size was tweaked. */}
       {(() => {
         const CONT_COLOR: Record<string, string> = {
           'north-america': '#E67E22', 'south-america': '#27AE60',
@@ -4178,255 +5691,330 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
           'asia': '#8E44AD', 'australia': '#F39C12',
         }
         const sideboard = cardState.sideboard ?? []
-        const currentPlayer = gameState.players[gameState.currentPlayerIndex]
         const currentEventCard = currentEventCardId ? getEventCard(currentEventCardId) : null
         const currentMissionId = cardState.currentMissionId ?? null
         const currentMission = currentMissionId ? (CARD_LOOKUP.get(currentMissionId) as import('@/types/card').MissionCard | undefined) : null
 
-        const CARD_W = 90
-        const cardBase: React.CSSProperties = {
-          width: CARD_W, background: '#1a0d00',
-          borderRadius: 7, padding: '6px 6px 5px',
-          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-          boxShadow: '0 1px 6px rgba(0,0,0,0.6)',
-        }
+        const isPrivate = !!currentMissionId && isPrivateMission(currentMissionId)
+        const mAccent = isPrivate ? '160,110,220' : '220,80,80'
+        const mSolid = isPrivate ? '#a06edc' : '#dc5050'
+        const mBody = isPrivate ? '#e0ccff' : '#ffc8c8'
+        const coinsLeft = cardState.resourceDeck?.length ?? 0
+        const coinsDepleted = coinsLeft === 0
 
-        return (
-          <div style={{
-            position: 'absolute', right: 200, top: '50%',
-            transform: 'translateY(calc(-50% - 40px))',
-            zIndex: 21, pointerEvents: 'none',
-            display: 'flex', flexDirection: 'row', alignItems: 'flex-start', gap: 8,
-            border: '1.5px solid rgba(200,148,10,0.5)',
-            borderRadius: 10,
-            padding: '8px',
-            background: 'rgba(40,40,40,0.85)',
-          }}>
+        /** Docked width. Past ~196 the panel clips the far east of the map —
+         *  worth it for legibility, and no territory label sits under it. */
+        const DOCKED_W = 300
 
-            {/* ── Event card column ── */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-              <div style={{
-                fontSize: 8, letterSpacing: 1.5, textTransform: 'uppercase',
-                color: 'rgba(100,180,255,0.75)', textAlign: 'center', marginBottom: 2,
-              }}>
-                Event Card
-              </div>
-              <div style={{
-                ...cardBase,
-                border: `1.5px solid rgba(100,180,255,${currentEventCard ? 0.6 : 0.2})`,
-                minHeight: 90,
-                justifyContent: 'center',
-              }}>
-                <div style={{ width: '100%', height: 3, borderRadius: 2, background: '#64b4ff', opacity: currentEventCard ? 1 : 0.3 }} />
-                {currentEventCard ? (
-                  <>
-                    <div style={{ fontSize: 18, marginTop: 2 }}>⚡</div>
-                    <div style={{
-                      fontSize: 9, fontWeight: 'bold', color: '#c8e0ff',
-                      textAlign: 'center', lineHeight: 1.3, fontFamily: 'Georgia, serif',
-                    }}>
-                      {currentEventCard.name}
-                    </div>
-                    <div style={{
-                      fontSize: 7, color: 'rgba(100,180,255,0.6)', letterSpacing: 0.5,
-                      textAlign: 'center',
-                    }}>
-                      ACTIVE EVENT
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div style={{ fontSize: 22, opacity: 0.25 }}>⚡</div>
-                    <div style={{ fontSize: 8, color: 'rgba(100,180,255,0.3)', textAlign: 'center', lineHeight: 1.3 }}>
-                      No active<br/>event
-                    </div>
-                  </>
-                )}
-              </div>
-              {/* Event deck count */}
-              <div style={{
-                ...cardBase,
-                border: '1px solid rgba(100,180,255,0.2)',
-                padding: '5px 6px',
-                flexDirection: 'row', justifyContent: 'center', gap: 4,
-              }}>
-                <span style={{ fontSize: 10, color: 'rgba(100,180,255,0.5)' }}>🂠</span>
-                <span style={{ fontSize: 9, color: 'rgba(100,180,255,0.55)', fontFamily: 'Georgia, serif' }}>
-                  {cardState.eventDeck?.length ?? 0} left
-                </span>
-              </div>
+        function table(s: number) {
+          const r = (n: number) => Math.round(n * s * 10) / 10
+          const gap = r(5)
+          // Above this scale there is room for the detail the margin panel has
+          // to leave out: full mission text and coins as countable icons.
+          const full = s >= 1.5
+
+          const cardBase: React.CSSProperties = {
+            flex: '1 1 0', minWidth: 0,
+            background: '#1a0d00', borderRadius: r(6), padding: `${r(4)}px ${r(4)}px ${r(3)}px`,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: r(3),
+            boxShadow: '0 1px 5px rgba(0,0,0,0.6)',
+          }
+          const slotLabel = (color: string): React.CSSProperties => ({
+            fontSize: r(8), letterSpacing: r(1), textTransform: 'uppercase',
+            color, textAlign: 'center', marginBottom: r(3),
+          })
+          const deckCount = (n: number, rgb: string) => (
+            <div style={{ fontSize: r(8), color: `rgba(${rgb},0.55)`, textAlign: 'center', fontFamily: 'Georgia, serif' }}>
+              🂠 {n}
             </div>
+          )
+          const bar = (color: string, on = true) => (
+            <div style={{ width: '100%', height: r(3), borderRadius: r(2), background: color, opacity: on ? 1 : 0.3 }} />
+          )
 
-            {/* ── Mission card column ── */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-              <div style={{
-                fontSize: 8, letterSpacing: 1.5, textTransform: 'uppercase',
-                color: 'rgba(220,80,80,0.75)', textAlign: 'center', marginBottom: 2,
-              }}>
-                Mission
-              </div>
-              <div style={{
-                ...cardBase,
-                border: `1.5px solid rgba(220,80,80,${currentMission ? 0.6 : 0.2})`,
-                minHeight: 90,
-                justifyContent: 'center',
-              }}>
-                <div style={{ width: '100%', height: 3, borderRadius: 2, background: '#dc5050', opacity: currentMission ? 1 : 0.3 }} />
-                {currentMission ? (
-                  <>
-                    <div style={{ fontSize: 14, marginTop: 2 }}>
-                      {currentMission.stars === 2 ? '★★' : '★'}
-                    </div>
-                    <div style={{
-                      fontSize: 9, fontWeight: 'bold', color: '#ffc8c8',
-                      textAlign: 'center', lineHeight: 1.3, fontFamily: 'Georgia, serif',
-                      wordBreak: 'break-word',
-                    }}>
-                      {currentMission.description}
-                    </div>
-                    <div style={{
-                      fontSize: 7, color: 'rgba(220,80,80,0.6)', letterSpacing: 0.5, textAlign: 'center',
-                    }}>
-                      {currentMission.stars === 2 ? 'SPECIAL · SINGLE USE' : 'SHARED — ANY PLAYER'}
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div style={{ fontSize: 22, opacity: 0.25 }}>🎯</div>
-                    <div style={{ fontSize: 8, color: 'rgba(220,80,80,0.3)', textAlign: 'center', lineHeight: 1.3 }}>
-                      No mission<br/>face up
-                    </div>
-                  </>
-                )}
-              </div>
-              {/* Mission deck count */}
-              <div style={{
-                ...cardBase,
-                border: '1px solid rgba(220,80,80,0.2)',
-                padding: '5px 6px',
-                flexDirection: 'row', justifyContent: 'center', gap: 4,
-              }}>
-                <span style={{ fontSize: 10, color: 'rgba(220,80,80,0.5)' }}>🂠</span>
-                <span style={{ fontSize: 9, color: 'rgba(220,80,80,0.55)', fontFamily: 'Georgia, serif' }}>
-                  {cardState.missionDeck?.length ?? 0} left
-                </span>
-              </div>
-            </div>
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: gap + r(2) }}>
 
-            {/* ── Territory cards column ── */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-            <div style={{
-              fontSize: 8, letterSpacing: 1.5, textTransform: 'uppercase',
-              color: 'rgba(200,148,10,0.75)', textAlign: 'center', marginBottom: 2,
-            }}>
-              Territory Cards
-            </div>
-            {sideboard.slice(0, 4).map((cardId, idx) => {
-              const card = getTerritoryCard(cardId)
-              const terrDef = card ? TERRITORY_DEFINITIONS.find(d => d.id === card.territoryId) : null
-              const contColor = CONT_COLOR[terrDef?.continentId ?? ''] ?? '#888'
-              return (
-                <div key={cardId} style={{
-                  width: 90, background: '#1a0d00',
-                  border: `1.5px solid ${contColor}88`,
-                  borderRadius: 7,
-                  padding: '6px 6px 5px',
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-                  boxShadow: `0 1px 6px rgba(0,0,0,0.6)`,
-                  position: 'relative',
-                }}>
-                  {/* Number badge */}
+              {/* ── Top row: Event · Mission · Coin pile ── */}
+              <div style={{ display: 'flex', flexDirection: 'row', gap }}>
+
+                {/* Event */}
+                <div style={{ flex: '1 1 0', minWidth: 0 }}>
+                  <div style={slotLabel('rgba(100,180,255,0.75)')}>Event</div>
                   <div style={{
-                    position: 'absolute', top: -7, left: -7,
-                    width: 16, height: 16, borderRadius: '50%',
-                    background: contColor, color: '#000',
-                    fontSize: 9, fontWeight: 900,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    boxShadow: '0 1px 4px rgba(0,0,0,0.7)',
-                    fontFamily: 'Georgia, serif',
-                    zIndex: 1,
+                    ...cardBase,
+                    border: `${r(1.5)}px solid rgba(100,180,255,${currentEventCard ? 0.6 : 0.2})`,
+                    minHeight: r(68), justifyContent: 'center',
                   }}>
-                    {idx + 1}
+                    {bar('#64b4ff', !!currentEventCard)}
+                    {currentEventCard ? (
+                      <>
+                        <div style={{ fontSize: r(16) }}>⚡</div>
+                        <div style={{
+                          fontSize: r(9), fontWeight: 'bold', color: '#c8e0ff',
+                          textAlign: 'center', lineHeight: 1.25, fontFamily: 'Georgia, serif',
+                          wordBreak: 'break-word',
+                        }}>
+                          {currentEventCard.name}
+                        </div>
+                        {full && currentEventCard.description && (
+                          <div style={{
+                            fontSize: r(7.5), color: 'rgba(200,224,255,0.65)', textAlign: 'center',
+                            lineHeight: 1.35, fontFamily: 'Georgia, serif',
+                          }}>
+                            {currentEventCard.description}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: r(20), opacity: 0.25 }}>⚡</div>
+                        <div style={{ fontSize: r(8), color: 'rgba(100,180,255,0.35)', textAlign: 'center', lineHeight: 1.25 }}>
+                          none
+                        </div>
+                      </>
+                    )}
                   </div>
-                  <div style={{ width: '100%', height: 3, borderRadius: 2, background: contColor }} />
-                  <div style={{
-                    fontSize: 10, fontWeight: 'bold', color: '#E8DCC8',
-                    textAlign: 'center', lineHeight: 1.25,
-                    fontFamily: 'Georgia, serif',
-                    wordBreak: 'break-word',
-                  }}>
-                    {terrDef?.name ?? cardId}
-                  </div>
-                  <div style={{
-                    fontSize: 8, color: contColor, letterSpacing: 0.5,
-                    fontFamily: 'Georgia, serif',
-                  }}>
-                    {(terrDef?.continentId ?? '').replace(/-/g, ' ').toUpperCase()}
-                  </div>
-                  {/* Coin slot — shows resources assigned to this card */}
-                  {(() => {
-                    const coins = legacyState.cardResources?.[cardId] ?? 0
-                    return (
-                      <div style={{
-                        width: '100%',
-                        background: coins > 0 ? 'rgba(200,148,10,0.10)' : 'rgba(200,148,10,0.04)',
-                        border: `1px solid rgba(200,148,10,${coins > 0 ? 0.35 : 0.12})`,
-                        borderRadius: 4,
-                        padding: '4px 3px',
-                        display: 'flex', flexWrap: 'wrap', gap: 2,
-                        justifyContent: 'center', minHeight: 28,
-                        alignItems: 'center',
-                      }}>
-                        {coins > 0
-                          ? Array.from({ length: coins }, (_, i) => (
-                              <span key={i} style={{ fontSize: 13 }}>🪙</span>
-                            ))
-                          : <span style={{ fontSize: 9, color: 'rgba(200,148,10,0.25)' }}>—</span>
-                        }
-                      </div>
-                    )
-                  })()}
+                  {deckCount(cardState.eventDeck?.length ?? 0, '100,180,255')}
                 </div>
-              )
-            })}
-            <div style={{
-              width: 90, background: '#1a0d00',
-              border: '1.5px solid rgba(200,148,10,0.88)',
-              borderRadius: 7, padding: '6px 6px 5px',
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-              boxShadow: '0 1px 6px rgba(0,0,0,0.6)',
-            }}>
-              <div style={{ width: '100%', height: 3, borderRadius: 2, background: '#C8940A' }} />
-              {(() => {
-                const coinsLeft = cardState.resourceDeck?.length ?? 0
-                const coinsDepleted = coinsLeft === 0
-                return (
+
+                {/* Mission — private missions are recoloured purple and labelled,
+                    since claiming one is worth a permanent star power. */}
+                <div style={{ flex: '1 1 0', minWidth: 0 }}>
+                  <div style={slotLabel(`rgba(${mAccent},0.75)`)}>{isPrivate ? '✦ Private' : 'Mission'}</div>
                   <div style={{
-                    width: '100%',
-                    background: coinsDepleted ? 'rgba(192,57,43,0.15)' : 'rgba(200,148,10,0.07)',
-                    border: `1px solid ${coinsDepleted ? 'rgba(192,57,43,0.5)' : 'rgba(200,148,10,0.2)'}`,
-                    borderRadius: 4,
-                    padding: '4px 3px',
-                    display: 'flex', flexWrap: 'wrap', gap: 2,
-                    justifyContent: 'center', minHeight: 59,
-                    alignItems: 'center', flexDirection: 'column',
+                    ...cardBase,
+                    border: `${r(1.5)}px solid rgba(${mAccent},${currentMission ? 0.6 : 0.2})`,
+                    minHeight: r(68), justifyContent: 'center',
+                    boxShadow: isPrivate ? `0 0 ${r(10)}px rgba(${mAccent},0.30)` : cardBase.boxShadow,
                   }}>
-                    <span style={{ fontSize: 32, color: coinsDepleted ? '#c0392b' : undefined }}>
+                    {bar(mSolid, !!currentMission)}
+                    {currentMission ? (
+                      <>
+                        <div style={{ fontSize: r(13) }}>
+                          {isPrivate ? '✦★' : currentMission.stars === 2 ? '★★' : '★'}
+                        </div>
+                        <div style={{
+                          fontSize: r(9), fontWeight: 'bold', color: mBody,
+                          textAlign: 'center', lineHeight: 1.25, fontFamily: 'Georgia, serif',
+                          wordBreak: 'break-word',
+                        }}>
+                          {isPrivate ? currentMission.name : currentMission.description}
+                        </div>
+                        {full && isPrivate && (
+                          <div style={{
+                            fontSize: r(7.5), color: 'rgba(224,204,255,0.7)', textAlign: 'center',
+                            lineHeight: 1.35, fontFamily: 'Georgia, serif',
+                          }}>
+                            {currentMission.description}
+                          </div>
+                        )}
+                        {full && (
+                          <div style={{ fontSize: r(7), color: `rgba(${mAccent},0.75)`, letterSpacing: r(0.5), textAlign: 'center' }}>
+                            {isPrivate
+                              ? 'CLAIM = PERMANENT STAR POWER'
+                              : currentMission.stars === 2 ? 'SPECIAL · SINGLE USE' : 'SHARED — ANY PLAYER'}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: r(20), opacity: 0.25 }}>🎯</div>
+                        <div style={{ fontSize: r(8), color: `rgba(${mAccent},0.35)`, textAlign: 'center', lineHeight: 1.25 }}>
+                          none
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  {deckCount(cardState.missionDeck?.length ?? 0, '220,80,80')}
+                </div>
+
+                {/* Coin pile — beside the mission so both shared piles read together */}
+                <div style={{ flex: '1 1 0', minWidth: 0 }}>
+                  <div style={slotLabel('rgba(200,148,10,0.75)')}>Coins</div>
+                  <div style={{
+                    ...cardBase,
+                    border: `${r(1.5)}px solid ${coinsDepleted ? 'rgba(192,57,43,0.6)' : 'rgba(200,148,10,0.88)'}`,
+                    minHeight: r(68), justifyContent: 'center',
+                  }}>
+                    {bar(coinsDepleted ? '#c0392b' : '#C8940A')}
+                    <span style={{ fontSize: r(27), color: coinsDepleted ? '#c0392b' : undefined }}>
                       {coinsDepleted ? '★' : '🪙'}
                     </span>
                     {coinsDepleted ? (
-                      <span style={{ fontSize: 8, color: '#c0392b', fontFamily: 'Arial, sans-serif', fontWeight: 'bold', letterSpacing: 0.5 }}>GONE</span>
+                      <span style={{ fontSize: r(8), color: '#c0392b', fontWeight: 'bold', letterSpacing: r(0.5) }}>GONE</span>
                     ) : (
-                      <span style={{ fontSize: 9, color: '#C8940A', fontWeight: 'bold', letterSpacing: 0.5 }}>
+                      <span style={{ fontSize: r(9), color: '#C8940A', fontWeight: 'bold', letterSpacing: r(0.5) }}>
                         {coinsLeft} left
                       </span>
                     )}
+                    {full && (
+                      <span style={{ fontSize: r(6.5), color: 'rgba(200,148,10,0.55)', textAlign: 'center', lineHeight: 1.35 }}>
+                        {coinsDepleted
+                          ? 'the red star has been resolved'
+                          : 'traded-in coins return here'}
+                      </span>
+                    )}
                   </div>
-                )
-              })()}
+                </div>
+              </div>
+
+              {/* ── Bottom row: the four face-up territory cards ── */}
+              <div>
+                <div style={slotLabel('rgba(200,148,10,0.75)')}>Face-up Territory Cards</div>
+                <div style={{ display: 'flex', flexDirection: 'row', gap }}>
+                  {sideboard.slice(0, 4).map((cardId, idx) => {
+                    const card = getTerritoryCard(cardId)
+                    const terrDef = card ? TERRITORY_DEFINITIONS.find(d => d.id === card.territoryId) : null
+                    const contColor = CONT_COLOR[terrDef?.continentId ?? ''] ?? '#888'
+                    const coins = legacyState.cardResources?.[cardId] ?? 0
+                    return (
+                      <div key={cardId} style={{
+                        ...cardBase,
+                        border: `${r(1.5)}px solid ${contColor}88`,
+                        position: 'relative', gap: r(2),
+                      }}>
+                        {/* Number badge */}
+                        <div style={{
+                          position: 'absolute', top: -r(6), left: -r(6),
+                          width: r(15), height: r(15), borderRadius: '50%',
+                          background: contColor, color: '#000',
+                          fontSize: r(9), fontWeight: 900,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.7)',
+                          fontFamily: 'Georgia, serif', zIndex: 1,
+                        }}>
+                          {idx + 1}
+                        </div>
+                        {bar(contColor)}
+                        <div style={{
+                          fontSize: r(11), fontWeight: 'bold', color: '#E8DCC8',
+                          textAlign: 'center', lineHeight: 1.2,
+                          fontFamily: 'Georgia, serif', wordBreak: 'break-word',
+                          minHeight: r(24),
+                        }}>
+                          {terrDef?.name ?? cardId}
+                        </div>
+                        {full && (
+                          <div style={{
+                            fontSize: r(7), color: contColor, letterSpacing: r(0.5),
+                            fontFamily: 'Georgia, serif', textAlign: 'center',
+                          }}>
+                            {(terrDef?.continentId ?? '').replace(/-/g, ' ').toUpperCase()}
+                          </div>
+                        )}
+                        {/* Coin value. The margin panel shows a count because a
+                            row of icons wraps badly at 67px; the blown-up view
+                            has room for icons you can actually count. */}
+                        <div style={{
+                          width: '100%',
+                          background: coins > 0 ? 'rgba(200,148,10,0.10)' : 'rgba(200,148,10,0.04)',
+                          border: `1px solid rgba(200,148,10,${coins > 0 ? 0.35 : 0.12})`,
+                          borderRadius: r(4), padding: `${r(2)}px ${r(1)}px`,
+                          display: 'flex', flexWrap: 'wrap',
+                          justifyContent: 'center', alignItems: 'center', gap: r(1),
+                          minHeight: full ? r(20) : undefined,
+                        }}>
+                          {coins > 0 ? (
+                            full
+                              ? Array.from({ length: coins }, (_, i) => (
+                                  <span key={i} style={{ fontSize: r(11) }}>🪙</span>
+                                ))
+                              : (
+                                <>
+                                  <span style={{ fontSize: r(11) }}>🪙</span>
+                                  <span style={{ fontSize: r(10), color: '#C8940A', fontWeight: 'bold' }}>{coins}</span>
+                                </>
+                              )
+                          ) : (
+                            <span style={{ fontSize: r(9), color: 'rgba(200,148,10,0.3)' }}>—</span>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
             </div>
+          )
+        }
+
+        return (
+          <>
+            {/* Docked copy. Offsets are relative to the board container, which
+                starts below the toolbar — top: 6 tucks it under the sound menu,
+                above the player list further down the same margin. */}
+            <div style={{
+              position: 'absolute', top: 6, right: 10, zIndex: 21,
+              width: DOCKED_W, padding: 7,
+              background: 'rgba(10,5,0,0.82)',
+              border: '1px solid rgba(200,148,10,0.30)',
+              borderRadius: 8,
+              boxShadow: '0 2px 10px rgba(0,0,0,0.55)',
+              // The panel itself must never eat a map click; only the button does.
+              pointerEvents: 'none',
+            }}>
+              <button
+                onClick={() => setCardsExpanded(true)}
+                title="Enlarge the board cards"
+                style={{
+                  position: 'absolute', top: 4, right: 4, zIndex: 2,
+                  width: 20, height: 20, borderRadius: 5, padding: 0,
+                  border: '1px solid rgba(200,148,10,0.45)',
+                  background: 'rgba(200,148,10,0.16)', color: '#C8940A',
+                  fontSize: 11, lineHeight: 1, cursor: 'pointer',
+                  fontFamily: 'Georgia, serif', pointerEvents: 'auto',
+                }}>
+                ⤢
+              </button>
+              {table(1)}
             </div>
-          </div>
+
+            {/* Blown-up copy — click the backdrop or press Escape to dismiss. */}
+            {cardsExpanded && (
+              <div
+                onClick={() => setCardsExpanded(false)}
+                style={{
+                  position: 'fixed', inset: 0, zIndex: 400,
+                  background: 'rgba(0,0,0,0.78)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  padding: 20, pointerEvents: 'auto',
+                }}>
+                <div
+                  onClick={e => e.stopPropagation()}
+                  style={{
+                    width: 'min(1040px, 94vw)', maxHeight: '92vh', overflowY: 'auto',
+                    background: 'linear-gradient(160deg, #1A0E02 0%, #0A0600 100%)',
+                    border: '2px solid rgba(200,148,10,0.55)',
+                    borderRadius: 14, padding: '18px 22px 22px',
+                    boxShadow: '0 20px 70px rgba(0,0,0,0.9)',
+                  }}>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    marginBottom: 16, borderBottom: '1px solid rgba(200,148,10,0.20)', paddingBottom: 9,
+                  }}>
+                    <span style={{
+                      fontSize: 13, color: '#C8940A', letterSpacing: 2,
+                      textTransform: 'uppercase', fontFamily: 'Georgia, serif',
+                    }}>
+                      🎴 Board Cards
+                    </span>
+                    <button
+                      onClick={() => setCardsExpanded(false)}
+                      style={{
+                        padding: '6px 14px', borderRadius: 7, fontSize: 12,
+                        border: '1px solid rgba(200,148,10,0.45)',
+                        background: 'rgba(200,148,10,0.12)', color: '#E8DCC8',
+                        cursor: 'pointer', fontFamily: 'Georgia, serif',
+                      }}>
+                      ✕ Close
+                    </button>
+                  </div>
+                  {table(2.2)}
+                </div>
+              </div>
+            )}
+          </>
         )
       })()}
 
@@ -4603,6 +6191,50 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         )
       })()}
 
+      {/* ── Whose turn it is, when it is not yours ──────────────────────────
+          A stalled AI turn is otherwise indistinguishable from a human seat:
+          the phase controls stay live and the map stays clickable, so it looks
+          as though an AI "became human" and refuses to play. This says which. */}
+      {currentPlayer?.isAI && gameState.phase !== 'game-over' && !showWinScreen && (() => {
+        const waitingOn = humanBlockingChoice()
+        if (waitingOn) {
+          return (
+            <HintBar color="#F1C40F">
+              🤖 <strong>{currentPlayer.name}</strong> is waiting for you to finish {waitingOn}
+            </HintBar>
+          )
+        }
+        if (aiStalled) {
+          return (
+            <div style={{
+              position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)',
+              background: 'rgba(0,0,0,0.88)', border: '1px solid #e0707099',
+              borderRadius: 6, padding: '7px 16px', zIndex: 11,
+              fontFamily: 'Georgia, serif', fontSize: 12, color: '#e08070',
+              display: 'flex', alignItems: 'center', gap: 12, whiteSpace: 'nowrap',
+              boxShadow: '0 2px 10px rgba(0,0,0,0.6)',
+            }}>
+              <span>🤖 <strong>{currentPlayer.name}</strong> has stopped mid-turn</span>
+              <button
+                onClick={() => { aiBusyRef.current = false; setAiStalled(false); setAiNudge(n => n + 1) }}
+                style={{
+                  padding: '4px 12px', borderRadius: 5, fontSize: 11.5, cursor: 'pointer',
+                  border: '1px solid rgba(241,196,15,0.6)', background: 'rgba(241,196,15,0.18)',
+                  color: '#F1C40F', fontFamily: 'Georgia, serif', fontWeight: 'bold',
+                }}>
+                Nudge
+              </button>
+            </div>
+          )
+        }
+        return (
+          <HintBar color="#C8940A">
+            🤖 <strong>{currentPlayer.name}</strong> is taking their turn
+            <Dim> · not your move</Dim>
+          </HintBar>
+        )
+      })()}
+
       {/* Context hint bar — bottom-center */}
       {(gameState.phase === 'attack' && attackSrcId && !showCombat) && (
         <HintBar color="#FF6600">
@@ -4667,6 +6299,76 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         )
       })()}
 
+      {/* Mobile HQ comeback power — move an HQ to an adjacent owned territory */}
+      {(() => {
+        const cp = gameState.players[gameState.currentPlayerIndex]
+        if (!cp) return null
+        if ((legacyState.comebackPowers ?? {})[cp.factionId] !== 'mobile-hq') return null
+        if (gameState.phase === 'game-over') return null
+        // Only useful while they actually hold an HQ
+        const holdsHq = Object.values(gameState.territories).some(
+          t => t.occupyingPlayerId === cp.id && !!t.activeHqPlayerId,
+        )
+        if (!holdsHq) return null
+        return (
+          <div style={{
+            position: 'absolute', bottom: 118, left: '50%', transform: 'translateX(-50%)',
+            zIndex: 60, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+          }}>
+            {mobileHqUsed ? (
+              <div style={{
+                padding: '6px 16px', borderRadius: 7, fontFamily: 'Georgia, serif',
+                fontSize: 11, background: 'rgba(60,40,10,0.5)',
+                border: '1px solid rgba(160,106,42,0.35)', color: 'rgba(200,148,10,0.5)',
+              }}>
+                🏰 HQ already moved this turn
+              </div>
+            ) : !mobileHqMode ? (
+              <button
+                onClick={() => {
+                  mobileHqModeRef.current = true; setMobileHqMode(true)
+                  mobileHqSrcRef.current = null; setMobileHqSrcId(null)
+                }}
+                style={{
+                  padding: '8px 20px', borderRadius: 8, fontFamily: 'Georgia, serif',
+                  fontSize: 12, fontWeight: 'bold', cursor: 'pointer',
+                  background: 'rgba(200,148,10,0.18)', border: '1.5px solid rgba(200,148,10,0.70)',
+                  color: '#E8C86A', letterSpacing: 0.5,
+                }}
+              >
+                🏰 Move HQ (Mobile HQ)
+              </button>
+            ) : (
+              <>
+                <div style={{
+                  padding: '5px 14px', borderRadius: 7, fontFamily: 'Georgia, serif',
+                  fontSize: 11, background: 'rgba(200,148,10,0.12)',
+                  border: '1px solid rgba(200,148,10,0.45)', color: '#E8C86A',
+                }}>
+                  {mobileHqSrcId
+                    ? `🏰 Now click an adjacent territory you control`
+                    : '🏰 Click one of your HQ territories'}
+                </div>
+                <button
+                  onClick={() => {
+                    mobileHqModeRef.current = false; setMobileHqMode(false)
+                    mobileHqSrcRef.current = null; setMobileHqSrcId(null)
+                  }}
+                  style={{
+                    padding: '6px 16px', borderRadius: 7, fontFamily: 'Georgia, serif',
+                    fontSize: 11, cursor: 'pointer',
+                    background: 'rgba(90,60,10,0.15)', border: '1px solid rgba(160,106,42,0.40)',
+                    color: 'rgba(200,148,10,0.70)',
+                  }}
+                >
+                  Cancel
+                </button>
+              </>
+            )}
+          </div>
+        )
+      })()}
+
       {/* Missile power activations — draft phase (Stealthy / Convincing / Rally) */}
       {gameState.phase === 'reinforce' && (() => {
         const cp = gameState.players[gameState.currentPlayerIndex]
@@ -4725,6 +6427,20 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         </HintBar>
       )}
 
+      {/* Expand comeback power — mirrors the Stealthy hints above */}
+      {gameState.phase === 'reinforce' && troopsToPlace > 0 && !stealthyMode
+        && (legacyState.comebackPowers ?? {})[currentPlayer?.factionId ?? ''] === 'expand' && (
+        expandTargetId ? (
+          <HintBar color="#27AE60">
+            🌍 <strong>Expand</strong> — click <strong>{gameState.territories[expandTargetId]?.name}</strong> again to place recruits there
+          </HintBar>
+        ) : (
+          <HintBar color="#27AE60">
+            🌍 <strong>Expand</strong> — click an unmarked, unoccupied territory to claim it
+          </HintBar>
+        )
+      )}
+
       {gameState.phase === 'fortify' && !fortifyDone && !fortifySrcId && (
         <HintBar color="#2980B9">
           ⟳ Click one of your territories to move troops from — or click <strong>End Turn</strong> to skip
@@ -4776,11 +6492,18 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         // Berserker Rage: ATTACKER ability — three-of-a-kind + kill wipes all defenders
         const bearRage    = atkAbility === 'bear-triple-kill'
 
+        // Resilient comeback power: this faction ignores Ammo Shortage while
+        // DEFENDING. Ammo Shortage no longer caps attacker dice — it applies −1
+        // to the defender's highest die — so "unaffected" means that penalty is
+        // simply not applied to them, from either the scar or the event.
+        const defFactionId = gameState.players.find(p => p.id === defPlayerId)?.factionId ?? ''
+        const defResilient = (legacyState.comebackPowers ?? {})[defFactionId] === 'resilient'
+
         // Scar effects on the defender's territory
         const tgtScars    = attackTgtTerritory.scars ?? []
         const hasFortifiedScar      = tgtScars.some(s => s.type === 'fortified')
         const hasFortificationScar  = tgtScars.some(s => s.type === 'fortification')
-        const hasWastelandScar  = tgtScars.some(s => s.type === 'wasteland')
+        const hasWastelandScar  = tgtScars.some(s => s.type === 'wasteland') && !defResilient
         const hasNuclearFallout = tgtScars.some(s => s.type === 'nuclear-fallout')
           || activeEffects.has('nuclear-fallout-round')
 
@@ -4793,7 +6516,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         const hasFortSticker = !!fortSticker
 
         // Accumulate defender die bonus from all sources
-        const ammoShortage = activeEffects.has('ammunition-shortage')
+        const ammoShortage = activeEffects.has('ammunition-shortage') && !defResilient
         const defBonusHighest = (dmArmored ? 1 : 0) + (hasFortifiedScar ? 1 : 0) + (hasFortificationScar ? 1 : 0) + (hasFortSticker ? 1 : 0) + (hasWastelandScar ? -1 : 0) + (ammoShortage ? -1 : 0)
         // Fortifications (scar or city sticker) buff the defender's highest AND lowest die.
         // Bear Trap subtracts 1 from the defender's lowest die in the Bear's first attacked territory.
@@ -4810,11 +6533,15 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         if (hasWastelandScar)    defDieParts.push({ label: '🔫 Ammo Shortage — defender highest −1', highest: -1 })
         if (ammoShortage)        defDieParts.push({ label: '🔫 Ammo Shortage (event) — defender highest −1', highest: -1 })
         if (bearTrap)            defDieParts.push({ label: '🐻 Bear Trap — defender lowest −1', lowest: -1 })
+        // Purely informational: no die change, so the player can see WHY the
+        // Ammo Shortage penalty they expected never landed.
+        if (defResilient && (tgtScars.some(s => s.type === 'wasteland') || activeEffects.has('ammunition-shortage'))) {
+          defDieParts.push({ label: '🛡 Resilient — Ammo Shortage ignored' })
+        }
 
         // Comeback power effects in combat
         const currentComebackPower = (legacyState.comebackPowers ?? {})[currentPlayer.factionId ?? '']
         const atkAggressive = currentComebackPower === 'aggressive' && defHasHq ? 1 : 0
-        const atkResilient  = currentComebackPower === 'resilient'
 
         // No attacker dice cap from Ammo Shortage — it only applies -1 to defender's highest die
         const atkMaxDice: number | undefined = undefined
@@ -5023,10 +6750,99 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         )
       })()}
 
+      {/* ── Campaign complete: crown the champion, then hand the board back ── */}
+      {campaignOutcomeState && !campaignCelebrated && (
+        <CampaignCompleteScreen
+          legacy={legacyState}
+          outcome={campaignOutcomeState}
+          onViewWorld={() => setCampaignCelebrated(true)}
+        />
+      )}
+      {/* The finished world stays on screen for as long as they want it. */}
+      {campaignOutcomeState && campaignCelebrated && (
+        <div style={{
+          position: 'fixed', top: 0, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 1200, display: 'flex', alignItems: 'center', gap: 14,
+          padding: '9px 20px', borderRadius: '0 0 10px 10px',
+          background: 'rgba(12,6,0,0.94)', border: '1px solid rgba(200,148,10,0.55)', borderTop: 'none',
+          fontFamily: 'Georgia, serif', color: '#E8DCC8', fontSize: 12,
+          boxShadow: '0 6px 24px rgba(0,0,0,0.7)',
+        }}>
+          <span>🌍 <strong style={{ color: '#C8940A' }}>{championLabel(campaignOutcomeState)}</strong> — champion of {legacyState.worldName}</span>
+          <button
+            onClick={() => setCampaignCelebrated(false)}
+            style={{
+              padding: '4px 11px', borderRadius: 5, fontSize: 11, cursor: 'pointer',
+              border: '1px solid rgba(200,148,10,0.45)', background: 'transparent',
+              color: '#C8940A', fontFamily: 'Georgia, serif',
+            }}>
+            Replay ceremony
+          </button>
+          <button
+            onClick={onReturnToLobby}
+            style={{
+              padding: '4px 11px', borderRadius: 5, fontSize: 11, cursor: 'pointer',
+              border: '1px solid rgba(200,148,10,0.45)', background: 'rgba(200,148,10,0.14)',
+              color: '#E8DCC8', fontFamily: 'Georgia, serif',
+            }}>
+            Campaign summary →
+          </button>
+        </div>
+      )}
+
+      {/* Leave-to-menu confirmation — the button is a easy mis-click away from
+          Legacy, and leaving mid-game used to be a one-way trip. */}
+      {showMenuConfirm && (
+        <div
+          onClick={e => e.target === e.currentTarget && setShowMenuConfirm(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 2500,
+            background: 'rgba(5,2,0,0.78)', display: 'flex',
+            alignItems: 'center', justifyContent: 'center', fontFamily: 'Georgia, serif',
+          }}>
+          <div style={{
+            background: 'linear-gradient(155deg, #1A0E02 0%, #0E0700 100%)',
+            border: '2px solid rgba(200,148,10,0.55)', borderRadius: 12,
+            padding: '24px 28px', width: 420, maxWidth: '92vw',
+            color: '#E8DCC8', boxShadow: '0 12px 44px rgba(0,0,0,0.85)',
+          }}>
+            <div style={{ fontSize: 17, fontWeight: 'bold', color: '#C8940A', marginBottom: 10 }}>
+              Leave to the campaign screen?
+            </div>
+            <div style={{ fontSize: 12.5, color: '#9a8a6a', lineHeight: 1.6, marginBottom: 18 }}>
+              This game is saved and stays in progress — you can pick it straight
+              back up with <strong style={{ color: '#C8940A' }}>Resume Game</strong> on
+              the campaign screen. Nothing is lost.
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={() => setShowMenuConfirm(false)}
+                style={{
+                  flex: 1, padding: '10px', borderRadius: 7, fontSize: 13,
+                  border: '1.5px solid rgba(200,148,10,0.70)', background: 'rgba(200,148,10,0.16)',
+                  color: '#E8DCC8', cursor: 'pointer', fontFamily: 'Georgia, serif',
+                }}>
+                Keep Playing
+              </button>
+              <button
+                onClick={() => { setShowMenuConfirm(false); onReturnToLobby() }}
+                style={{
+                  flex: 1, padding: '10px', borderRadius: 7, fontSize: 13,
+                  border: '1px solid rgba(200,148,10,0.30)', background: 'transparent',
+                  color: '#9a8060', cursor: 'pointer', fontFamily: 'Georgia, serif',
+                }}>
+                Leave to Menu
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Legacy Panel overlay */}
       {showLegacyPanel && (
         <LegacyPanel
           legacy={legacyState}
+          factionPlayerIds={Object.fromEntries(gameState.players.map(p => [p.factionId, p.id]))}
           onClose={() => setShowLegacyPanel(false)}
         />
       )}
@@ -5227,6 +7043,18 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         )
       })()}
 
+      {/* Hint bar for Join the Cause troop placement */}
+      {joinCausePlacement && (() => {
+        const jp = gameState.players.find(p => p.id === joinCausePlacement.playerId)
+        return (
+          <HintBar color="#9040c0">
+            🫂 <strong>Join the Cause</strong> — {jp?.name ?? 'Player'} has the largest population:
+            click your <strong>cities</strong> to place <strong>{joinCausePlacement.troopsLeft}</strong> more
+            troop{joinCausePlacement.troopsLeft !== 1 ? 's' : ''}
+          </HintBar>
+        )
+      })()}
+
       {/* Hint bar for Fortify event placement */}
       {fortifyEventPlayerId && (() => {
         const fp = gameState.players.find(p => p.id === fortifyEventPlayerId)
@@ -5240,8 +7068,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
       {/* Control the People — largest-population player chooses a reward */}
       {controlPeopleChoice && (() => {
         const cp = gameState.players.find(p => p.id === controlPeopleChoice)
-        const ownsCity = Object.values(gameState.territories).some(t =>
-          t.occupyingPlayerId === controlPeopleChoice && (t.cities ?? []).some(c => !c.isDestroyed && !c.headquartersFactionId))
+        const cityCount = ownedCityIds(controlPeopleChoice).length
+        const ownsCity = cityCount > 0
         return (
           <div style={{
             position: 'fixed', inset: 0, zIndex: 8000,
@@ -5278,7 +7106,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
                     fontFamily: 'Georgia, serif', color: '#e8dcc8',
                   }}>
                   <div style={{ fontSize: 14, fontWeight: 'bold', color: '#c8a0e8', marginBottom: 3 }}>⚔ Raise 5 Troops</div>
-                  <div style={{ fontSize: 11, color: '#9a8070' }}>Place 5 troops into any one city you control.{!ownsCity ? ' (You control no city.)' : ''}</div>
+                  <div style={{ fontSize: 11, color: '#9a8070' }}>Place 5 troops into any one city you control.{ownsCity ? ` (${cityCount} to choose from.)` : ' (You control no city.)'}</div>
                 </button>
                 <button
                   onClick={() => {
@@ -5350,6 +7178,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         const loserCanLose = Object.values(gameState.territories).some(
           t => t.occupyingPlayerId === riotResult.loserId && (t.troops ?? 0) > 1,
         )
+        // An AI picks its own casualties. Handing a human the click meant
+        // choosing where an opponent bleeds — and on your own turn the board
+        // would sit waiting for you to do it.
+        const loserIsAI = !!loser?.isAI
         return (
           <div style={{
             position: 'fixed', inset: 0, zIndex: 8000,
@@ -5390,6 +7222,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
               </div>
               <button
                 onClick={() => {
+                  if (loserIsAI) {
+                    resolveAiRiot(riotResult.loserId)
+                    return
+                  }
                   if (loserCanLose) {
                     riotRemovalRef.current = riotResult.loserId
                     setRiotRemovalPlayerId(riotResult.loserId)
@@ -5404,7 +7240,11 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
                   color: '#E8DCC8', cursor: 'pointer', fontFamily: 'Georgia, serif',
                 }}
               >
-                {loserCanLose ? `🔥 ${loser?.name ?? 'Loser'} removes 2 troops →` : 'Acknowledge'}
+                {!loserCanLose
+                  ? 'Acknowledge'
+                  : loserIsAI
+                    ? `🔥 ${loser?.name ?? 'Loser'} takes the losses →`
+                    : `🔥 ${loser?.name ?? 'Loser'} removes 2 troops →`}
               </button>
             </div>
           </div>
@@ -5448,6 +7288,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
               setCityTarget(null)
               return
             }
+            // The World Capital IS the city on its territory — nothing is built under it
+            if (action === 'place-city' && t.id === legacyState.worldCapitalTerritoryId) {
+              showWeaknessNotice('⌃ The World Capital already stands here')
+              setCityTarget(null)
+              return
+            }
             if (action === 'place-city' && cityName) {
               playCity()
               const sticker: import('@/types/legacy').Sticker = { id: `city-${Date.now()}-${currentPlayer.id}`, name: cityName, targetId: t.id, placement: 'territory', description: 'city:minor', placedByPlayerId: currentPlayer.id, appliedInGame: gameState.gameNumber }
@@ -5476,6 +7322,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
           appears the moment it's earned, before the fortify phase. */}
       {balkExpansionPending && (() => {
         const balkPlayer = gameState.players.find(p => p.id === balkExpansionPending)
+        // Purist weakness power: cannot hold more than 2 coin cards
+        const balkIsPurist = (legacyState.alienWeaknessPowers ?? {})[balkPlayer?.factionId ?? ''] === 'wp-purist'
+        const balkCoinCount = (cardState.playerHands[balkExpansionPending] ?? []).filter(id => !!getCoinCard(id)).length
         return (
           <CardDrawModal
             playerId={balkExpansionPending}
@@ -5483,6 +7332,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
             resourceDeck={cardState.resourceDeck ?? cardState.coinDeck ?? []}
             territories={gameState.territories}
             cardResources={legacyState.cardResources}
+            homelandContinentId={playerHomeland(balkExpansionPending)}
+            coinBlocked={balkIsPurist && balkCoinCount >= 2}
             title="⚑ Imperial Expansion"
             subtitle={`${balkPlayer?.name ?? 'Balkania'} expanded into their 4th territory — claim a bonus card. Face-up cards you control must be taken first; the resource pile is only available if you control none.`}
             onSelect={handleBalkExpansionSelect}
@@ -5509,6 +7360,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
             resourceDeck={cardState.resourceDeck ?? cardState.coinDeck ?? []}
             territories={gameState.territories}
             cardResources={legacyState.cardResources}
+            homelandContinentId={playerHomeland(drawPlayerId)}
             coinBlocked={drawIsPurist && coinCount >= 2}
             reconAvailable={reconAvailable}
             reconActive={reconDrawActive}
@@ -5540,6 +7392,61 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
             onJoin={handleJoinWar}
             onForfeit={handleForfeitWar}
           />
+        )
+      })()}
+
+      {/* Lead faction — choose the starting face-up mission */}
+      {leadMissionPick && (() => {
+        const p = gameState.players.find(pl => pl.id === leadMissionPick.playerId)
+        if (!p) return null
+        return (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 1400,
+            background: 'rgba(5,2,0,0.86)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontFamily: 'Georgia, serif', padding: 16, overflowY: 'auto',
+          }}>
+            <div style={{
+              background: 'linear-gradient(155deg, #1A0E02 0%, #0E0700 100%)',
+              border: '2px solid rgba(231,76,60,0.65)', borderRadius: 13,
+              width: 560, maxWidth: '94vw', maxHeight: '92vh', overflowY: 'auto',
+              padding: '22px 26px', color: '#E8DCC8',
+            }}>
+              <div style={{ textAlign: 'center', marginBottom: 18 }}>
+                <div style={{ fontSize: 10, letterSpacing: 2, color: '#e74c3c', textTransform: 'uppercase' }}>
+                  ⌃ Lead Faction
+                </div>
+                <div style={{ fontSize: 19, fontWeight: 'bold', marginTop: 5 }}>
+                  {p.name} chooses the starting mission
+                </div>
+                <div style={{ fontSize: 11, color: '#8a7050', marginTop: 5, lineHeight: 1.5 }}>
+                  {p.factionId.replace(/-/g, ' ')} leads the campaign in wins — pick which
+                  mission starts face-up. The rest stay in the deck.
+                </div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {leadMissionPick.options.map(id => {
+                  const m = CARD_LOOKUP.get(id) as import('@/types/card').MissionCard | undefined
+                  if (!m) return null
+                  const priv = isPrivateMission(id)
+                  const accent = priv ? '160,110,220' : '220,80,80'
+                  return (
+                    <button key={id} onClick={() => handleLeadMissionPick(id)} style={{
+                      textAlign: 'left', padding: '11px 14px', borderRadius: 8, cursor: 'pointer',
+                      background: `rgba(${accent},0.08)`, border: `1.5px solid rgba(${accent},0.45)`,
+                      color: '#E8DCC8', fontFamily: 'Georgia, serif',
+                    }}>
+                      <div style={{ fontSize: 12, fontWeight: 'bold', color: `rgb(${accent})`, marginBottom: 3 }}>
+                        {priv ? '✦ ' : ''}{m.name} · {m.stars === 2 ? '★★' : '★'}
+                        {priv && <span style={{ fontSize: 9, marginLeft: 6 }}>PRIVATE — STAR POWER</span>}
+                      </div>
+                      <div style={{ fontSize: 11, color: '#9a8060', lineHeight: 1.45 }}>{m.description}</div>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
         )
       })()}
 
@@ -5606,14 +7513,24 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
           textAlign: 'center',
           minWidth: 300,
         }}>
-          <div style={{ fontSize: 28, marginBottom: 6 }}>★</div>
+          <div style={{ fontSize: 28, marginBottom: 6 }}>{coinDeckStarWinner.kind === 'tie' ? '⚖' : '★'}</div>
           <div style={{ fontSize: 15, fontWeight: 'bold', color: '#E8DCC8', marginBottom: 4 }}>
-            Red Star Awarded!
+            {coinDeckStarWinner.kind === 'tie' ? 'No Red Star — Territories Tied' : 'Red Star Awarded!'}
           </div>
-          <div style={{ fontSize: 12, color: 'rgba(220,200,160,0.80)', lineHeight: 1.5 }}>
-            <strong style={{ color: '#e8c07a' }}>{coinDeckStarWinner.name}</strong> controls the most territories
-            ({coinDeckStarWinner.count}) as the coin deck runs out.
-          </div>
+          {coinDeckStarWinner.kind === 'tie' ? (
+            <div style={{ fontSize: 12, color: 'rgba(220,200,160,0.80)', lineHeight: 1.5 }}>
+              <strong style={{ color: '#e8c07a' }}>{coinDeckStarWinner.names.join(' and ')}</strong> are tied
+              on {coinDeckStarWinner.count} territories as the coin deck runs out.
+              <div style={{ marginTop: 5, color: 'rgba(220,200,160,0.62)' }}>
+                The star goes to a clear leader only — with the lead shared, nobody takes it.
+              </div>
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: 'rgba(220,200,160,0.80)', lineHeight: 1.5 }}>
+              <strong style={{ color: '#e8c07a' }}>{coinDeckStarWinner.name}</strong> controls the most territories
+              ({coinDeckStarWinner.count}) as the coin deck runs out.
+            </div>
+          )}
           <button
             onClick={() => setCoinDeckStarWinner(null)}
             style={{
@@ -5630,7 +7547,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
       {/* Win ceremony — blocked until comeback power choice is resolved */}
       {/* Win ceremony waits until pending choices resolve — a missile power
           earned on the winning star is picked BEFORE the game ends */}
-      {showWinScreen && winnerPlayerId && !comebackEliminatedPlayer && !missilePowerPendingPlayerId && (() => {
+      {showWinScreen && winScreenArmed && winnerPlayerId && !comebackEliminatedPlayer && !missilePowerPendingPlayerId && (() => {
         const winPlayer = gameState.players.find(p => p.id === winnerPlayerId)
         if (!winPlayer) return null
         return (
@@ -5670,65 +7587,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
             card={card}
             effect={effect}
             roundNumber={gameState.turnNumber}
-            onDismiss={() => {
-              setShowEventCard(false)
-              if (effect.kind === 'join-the-cause') setShowJoinTheCause(true)
-              if (effect.kind === 'die-humans') {
-                const alienPlayer = gameState.players.find(p => p.factionId === 'aliens' && !p.isEliminated)
-                if (alienPlayer && hasRuinableCity()) {
-                  setDieHumansPendingCardId(currentEventCardId)
-                } else {
-                  // No Alien player in the game or no minor city to ruin —
-                  // the card is only destroyed if used, so return it to the discard
-                  returnEventCardToDiscard(currentEventCardId)
-                }
-              }
-              if (effect.kind === 'beam-down') {
-                const alienPlayer = gameState.players.find(p => p.factionId === 'aliens' && !p.isEliminated)
-                if (alienPlayer && hasBeamDownTarget()) setBeamDownActive(true)
-              }
-              if (effect.kind === 'mysterious-island') {
-                const controllerId = gameState.territories[ALIEN_ISLAND_TERRITORY_ID]?.occupyingPlayerId
-                const anyCards = (cardState.sideboard?.length ?? 0) > 0 ||
-                  ((cardState.resourceDeck ?? cardState.coinDeck ?? []).length > 0)
-                if (controllerId && anyCards) {
-                  setPendingCardDraws(prev => [controllerId, ...prev])
-                  setEventDrawActive(true)
-                }
-              }
-              if (effect.kind === 'fallout-event') {
-                applyFalloutEvent(currentEventCardId)
-              }
-              if (effect.kind === 'fortify-city') {
-                // The drawer (current player) places 2 troops on one owned territory
-                const drawerId = gameState.players[gameState.currentPlayerIndex]?.id ?? null
-                const ownsAny = drawerId && Object.values(gameState.territories).some(t => t.occupyingPlayerId === drawerId)
-                if (drawerId && ownsAny) {
-                  fortifyEventRef.current = drawerId
-                  setFortifyEventPlayerId(drawerId)
-                }
-              }
-              if (effect.kind === 'control-the-people') {
-                // The largest-population player chooses their reward
-                const leaderId = largestPopulationPlayerId()
-                if (leaderId) setControlPeopleChoice(leaderId)
-              }
-              if (effect.kind === 'riot') {
-                applyRiotEvent()
-              }
-              if (effect.kind === 'agent-of-chaos') {
-                applyAgentOfChaos()
-              }
-              if (effect.kind === 'mutants-evolve') {
-                const mutantPlayer = gameState.players.find(p => p.factionId === 'mutants' && !p.isEliminated)
-                if (mutantPlayer) {
-                  setMutantsEvolvePendingCardId(currentEventCardId)
-                } else {
-                  // Only destroyed if used — return to the discard when no Mutants are playing
-                  returnEventCardToDiscard(currentEventCardId)
-                }
-              }
-            }}
+            onDismiss={() => resolveEventCardDismiss(currentEventCardId)}
           />
         ) : null
       })()}
@@ -5846,38 +7705,47 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         // swaps that shared mission for any card still in the deck.
         const currentMissionId = cardState.currentMissionId ?? null
         const availableMissionIds = cardState.missionDeck
-        const sharedMissionMap = currentMissionId
-          ? Object.fromEntries(gameState.players.map(p => [p.id, currentMissionId]))
-          : {}
+        const leaderId = largestPopulationPlayerId()
+        if (!leaderId) return null
         return (
           <JoinTheCauseModal
             players={gameState.players}
             territories={gameState.territories}
             availableMissionIds={availableMissionIds}
-            playerMissions={sharedMissionMap}
+            currentMissionId={currentMissionId}
             worldCapitalTerritoryId={legacyState.worldCapitalTerritoryId}
-            onChooseTroops={() => {
-              setTroopsToPlace(prev => prev + 3)
+            leaderId={leaderId}
+            reinforceTargets={ownedCityIds(leaderId).length}
+            onDecline={() => {
+              const name = gameState.players.find(p => p.id === leaderId)?.name ?? 'Player'
               setShowJoinTheCause(false)
+              logHistory(`🫂 Join the Cause — ${name} had the largest population but could take neither reward`)
+            }}
+            onChooseTroops={(playerId) => {
+              setShowJoinTheCause(false)
+              startJoinCauseTroops(playerId)
             }}
             onChooseMission={(_playerId, missionId) => {
               // Put the current shared mission back in the deck, flip the chosen one face up
-              setCardState(prev => {
-                const oldMissionId = prev.currentMissionId ?? null
-                const updated: ActiveGameCards = {
-                  ...prev,
-                  currentMissionId: missionId,
-                  missionDeck: prev.missionDeck
-                    .filter(id => id !== missionId)
-                    .concat(oldMissionId ? [oldMissionId] : []),
-                }
-                const newLegacy = { ...legacyStateRef.current, activeGameCards: updated }
-                setLegacyState(newLegacy)
+              const oldMissionId = cardState.currentMissionId ?? null
+              const updated: ActiveGameCards = {
+                ...cardState,
+                currentMissionId: missionId,
+                missionDeck: cardState.missionDeck
+                  .filter(id => id !== missionId)
+                  .concat(oldMissionId ? [oldMissionId] : []),
+              }
+              setCardState(updated)
+              setLegacyState(prev => {
+                const newLegacy: LegacyState = { ...prev, activeGameCards: updated }
+                legacyStateRef.current = newLegacy
                 saveLegacyState(newLegacy).catch(() => {})
-                return updated
+                return newLegacy
               })
               const md = CARD_LOOKUP.get(missionId) as import('@/types/card').MissionCard | undefined
               showWeaknessNotice(`📜 New shared mission revealed: ${md?.description ?? missionId}`)
+              const leaderName = gameState.players.find(p => p.id === leaderId)?.name ?? 'Player'
+              logHistory(`🫂 Join the Cause — ${leaderName} had the largest population and swapped the shared mission for: ${md?.description ?? missionId}`)
               setShowJoinTheCause(false)
             }}
           />
@@ -5891,25 +7759,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         return (
           <WorldCapitalModal
             completingPlayer={completingPlayer}
-            players={gameState.players}
             territories={gameState.territories}
-            onPlace={(territoryId) => {
-              setLegacyState(prev => {
-                const next = {
-                  ...prev,
-                  worldCapitalTerritoryId: territoryId,
-                  historyLog: [...prev.historyLog, {
-                    gameNumber: gameStateRef.current.gameNumber,
-                    entry: `${completingPlayer.name} placed the World Capital at ${gameState.territories[territoryId]?.name ?? territoryId}`,
-                    timestamp: new Date().toISOString(),
-                  }],
-                }
-                saveLegacyState(next).catch(() => {})
-                return next
-              })
-              setShowWorldCapitalModal(false)
-              setWorldCapitalCompletingId(null)
-            }}
+            candidateTerritoryIds={worldCapitalCandidates}
+            onPlace={(territoryId) => placeWorldCapital(territoryId, completingPlayer)}
           />
         )
       })()}
@@ -5936,10 +7788,15 @@ function HintBar({ color, children }: { color: string; children: React.ReactNode
   return (
     <div style={{
       position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)',
-      background: `${color}1A`, border: `1px solid ${color}88`,
+      // Solid black plate rather than a 10%-alpha tint of the accent colour —
+      // these sit over the map, and the tint left the text competing with
+      // whatever terrain happened to be underneath. The border keeps the
+      // per-hint colour coding.
+      background: 'rgba(0,0,0,0.88)', border: `1px solid ${color}99`,
       borderRadius: 6, padding: '7px 20px',
       fontFamily: 'Georgia, serif', fontSize: 12, color,
-      pointerEvents: 'none', letterSpacing: 0.3, backdropFilter: 'blur(5px)',
+      pointerEvents: 'none', letterSpacing: 0.3,
+      boxShadow: '0 2px 10px rgba(0,0,0,0.6)',
       whiteSpace: 'nowrap', zIndex: 10,
     }}>
       {children}

@@ -70,7 +70,7 @@ export default function FirstEliminationMilestoneModal({ eliminatedPlayerName, e
             Every faction that gets eliminated claims a permanent <strong>comeback power </strong>
             (the blue slot on its faction card). Each power can only ever be claimed by one
             faction. <strong style={{ color: '#3498DB' }}>{eliminatedPlayerName}</strong> chooses
-            first, right now: <em>Expand, Aggressive, Mobile HQ, Mercenary or Resilient</em>.
+            first, right now: <em>Expand, Aggressive, Mobile HQ, Mercenary, Resilient or Resourceful</em>.
           </Unlock>
 
           <Unlock icon="🧍" color="#c0a060" title="Mercenary Scar Cards ×3">

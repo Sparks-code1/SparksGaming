@@ -1,5 +1,7 @@
 import type { LegacyState } from '@/types/legacy'
 import { FACTION_COLORS } from '@/data/mockGameState'
+import { getRoster, rosterName, playerSignatureCount, victoryWinnerId } from '@/lib/roster'
+import { campaignOutcome, championLabel } from '@/lib/campaign'
 import { MOCK_PLAYERS } from '@/data/mockGameState'
 
 const FACTION_NAMES: Record<string, string> = {
@@ -32,22 +34,44 @@ interface Props {
 export default function CampaignVictoryScreen({ legacy, onNewCampaign }: Props) {
   const winnerId = legacy.campaignWinnerId ?? ''
   const winnerPlayer = MOCK_PLAYERS.find(p => p.id === winnerId)
-  const winnerFaction = winnerPlayer?.factionId ?? ''
-  const winnerName = winnerPlayer?.name ?? 'Unknown'
+  // The faction they last won under — a person plays different factions across
+  // a campaign, so this comes from the victory log, not a fixed seat mapping.
+  const winnerFaction = [...(legacy.victoryLog ?? [])]
+    .reverse()
+    .find(v => victoryWinnerId(legacy, v) === winnerId)?.factionId
+    ?? winnerPlayer?.factionId ?? ''
+  const winnerName = rosterName(legacy, winnerId, winnerPlayer?.name ?? 'Unknown')
+  // A 15th-game tie leaves the world shared, so name everyone who holds it.
+  const outcome = campaignOutcome(legacy)
+  const championNames = outcome.championIds.length > 1 ? championLabel(outcome) : winnerName
   const { r, g, b } = factionRgb(winnerFaction)
   const factionColor = `rgb(${r},${g},${b})`
   const factionName = FACTION_NAMES[winnerFaction] ?? winnerFaction
 
   const playerRedStars = legacy.playerRedStars ?? {}
 
-  const hallOfFame = MOCK_PLAYERS
-    .map(p => {
-      const wins = (legacy.victoryLog ?? []).filter(v => v.factionId === p.factionId).length
-      const stars = playerRedStars[p.id] ?? 0
-      const { r, g, b } = factionRgb(p.factionId)
-      return { ...p, wins, stars, color: `rgb(${r},${g},${b})` }
+  // The campaign roster is the hall of fame — wins and stars belong to the
+  // person, counted by roster id, not to whichever faction they happened to
+  // play in a given game.
+  const hallOfFame = getRoster(legacy)
+    .map(m => {
+      const lastFaction = [...(legacy.victoryLog ?? [])]
+        .reverse()
+        .find(v => victoryWinnerId(legacy, v) === m.id)?.factionId
+        ?? MOCK_PLAYERS.find(p => p.id === m.id)?.factionId ?? ''
+      const { r, g, b } = factionRgb(lastFaction)
+      return {
+        id: m.id,
+        name: m.name,
+        factionId: lastFaction,
+        wins: playerSignatureCount(legacy, m.id),
+        stars: playerRedStars[m.id] ?? 0,
+        color: `rgb(${r},${g},${b})`,
+      }
     })
-    .sort((a, b) => b.stars - a.stars || b.wins - a.wins)
+    // Ranked by games won — that is what decides the campaign. Red stars are a
+    // per-game tally and reset, so they only break ties here.
+    .sort((a, b) => b.wins - a.wins || b.stars - a.stars)
 
   const namedContinents = legacy.namedContinents ?? {}
   const bonusMods = legacy.continentBonusModifiers ?? []
@@ -73,11 +97,13 @@ export default function CampaignVictoryScreen({ legacy, onNewCampaign }: Props) 
             CAMPAIGN COMPLETE
           </div>
           <div style={{ fontSize: 28, fontWeight: 'bold', color: factionColor, textShadow: `0 0 30px rgba(${r},${g},${b},0.7)`, marginBottom: 4 }}>
-            {winnerName}
+            {championNames}
           </div>
           <div style={{ fontSize: 14, color: `rgba(${r},${g},${b},0.75)`, marginBottom: 20 }}>{factionName}</div>
+          {/* The campaign is won on games won, not red stars — stars decide a
+              single game and reset between them. */}
           <div style={{ display: 'inline-block', padding: '10px 28px', borderRadius: 24, border: `2px solid rgba(${r},${g},${b},0.55)`, background: `rgba(${r},${g},${b},0.12)`, fontSize: 15, color: '#E8DCC8' }}>
-            {playerRedStars[winnerId] ?? 0} <span style={{ color: '#c0392b' }}>★</span> — Campaign Champion
+            {outcome.standings.find(s => s.playerId === winnerId)?.signatures ?? 0} of {outcome.gamesPlayed} games won — Campaign Champion
           </div>
         </div>
 

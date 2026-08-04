@@ -11,6 +11,20 @@ export const MOCK_PLAYERS: Player[] = [
   { id: 'p5', name: 'Eve',     factionId: 'die-mechaniker',      userId: null, troops: 3, cards: [], missionCardId: null, isEliminated: false, holdsHq: false, wins: 0, winHistory: [] },
 ]
 
+/**
+ * Point the shared seat table at the campaign roster's names.
+ *
+ * Seat ids (`p1`…`p5`) are the roster ids, so this only refreshes the labels
+ * every screen renders. Identity itself comes from the roster — a seat is never
+ * reassigned to a different person by this call.
+ */
+export function applyRosterNames(roster: Array<{ id: string; name: string }>): void {
+  for (const m of roster) {
+    const p = MOCK_PLAYERS.find(mp => mp.id === m.id)
+    if (p) p.name = m.name
+  }
+}
+
 /** Faction → hex color for map rendering */
 export const FACTION_COLORS: Record<string, number> = {
   'enclave-of-the-bear': 0xf1c40f,  // yellow

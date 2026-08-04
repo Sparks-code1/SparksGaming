@@ -1,8 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { getVolume, isMuted, setVolume, toggleMuted, attachUiClickSound } from '@/lib/sounds'
 
-/** Top-corner sound control: mute toggle + volume slider. */
-export default function SoundSettings() {
+/**
+ * Sound control: mute toggle + volume slider.
+ * Default: a fixed button in the top-right corner (used on menu/setup screens).
+ * `inline`: renders in normal flow so it can sit inside another toolbar row
+ * (used in-game, tucked to the left of the Legacy button).
+ */
+export default function SoundSettings({ inline = false }: { inline?: boolean }) {
   const [open, setOpen] = useState(false)
   const [vol, setVol] = useState(getVolume())
   const [muted, setMuted] = useState(isMuted())
@@ -11,12 +16,12 @@ export default function SoundSettings() {
 
   const icon = muted || vol === 0 ? '🔇' : vol < 0.4 ? '🔈' : vol < 0.75 ? '🔉' : '🔊'
 
+  const wrapperStyle: CSSProperties = inline
+    ? { position: 'relative', display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'Georgia, serif' }
+    : { position: 'fixed', top: 10, right: 10, zIndex: 5000, display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'Georgia, serif' }
+
   return (
-    <div style={{
-      position: 'fixed', top: 10, right: 10, zIndex: 5000,
-      display: 'flex', alignItems: 'center', gap: 8,
-      fontFamily: 'Georgia, serif',
-    }}>
+    <div style={wrapperStyle}>
       {open && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 10,

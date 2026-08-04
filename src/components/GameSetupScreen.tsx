@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { MOCK_PLAYERS, FACTION_COLORS } from '@/data/mockGameState'
 import { TERRITORY_DEFINITIONS } from '@/data/territoryData'
-import { FACTION_ABILITY_OPTIONS, getAbilitiesForFaction } from '@/data/factionAbilities'
+import { FACTION_ABILITY_OPTIONS, getAbilitiesForFaction, getAbility } from '@/data/factionAbilities'
 import { needsWeaknessPower } from '@/data/weaknessPowers'
+import { leadFactionId, factionWinCounts } from '@/lib/gameLogic'
+import { factionCampaignMarks } from '@/lib/factionPowers'
 import type { FactionId } from '@/types/faction'
 import type { LegacyState } from '@/types/legacy'
 import type { AIDifficulty } from '@/types/ai'
@@ -354,7 +356,14 @@ export default function GameSetupScreen({ playerOrder, existingAbilities, remove
                 const col = hexToRgb(FACTION_COLORS[fid as FactionId] ?? 0x888888)
                 const colA = col.replace('rgb', 'rgba').replace(')', ',0.60)')
                 const [ab1, ab2] = getAbilitiesForFaction(fid as FactionId)
-                const visibleAbilities = [ab1, ab2].filter(ab => ab && !removedAbilityIds.includes(ab.id))
+                // A faction that locked its ability in during an earlier game
+                // never chooses again — advanceAfterFactionStage skips its
+                // ability phase — so show the settled power rather than two
+                // options it can no longer pick between.
+                const lockedAbility = existingAbilities[fid] ? getAbility(existingAbilities[fid]) : undefined
+                const visibleAbilities = lockedAbility
+                  ? [lockedAbility]
+                  : [ab1, ab2].filter(ab => ab && !removedAbilityIds.includes(ab.id))
                 return (
                   <button
                     key={fid}
@@ -376,7 +385,44 @@ export default function GameSetupScreen({ playerOrder, existingAbilities, remove
                       <span style={{ fontSize: 13, fontWeight: 'bold', color: taken ? '#4a3020' : col }}>{FACTION_NAMES[fid]}</span>
                       {taken && <span style={{ fontSize: 9, color: '#3a2810', marginLeft: 4 }}>(taken)</span>}
                     </div>
-                    {/* Two ability options */}
+                    {/* Lead faction — most campaign wins. Owns the World Capital
+                        at game start and picks the face-up mission. */}
+                    {leadFactionId(legacy?.victoryLog) === fid && (
+                      <div style={{
+                        padding: '6px 8px', borderRadius: 6, marginBottom: 7,
+                        background: taken ? 'rgba(0,0,0,0.15)' : 'rgba(212,175,55,0.12)',
+                        border: `1px solid ${taken ? 'rgba(100,75,25,0.10)' : 'rgba(212,175,55,0.55)'}`,
+                      }}>
+                        <div style={{ fontSize: 10, fontWeight: 'bold', color: taken ? '#4a3020' : '#D4AF37', marginBottom: 2 }}>
+                          ⌃ Lead Faction · {factionWinCounts(legacy?.victoryLog)[fid] ?? 0} wins
+                        </div>
+                        <div style={{ fontSize: 9, color: taken ? '#3a2010' : '#9a8060', lineHeight: 1.4 }}>
+                          {legacy?.worldCapitalTerritoryId
+                            ? 'Picks the starting face-up mission and begins owning the World Capital with 3 troops.'
+                            : 'Lead-faction rules activate once the World Capital is placed.'}
+                        </div>
+                      </div>
+                    )}
+                    {/* Everything this faction carries in from past games —
+                        star power, comeback powers, weaknesses, the nuclear
+                        mark. Same source as the draft screen, so the record
+                        reads identically wherever you pick a faction. */}
+                    {factionCampaignMarks(fid, legacy).map((pw, i) => (
+                      <div key={i} style={{
+                        padding: '6px 8px', borderRadius: 6, marginBottom: 7,
+                        background: taken ? 'rgba(0,0,0,0.15)' : `${pw.color}1A`,
+                        border: `1px solid ${taken ? 'rgba(100,75,25,0.10)' : `${pw.color}73`}`,
+                      }}>
+                        <div style={{ fontSize: 10, fontWeight: 'bold', color: taken ? '#4a3020' : pw.color, marginBottom: 2 }}>
+                          {pw.label}{pw.name ? ` · ${pw.name}` : ''}
+                        </div>
+                        <div style={{ fontSize: 9, color: taken ? '#3a2010' : '#9a8060', lineHeight: 1.4 }}>
+                          {pw.description}
+                        </div>
+                      </div>
+                    ))}
+                    {/* The ability: two options to choose from, or the one
+                        already locked in for the rest of the campaign. */}
                     <div style={{ display: 'flex', gap: 8 }}>
                       {visibleAbilities.map(ab => (
                         <div key={ab.id} style={{
@@ -386,6 +432,11 @@ export default function GameSetupScreen({ playerOrder, existingAbilities, remove
                         }}>
                           <div style={{ fontSize: 10, fontWeight: 'bold', color: taken ? '#4a3020' : col, marginBottom: 2 }}>
                             {PHASE_LABEL[ab.phase] ?? ab.phase} · {ab.name}
+                            {lockedAbility && (
+                              <span style={{ marginLeft: 6, fontWeight: 'normal', fontSize: 9, color: taken ? '#4a3020' : '#7a6848' }}>
+                                🔒 locked in
+                              </span>
+                            )}
                           </div>
                           <div style={{ fontSize: 9, color: taken ? '#3a2010' : '#9a8060', lineHeight: 1.4 }}>
                             {ab.tagline}

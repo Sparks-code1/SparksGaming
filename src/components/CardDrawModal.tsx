@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import type { Territory } from '@/types/territory'
 import { getTerritoryCard, getCoinCard } from '@/data/cards'
 import { TERRITORY_DEFINITIONS } from '@/data/territoryData'
@@ -21,6 +21,9 @@ interface Props {
   reconAvailable?: boolean
   reconActive?: boolean
   onActivateRecon?: () => void
+  /** Faction homeland continent (double-winner unlock): every card in this
+   *  continent is claimable too, not just territories the player occupies. */
+  homelandContinentId?: string | null
   /** Override modal title */
   title?: string
   /** Override modal subtitle */
@@ -46,10 +49,21 @@ const SUIT_LABEL: Record<string, string> = {
   wild:      'Resource',
 }
 
-export default function CardDrawModal({ playerId, sideboard, resourceDeck, territories, cardResources = {}, freeChoice = false, coinBlocked = false, reconAvailable = false, reconActive = false, onActivateRecon, title, subtitle, onSelect, onSkip }: Props) {
+export default function CardDrawModal({ playerId, sideboard, resourceDeck, territories, cardResources = {}, freeChoice = false, coinBlocked = false, reconAvailable = false, reconActive = false, onActivateRecon, homelandContinentId = null, title, subtitle, onSelect, onSkip }: Props) {
   const [selected, setSelected] = useState<string | null>(null)
   // Card is animating out of the modal after being taken
   const [leaving, setLeaving] = useState(false)
+
+  // A player can owe more than one draw in a turn (a conquest plus an event, say).
+  // The parent renders the same element for each, so React KEEPS this component
+  // mounted and its state with it — leaving `leaving` stuck true and `selected`
+  // pointing at the card just taken, which disabled Take Card for good. Reset
+  // whenever the cards on offer change, which is exactly when a draw completes.
+  const offerKey = `${playerId}|${sideboard.join(',')}|${resourceDeck.length}`
+  useEffect(() => {
+    setSelected(null)
+    setLeaving(false)
+  }, [offerKey])
 
   function handleTake() {
     if (!selected || leaving) return
@@ -67,8 +81,10 @@ export default function CardDrawModal({ playerId, sideboard, resourceDeck, terri
   const sideboardCards = sideboard.map(cardId => {
     const card = getTerritoryCard(cardId)
     const terrDef = card ? TERRITORY_DEFINITIONS.find(d => d.id === card.territoryId) : null
-    const controls = card ? controlledTerritoryIds.has(card.territoryId) : false
-    return { cardId, card, terrDef, controls }
+    const occupies = card ? controlledTerritoryIds.has(card.territoryId) : false
+    // Homeland: any card in that continent is claimable, occupied or not.
+    const viaHomeland = !occupies && !!homelandContinentId && terrDef?.continentId === homelandContinentId
+    return { cardId, card, terrDef, controls: occupies || viaHomeland, viaHomeland }
   })
 
   const anyControlled = sideboardCards.some(c => c.controls)
@@ -78,6 +94,22 @@ export default function CardDrawModal({ playerId, sideboard, resourceDeck, terri
   // Recon (missile power) makes every face-up territory card selectable instead of the coin.
   const sideboardSelectable = (controls: boolean) => (freeChoice || reconActive) ? true : (anyControlled ? controls : false)
   const resourceSelectable = coinBlocked ? false : (freeChoice ? true : !anyControlled)
+
+  // Whether there is ANY legal pick. Skip used to be offered only when the
+  // resource pile had run dry, which left one combination with no way out at
+  // all: a full pile, no face-up card you control, and the coin blocked (Purist
+  // at 2 coin cards). Nothing was selectable, Take Card stayed disabled, and
+  // there was no Skip — the draw could not be finished or abandoned.
+  const anySelectable =
+    sideboardCards.some(c => sideboardSelectable(c.controls)) ||
+    (hasResource && resourceSelectable)
+
+  /** Why nothing can be taken — shown on the Skip button so it isn't a mystery. */
+  const skipReason = coinBlocked && hasResource
+    ? 'you already hold the most coin cards allowed'
+    : !hasResource && !anyControlled
+      ? 'no cards available'
+      : 'nothing you can take'
 
   return (
     <div style={{
@@ -119,7 +151,7 @@ export default function CardDrawModal({ playerId, sideboard, resourceDeck, terri
           </div>
 
           <div style={{ display: 'flex', gap: 10 }}>
-            {sideboardCards.map(({ cardId, card, terrDef, controls }, idx) => {
+            {sideboardCards.map(({ cardId, card, terrDef, controls, viaHomeland }, idx) => {
               const continent = terrDef?.continentId ?? ''
               const contColor = CONTINENT_COLOR[continent] ?? '#888'
               const selectable = sideboardSelectable(controls)
@@ -206,8 +238,8 @@ export default function CardDrawModal({ playerId, sideboard, resourceDeck, terri
                   })()}
 
                   {(controls || freeChoice) && (
-                    <div style={{ fontSize: 8, color: '#2ecc71', letterSpacing: 0.5 }}>
-                      {controls ? '✓ YOUR TERRITORY' : '✓ AVAILABLE'}
+                    <div style={{ fontSize: 8, color: viaHomeland ? '#5DADE2' : '#2ecc71', letterSpacing: 0.5 }}>
+                      {viaHomeland ? '✦ YOUR HOMELAND' : controls ? '✓ YOUR TERRITORY' : '✓ AVAILABLE'}
                     </div>
                   )}
                 </button>
@@ -313,7 +345,7 @@ export default function CardDrawModal({ playerId, sideboard, resourceDeck, terri
           )}
         </div>
 
-        {(!hasResource && !anyControlled && onSkip) ? (
+        {(!anySelectable && onSkip) ? (
           <button
             onClick={onSkip}
             style={{
@@ -325,7 +357,7 @@ export default function CardDrawModal({ playerId, sideboard, resourceDeck, terri
               color: 'rgba(220,210,190,0.80)',
             }}
           >
-            Skip (no cards available)
+            Skip ({skipReason})
           </button>
         ) : (
           <button

@@ -8,18 +8,20 @@ export type ContinentId =
   | 'alien-island'  // special single-territory "continent" — never awards a bonus
 
 export type ScarType =
-  | 'nuclear-fallout'    // +1 loss both sides per battle here
+  | 'nuclear-fallout'    // +1 loss to BOTH sides on every combat round fought here
   | 'fortified'          // +1 to defender's highest die (Bunker)
-  | 'fortification'      // +1 to defender's highest AND lowest die (Fortification ring)
-  | 'rich-land'          // +1 troop to pool during draft if controlled (legacy, no longer dealt)
-  | 'wasteland'          // attacker capped at 2 dice
-  | 'biological'         // owner loses 1 troop here at start of their turn (legacy, no longer dealt)
-  | 'mercenary'          // +1 troop auto-placed on this territory during owner's draft
+  | 'fortification'      // +1 to defender's highest AND lowest die; one charge
+                         //   spent per combat round, destroyed at 10
+  | 'wasteland'          // −1 to defender's highest die (Ammo Shortage)
+  | 'biological'         // owner loses 1 troop here at the END of their turn;
+                         //   Mutants gain 1 instead (legacy, no longer dealt)
+  | 'mercenary'          // +1 troop here at the END of the owner's turn (+2 with
+                         //   the Mercenary comeback power); Mutants lose 1 instead
 
 export interface Scar {
   type: ScarType
   appliedInGame: number  // campaign game number when applied
-  attackCount?: number   // times attacked (fortification scar removed at 10)
+  attackCount?: number   // combat ROUNDS fought against it (fortification destroyed at 10)
 }
 
 export interface City {

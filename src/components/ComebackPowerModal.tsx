@@ -37,15 +37,22 @@ export const COMEBACK_POWERS: ComebackPower[] = [
     id: 'mercenary',
     name: 'Mercenary',
     icon: '💀',
-    desc: 'Gain one extra troop for each mercenary territory you control during draft.',
-    gameplayNote: 'Mercenary territories are neutral (unowned) territories. Bonus applied automatically at reinforce.',
+    desc: 'Territories you control with a Mercenary scar gain an extra troop each turn.',
+    gameplayNote: 'A Mercenary scar already adds +1 troop at the end of your turn; this power makes it +2. Placed automatically on that territory.',
   },
   {
     id: 'resilient',
     name: 'Resilient',
     icon: '🛡️',
-    desc: 'Your faction is unaffected by Ammo Shortage scars.',
-    gameplayNote: 'Automatically bypasses the Ammo Shortage dice cap when attacking.',
+    desc: 'Your faction is unaffected by Ammo Shortage while defending.',
+    gameplayNote: 'When your territories are attacked, the Ammo Shortage penalty to your highest defence die is ignored — from both the scar and the global event.',
+  },
+  {
+    id: 'resourceful',
+    name: 'Resourceful',
+    icon: '📦',
+    desc: 'Expand into a city territory and you draw a card, even without conquering.',
+    gameplayNote: 'Moving into an unoccupied territory that holds a city normally earns nothing. With this power it earns the same end-of-turn card a conquest would. Not an extra card — if you conquered this turn you already have one.',
   },
 ]
 
@@ -82,6 +89,9 @@ export default function ComebackPowerModal({
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         zIndex: 2000,
         fontFamily: 'Georgia, serif',
+        // The power list grows with each power added; on a short window the
+        // panel must scroll rather than push its confirm button off-screen.
+        overflowY: 'auto', padding: '16px 0',
       }}
     >
       <div
@@ -92,6 +102,7 @@ export default function ComebackPowerModal({
           padding: '36px 32px 28px',
           width: 560,
           maxWidth: '94vw',
+          maxHeight: '92vh', overflowY: 'auto', flexShrink: 0,
           color: '#E8DCC8',
           boxShadow: '0 16px 60px rgba(0,0,0,0.95), 0 0 40px rgba(41,128,185,0.15)',
         }}
