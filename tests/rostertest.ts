@@ -153,3 +153,6 @@ console.log('\n--- the roster is permanent ---')
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
+
+// Not optional: without an exit code the runner counts a failing suite green.
+process.exit(pass ? 0 : 1)

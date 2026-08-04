@@ -79,3 +79,6 @@ const check = (label: string, actual: string, expected: string) => {
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
+
+// Not optional: without an exit code the runner counts a failing suite green.
+process.exit(pass ? 0 : 1)

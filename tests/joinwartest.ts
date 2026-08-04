@@ -89,3 +89,6 @@ check('already forfeited -> skipped even though a spot exists',
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
+
+// Not optional: without an exit code the runner counts a failing suite green.
+process.exit(pass ? 0 : 1)

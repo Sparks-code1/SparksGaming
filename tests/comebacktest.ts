@@ -67,3 +67,6 @@ const troops = (t: Record<string, any>) => ({ m1: t.m1.troops, m2: t.m2.troops, 
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
+
+// Not optional: without an exit code the runner counts a failing suite green.
+process.exit(pass ? 0 : 1)

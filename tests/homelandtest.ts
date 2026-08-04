@@ -80,3 +80,6 @@ check('homeland asia — territories you hold elsewhere still count',
 check('unknown territory id is refused', claim('atlantis', 'asia'), false)
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
+
+// Not optional: without an exit code the runner counts a failing suite green.
+process.exit(pass ? 0 : 1)

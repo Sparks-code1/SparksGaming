@@ -82,3 +82,6 @@ check('an occupied enemy territory cannot be claimed',
     isOwn: false, isUnoccupied: false, isUnmarked: true, isCurrentTarget: false }), 'ignore')
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
+
+// Not optional: without an exit code the runner counts a failing suite green.
+process.exit(pass ? 0 : 1)

@@ -96,3 +96,6 @@ check('a TIED player on 3 stars does not win', wouldEndGame(3, { p1: 11, p2: 11 
 check('...and neither does the other', wouldEndGame(3, { p1: 11, p2: 11 }, 'p2'), false)
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
+
+// Not optional: without an exit code the runner counts a failing suite green.
+process.exit(pass ? 0 : 1)

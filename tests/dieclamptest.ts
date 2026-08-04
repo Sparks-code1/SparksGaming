@@ -111,3 +111,6 @@ check('a 3-die defence modifies only the highest and lowest',
   animated([5, 3, 2], [BUNKER, BEAR_TRAP]), [6, 3, 1])
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
+
+// Not optional: without an exit code the runner counts a failing suite green.
+process.exit(pass ? 0 : 1)

@@ -112,3 +112,6 @@ check('valid credentials pass', validateCredentials('a@b.co', '123456'), null)
 check('surrounding whitespace is tolerated', validateCredentials('  a@b.co  ', '123456'), null)
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
+
+// Not optional: without an exit code the runner counts a failing suite green.
+process.exit(pass ? 0 : 1)
