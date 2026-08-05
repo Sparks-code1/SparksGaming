@@ -65,7 +65,8 @@ Event rewards — Join the Cause, Resistance, Control the People and Riot, all o
 which pay a player the *board* picks rather than whoever is taking the turn.
 That distinction is what several of these suites are guarding.
 
-Accounts and campaigns — join codes, roster rules, join-by-code refusals.
+Accounts and campaigns — join codes, roster rules, join-by-code refusals, and
+the roster being settled at campaign setup rather than by the first game.
 
 Server authority — that the server's dice cannot be forged, that a client
 cannot hand the server a board, and that hotseat behaviour is unchanged.

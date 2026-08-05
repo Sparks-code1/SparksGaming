@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { LegacyState } from '@/types/legacy'
 import type { AIDifficulty } from '@/types/ai'
 import { AI_DIFFICULTY_LABEL } from '@/types/ai'
-import { ROSTER_IDS, MAX_ROSTER, hasRoster, getRoster, validateSeats } from '@/lib/roster'
+import { ROSTER_IDS, MAX_ROSTER, hasRoster, getRoster, validateSeats, validateRosterNames } from '@/lib/roster'
 import JoinCodeCard from './JoinCodeCard'
 
 export interface SlotConfig { isAI: boolean; difficulty: AIDifficulty }
@@ -62,11 +62,7 @@ export default function PlayerSlotsScreen({ legacy = null, user = null, onConfir
   const trimmed = activeSeats.map(i => names[i].trim())
   const seatCheck = locked
     ? validateSeats(legacy, activeSeats.map(i => seatIds[i]))
-    : trimmed.every(n => n.length > 0)
-      ? (new Set(trimmed.map(n => n.toLowerCase())).size === trimmed.length
-          ? { ok: true as const }
-          : { ok: false as const, reason: 'Each player needs a different name' })
-      : { ok: false as const, reason: 'Every player needs a name' }
+    : validateRosterNames(trimmed)
 
   const canConfirm = humanCount >= 1 && seatCheck.ok
 

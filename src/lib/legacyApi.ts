@@ -4,7 +4,7 @@ import type { ScarType } from '@/types/territory'
 import { getInitialScarDeck } from '@/data/scarCards'
 import { storeGet, storeSet, storeRemove } from './appStore'
 import { generateJoinCode, normalizeJoinCode, isValidJoinCode } from './joinCode'
-import { addRosterMember, claimRosterSeat, getRoster } from './roster'
+import { addRosterMember, claimRosterSeat, getRoster, createRoster, validateRosterNames } from './roster'
 
 // ─── Campaign identity ────────────────────────────────────────────────────────
 // Campaigns are keyed by a generated UUID, so any number of them coexist in the
@@ -534,13 +534,41 @@ export async function ensureJoinCode(state: LegacyState): Promise<string> {
 }
 
 /**
- * Create a campaign and its join code in one step.
+ * Create a campaign, its roster and its join code in one step.
+ *
+ * The roster is settled HERE rather than by the first game. It is the
+ * campaign's list of people, and three things that happen before a board exists
+ * all need it: a joiner has to have a name to claim, an account has to have a
+ * seat to link to, and online play has to know whose turn it is. Deriving it
+ * from game one meant none of that could happen until game one was under way —
+ * and the roster is permanent regardless of which game creates it, so the later
+ * point was never the more honest one.
+ *
+ * `host` links the creator's own account to one of those names immediately, so
+ * the person setting the campaign up is not left as the one unclaimed seat
+ * blocking their own game from going online.
  *
  * The row is written BEFORE the code is assigned, because the code is set with
  * an update keyed on the row's id — a campaign with no row cannot hold a code.
  */
-export async function createCampaign(worldName: string): Promise<LegacyState> {
-  const fresh: LegacyState = { ...defaultLegacyState(), worldName }
+export async function createCampaign(
+  worldName: string,
+  rosterNames: string[],
+  host?: { playerId: string; userId: string; userEmail?: string | null },
+): Promise<LegacyState> {
+  const check = validateRosterNames(rosterNames)
+  if (!check.ok) throw new Error(check.reason)
+
+  let roster = createRoster(rosterNames, 1)
+  if (host) {
+    const claimed = claimRosterSeat(roster, host.playerId, host.userId, host.userEmail)
+    // Refuse rather than create the campaign with the link silently dropped —
+    // an unlinked host is exactly the state this argument exists to prevent.
+    if (!claimed.ok) throw new Error(claimed.reason ?? 'Could not link your account to that name')
+    roster = claimed.roster
+  }
+
+  const fresh: LegacyState = { ...defaultLegacyState(), worldName, roster }
   await saveLegacyState(fresh)
   try {
     const code = await ensureJoinCode(fresh)

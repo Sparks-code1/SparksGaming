@@ -13,7 +13,9 @@ import CampaignVictoryScreen from './CampaignVictoryScreen'
 import CampaignPicker from './CampaignPicker'
 import AuthPanel from './AuthPanel'
 import { getCurrentUser, onAuthChange, type AuthUser } from '@/lib/auth'
-import { claimRosterSeat, getRoster } from '@/lib/roster'
+import {
+  claimRosterSeat, getRoster, validateRosterNames, ROSTER_IDS, MAX_ROSTER, MAX_ROSTER_NAME,
+} from '@/lib/roster'
 
 interface Props {
   onReadyForDiceRoll: (legacy: LegacyState) => void
@@ -37,6 +39,20 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
   const [legacy, setLegacy]     = useState<LegacyState | null>(null)
   const [sessions, setSessions] = useState<GameSessionRow[]>([])
   const [worldName, setWorldName] = useState('New World')
+
+  // ── New-campaign roster ───────────────────────────────────────────────────
+  // Named here, before any game exists, because everything that identifies a
+  // person in this campaign hangs off the roster: the names a joiner claims,
+  // the seat an account links to, and whose turn the server thinks it is.
+  const [newCount, setNewCount] = useState(4)
+  const [newNames, setNewNames] = useState<string[]>(() => Array.from({ length: MAX_ROSTER }, () => ''))
+  /** Which of those names is the host's own — links their account on creation. */
+  const [hostSeat, setHostSeat] = useState<number | null>(null)
+  const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
+
+  const newRosterNames = newNames.slice(0, newCount)
+  const rosterCheck = validateRosterNames(newRosterNames)
 
   // ── Optional account ─────────────────────────────────────────────────────
   // Signing in is never required. `authDismissed` records that the player chose
@@ -132,16 +148,27 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
   }
 
   async function handleNewCampaignStart(name: string) {
-    // createCampaign mints a fresh id AND a join code, so this never collides
-    // with an existing campaign and is shareable the moment it exists.
+    // createCampaign mints a fresh id, the ROSTER and a join code, so the
+    // campaign is shareable and claimable the moment it exists — before a board
+    // has been dealt.
+    if (!rosterCheck.ok) return
+    setCreating(true)
+    setCreateError(null)
     try {
-      const fresh = await createCampaign(name)
-      console.log('[Campaign] starting new campaign', fresh.campaignId, fresh.joinCode)
+      const host = user && hostSeat !== null
+        ? { playerId: ROSTER_IDS[hostSeat], userId: user.id, userEmail: user.email }
+        : undefined
+      const fresh = await createCampaign(name, newRosterNames.map(n => n.trim()), host)
+      console.log('[Campaign] starting new campaign', fresh.campaignId, fresh.joinCode,
+        'roster:', (fresh.roster ?? []).map(m => m.name).join(', '))
       await setActiveCampaignId(fresh.campaignId)
       onReadyForDiceRoll(normalizeLegacy(fresh))
     } catch (e) {
+      // A failure here leaves the form filled in and says why, rather than
+      // dropping to the generic error screen with the typed names lost.
       console.error('[Campaign] could not create campaign:', e)
-      setStatus('error')
+      setCreateError(e instanceof Error ? e.message : 'Could not create the campaign')
+      setCreating(false)
     }
   }
 
@@ -404,11 +431,107 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
                 }}
               />
             </div>
+
+            {/* The campaign roster. Permanent from this moment: these names are
+                what every signature, city claim and naming right belongs to for
+                the next fifteen games, and what someone joining by code picks
+                from. Anyone can sit out any game — the roster is who is IN the
+                campaign, not who is playing tonight. */}
+            <div style={{ marginBottom: 18 }}>
+              <label style={{ fontSize: 11, color: '#6a5030', display: 'block', marginBottom: 8, letterSpacing: 1 }}>
+                WHO IS IN THIS CAMPAIGN
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                {[2, 3, 4, 5].map(n => {
+                  const on = newCount === n
+                  return (
+                    <button key={n} onClick={() => setNewCount(n)} style={{
+                      width: 38, height: 38, borderRadius: 8, fontSize: 15, fontWeight: 'bold',
+                      fontFamily: 'Georgia, serif', cursor: 'pointer',
+                      border: `2px solid ${on ? '#C8940A' : 'rgba(200,148,10,0.25)'}`,
+                      background: on ? 'rgba(200,148,10,0.22)' : 'rgba(0,0,0,0.25)',
+                      color: on ? '#C8940A' : '#6a5030',
+                    }}>{n}</button>
+                  )
+                })}
+                <span style={{ fontSize: 10.5, color: '#5a4020', marginLeft: 4 }}>people</span>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                {Array.from({ length: newCount }, (_, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 10.5, color: '#5a4020', width: 12, textAlign: 'right' }}>{i + 1}</span>
+                    <input
+                      value={newNames[i]}
+                      onChange={e => setNewNames(prev => prev.map((v, j) => (j === i ? e.target.value : v)))}
+                      maxLength={MAX_ROSTER_NAME}
+                      placeholder={`Player ${i + 1}`}
+                      style={{
+                        flex: 1, minWidth: 0, padding: '9px 12px', borderRadius: 6,
+                        border: '1.5px solid rgba(200,148,10,0.40)',
+                        background: 'rgba(0,0,0,0.40)', color: '#E8DCC8',
+                        fontSize: 14, fontFamily: 'Georgia, serif', boxSizing: 'border-box',
+                      }}
+                    />
+                    {/* Claiming the host's own seat here saves them being the one
+                        unlinked player blocking their own campaign from going
+                        online later. */}
+                    {user && (
+                      <button
+                        onClick={() => setHostSeat(hostSeat === i ? null : i)}
+                        title={`Link ${user.email} to this name`}
+                        style={{
+                          padding: '6px 11px', borderRadius: 14, fontSize: 10.5, flexShrink: 0,
+                          fontFamily: 'Georgia, serif', cursor: 'pointer',
+                          border: `1px solid ${hostSeat === i ? 'rgba(39,174,96,0.6)' : 'rgba(200,148,10,0.25)'}`,
+                          background: hostSeat === i ? 'rgba(39,174,96,0.15)' : 'transparent',
+                          color: hostSeat === i ? '#27AE60' : '#6a5030',
+                        }}>
+                        {hostSeat === i ? '✓ you' : 'this is me'}
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ fontSize: 10, color: '#5a4020', marginTop: 8, lineHeight: 1.5 }}>
+                Permanent for the whole campaign. Anyone can sit out a game and keep their
+                stars, signatures and cities.
+                {user
+                  ? ' Everyone else signs in and claims their name with the join code.'
+                  : ' Sign in first if you want your record to follow your account.'}
+              </div>
+            </div>
+
+            {!rosterCheck.ok && newRosterNames.some(n => n.trim()) && (
+              <div style={{
+                padding: '8px 12px', borderRadius: 6, marginBottom: 12, fontSize: 11,
+                background: 'rgba(231,76,60,0.10)', border: '1px solid rgba(231,76,60,0.40)',
+                color: '#e08070', textAlign: 'center',
+              }}>
+                {rosterCheck.reason}
+              </div>
+            )}
+            {createError && (
+              <div style={{
+                padding: '8px 12px', borderRadius: 6, marginBottom: 12, fontSize: 11,
+                background: 'rgba(231,76,60,0.10)', border: '1px solid rgba(231,76,60,0.40)',
+                color: '#e08070', textAlign: 'center',
+              }}>
+                {createError}
+              </div>
+            )}
+
             <button
               onClick={() => handleNewCampaignStart(worldName.trim() || 'New World')}
-              style={primaryBtn('#C8940A')}
+              disabled={!rosterCheck.ok || creating}
+              style={{
+                ...primaryBtn('#C8940A'),
+                opacity: rosterCheck.ok && !creating ? 1 : 0.4,
+                cursor: rosterCheck.ok && !creating ? 'pointer' : 'not-allowed',
+              }}
             >
-              🃏 Begin Campaign — Deal Cards &amp; Start Game #1
+              {creating ? 'Creating…' : '🃏 Begin Campaign — Deal Cards & Start Game #1'}
             </button>
           </>
         )}

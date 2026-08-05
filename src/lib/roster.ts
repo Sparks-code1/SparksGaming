@@ -38,6 +38,32 @@ export function rosterName(
   return rosterMember(legacy, playerId)?.name ?? fallback ?? playerId
 }
 
+/** Longest a roster name may be — matches the cap [addRosterMember] enforces. */
+export const MAX_ROSTER_NAME = 24
+
+/**
+ * Are these names a legal campaign roster?
+ *
+ * One validator for both places a roster can be born — campaign setup, and the
+ * older first-game naming path — because the roster is the campaign's identity
+ * list and the two must not disagree about what a legal one looks like. The
+ * uniqueness rule is the point: two people called "Chris" would make every
+ * signature, city claim and naming right ambiguous to anyone reading the board
+ * years later, and by then it is unfixable.
+ */
+export function validateRosterNames(names: string[]): { ok: boolean; reason?: string } {
+  const trimmed = names.map(n => (n ?? '').trim())
+  if (trimmed.length < 2) return { ok: false, reason: 'A campaign needs at least 2 players' }
+  if (trimmed.length > MAX_ROSTER) return { ok: false, reason: `A campaign holds at most ${MAX_ROSTER} players` }
+  if (trimmed.some(n => n.length === 0)) return { ok: false, reason: 'Every player needs a name' }
+  const tooLong = trimmed.find(n => n.length > MAX_ROSTER_NAME)
+  if (tooLong) return { ok: false, reason: `"${tooLong}" is too long (${MAX_ROSTER_NAME} characters max)` }
+  if (new Set(trimmed.map(n => n.toLowerCase())).size !== trimmed.length) {
+    return { ok: false, reason: 'Each player needs a different name' }
+  }
+  return { ok: true }
+}
+
 /**
  * Build the permanent roster from the names typed at first setup. Seat order
  * fixes the ids, so the first person named gets `p1`, and so on.
