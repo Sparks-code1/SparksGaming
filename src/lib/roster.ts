@@ -167,7 +167,7 @@ export function unclaimedMembers(legacy: LegacyState | null | undefined): Roster
 }
 
 /** The first unused seat id, or null when the roster is full. */
-export function nextRosterId(roster: RosterMember[]): string | null {
+export function nextRosterId(roster: Pick<RosterMember, 'id'>[]): string | null {
   const taken = new Set(roster.map(m => m.id))
   return ROSTER_IDS.find(id => !taken.has(id)) ?? null
 }

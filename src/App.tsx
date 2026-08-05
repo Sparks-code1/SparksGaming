@@ -17,8 +17,8 @@ import GameBoard from '@/components/GameBoard'
 import { loadLegacyState, saveLegacyState, getActiveCampaignId } from '@/lib/legacyApi'
 import { dealScarCards } from '@/data/scarCards'
 import { MOCK_PLAYERS, applyRosterNames } from '@/data/mockGameState'
-import { hasRoster, getRoster, createRoster } from '@/lib/roster'
-import { createLobby, matchState, type Lobby } from '@/lib/lobby'
+import { hasRoster, getRoster, createRoster, addRosterMember } from '@/lib/roster'
+import { matchState, reconcileSeats, setLobbyShape, type Lobby } from '@/lib/lobby'
 import LobbyScreen from '@/components/LobbyScreen'
 
 type Screen = 'loading' | 'between-games' | 'player-slots' | 'lobby' | 'scar-dealing' | 'dice-roll' | 'draft-setup' | 'game-setup' | 'playing'
@@ -83,52 +83,43 @@ export default function App() {
     setScreen('player-slots')
   }
 
-  async function handleSlotsChosen(slots: PlayerSlotSetup[], online = false) {
-    setPlayOnline(online)
-    setSlotConfig(Object.fromEntries(slots.map(s => [s.playerId, { isAI: s.isAI, difficulty: s.difficulty }])))
-    const ids = slots.map(s => s.playerId)
-    setRosterIds(ids)
-
-    // Deal scar cards to the SELECTED players only (legacy state was
-    // normalized by BetweenGameScreen, so scarDeck/dealtScars are arrays)
+  /**
+   * The hotseat path. Online games never come here — hosting happens from the
+   * campaign screen and goes through the lobby, where players seat themselves.
+   */
+  async function handleSlotsChosen(slots: PlayerSlotSetup[]) {
+    setPlayOnline(false)
     let ls = legacy
     if (!ls) return
 
-    // ── Online: open a lobby and wait, rather than dealing straight away ────
-    // Everything after this point — scars, dice, factions — is decided for a
-    // fixed set of players, so it cannot begin until that set is settled. The
-    // host waits here; the game proceeds when they press Start.
-    if (online && user) {
-      const me = getRoster(ls).find(m => m.userId === user.id)
-      if (!me) return
-      const humans = slots.filter(s => !s.isAI)
-      const ais = slots.filter(s => s.isAI)
-      try {
-        const open = await createLobby(
-          ls.campaignId, ls.currentGameNumber,
-          { playerId: me.id, name: me.name },
-          humans.length,
-          ais.map(a => ({ playerId: a.playerId, name: a.name, difficulty: a.difficulty })),
-        )
-        setLobby(open)
-        setScreen('lobby')
-        return                      // the rest resumes from handleLobbyStart
-      } catch (e) {
-        // A lobby that cannot be opened must not silently become a game only
-        // this machine can see — fall back to one screen and say so.
-        console.error('[Lobby] could not open a lobby, playing on one screen:', e)
-        setPlayOnline(false)
-      }
-    }
-
-    // First time players are named, that list becomes the permanent campaign
-    // roster. Seat ids are fixed by naming order, so every later game seats
-    // people by id and their campaign record follows them.
+    // A campaign that predates rosters names its whole table here, once.
     if (!hasRoster(ls)) {
       ls = { ...ls, roster: createRoster(slots.map(s => s.name), ls.currentGameNumber) }
+    }
+    // Seats with a typed name are people (or AI) joining the campaign right
+    // now — their roster entry is created here, and the id it lands on is the
+    // id this game seats. Sequential on purpose: each addition sees the one
+    // before it, exactly like the online reconcile.
+    let roster = getRoster(ls)
+    const ids: string[] = []
+    for (const s of slots) {
+      if (s.playerId) { ids.push(s.playerId); continue }
+      const added = addRosterMember(roster, s.name, ls.currentGameNumber)
+      if (!added.ok || !added.member) {
+        console.error('[Slots] could not add', s.name, added.reason)
+        return
+      }
+      roster = added.roster
+      ids.push(added.member.id)
+    }
+    if (roster !== getRoster(ls)) ls = { ...ls, roster }
+    if (ls !== legacy) {
       setLegacy(ls)
       await saveLegacyState(ls).catch(() => {})
     }
+
+    setSlotConfig(Object.fromEntries(slots.map((s, i) => [ids[i], { isAI: s.isAI, difficulty: s.difficulty }])))
+    setRosterIds(ids)
     // Refresh the shared seat labels from the roster (identity is unchanged —
     // seat ids ARE roster ids; only the displayed names are synced).
     applyRosterNames(getRoster(ls))
@@ -171,37 +162,77 @@ export default function App() {
   /**
    * The lobby is done with. Two very different continuations.
    *
-   * The HOST goes on through the normal setup — scars, dice, factions — and the
-   * lobby is only flipped to 'active' at the end of it, when a board finally
-   * exists for the server to be authoritative over. `lobbyToStart` carries that
-   * obligation to GameBoard.
+   * The HOST first settles who the seats actually ARE. People named themselves
+   * on the way in and AI names were typed or generated in the lobby, so the
+   * roster may never have heard of some of them — reconcile matches every seat
+   * to a roster identity, adds the missing AI, and rewrites the seat rows so
+   * the server's turn-validation speaks the same ids as the board. Only then
+   * does the normal setup run — scars, dice, factions — with the lobby flipped
+   * to 'active' at the very end, when a board exists to be authoritative over.
    *
    * A JOINER never runs setup at all. They receive the finished board from the
    * match row, which is the whole point: one game, built once.
+   *
+   * Returns an error message for the lobby screen to show, or null.
    */
-  async function handleLobbyStart(started: Lobby) {
-    const ls = legacy
-    if (!ls || !user) return
-    const seats = started.seats
-    setSlotConfig(Object.fromEntries(seats.map(s =>
-      [s.playerId, { isAI: s.isAI, difficulty: s.aiDifficulty ?? 'medium' }])))
-    setRosterIds(seats.map(s => s.playerId))
+  async function handleLobbyStart(started: Lobby): Promise<string | null> {
+    if (!legacy || !user) return 'Not signed in'
     setPlayOnline(true)
 
     if (started.createdBy === user.id && started.status === 'lobby') {
+      // Joiners wrote themselves onto the roster after this screen loaded it —
+      // reconcile against what the server has, not what this machine remembers.
+      let fresh = await loadLegacyState(started.campaignId)
+      if (!fresh) return 'Could not reload the campaign'
+
+      const rec = reconcileSeats(started.seats, getRoster(fresh))
+      if (!rec.ok) return rec.reason ?? 'Could not start the game'
+
+      let roster = getRoster(fresh)
+      for (const ai of rec.aiToAdd) {
+        const added = addRosterMember(roster, ai.name, fresh.currentGameNumber)
+        if (!added.ok) return added.reason ?? `Could not add ${ai.name} to the campaign`
+        roster = added.roster
+      }
+      if (rec.aiToAdd.length > 0) {
+        fresh = { ...fresh, roster }
+        await saveLegacyState(fresh)
+      }
+      // The seat rows must carry the REAL roster ids before the game starts —
+      // the server decides whose turn it is by looking them up.
+      const finalAis = rec.resolved.filter(r => r.isAI)
+      if (finalAis.length > 0 || started.seats.some(s => s.isAI)) {
+        await setLobbyShape(started.matchId, started.humanSlots,
+          finalAis.map(a => ({ playerId: a.playerId, name: a.name, difficulty: a.aiDifficulty ?? 'medium' })))
+      }
+
+      setLegacy(fresh)
+      applyRosterNames(getRoster(fresh))
+      setSlotConfig(Object.fromEntries(rec.resolved.map(r =>
+        [r.playerId, { isAI: r.isAI, difficulty: r.aiDifficulty ?? 'medium' }])))
+      setRosterIds(rec.resolved.map(r => r.playerId))
       setLobbyToStart(started.matchId)
       setLobby(null)
-      await dealScarsAndContinue(ls, seats.map(s => s.playerId))
-      return
+      await dealScarsAndContinue(fresh, rec.resolved.map(r => r.playerId))
+      return null
     }
 
-    // Joiner: the board is on the server already.
+    // Joiner: the board is on the server already, and so is the roster the
+    // host just finished growing — read both rather than trusting this
+    // machine's stale copies.
     const state = await matchState(started.matchId)
-    if (!state) return
+    if (!state) return 'The game started but its board could not be read'
+    const fresh = (await loadLegacyState(started.campaignId).catch(() => null)) ?? legacy
+    setLegacy(fresh)
+    applyRosterNames(getRoster(fresh))
+    setSlotConfig(Object.fromEntries(started.seats.map(s =>
+      [s.playerId, { isAI: s.isAI, difficulty: s.aiDifficulty ?? 'medium' }])))
+    setRosterIds(started.seats.map(s => s.playerId))
     setJoinedMatch({ matchId: started.matchId, version: state.version })
     setRestoredGameState(state.state as RestoredGameState)
     setLobby(null)
     setScreen('playing')
+    return null
   }
 
   function handleLeaveLobby() {
@@ -322,7 +353,13 @@ export default function App() {
       />
     )
   } else if (screen === 'player-slots') {
-    content = <PlayerSlotsScreen legacy={legacy} user={user} onConfirm={handleSlotsChosen} />
+    content = (
+      <PlayerSlotsScreen
+        legacy={legacy}
+        onConfirm={handleSlotsChosen}
+        onBack={() => setScreen('between-games')}
+      />
+    )
   } else if (screen === 'lobby' && lobby && legacy && user) {
     content = (
       <LobbyScreen

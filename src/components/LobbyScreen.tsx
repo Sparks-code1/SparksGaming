@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { LegacyState } from '@/types/legacy'
 import type { AuthUser } from '@/lib/auth'
 import type { AIDifficulty } from '@/types/ai'
@@ -8,14 +8,19 @@ import {
   MIN_SEATS, MAX_SEATS,
 } from '@/lib/lobby'
 import { getRoster } from '@/lib/roster'
+import { generateAiName } from '@/lib/aiNames'
 import JoinCodeCard from './JoinCodeCard'
 
 interface Props {
   lobby: Lobby
   legacy: LegacyState
   user: AuthUser
-  /** Host pressed Start and the match went active. */
-  onStart: (lobby: Lobby) => void
+  /**
+   * Host pressed Start, or (for a joiner) the match went active. May resolve
+   * to an error message — reconciling names onto the roster can refuse — and
+   * that message belongs HERE, on the screen whose button was pressed.
+   */
+  onStart: (lobby: Lobby) => void | Promise<string | null>
   onLeave: () => void
 }
 
@@ -44,9 +49,17 @@ export default function LobbyScreen({ lobby: initial, legacy, user, onStart, onL
     if (!next) { onLeave(); return }
     setLobby(next)
     // A joiner finds out the game has begun the same way they find out anything
-    // else here — the row changed. No separate signal to miss.
-    if (next.status === 'active') onStart(next)
+    // else here — the row changed. No separate signal to miss. Latched: the
+    // poll and the realtime push can both report 'active', and adopting the
+    // board twice mid-adoption helps nobody.
+    if (next.status === 'active' && !startedRef.current) {
+      startedRef.current = true
+      void Promise.resolve(onStart(next)).then(err => {
+        if (err) { startedRef.current = false; setError(err) }
+      })
+    }
   }), [initial.matchId])
+  const startedRef = useRef(false)
 
   async function guard(work: () => Promise<unknown>) {
     setBusy(true); setError(null)
@@ -55,20 +68,53 @@ export default function LobbyScreen({ lobby: initial, legacy, user, onStart, onL
     } finally { setBusy(false) }
   }
 
-  /** Roster names nobody in this lobby is playing — what the AI seats draw from. */
-  const freeNames = roster.filter(m => !lobby.seats.some(s => s.playerId === m.id))
   const aiSeats = lobby.seats.filter(s => s.isAI)
+  /** Host's in-progress edit of one AI name: seat number + text, or null. */
+  const [aiEdit, setAiEdit] = useState<{ seat: number; name: string } | null>(null)
 
-  async function resize(humanSlots: number, aiCount: number) {
-    const pool = roster.filter(m =>
-      !lobby.seats.some(s => s.playerId === m.id && !s.isAI))
-    await guard(async () => {
+  /** The AI seats as they should exist after a change, names preserved. */
+  const currentAis = (): { name: string; difficulty: AIDifficulty | null }[] =>
+    aiSeats.map(s => ({ name: s.name, difficulty: s.aiDifficulty }))
+
+  const applyAis = (ais: { name: string; difficulty: AIDifficulty | null }[], humanSlots = lobby.humanSlots) =>
+    guard(async () => {
       setLobby(await setLobbyShape(lobby.matchId, humanSlots,
-        pool.slice(0, aiCount).map((m, i) => ({
-          playerId: m.id, name: m.name,
-          difficulty: aiSeats[i]?.aiDifficulty ?? 'medium',
+        ais.map((a, i) => ({
+          // Provisional id — the real roster id is settled when the host
+          // starts the game, once the final table is known.
+          playerId: `ai${i + 1}`, name: a.name, difficulty: a.difficulty ?? 'medium',
         }))))
     })
+
+  async function resize(humanSlots: number, aiCount: number) {
+    // Names survive a resize: generate only for seats that are actually new,
+    // avoiding every name at the table AND on the roster — reusing a campaign
+    // identity should be the host typing it on purpose, not luck.
+    const kept = currentAis().slice(0, aiCount)
+    while (kept.length < aiCount) {
+      const taken = [
+        ...lobby.seats.map(s => s.name),
+        ...roster.map(m => m.name),
+        ...kept.map(k => k.name),
+      ]
+      kept.push({ name: generateAiName(taken), difficulty: 'medium' })
+    }
+    await applyAis(kept, humanSlots)
+  }
+
+  /** Commit the host's rename of one AI seat. */
+  async function renameAi(seatNo: number, raw: string) {
+    setAiEdit(null)
+    const name = raw.trim()
+    const target = aiSeats.find(s => s.seat === seatNo)
+    if (!target || !name || name === target.name) return
+    // A name already at the table would resolve two seats to one identity.
+    if (lobby.seats.some(s => s.seat !== seatNo && s.name.toLowerCase() === name.toLowerCase())) {
+      setError(`${name} is already at this table`)
+      return
+    }
+    await applyAis(currentAis().map(a =>
+      a.name === target.name ? { ...a, name } : a))
   }
 
   return (
@@ -112,13 +158,33 @@ export default function LobbyScreen({ lobby: initial, legacy, user, onStart, onL
                 <span style={{ fontSize: 15, width: 18, textAlign: 'center' }}>
                   {s.isAI ? '🤖' : s.ready ? '✅' : '⏳'}
                 </span>
-                <span style={{ fontSize: 14, fontWeight: 'bold', flex: 1, minWidth: 0 }}>
-                  {s.name}
-                  {me && <span style={{ fontSize: 10, color: '#6a5030', fontWeight: 'normal' }}> (you)</span>}
-                  {s.userId === lobby.createdBy && s.userId && (
-                    <span style={{ fontSize: 10, color: GOLD, fontWeight: 'normal' }}> · host</span>
-                  )}
-                </span>
+                {isHost && s.isAI ? (
+                  /* The host may overwrite a generated AI name — click and type. */
+                  <input
+                    value={aiEdit?.seat === s.seat ? aiEdit.name : s.name}
+                    onFocus={() => setAiEdit({ seat: s.seat, name: s.name })}
+                    onChange={e => setAiEdit({ seat: s.seat, name: e.target.value })}
+                    onBlur={e => void renameAi(s.seat, e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                    maxLength={24}
+                    disabled={busy}
+                    title="Rename this computer player"
+                    style={{
+                      flex: 1, minWidth: 0, padding: '4px 8px', borderRadius: 5,
+                      border: '1px dashed rgba(200,148,10,0.35)',
+                      background: 'transparent', color: '#E8DCC8',
+                      fontSize: 14, fontWeight: 'bold', fontFamily: 'Georgia, serif', outline: 'none',
+                    }}
+                  />
+                ) : (
+                  <span style={{ fontSize: 14, fontWeight: 'bold', flex: 1, minWidth: 0 }}>
+                    {s.name}
+                    {me && <span style={{ fontSize: 10, color: '#6a5030', fontWeight: 'normal' }}> (you)</span>}
+                    {s.userId === lobby.createdBy && s.userId && (
+                      <span style={{ fontSize: 10, color: GOLD, fontWeight: 'normal' }}> · host</span>
+                    )}
+                  </span>
+                )}
                 <span style={{ fontSize: 11, color: s.ready ? '#8fbf9a' : '#7a6040' }}>
                   {s.isAI ? AI_DIFFICULTY_LABEL[s.aiDifficulty ?? 'medium'] : s.ready ? 'Ready' : 'Not ready'}
                 </span>
@@ -165,7 +231,6 @@ export default function LobbyScreen({ lobby: initial, legacy, user, onStart, onL
                   const disabled = busy
                     || n + other > MAX_SEATS
                     || (isHumans && (n < 1 || n < seatedHumans))
-                    || (!isHumans && n > freeNames.length + aiSeats.length)
                   const on = value === n
                   return (
                     <button key={n} disabled={disabled} onClick={() => set(n)} style={{
@@ -186,9 +251,7 @@ export default function LobbyScreen({ lobby: initial, legacy, user, onStart, onL
                   const on = aiSeats.every(s => s.aiDifficulty === d)
                   return (
                     <button key={d} disabled={busy}
-                      onClick={() => guard(async () => setLobby(await setLobbyShape(
-                        lobby.matchId, lobby.humanSlots,
-                        aiSeats.map(s => ({ playerId: s.playerId, name: s.name, difficulty: d })))))}
+                      onClick={() => void applyAis(currentAis().map(a => ({ ...a, difficulty: d })))}
                       style={{
                         padding: '5px 11px', fontSize: 11, borderRadius: 6, fontFamily: 'Georgia, serif',
                         cursor: busy ? 'not-allowed' : 'pointer',
@@ -242,7 +305,10 @@ export default function LobbyScreen({ lobby: initial, legacy, user, onStart, onL
 
         {isHost && (
           <button
-            onClick={() => onStart(lobby)}
+            onClick={() => guard(async () => {
+              const err = await onStart(lobby)
+              if (err) throw new Error(err)
+            })}
             disabled={!readiness.canStart || busy}
             title={readiness.reason ?? undefined}
             style={{
@@ -267,7 +333,7 @@ export default function LobbyScreen({ lobby: initial, legacy, user, onStart, onL
             border: '1px solid rgba(200,148,10,0.20)', background: 'transparent',
             color: '#6a5030', cursor: 'pointer', fontFamily: 'Georgia, serif',
           }}>
-          {isHost ? 'Cancel this game' : 'Leave'}
+          {isHost ? '← Back — cancel this game (you can join another instead)' : '← Leave this game'}
         </button>
 
         <div style={{ fontSize: 9.5, color: '#4a3820', textAlign: 'center', marginTop: 9, lineHeight: 1.5 }}>

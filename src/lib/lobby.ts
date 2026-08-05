@@ -15,6 +15,8 @@
 import { supabase } from '@/lib/supabase'
 import type { GameState } from '@/types/game'
 import type { AIDifficulty } from '@/types/ai'
+import type { RosterMember } from '@/types/legacy'
+import { nextRosterId } from '@/lib/roster'
 
 export const UNASSIGNED_FACTION = 'unassigned'
 
@@ -104,6 +106,107 @@ export function lobbyReadiness(lobby: Pick<Lobby, 'humanSlots' | 'seats'>): Lobb
     canStart: reason === null,
     reason,
   }
+}
+
+// ─── Turning lobby seats into permanent identities ───────────────────────────
+
+export interface SeatResolution {
+  seat: number
+  /** The roster id this seat will play as. */
+  playerId: string
+  name: string
+  isAI: boolean
+  aiDifficulty: AIDifficulty | null
+  userId: string | null
+}
+
+export interface Reconciliation {
+  ok: boolean
+  reason?: string
+  /** Every seat, resolved to a real roster id, in seat order. */
+  resolved: SeatResolution[]
+  /** AI names that are not on the roster yet — add these, in this order. */
+  aiToAdd: Array<{ name: string; difficulty: AIDifficulty | null }>
+}
+
+/**
+ * Resolve every lobby seat to a campaign roster identity.
+ *
+ * People name THEMSELVES now — the host no longer types the table in — so the
+ * lobby can hold seats the roster has never heard of. This runs on the host's
+ * machine at Start, against a FRESH roster read, and decides:
+ *
+ *   humans — matched by account. Joiners write themselves onto the roster the
+ *     moment they take a seat, so a miss here means something actually broke
+ *     (a save that never landed), and the honest move is to refuse with the
+ *     player's name rather than invent an identity for them.
+ *
+ *   AI — matched by name, case-insensitively, so typing "Hard" deliberately
+ *     brings back the campaign's existing Hard with all its history. Anything
+ *     unmatched is queued for creation; ids are simulated with the same
+ *     `nextRosterId` the real addition uses, so what this predicts is what
+ *     `addRosterMember` will hand out.
+ *
+ * Pure — the caller does the writing — which is what makes it testable and
+ * what keeps the ordering visible: additions MUST be applied in `aiToAdd`
+ * order or the simulated ids are lies.
+ */
+export function reconcileSeats(
+  seats: Pick<LobbySeat, 'seat' | 'name' | 'userId' | 'isAI' | 'aiDifficulty'>[],
+  roster: RosterMember[],
+): Reconciliation {
+  const resolved: SeatResolution[] = []
+  const aiToAdd: Reconciliation['aiToAdd'] = []
+  // Simulated future roster: grows as AI additions are planned, so two new AI
+  // get two different ids and a later name-match can hit an earlier addition.
+  const future: { id: string; name: string }[] = roster.map(m => ({ id: m.id, name: m.name }))
+
+  for (const s of [...seats].sort((a, b) => a.seat - b.seat)) {
+    if (!s.isAI) {
+      const member = roster.find(m => m.userId && m.userId === s.userId)
+      if (!member) {
+        return {
+          ok: false, resolved: [], aiToAdd: [],
+          reason: `${s.name} is not on the campaign roster — ask them to leave and rejoin`,
+        }
+      }
+      resolved.push({
+        seat: s.seat, playerId: member.id, name: member.name,
+        isAI: false, aiDifficulty: null, userId: s.userId,
+      })
+      continue
+    }
+
+    const wanted = s.name.trim()
+    const existing = future.find(m => m.name.toLowerCase() === wanted.toLowerCase())
+    if (existing) {
+      resolved.push({
+        seat: s.seat, playerId: existing.id, name: existing.name,
+        isAI: true, aiDifficulty: s.aiDifficulty, userId: null,
+      })
+      continue
+    }
+    const id = nextRosterId(future)
+    if (!id) {
+      return {
+        ok: false, resolved: [], aiToAdd: [],
+        reason: `The campaign roster is full — rename ${wanted} to an existing player instead`,
+      }
+    }
+    future.push({ id, name: wanted })
+    aiToAdd.push({ name: wanted, difficulty: s.aiDifficulty })
+    resolved.push({
+      seat: s.seat, playerId: id, name: wanted,
+      isAI: true, aiDifficulty: s.aiDifficulty, userId: null,
+    })
+  }
+
+  // Two seats resolving to one identity would let a person play twice.
+  const ids = resolved.map(r => r.playerId)
+  if (new Set(ids).size !== ids.length) {
+    return { ok: false, resolved: [], aiToAdd: [], reason: 'Two seats resolved to the same player' }
+  }
+  return { ok: true, resolved, aiToAdd }
 }
 
 /** The lowest seat number nobody is using. */

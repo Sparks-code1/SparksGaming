@@ -4,7 +4,7 @@ import type { ScarType } from '@/types/territory'
 import { getInitialScarDeck } from '@/data/scarCards'
 import { storeGet, storeSet, storeRemove } from './appStore'
 import { generateJoinCode, normalizeJoinCode, isValidJoinCode } from './joinCode'
-import { addRosterMember, claimRosterSeat, getRoster, createRoster, validateRosterNames } from './roster'
+import { addRosterMember, claimRosterSeat, getRoster, createRoster, MAX_ROSTER_NAME } from './roster'
 import { SerialQueue } from './serialQueue'
 
 // ─── Campaign identity ────────────────────────────────────────────────────────
@@ -586,37 +586,40 @@ export async function ensureJoinCode(state: LegacyState): Promise<string> {
 }
 
 /**
- * Create a campaign, its roster and its join code in one step.
+ * Create a campaign, its founder and its join code in one step.
  *
- * The roster is settled HERE rather than by the first game. It is the
- * campaign's list of people, and three things that happen before a board exists
- * all need it: a joiner has to have a name to claim, an account has to have a
- * seat to link to, and online play has to know whose turn it is. Deriving it
- * from game one meant none of that could happen until game one was under way —
- * and the roster is permanent regardless of which game creates it, so the later
- * point was never the more honest one.
+ * The roster starts with ONE name: the person creating it. It used to demand
+ * the whole table typed in up front, which put the wrong person in charge of
+ * everyone's identity — the founder was naming people who were sitting at
+ * their own machines perfectly able to type. Now everybody names themself:
+ * joiners add their own entry when they enter the code or take a lobby seat,
+ * and AI names are added by whichever game first seats them. The roster is
+ * still permanent per NAME — it just grows one person at a time, each entry
+ * written by its owner.
  *
- * `host` links the creator's own account to one of those names immediately, so
- * the person setting the campaign up is not left as the one unclaimed seat
- * blocking their own game from going online.
+ * `account` links the founder immediately, so the person setting the campaign
+ * up is never the one unclaimed seat blocking their own game from going online.
  *
  * The row is written BEFORE the code is assigned, because the code is set with
  * an update keyed on the row's id — a campaign with no row cannot hold a code.
  */
 export async function createCampaign(
   worldName: string,
-  rosterNames: string[],
-  host?: { playerId: string; userId: string; userEmail?: string | null },
+  founderName: string,
+  account?: { userId: string; userEmail?: string | null },
 ): Promise<LegacyState> {
-  const check = validateRosterNames(rosterNames)
-  if (!check.ok) throw new Error(check.reason)
+  const name = (founderName ?? '').trim()
+  if (!name) throw new Error('Enter your name — the campaign needs its first player')
+  if (name.length > MAX_ROSTER_NAME) {
+    throw new Error(`That name is too long (${MAX_ROSTER_NAME} characters max)`)
+  }
 
-  let roster = createRoster(rosterNames, 1)
-  if (host) {
-    const claimed = claimRosterSeat(roster, host.playerId, host.userId, host.userEmail)
+  let roster = createRoster([name], 1)
+  if (account) {
+    const claimed = claimRosterSeat(roster, roster[0].id, account.userId, account.userEmail)
     // Refuse rather than create the campaign with the link silently dropped —
-    // an unlinked host is exactly the state this argument exists to prevent.
-    if (!claimed.ok) throw new Error(claimed.reason ?? 'Could not link your account to that name')
+    // an unlinked founder is exactly the state this argument exists to prevent.
+    if (!claimed.ok) throw new Error(claimed.reason ?? 'Could not link your account')
     roster = claimed.roster
   }
 

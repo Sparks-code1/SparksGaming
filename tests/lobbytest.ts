@@ -5,9 +5,10 @@
 // nothing about each other. The rules below are what makes a hosted game a
 // single object: who may sit down, when Start unlocks, and why it is refused.
 import {
-  lobbyReadiness, nextFreeSeat, seatRefusal, MIN_SEATS, MAX_SEATS,
+  lobbyReadiness, nextFreeSeat, seatRefusal, reconcileSeats, MIN_SEATS, MAX_SEATS,
   type LobbySeat,
 } from '@/lib/lobby'
+import { generateAiName, AI_NAME_POOL } from '@/lib/aiNames'
 
 let pass = true
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -124,6 +125,75 @@ console.log('\n--- seat allocation ---')
     nextFreeSeat([{ seat: 0 }, { seat: 2 }]), 1)
   check('a full table has no free seat',
     nextFreeSeat([0, 1, 2, 3, 4].map(seat => ({ seat }))), MAX_SEATS)
+}
+
+// ─── 7. Names become identities only at Start ─────────────────────────────
+console.log('\n--- reconciling seats onto the roster ---')
+{
+  // The campaign so far: a founder and one past player, plus an old AI.
+  const roster = [
+    { id: 'p1', name: 'Ryan', joinedInGame: 1, userId: 'u-ryan' },
+    { id: 'p2', name: 'Chris', joinedInGame: 1, userId: 'u-chris' },
+    { id: 'p3', name: 'Hard', joinedInGame: 1 },
+  ] as any
+
+  // A lobby: both humans, the old AI typed back in, and a brand-new AI.
+  const seats = [
+    { seat: 0, name: 'Ryan', userId: 'u-ryan', isAI: false, aiDifficulty: null },
+    { seat: 1, name: 'Chris', userId: 'u-chris', isAI: false, aiDifficulty: null },
+    { seat: 2, name: 'hard', userId: null, isAI: true, aiDifficulty: 'hard' as const },
+    { seat: 3, name: 'General Vex', userId: null, isAI: true, aiDifficulty: 'easy' as const },
+  ]
+  const rec = reconcileSeats(seats, roster)
+  check('a full table reconciles', rec.ok, true)
+  check('humans are matched by ACCOUNT, not by name',
+    rec.resolved.filter(r => !r.isAI).map(r => r.playerId), ['p1', 'p2'])
+  check('typing an old AI name brings back its identity, case and all',
+    rec.resolved[2], { seat: 2, playerId: 'p3', name: 'Hard', isAI: true, aiDifficulty: 'hard', userId: null })
+  check('a new AI gets the next free id', rec.resolved[3].playerId, 'p4')
+  check('and is queued for the roster', rec.aiToAdd, [{ name: 'General Vex', difficulty: 'easy' }])
+
+  // A human the roster has never heard of means a join that never saved —
+  // refuse with their name, never invent an identity for them.
+  const stranger = reconcileSeats(
+    [{ seat: 0, name: 'Zed', userId: 'u-zed', isAI: false, aiDifficulty: null }], roster)
+  check('an unknown human is refused by name', stranger.ok, false)
+  check('and the reason says who', /Zed/.test(stranger.reason ?? ''), true)
+
+  // Two new AI must get two DIFFERENT ids — the simulation has to grow.
+  const twoNew = reconcileSeats([
+    { seat: 0, name: 'Ryan', userId: 'u-ryan', isAI: false, aiDifficulty: null },
+    { seat: 1, name: 'Vex', userId: null, isAI: true, aiDifficulty: null },
+    { seat: 2, name: 'Krieg', userId: null, isAI: true, aiDifficulty: null },
+  ], roster)
+  check('two new AI take consecutive free ids',
+    twoNew.resolved.filter(r => r.isAI).map(r => r.playerId), ['p4', 'p5'])
+
+  // A fifth new name on a full roster has nowhere to go.
+  const fullRoster = ['a', 'b', 'c', 'd', 'e'].map((n, i) =>
+    ({ id: `p${i + 1}`, name: n, joinedInGame: 1, userId: i === 0 ? 'u-a' : undefined })) as any
+  const overflow = reconcileSeats([
+    { seat: 0, name: 'a', userId: 'u-a', isAI: false, aiDifficulty: null },
+    { seat: 1, name: 'Newcomer', userId: null, isAI: true, aiDifficulty: null },
+  ], fullRoster)
+  check('a full roster refuses a new AI name', overflow.ok, false)
+  check('and suggests the way out', /rename Newcomer/.test(overflow.reason ?? ''), true)
+}
+
+// ─── 8. Generated AI names ────────────────────────────────────────────────
+console.log('\n--- AI names ---')
+{
+  const first = generateAiName([], () => 0)
+  check('a name comes from the themed pool', AI_NAME_POOL.includes(first as never), true)
+  check('a taken name is never handed out',
+    generateAiName([first], () => 0) !== first, true)
+  check('taken-ness ignores case',
+    generateAiName([first.toUpperCase()], () => 0) !== first, true)
+  const all = [...AI_NAME_POOL]
+  check('an exhausted pool falls back to numbering',
+    generateAiName(all, () => 0), 'Computer 1')
+  check('and the numbering itself never collides',
+    generateAiName([...all, 'Computer 1'], () => 0), 'Computer 2')
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

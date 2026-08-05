@@ -13,12 +13,9 @@ import CampaignVictoryScreen from './CampaignVictoryScreen'
 import CampaignPicker from './CampaignPicker'
 import AuthPanel from './AuthPanel'
 import { getCurrentUser, onAuthChange, type AuthUser } from '@/lib/auth'
-import {
-  claimRosterSeat, getRoster, validateRosterNames, addRosterMember,
-  ROSTER_IDS, MAX_ROSTER, MAX_ROSTER_NAME,
-} from '@/lib/roster'
+import { claimRosterSeat, getRoster, addRosterMember, MAX_ROSTER_NAME } from '@/lib/roster'
 import CampaignRosterPanel from './CampaignRosterPanel'
-import { findOpenLobby, takeSeat, type Lobby } from '@/lib/lobby'
+import { findOpenLobby, takeSeat, createLobby, type Lobby } from '@/lib/lobby'
 
 interface Props {
   onReadyForDiceRoll: (legacy: LegacyState) => void
@@ -45,19 +42,13 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
   const [sessions, setSessions] = useState<GameSessionRow[]>([])
   const [worldName, setWorldName] = useState('New World')
 
-  // ── New-campaign roster ───────────────────────────────────────────────────
-  // Named here, before any game exists, because everything that identifies a
-  // person in this campaign hangs off the roster: the names a joiner claims,
-  // the seat an account links to, and whose turn the server thinks it is.
-  const [newCount, setNewCount] = useState(4)
-  const [newNames, setNewNames] = useState<string[]>(() => Array.from({ length: MAX_ROSTER }, () => ''))
-  /** Which of those names is the host's own — links their account on creation. */
-  const [hostSeat, setHostSeat] = useState<number | null>(null)
+  // ── New campaign ─────────────────────────────────────────────────────────
+  // The founder types only their OWN name. Everyone else names themself when
+  // they join — by code or by lobby seat — because the person at the other
+  // machine is the authority on what they are called, not the host.
+  const [founderName, setFounderName] = useState('')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
-
-  const newRosterNames = newNames.slice(0, newCount)
-  const rosterCheck = validateRosterNames(newRosterNames)
 
   // ── Optional account ─────────────────────────────────────────────────────
   // Signing in is never required. `authDismissed` records that the player chose
@@ -74,6 +65,10 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
   const [openLobby, setOpenLobby] = useState<Lobby | null>(null)
   const [lobbyError, setLobbyError] = useState<string | null>(null)
   const [joiningLobby, setJoiningLobby] = useState(false)
+  /** What a first-time joiner wants to be called — they name themself. */
+  const [joinName, setJoinName] = useState('')
+  const [hostingGame, setHostingGame] = useState(false)
+  const [hostError, setHostError] = useState<string | null>(null)
 
   useEffect(() => {
     const campaignId = legacy?.campaignId
@@ -89,22 +84,62 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
     return () => { cancelled = true; clearInterval(timer) }
   }, [legacy?.campaignId, legacy?.currentGameNumber, user?.id])
 
-  /** Take a seat in the open lobby and go and wait in it. */
+  /**
+   * Take a seat in the open lobby and go and wait in it.
+   *
+   * A returning player joins as the name their account already holds. A NEW
+   * player types their own name right here — it becomes their permanent roster
+   * entry, written by them, which is the entire point of the rework: the host
+   * hosts, and everyone names themself.
+   */
   async function joinOpenLobby() {
     if (!openLobby || !legacy || !user) return
-    const me = getRoster(legacy).find(m => m.userId === user.id)
-    if (!me) {
-      // Without a claimed name the server has no way to know which seat is
-      // theirs, and an unclaimed seat can never take a turn.
-      setLobbyError('Claim your name on this campaign first — use the roster above.')
-      return
-    }
+    let ls = legacy
+    let me = getRoster(ls).find(m => m.userId === user.id)
     setJoiningLobby(true); setLobbyError(null)
     try {
-      onEnterLobby(await takeSeat(openLobby.matchId, { playerId: me.id, name: me.name }), legacy)
+      if (!me) {
+        const added = addRosterMember(getRoster(ls), joinName, ls.currentGameNumber,
+          { userId: user.id, userEmail: user.email })
+        if (!added.ok || !added.member) throw new Error(added.reason ?? 'Could not join the campaign')
+        ls = { ...ls, roster: added.roster }
+        await saveLegacyState(ls)     // their entry, written by them
+        setLegacy(ls)
+        me = added.member
+      }
+      onEnterLobby(await takeSeat(openLobby.matchId, { playerId: me.id, name: me.name }), ls)
     } catch (e) {
       setLobbyError(e instanceof Error ? e.message : 'Could not join that game')
       setJoiningLobby(false)
+    }
+  }
+
+  /**
+   * Open a lobby for this game and go and wait in it.
+   *
+   * The host configures nothing here — how many humans, how many AI, and the
+   * AI names are all adjusted inside the lobby itself, where changes are
+   * visible to everyone who has already joined.
+   */
+  async function hostOnlineGame() {
+    if (!legacy || !user) return
+    const me = getRoster(legacy).find(m => m.userId === user.id)
+    if (!me) {
+      setHostError('Link your account to your name first — the Account panel above does it in one click.')
+      return
+    }
+    setHostingGame(true); setHostError(null)
+    try {
+      const lobby = await createLobby(
+        legacy.campaignId, legacy.currentGameNumber,
+        { playerId: me.id, name: me.name },
+        2,      // waiting for one other human by default; adjustable in the lobby
+        [],
+      )
+      onEnterLobby(lobby, legacy)
+    } catch (e) {
+      setHostError(e instanceof Error ? e.message : 'Could not open the game')
+      setHostingGame(false)
     }
   }
 
@@ -217,24 +252,27 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
   }
 
   async function handleNewCampaignStart(name: string) {
-    // createCampaign mints a fresh id, the ROSTER and a join code, so the
-    // campaign is shareable and claimable the moment it exists — before a board
-    // has been dealt.
-    if (!rosterCheck.ok) return
+    // createCampaign mints a fresh id, the founder's roster entry and a join
+    // code, so the campaign is shareable the moment it exists. It does NOT go
+    // straight into a game any more — the founder lands on the campaign
+    // screen, where they can host, share the code, or seat a table by hand.
+    if (!founderName.trim()) return
     setCreating(true)
     setCreateError(null)
     try {
-      const host = user && hostSeat !== null
-        ? { playerId: ROSTER_IDS[hostSeat], userId: user.id, userEmail: user.email }
-        : undefined
-      const fresh = await createCampaign(name, newRosterNames.map(n => n.trim()), host)
-      console.log('[Campaign] starting new campaign', fresh.campaignId, fresh.joinCode,
-        'roster:', (fresh.roster ?? []).map(m => m.name).join(', '))
+      const fresh = await createCampaign(
+        name, founderName,
+        user ? { userId: user.id, userEmail: user.email } : undefined,
+      )
+      console.log('[Campaign] created', fresh.campaignId, fresh.joinCode, 'founder:', founderName)
       await setActiveCampaignId(fresh.campaignId)
-      onReadyForDiceRoll(normalizeLegacy(fresh))
+      setLegacy(normalizeLegacy(fresh))
+      setSessions([])
+      setCreating(false)
+      setStatus('found')
     } catch (e) {
       // A failure here leaves the form filled in and says why, rather than
-      // dropping to the generic error screen with the typed names lost.
+      // dropping to the generic error screen with the typed name lost.
       console.error('[Campaign] could not create campaign:', e)
       setCreateError(e instanceof Error ? e.message : 'Could not create the campaign')
       setCreating(false)
@@ -364,38 +402,65 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
             {/* An open lobby outranks everything else on this screen — someone
                 is sitting waiting for you, and starting your own game instead
                 would produce the second game this whole flow exists to stop. */}
-            {openLobby && user && (
-              <div style={{
-                border: '1.5px solid rgba(39,174,96,0.45)', borderRadius: 10,
-                background: 'rgba(39,174,96,0.07)', padding: '13px 15px', marginBottom: 18,
-              }}>
-                <div style={{ fontSize: 12.5, color: '#8fbf9a', marginBottom: 3 }}>
-                  🎲 A game is being hosted right now
-                </div>
-                <div style={{ fontSize: 10.5, color: '#6a8a72', marginBottom: 10 }}>
-                  Game #{openLobby.gameNumber} ·{' '}
-                  {openLobby.seats.filter(s => !s.isAI).length} of {openLobby.humanSlots} players in
-                  {openLobby.seats.some(s => s.isAI) &&
-                    ` · ${openLobby.seats.filter(s => s.isAI).length} computer`}
-                </div>
-                <button
-                  onClick={joinOpenLobby}
-                  disabled={joiningLobby}
-                  style={{
-                    width: '100%', padding: '11px', borderRadius: 8, fontSize: 13, fontWeight: 'bold',
-                    fontFamily: 'Georgia, serif', cursor: joiningLobby ? 'not-allowed' : 'pointer',
-                    border: '1.5px solid rgba(39,174,96,0.6)',
-                    background: 'rgba(39,174,96,0.16)', color: '#E8DCC8',
-                  }}>
-                  {joiningLobby ? 'Joining…' : 'Join This Game →'}
-                </button>
-                {lobbyError && (
-                  <div style={{ fontSize: 10.5, color: '#e08070', marginTop: 8, lineHeight: 1.5 }}>
-                    {lobbyError}
+            {openLobby && user && (() => {
+              const mine = openLobby.createdBy === user.id
+              const claimed = getRoster(legacy).find(m => m.userId === user.id)
+              const needsName = !mine && !claimed
+              const joinDisabled = joiningLobby || (needsName && !joinName.trim())
+              return (
+                <div style={{
+                  border: '1.5px solid rgba(39,174,96,0.45)', borderRadius: 10,
+                  background: 'rgba(39,174,96,0.07)', padding: '13px 15px', marginBottom: 18,
+                }}>
+                  <div style={{ fontSize: 12.5, color: '#8fbf9a', marginBottom: 3 }}>
+                    {mine ? '🎲 You are hosting a game' : '🎲 A game is being hosted right now'}
                   </div>
-                )}
-              </div>
-            )}
+                  <div style={{ fontSize: 10.5, color: '#6a8a72', marginBottom: 10 }}>
+                    Game #{openLobby.gameNumber} ·{' '}
+                    {openLobby.seats.filter(s => !s.isAI).length} of {openLobby.humanSlots} players in
+                    {openLobby.seats.some(s => s.isAI) &&
+                      ` · ${openLobby.seats.filter(s => s.isAI).length} computer`}
+                  </div>
+                  {/* First-time joiners name THEMSELVES — this becomes their
+                      permanent campaign identity, typed by its owner. */}
+                  {needsName && (
+                    <input
+                      value={joinName}
+                      onChange={e => { setJoinName(e.target.value); setLobbyError(null) }}
+                      onKeyDown={e => { if (e.key === 'Enter' && !joinDisabled) joinOpenLobby() }}
+                      maxLength={MAX_ROSTER_NAME}
+                      placeholder="Your name — what the board will call you"
+                      style={{
+                        width: '100%', padding: '9px 12px', borderRadius: 6, marginBottom: 8,
+                        border: '1.5px solid rgba(39,174,96,0.40)',
+                        background: 'rgba(0,0,0,0.40)', color: '#E8DCC8',
+                        fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box',
+                      }}
+                    />
+                  )}
+                  <button
+                    onClick={mine ? () => onEnterLobby(openLobby, legacy) : joinOpenLobby}
+                    disabled={joinDisabled}
+                    style={{
+                      width: '100%', padding: '11px', borderRadius: 8, fontSize: 13, fontWeight: 'bold',
+                      fontFamily: 'Georgia, serif', cursor: joinDisabled ? 'not-allowed' : 'pointer',
+                      border: '1.5px solid rgba(39,174,96,0.6)',
+                      background: 'rgba(39,174,96,0.16)',
+                      color: joinDisabled ? '#5a7a62' : '#E8DCC8',
+                    }}>
+                    {mine ? 'Return to Your Lobby →'
+                      : joiningLobby ? 'Joining…'
+                      : claimed ? `Join This Game as ${claimed.name} →`
+                      : `Join as ${joinName.trim() || '…'} →`}
+                  </button>
+                  {lobbyError && (
+                    <div style={{ fontSize: 10.5, color: '#e08070', marginTop: 8, lineHeight: 1.5 }}>
+                      {lobbyError}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
 
             {legacy.joinCode && <JoinCodeCard code={legacy.joinCode} />}
 
@@ -504,9 +569,36 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
                 )}
               </>
             ) : (
-              <button onClick={handleContinue} style={primaryBtn('#C8940A')}>
-                🃏 Deal Scar Cards &amp; Start Game #{legacy.currentGameNumber}
-              </button>
+              <>
+                <button onClick={handleContinue} style={primaryBtn('#C8940A')}>
+                  🃏 Deal Scar Cards &amp; Start Game #{legacy.currentGameNumber} (one screen)
+                </button>
+                {/* Hosting opens a lobby and waits. Hidden while somebody else
+                    is already hosting — the panel above outranks it, because a
+                    second lobby is the two-games problem all over again. */}
+                {user && !openLobby && (
+                  <button
+                    onClick={hostOnlineGame}
+                    disabled={hostingGame}
+                    style={{
+                      ...primaryBtn('#2980B9'), marginTop: 8,
+                      border: '2px solid rgba(41,128,185,0.55)',
+                      background: 'rgba(41,128,185,0.12)',
+                      opacity: hostingGame ? 0.5 : 1,
+                    }}>
+                    {hostingGame ? 'Opening lobby…' : `🌐 Host Game #${legacy.currentGameNumber} Online`}
+                  </button>
+                )}
+                {hostError && (
+                  <div style={{
+                    padding: '8px 12px', borderRadius: 6, marginTop: 8, fontSize: 11,
+                    background: 'rgba(231,76,60,0.10)', border: '1px solid rgba(231,76,60,0.40)',
+                    color: '#e08070', textAlign: 'center', lineHeight: 1.5,
+                  }}>
+                    {hostError}
+                  </div>
+                )}
+              </>
             )}
             <div style={{ textAlign: 'center', margin: '14px 0 4px', fontSize: 10, color: '#4a3820' }}>OR</div>
             {/* Starting another campaign no longer destroys this one — each has
@@ -542,86 +634,35 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
               />
             </div>
 
-            {/* The campaign roster. Permanent from this moment: these names are
-                what every signature, city claim and naming right belongs to for
-                the next fifteen games, and what someone joining by code picks
-                from. Anyone can sit out any game — the roster is who is IN the
-                campaign, not who is playing tonight. */}
+            {/* Only the founder's own name. Everyone else types theirs when
+                they join — the person at the other machine is the authority on
+                what they are called, not whoever made the campaign. */}
             <div style={{ marginBottom: 18 }}>
               <label style={{ fontSize: 11, color: '#6a5030', display: 'block', marginBottom: 8, letterSpacing: 1 }}>
-                WHO IS IN THIS CAMPAIGN
+                YOUR NAME
               </label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                {[2, 3, 4, 5].map(n => {
-                  const on = newCount === n
-                  return (
-                    <button key={n} onClick={() => setNewCount(n)} style={{
-                      width: 38, height: 38, borderRadius: 8, fontSize: 15, fontWeight: 'bold',
-                      fontFamily: 'Georgia, serif', cursor: 'pointer',
-                      border: `2px solid ${on ? '#C8940A' : 'rgba(200,148,10,0.25)'}`,
-                      background: on ? 'rgba(200,148,10,0.22)' : 'rgba(0,0,0,0.25)',
-                      color: on ? '#C8940A' : '#6a5030',
-                    }}>{n}</button>
-                  )
-                })}
-                <span style={{ fontSize: 10.5, color: '#5a4020', marginLeft: 4 }}>people</span>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-                {Array.from({ length: newCount }, (_, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 10.5, color: '#5a4020', width: 12, textAlign: 'right' }}>{i + 1}</span>
-                    <input
-                      value={newNames[i]}
-                      onChange={e => setNewNames(prev => prev.map((v, j) => (j === i ? e.target.value : v)))}
-                      maxLength={MAX_ROSTER_NAME}
-                      placeholder={`Player ${i + 1}`}
-                      style={{
-                        flex: 1, minWidth: 0, padding: '9px 12px', borderRadius: 6,
-                        border: '1.5px solid rgba(200,148,10,0.40)',
-                        background: 'rgba(0,0,0,0.40)', color: '#E8DCC8',
-                        fontSize: 14, fontFamily: 'Georgia, serif', boxSizing: 'border-box',
-                      }}
-                    />
-                    {/* Claiming the host's own seat here saves them being the one
-                        unlinked player blocking their own campaign from going
-                        online later. */}
-                    {user && (
-                      <button
-                        onClick={() => setHostSeat(hostSeat === i ? null : i)}
-                        title={`Link ${user.email} to this name`}
-                        style={{
-                          padding: '6px 11px', borderRadius: 14, fontSize: 10.5, flexShrink: 0,
-                          fontFamily: 'Georgia, serif', cursor: 'pointer',
-                          border: `1px solid ${hostSeat === i ? 'rgba(39,174,96,0.6)' : 'rgba(200,148,10,0.25)'}`,
-                          background: hostSeat === i ? 'rgba(39,174,96,0.15)' : 'transparent',
-                          color: hostSeat === i ? '#27AE60' : '#6a5030',
-                        }}>
-                        {hostSeat === i ? '✓ you' : 'this is me'}
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-
+              <input
+                value={founderName}
+                onChange={e => { setFounderName(e.target.value); setCreateError(null) }}
+                onKeyDown={e => { if (e.key === 'Enter' && founderName.trim() && !creating) handleNewCampaignStart(worldName.trim() || 'New World') }}
+                maxLength={MAX_ROSTER_NAME}
+                placeholder="What the board will call you"
+                style={{
+                  width: '100%', padding: '10px 14px', borderRadius: 6,
+                  border: '1.5px solid rgba(200,148,10,0.45)',
+                  background: 'rgba(0,0,0,0.40)', color: '#E8DCC8',
+                  fontSize: 15, fontFamily: 'Georgia, serif', boxSizing: 'border-box',
+                }}
+              />
               <div style={{ fontSize: 10, color: '#5a4020', marginTop: 8, lineHeight: 1.5 }}>
-                Permanent for the whole campaign. Anyone can sit out a game and keep their
-                stars, signatures and cities.
+                Permanent for the whole campaign — it goes on every signature and city you claim.
+                Everyone else adds their own name when they join with the campaign code.
                 {user
-                  ? ' Everyone else signs in and claims their name with the join code.'
+                  ? ` This name will be linked to ${user.email}.`
                   : ' Sign in first if you want your record to follow your account.'}
               </div>
             </div>
 
-            {!rosterCheck.ok && newRosterNames.some(n => n.trim()) && (
-              <div style={{
-                padding: '8px 12px', borderRadius: 6, marginBottom: 12, fontSize: 11,
-                background: 'rgba(231,76,60,0.10)', border: '1px solid rgba(231,76,60,0.40)',
-                color: '#e08070', textAlign: 'center',
-              }}>
-                {rosterCheck.reason}
-              </div>
-            )}
             {createError && (
               <div style={{
                 padding: '8px 12px', borderRadius: 6, marginBottom: 12, fontSize: 11,
@@ -634,14 +675,19 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
 
             <button
               onClick={() => handleNewCampaignStart(worldName.trim() || 'New World')}
-              disabled={!rosterCheck.ok || creating}
+              disabled={!founderName.trim() || creating}
               style={{
                 ...primaryBtn('#C8940A'),
-                opacity: rosterCheck.ok && !creating ? 1 : 0.4,
-                cursor: rosterCheck.ok && !creating ? 'pointer' : 'not-allowed',
+                opacity: founderName.trim() && !creating ? 1 : 0.4,
+                cursor: founderName.trim() && !creating ? 'pointer' : 'not-allowed',
               }}
             >
-              {creating ? 'Creating…' : '🃏 Begin Campaign — Deal Cards & Start Game #1'}
+              {creating ? 'Creating…' : '✦ Create Campaign'}
+            </button>
+            <button
+              onClick={() => { setCreateError(null); setStatus('picking') }}
+              style={{ ...ghostBtnStyle, marginTop: 8 }}>
+              ← Back
             </button>
           </>
         )}
