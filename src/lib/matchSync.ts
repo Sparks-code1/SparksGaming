@@ -221,8 +221,11 @@ export function startMatchSync(
 
 export const supabaseTransport: SyncTransport = {
   open(matchId, onRow, onAction, onStatus) {
+    // Unique per subscription. A channel name is a handle — reusing one that
+    // is already subscribed throws when handlers are added, which a reconnect
+    // or a remount does routinely. Same crash the lobby channel had.
     const channel = supabase
-      .channel(`match:${matchId}`)
+      .channel(`match:${matchId}:${Math.random().toString(36).slice(2, 10)}`)
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'matches', filter: `id=eq.${matchId}` },

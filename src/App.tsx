@@ -18,8 +18,10 @@ import { loadLegacyState, saveLegacyState, getActiveCampaignId } from '@/lib/leg
 import { dealScarCards } from '@/data/scarCards'
 import { MOCK_PLAYERS, applyRosterNames } from '@/data/mockGameState'
 import { hasRoster, getRoster, createRoster } from '@/lib/roster'
+import { createLobby, matchState, type Lobby } from '@/lib/lobby'
+import LobbyScreen from '@/components/LobbyScreen'
 
-type Screen = 'loading' | 'between-games' | 'player-slots' | 'scar-dealing' | 'dice-roll' | 'draft-setup' | 'game-setup' | 'playing'
+type Screen = 'loading' | 'between-games' | 'player-slots' | 'lobby' | 'scar-dealing' | 'dice-roll' | 'draft-setup' | 'game-setup' | 'playing'
 
 type RestoredGameState = Omit<GameState, 'legacySnapshot'>
 
@@ -35,6 +37,15 @@ export default function App() {
   const [slotConfig, setSlotConfig]             = useState<Record<string, SlotConfig>>({})
   const [gameDeals, setGameDeals]               = useState<DealtScar[]>([])
   const [restoredGameState, setRestoredGameState] = useState<RestoredGameState | null>(null)
+  /** The lobby being waited in, whether hosting it or having joined it. */
+  const [lobby, setLobby]                       = useState<Lobby | null>(null)
+  /**
+   * The lobby this client must ACTIVATE once it has built a board. Host only —
+   * a joiner never builds a board, they receive one.
+   */
+  const [lobbyToStart, setLobbyToStart]         = useState<string | null>(null)
+  /** An already-running match this client joined. Its board comes from the server. */
+  const [joinedMatch, setJoinedMatch]           = useState<{ matchId: string; version: number } | null>(null)
 
   // On mount: check Supabase for an in-progress game and resume it directly,
   // bypassing the between-game / dice-roll / setup screens entirely.
@@ -83,6 +94,33 @@ export default function App() {
     let ls = legacy
     if (!ls) return
 
+    // ── Online: open a lobby and wait, rather than dealing straight away ────
+    // Everything after this point — scars, dice, factions — is decided for a
+    // fixed set of players, so it cannot begin until that set is settled. The
+    // host waits here; the game proceeds when they press Start.
+    if (online && user) {
+      const me = getRoster(ls).find(m => m.userId === user.id)
+      if (!me) return
+      const humans = slots.filter(s => !s.isAI)
+      const ais = slots.filter(s => s.isAI)
+      try {
+        const open = await createLobby(
+          ls.campaignId, ls.currentGameNumber,
+          { playerId: me.id, name: me.name },
+          humans.length,
+          ais.map(a => ({ playerId: a.playerId, name: a.name, difficulty: a.difficulty })),
+        )
+        setLobby(open)
+        setScreen('lobby')
+        return                      // the rest resumes from handleLobbyStart
+      } catch (e) {
+        // A lobby that cannot be opened must not silently become a game only
+        // this machine can see — fall back to one screen and say so.
+        console.error('[Lobby] could not open a lobby, playing on one screen:', e)
+        setPlayOnline(false)
+      }
+    }
+
     // First time players are named, that list becomes the permanent campaign
     // roster. Seat ids are fixed by naming order, so every later game seats
     // people by id and their campaign record follows them.
@@ -94,7 +132,17 @@ export default function App() {
     // Refresh the shared seat labels from the roster (identity is unchanged —
     // seat ids ARE roster ids; only the displayed names are synced).
     applyRosterNames(getRoster(ls))
+    await dealScarsAndContinue(ls, ids)
+  }
 
+  /**
+   * Deal this game's scar cards and move on to the dealing screen.
+   *
+   * Shared by the hotseat path and the host's post-lobby path so the two cannot
+   * drift — an online game must be dealt exactly like any other, from the same
+   * campaign deck, to the players who are actually seated.
+   */
+  async function dealScarsAndContinue(ls: LegacyState, ids: string[]) {
     const gameNumber = ls.currentGameNumber
     // If this game's cards were already dealt (e.g. reloading before the game
     // started), reuse them — a player may only ever hold ONE scar card at a time
@@ -118,6 +166,49 @@ export default function App() {
     setLegacy(updated)
     setGameDeals(newDealtScars)
     setScreen('scar-dealing')
+  }
+
+  /**
+   * The lobby is done with. Two very different continuations.
+   *
+   * The HOST goes on through the normal setup — scars, dice, factions — and the
+   * lobby is only flipped to 'active' at the end of it, when a board finally
+   * exists for the server to be authoritative over. `lobbyToStart` carries that
+   * obligation to GameBoard.
+   *
+   * A JOINER never runs setup at all. They receive the finished board from the
+   * match row, which is the whole point: one game, built once.
+   */
+  async function handleLobbyStart(started: Lobby) {
+    const ls = legacy
+    if (!ls || !user) return
+    const seats = started.seats
+    setSlotConfig(Object.fromEntries(seats.map(s =>
+      [s.playerId, { isAI: s.isAI, difficulty: s.aiDifficulty ?? 'medium' }])))
+    setRosterIds(seats.map(s => s.playerId))
+    setPlayOnline(true)
+
+    if (started.createdBy === user.id && started.status === 'lobby') {
+      setLobbyToStart(started.matchId)
+      setLobby(null)
+      await dealScarsAndContinue(ls, seats.map(s => s.playerId))
+      return
+    }
+
+    // Joiner: the board is on the server already.
+    const state = await matchState(started.matchId)
+    if (!state) return
+    setJoinedMatch({ matchId: started.matchId, version: state.version })
+    setRestoredGameState(state.state as RestoredGameState)
+    setLobby(null)
+    setScreen('playing')
+  }
+
+  function handleLeaveLobby() {
+    setLobby(null)
+    setLobbyToStart(null)
+    setPlayOnline(false)
+    setScreen('between-games')
   }
 
   function handleOrderDetermined(orderedIds: string[]) {
@@ -222,10 +313,26 @@ export default function App() {
         onReadyForDiceRoll={handleReadyForDiceRoll}
         onResumeGame={handleResumeGame}
         onNewCampaign={() => { setLegacy(null); setScreen('between-games') }}
+        onEnterLobby={(joined, ls) => {
+          setLegacy(ls)
+          applyRosterNames(getRoster(ls))
+          setLobby(joined)
+          setScreen('lobby')
+        }}
       />
     )
   } else if (screen === 'player-slots') {
     content = <PlayerSlotsScreen legacy={legacy} user={user} onConfirm={handleSlotsChosen} />
+  } else if (screen === 'lobby' && lobby && legacy && user) {
+    content = (
+      <LobbyScreen
+        lobby={lobby}
+        legacy={legacy}
+        user={user}
+        onStart={handleLobbyStart}
+        onLeave={handleLeaveLobby}
+      />
+    )
   } else if (screen === 'scar-dealing' && legacy) {
     content = (
       <ScarDealingScreen
@@ -263,6 +370,8 @@ export default function App() {
         playerOrder={playerOrder}
         playerSetups={playerSetups}
         playOnline={playOnline}
+        lobbyToStart={lobbyToStart}
+        joinedMatch={joinedMatch}
         restoredGameState={restoredGameState}
         onReturnToLobby={handleReturnToLobby}
       />

@@ -63,6 +63,7 @@ import { AI_DIFFICULTY_LABEL, AI_DIFFICULTY_BADGE } from '@/types/ai'
 import { dispatchAction } from '@/lib/actionDispatch'
 import { useMatchSync } from '@/lib/useMatchSync'
 import { findActiveMatch, createOnlineMatch, seatsFromGameState } from '@/lib/onlineMatch'
+import { startLobby } from '@/lib/lobby'
 import LiveStatusBadge from './LiveStatusBadge'
 import { aiReinforcePlacements, aiAttackPlan, aiFortifyMove, aiTradeInDecision, rivalsOnMatchPoint, aiBonusTroopTarget } from '@/lib/ai'
 import { playVictory, playElimination, playCoin, playCity, playMilestone, playTroop, startAmbient, stopAmbient } from '@/lib/sounds'
@@ -226,6 +227,10 @@ interface GameBoardProps {
   playerSetups: PlayerSetup[]
   /** Start this game ONLINE: create the match row and play through the server. */
   playOnline?: boolean
+  /** Host of a readied-up lobby: hand it this board and flip it to active. */
+  lobbyToStart?: string | null
+  /** Joiner: the match is already live and holds the board — adopt, don't create. */
+  joinedMatch?: { matchId: string; version: number } | null
   /** When provided, restore this saved game instead of building a fresh one from playerSetups. */
   restoredGameState?: Omit<GameState, 'legacySnapshot'> | null
   onReturnToLobby: () => void
@@ -234,7 +239,7 @@ interface GameBoardProps {
 /** Faction ability ids that apply in combat (used to avoid re-reading legacy in every render) */
 type AbilityId = string
 
-export default function GameBoard({ initialLegacy, playerOrder, playerSetups, playOnline = false, restoredGameState, onReturnToLobby }: GameBoardProps) {
+export default function GameBoard({ initialLegacy, playerOrder, playerSetups, playOnline = false, lobbyToStart = null, joinedMatch = null, restoredGameState, onReturnToLobby }: GameBoardProps) {
   const containerRef   = useRef<HTMLDivElement>(null)
   const appRef         = useRef<PIXI.Application | null>(null)
   const handlesRef     = useRef<Map<string, TerritoryHandles>>(new Map())
@@ -5430,43 +5435,80 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   const advanceTgtTerritory = advanceTgtRef.current ? (gameState.territories[advanceTgtRef.current] ?? null) : null
 
   /**
-   * Create the match for a game started online.
+   * Put this game's match live.
    *
    * Here rather than in App because this is the first place the initial board
-   * exists — the server needs a state to be authoritative over. Runs once: a
-   * restored game already has its match, and `activeMatchId` is the latch.
+   * exists — the server needs a state to be authoritative over, and setup does
+   * not produce one until now. Three ways in:
+   *
+   *   `joinedMatch`  — somebody else built this board and the server already
+   *                    holds it. Adopt it; do not write anything.
+   *   `lobbyToStart` — the host of a lobby everyone readied up in. Hand the
+   *                    finished board over and flip the lobby to active.
+   *   neither        — an online game with no lobby (a resumed campaign, or a
+   *                    solo-with-AI online game). Create the match outright.
+   *
+   * Runs once: a restored game already has its match, and `activeMatchId` is
+   * the latch.
    */
   const creatingMatchRef = useRef(false)
   useEffect(() => {
-    if (!playOnline || restoredGameState) return
-    if (legacyState.activeMatchId || creatingMatchRef.current) return
+    if (!playOnline) return
+    if (creatingMatchRef.current) return
+
+    // Joining: the board came from the server, so there is nothing to create.
+    if (joinedMatch) {
+      creatingMatchRef.current = true
+      onlineMatchRef.current = joinedMatch
+      setOnlineMatch(joinedMatch)
+      setLegacyState(prev => {
+        if (prev.activeMatchId === joinedMatch.matchId) return prev
+        const next: LegacyState = { ...prev, activeMatchId: joinedMatch.matchId }
+        legacyStateRef.current = next
+        return next
+      })
+      return
+    }
+
+    if (restoredGameState || legacyState.activeMatchId) return
     creatingMatchRef.current = true
     void (async () => {
       try {
-        const created = await createOnlineMatch(
-          legacyState.campaignId,
-          gameStateRef.current.gameNumber,
-          seatsFromGameState(gameStateRef.current, legacyStateRef.current),
-          gameStateRef.current,
-        )
-        onlineMatchRef.current = created
-        setOnlineMatch(created)
+        let live: { matchId: string; version: number }
+        if (lobbyToStart) {
+          // Everyone is already seated in the lobby; this only hands over the
+          // board. The status compare-and-swap inside means a second attempt
+          // — two machines, one lobby — is refused rather than duplicating it.
+          await startLobby(lobbyToStart, gameStateRef.current)
+          const active = await findActiveMatch(legacyState.campaignId, gameStateRef.current.gameNumber)
+          live = active ?? { matchId: lobbyToStart, version: 0 }
+        } else {
+          live = await createOnlineMatch(
+            legacyState.campaignId,
+            gameStateRef.current.gameNumber,
+            seatsFromGameState(gameStateRef.current, legacyStateRef.current),
+            gameStateRef.current,
+          )
+        }
+        onlineMatchRef.current = live
+        setOnlineMatch(live)
         setLegacyState(prev => {
-          const next: LegacyState = { ...prev, activeMatchId: created.matchId }
+          const next: LegacyState = { ...prev, activeMatchId: live.matchId }
           legacyStateRef.current = next
           saveLegacyState(next).catch(() => {})
           return next
         })
-        showWeaknessNotice('🌐 Online game started — everyone else can join from their own machine')
+        showWeaknessNotice('🌐 Online game started — everyone else is now on this board')
       } catch (e) {
         // Falling back to hotseat is the safe failure: the game is playable,
         // and pretending to be online would mean moves going nowhere.
         creatingMatchRef.current = false
-        console.error('[Online] could not create the match:', e)
+        console.error('[Online] could not start the match:', e)
         showWeaknessNotice(`⚠ Could not start online play — continuing on this machine. ${String(e)}`)
       }
     })()
-  }, [playOnline, restoredGameState, legacyState.activeMatchId, legacyState.campaignId])
+  }, [playOnline, restoredGameState, joinedMatch, lobbyToStart,
+      legacyState.activeMatchId, legacyState.campaignId])
 
   // The online path lives in a stable ref, so it needs the current notice fn.
   showWeaknessNoticeRef.current = showWeaknessNotice

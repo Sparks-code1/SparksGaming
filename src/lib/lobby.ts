@@ -223,6 +223,22 @@ export async function readLobby(matchId: string): Promise<Lobby | null> {
   }
 }
 
+/**
+ * The board a started match is holding, for a client that did not build it.
+ *
+ * A joiner never runs setup — they receive the finished game. `version` comes
+ * back with it so their first action is dispatched against the right one rather
+ * than being rejected as stale on arrival.
+ */
+export async function matchState(
+  matchId: string,
+): Promise<{ state: GameState; version: number } | null> {
+  const { data } = await supabase
+    .from('matches').select('state, version').eq('id', matchId).maybeSingle()
+  if (!data?.state) return null
+  return { state: data.state as GameState, version: (data.version as number) ?? 0 }
+}
+
 /** The lobby waiting for players in this campaign's current game, if any. */
 export async function findOpenLobby(campaignId: string, gameNumber: number): Promise<Lobby | null> {
   const { data } = await supabase
@@ -351,8 +367,12 @@ export function subscribeLobby(matchId: string, onChange: (lobby: Lobby | null) 
     const lobby = await readLobby(matchId)
     if (!stopped) onChange(lobby)
   }
+  // A channel NAME is a handle: asking for one that already exists returns the
+  // existing channel, and adding handlers to an already-subscribed channel
+  // throws. Two lobby screens, or one remounted — which React does routinely —
+  // would take the whole component down. Unique per subscription, so it cannot.
   const channel = supabase
-    .channel(`lobby:${matchId}`)
+    .channel(`lobby:${matchId}:${Math.random().toString(36).slice(2, 10)}`)
     .on('postgres_changes',
       { event: '*', schema: 'public', table: 'match_players', filter: `match_id=eq.${matchId}` },
       () => { void refresh() })

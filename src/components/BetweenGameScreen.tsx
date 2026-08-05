@@ -18,12 +18,15 @@ import {
   ROSTER_IDS, MAX_ROSTER, MAX_ROSTER_NAME,
 } from '@/lib/roster'
 import CampaignRosterPanel from './CampaignRosterPanel'
+import { findOpenLobby, takeSeat, type Lobby } from '@/lib/lobby'
 
 interface Props {
   onReadyForDiceRoll: (legacy: LegacyState) => void
   /** Drop back into a game that is still in progress. */
   onResumeGame: (legacy: LegacyState) => void
   onNewCampaign: () => void
+  /** A seat has been taken in someone's lobby — show the waiting room. */
+  onEnterLobby: (lobby: Lobby, legacy: LegacyState) => void
 }
 
 type LoadState =
@@ -34,7 +37,7 @@ type LoadState =
   | 'none'      // naming a brand-new campaign
   | 'error'
 
-export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, onNewCampaign }: Props) {
+export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, onNewCampaign, onEnterLobby }: Props) {
   const [status, setStatus]     = useState<LoadState>('loading')
   /** Which screen the join panel was opened FROM, so Cancel goes back there. */
   const [joinReturnTo, setJoinReturnTo] = useState<LoadState>('picking')
@@ -63,6 +66,47 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
   const [authDismissed, setAuthDismissed] = useState(false)
   /** Guards the button that would throw away a game still in progress. */
   const [confirmRestart, setConfirmRestart] = useState(false)
+
+  // ── Somebody is hosting this game right now ───────────────────────────────
+  // Polled rather than pushed: a player sitting on this screen has not
+  // subscribed to anything yet, and the whole point is to notice a lobby that
+  // opened while they were looking at it.
+  const [openLobby, setOpenLobby] = useState<Lobby | null>(null)
+  const [lobbyError, setLobbyError] = useState<string | null>(null)
+  const [joiningLobby, setJoiningLobby] = useState(false)
+
+  useEffect(() => {
+    const campaignId = legacy?.campaignId
+    const gameNumber = legacy?.currentGameNumber
+    if (!campaignId || !gameNumber || !user) { setOpenLobby(null); return }
+    let cancelled = false
+    const look = async () => {
+      const found = await findOpenLobby(campaignId, gameNumber).catch(() => null)
+      if (!cancelled) setOpenLobby(found?.status === 'lobby' ? found : null)
+    }
+    void look()
+    const timer = setInterval(look, 4000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [legacy?.campaignId, legacy?.currentGameNumber, user?.id])
+
+  /** Take a seat in the open lobby and go and wait in it. */
+  async function joinOpenLobby() {
+    if (!openLobby || !legacy || !user) return
+    const me = getRoster(legacy).find(m => m.userId === user.id)
+    if (!me) {
+      // Without a claimed name the server has no way to know which seat is
+      // theirs, and an unclaimed seat can never take a turn.
+      setLobbyError('Claim your name on this campaign first — use the roster above.')
+      return
+    }
+    setJoiningLobby(true); setLobbyError(null)
+    try {
+      onEnterLobby(await takeSeat(openLobby.matchId, { playerId: me.id, name: me.name }), legacy)
+    } catch (e) {
+      setLobbyError(e instanceof Error ? e.message : 'Could not join that game')
+      setJoiningLobby(false)
+    }
+  }
 
   useEffect(() => {
     // A failure here resolves to null rather than throwing, so an unreachable
@@ -317,6 +361,42 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
         {/* Existing campaign */}
         {(status === 'found' || status === 'error') && legacy && (
           <>
+            {/* An open lobby outranks everything else on this screen — someone
+                is sitting waiting for you, and starting your own game instead
+                would produce the second game this whole flow exists to stop. */}
+            {openLobby && user && (
+              <div style={{
+                border: '1.5px solid rgba(39,174,96,0.45)', borderRadius: 10,
+                background: 'rgba(39,174,96,0.07)', padding: '13px 15px', marginBottom: 18,
+              }}>
+                <div style={{ fontSize: 12.5, color: '#8fbf9a', marginBottom: 3 }}>
+                  🎲 A game is being hosted right now
+                </div>
+                <div style={{ fontSize: 10.5, color: '#6a8a72', marginBottom: 10 }}>
+                  Game #{openLobby.gameNumber} ·{' '}
+                  {openLobby.seats.filter(s => !s.isAI).length} of {openLobby.humanSlots} players in
+                  {openLobby.seats.some(s => s.isAI) &&
+                    ` · ${openLobby.seats.filter(s => s.isAI).length} computer`}
+                </div>
+                <button
+                  onClick={joinOpenLobby}
+                  disabled={joiningLobby}
+                  style={{
+                    width: '100%', padding: '11px', borderRadius: 8, fontSize: 13, fontWeight: 'bold',
+                    fontFamily: 'Georgia, serif', cursor: joiningLobby ? 'not-allowed' : 'pointer',
+                    border: '1.5px solid rgba(39,174,96,0.6)',
+                    background: 'rgba(39,174,96,0.16)', color: '#E8DCC8',
+                  }}>
+                  {joiningLobby ? 'Joining…' : 'Join This Game →'}
+                </button>
+                {lobbyError && (
+                  <div style={{ fontSize: 10.5, color: '#e08070', marginTop: 8, lineHeight: 1.5 }}>
+                    {lobbyError}
+                  </div>
+                )}
+              </div>
+            )}
+
             {legacy.joinCode && <JoinCodeCard code={legacy.joinCode} />}
 
             {/* Who the code lets in. Sits directly under it because the two are
