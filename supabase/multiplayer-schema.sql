@@ -79,6 +79,44 @@ create table if not exists match_actions (
   primary key (match_id, seq)
 );
 
+-- ─── Column backfill ──────────────────────────────────────────────────────────
+-- `create table if not exists` does nothing at all when the table is already
+-- there — including when it is there with an OLDER shape, from a run of this
+-- file that failed partway. These add anything missing, so a half-applied
+-- schema is repaired by re-running rather than by dropping and starting over.
+alter table matches add column if not exists state       jsonb;
+alter table matches add column if not exists version     int    not null default 0;
+alter table matches add column if not exists action_seq  int    not null default 0;
+alter table matches add column if not exists rng_seed    bigint not null default (floor(random() * 9223372036854775807)::bigint);
+alter table matches add column if not exists status      text   not null default 'lobby';
+alter table matches add column if not exists created_by  uuid references auth.users(id) on delete set null;
+alter table matches add column if not exists created_at  timestamptz not null default now();
+alter table matches add column if not exists updated_at  timestamptz not null default now();
+
+alter table match_players add column if not exists user_id       uuid references auth.users(id) on delete set null;
+alter table match_players add column if not exists is_ai         boolean not null default false;
+alter table match_players add column if not exists ai_difficulty text;
+
+alter table match_actions add column if not exists actor_user_id   uuid references auth.users(id) on delete set null;
+alter table match_actions add column if not exists actor_player_id text;
+alter table match_actions add column if not exists effects         jsonb not null default '[]'::jsonb;
+alter table match_actions add column if not exists created_at      timestamptz not null default now();
+
+-- Constraints have no IF NOT EXISTS either, so they are guarded by name —
+-- the same pattern join-codes.sql uses.
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'matches_status_check') then
+    alter table matches add constraint matches_status_check
+      check (status in ('lobby','active','complete','abandoned'));
+  end if;
+
+  if not exists (select 1 from pg_constraint where conname = 'match_players_ai_difficulty_check') then
+    alter table match_players add constraint match_players_ai_difficulty_check
+      check (ai_difficulty is null or ai_difficulty in ('easy','medium','hard'));
+  end if;
+end $$;
+
 -- ─── Membership helper (used by RLS) ──────────────────────────────────────────
 create or replace function is_match_participant(m uuid)
 returns boolean language sql stable security definer as $$
@@ -93,26 +131,37 @@ $$;
 -- Write: NOBODY writes state/actions from the client. The Edge Function uses the
 -- service-role key, which bypasses RLS, and is the only writer. Match creation
 -- (lobby) is the one client insert we allow.
+--
+-- `enable row level security` is already safe to repeat; the policies are not.
+-- Postgres has no CREATE POLICY IF NOT EXISTS at any version, so each one is
+-- dropped first. That also means editing a policy here and re-running the file
+-- actually REPLACES it, rather than failing and leaving the old rule in force —
+-- which is the more dangerous half of the problem.
 alter table matches        enable row level security;
 alter table match_players  enable row level security;
 alter table match_actions  enable row level security;
 
+drop policy if exists "participants read matches" on matches;
 create policy "participants read matches"
   on matches for select using (is_match_participant(id));
 
+drop policy if exists "authed create lobby" on matches;
 create policy "authed create lobby"
   on matches for insert with check (auth.uid() = created_by);
 
+drop policy if exists "participants read roster" on match_players;
 create policy "participants read roster"
   on match_players for select using (is_match_participant(match_id));
 
 -- Let the lobby creator seat players before the game starts.
+drop policy if exists "creator seats players" on match_players;
 create policy "creator seats players"
   on match_players for insert
   with check (exists (
     select 1 from matches m where m.id = match_id and m.created_by = auth.uid() and m.status = 'lobby'
   ));
 
+drop policy if exists "participants read actions" on match_actions;
 create policy "participants read actions"
   on match_actions for select using (is_match_participant(match_id));
 
@@ -121,7 +170,46 @@ create policy "participants read actions"
 -- service-role key. This is what makes the model server-authoritative.
 
 -- ─── Realtime ─────────────────────────────────────────────────────────────────
--- Add these tables to the supabase_realtime publication so clients get pushes.
--- (Run once; ignore "already member" errors.)
---   alter publication supabase_realtime add table matches;
---   alter publication supabase_realtime add table match_actions;
+-- Without this the tables exist but push nothing, and every client sits on a
+-- board that never updates. `alter publication ... add table` errors if the
+-- table is already a member, so each is guarded rather than commented out and
+-- left to be forgotten.
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'matches'
+  ) then
+    alter publication supabase_realtime add table matches;
+  end if;
+
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'match_actions'
+  ) then
+    alter publication supabase_realtime add table match_actions;
+  end if;
+end $$;
+
+-- Realtime sends only the primary key on UPDATE unless the row is replicated in
+-- full. The client renders `state` straight off the payload, so without this it
+-- would receive a change notification carrying no state at all.
+alter table matches       replica identity full;
+alter table match_actions replica identity full;
+
+-- ─── Verification ─────────────────────────────────────────────────────────────
+-- Run this after applying, to see what actually landed.
+--
+--   select 'table' kind, tablename  name from pg_tables
+--     where schemaname = 'public' and tablename in ('matches','match_players','match_actions')
+--   union all
+--   select 'policy', policyname from pg_policies
+--     where schemaname = 'public' and tablename in ('matches','match_players','match_actions')
+--   union all
+--   select 'realtime', tablename from pg_publication_tables
+--     where pubname = 'supabase_realtime' and tablename in ('matches','match_actions')
+--   union all
+--   select 'function', proname from pg_proc where proname = 'is_match_participant'
+--   order by 1, 2;
+--
+-- Expect 3 tables, 5 policies, 2 realtime entries, 1 function.
