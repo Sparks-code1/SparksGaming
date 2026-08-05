@@ -191,9 +191,19 @@ begin
   end if;
 end $$;
 
--- Realtime sends only the primary key on UPDATE unless the row is replicated in
--- full. The client renders `state` straight off the payload, so without this it
--- would receive a change notification carrying no state at all.
+-- Applied 2026-08-05, and worth knowing why it is not optional.
+--
+-- Identity DEFAULT still sends the NEW row in full — which is why the client
+-- reading `payload.new.state` worked even before this landed. What DEFAULT
+-- omits is the OLD image, which carries nothing but the primary key. Realtime
+-- evaluates an UPDATE's filter against that old image, so `id=eq.<matchId>`
+-- survives (id is the key) while a filter on status, game_number or anything
+-- else would match nothing at all — with no error, on either side. The client
+-- would simply stop being told about turns.
+--
+-- The cost is WAL: every update to `matches` now writes the previous `state`
+-- blob alongside the new one. At a few hundred actions a game that is nothing
+-- against a failure mode that is invisible.
 alter table matches       replica identity full;
 alter table match_actions replica identity full;
 
