@@ -220,15 +220,23 @@ export const NINTH_CITY_EVENT_CARDS: EventCard[] = [
     kind: 'event', id: 'ec-fortify-1',
     name: 'Fortify',
     description: 'The player with the largest population chooses one: add 2 troops to each of 2 different cities they control, OR permanently fortify one city they control. The fortification needs one of the campaign’s 5 fortifications to be left — taking it DESTROYS this card for the whole campaign. Taking the troops only discards it, and it returns in later games.',
-    // Destroyed only when the FORTIFICATION is taken; the troops path discards.
-    removeAfterUse: false,
+    // Conditionally destroyed, so this stays TRUE — same as Die Humans. It
+    // keeps the DRAW from auto-discarding; the handler then either destroys the
+    // card (fortification taken) or returns it to the discard itself (troops).
+    // With false, the draw discards AND the troops path discards, and the card
+    // comes round twice in one game.
+    removeAfterUse: true,
   },
   {
     kind: 'event', id: 'ec-fortify-2',
     name: 'Fortify',
     description: 'The player with the largest population chooses one: add 2 troops to each of 2 different cities they control, OR permanently fortify one city they control. The fortification needs one of the campaign’s 5 fortifications to be left — taking it DESTROYS this card for the whole campaign. Taking the troops only discards it, and it returns in later games.',
-    // Destroyed only when the FORTIFICATION is taken; the troops path discards.
-    removeAfterUse: false,
+    // Conditionally destroyed, so this stays TRUE — same as Die Humans. It
+    // keeps the DRAW from auto-discarding; the handler then either destroys the
+    // card (fortification taken) or returns it to the discard itself (troops).
+    // With false, the draw discards AND the troops path discards, and the card
+    // comes round twice in one game.
+    removeAfterUse: true,
   },
   {
     kind: 'event', id: 'ec-control-1',

@@ -163,5 +163,32 @@ console.log('\n— the two cards are destroyed independently —')
   check('next game deals only the survivors', deck.join(',') === 'ec-fortify-2,ec-control-1', deck.join(','))
 }
 
+console.log('\n— the card lands in the discard exactly once —')
+{
+  // A conditionally-destroyed card must keep removeAfterUse TRUE, like Die
+  // Humans. That flag is what stops the DRAW from auto-discarding; the handler
+  // then either destroys the card or returns it to the discard itself. With it
+  // false the draw discards AND the troops path discards, so the card comes
+  // round twice in the same game.
+  const drawn = (removeAfterUse: boolean, discard: string[], cardId: string) =>
+    removeAfterUse ? discard : [...discard, cardId]
+
+  const correct = drawn(true, [], 'ec-fortify-1')
+  check('the draw does not discard it', correct.length === 0)
+  const afterTroops = [...correct, 'ec-fortify-1']          // returnEventCardToDiscard
+  check('the troops path puts it there once', afterTroops.filter(c => c === 'ec-fortify-1').length === 1)
+
+  const wrong = drawn(false, [], 'ec-fortify-1')
+  const wrongAfterTroops = [...wrong, 'ec-fortify-1']
+  check('with removeAfterUse false it would be doubled',
+    wrongAfterTroops.filter(c => c === 'ec-fortify-1').length === 2)
+
+  // The fortification path never touches the discard — it destroys instead.
+  const destroyed = ['ec-fortify-1']
+  check('a destroyed card is not in the discard', !correct.includes('ec-fortify-1'))
+  check('and next game filters it out',
+    ['ec-fortify-1', 'ec-fortify-2'].filter(id => !destroyed.includes(id)).join(',') === 'ec-fortify-2')
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)
