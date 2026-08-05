@@ -3,6 +3,7 @@ import type { LegacyState } from '@/types/legacy'
 import type { AIDifficulty } from '@/types/ai'
 import { AI_DIFFICULTY_LABEL } from '@/types/ai'
 import { ROSTER_IDS, MAX_ROSTER, hasRoster, getRoster, validateSeats } from '@/lib/roster'
+import JoinCodeCard from './JoinCodeCard'
 
 export interface SlotConfig { isAI: boolean; difficulty: AIDifficulty }
 
@@ -75,17 +76,30 @@ export default function PlayerSlotsScreen({ legacy = null, user = null, onConfir
   // Online needs an account per human seat: the edge function identifies the
   // actor from their JWT, so a seat nobody is signed in as can never act.
   const rosterOf = (id: string) => (legacy?.roster ?? []).find(m => m.id === id)
-  const humanSeatsWithoutAccount = activeSeats
+
+  /** Every human seat and whether an account has claimed it — the online checklist. */
+  const seatAccounts = activeSeats
     .filter(i => !ai[i].isAI)
-    .map(i => (locked ? seatIds[i] : ROSTER_IDS[i]))
-    .filter(id => !!id && !rosterOf(id!)?.userId)
-  const canPlayOnline = !!user && humanSeatsWithoutAccount.length === 0
+    .map(i => {
+      const id = locked ? seatIds[i] : ROSTER_IDS[i]
+      const member = id ? rosterOf(id) : undefined
+      return {
+        id,
+        name: member?.name ?? (locked ? '— empty seat —' : names[i].trim() || `Player ${i + 1}`),
+        email: member?.userEmail ?? null,
+        linked: !!member?.userId,
+        isMe: !!user && member?.userId === user.id,
+      }
+    })
+  const unlinkedSeats = seatAccounts.filter(s => !s.linked)
+  const canPlayOnline = !!user && locked && unlinkedSeats.length === 0
   const onlineBlockedReason = !user
-    ? 'Sign in to play online — the server needs to know whose turn it is.'
-    : humanSeatsWithoutAccount.length > 0
-      ? `Every human seat needs a linked account. Not linked: ${humanSeatsWithoutAccount
-          .map(id => rosterOf(id!)?.name ?? id).join(', ')}.`
-      : null
+    ? 'Sign in on the campaign screen to play online — the server decides whose turn it is from your account.'
+    : !locked
+      ? 'Online play needs the campaign roster, which is created by this first game. Play this one on a single screen; every game after can go online.'
+      : unlinkedSeats.length > 0
+        ? `${unlinkedSeats.map(s => s.name).join(', ')} ${unlinkedSeats.length === 1 ? 'has' : 'have'} not claimed an account yet.`
+        : null
 
   function confirm() {
     if (!canConfirm) return
@@ -120,6 +134,16 @@ export default function PlayerSlotsScreen({ legacy = null, user = null, onConfir
               : 'Name each player — these names become the permanent campaign roster'}
           </div>
         </div>
+
+        {/* The code to hand out. Shown here as well as on the campaign screen
+            because this is the screen you sit on while waiting for people — and
+            a brand-new campaign jumps straight here, never passing the other. */}
+        {legacy?.joinCode && (
+          <JoinCodeCard
+            code={legacy.joinCode}
+            note="Read this out so everyone can join — they sign in, enter it, and pick their name"
+          />
+        )}
 
         {/* Roster banner — makes it obvious the names are now fixed */}
         {locked && (
@@ -300,6 +324,33 @@ export default function PlayerSlotsScreen({ legacy = null, user = null, onConfir
           {!canPlayOnline && onlineBlockedReason && (
             <div style={{ fontSize: 10, color: '#a07850', marginTop: 8, lineHeight: 1.5 }}>
               {onlineBlockedReason}
+            </div>
+          )}
+
+          {/* Who still has to claim a seat. A sentence naming them is easy to
+              misread as a fault; a checklist shows exactly what is outstanding
+              and shrinks as people join. */}
+          {user && locked && seatAccounts.length > 0 && (
+            <div style={{ marginTop: 9, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {seatAccounts.map((s, i) => (
+                <div key={s.id ?? i} style={{
+                  display: 'flex', alignItems: 'center', gap: 7, fontSize: 10.5,
+                  color: s.linked ? '#8fbf9a' : '#7a6040',
+                }}>
+                  <span style={{ width: 12, textAlign: 'center' }}>{s.linked ? '✓' : '○'}</span>
+                  <span style={{ fontWeight: s.linked ? 'bold' : 'normal' }}>{s.name}</span>
+                  {s.isMe && <span style={{ color: '#6a5030' }}>(you)</span>}
+                  <span style={{ color: '#5a4526', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {s.linked ? (s.email ?? 'account linked') : 'no account yet'}
+                  </span>
+                </div>
+              ))}
+              {unlinkedSeats.length > 0 && (
+                <div style={{ fontSize: 9.5, color: '#6a5030', marginTop: 3, lineHeight: 1.5 }}>
+                  Each of them opens the app, signs in, types the join code above and picks their
+                  name. That links the seat for the rest of the campaign — it is a one-time step.
+                </div>
+              )}
             </div>
           )}
         </div>
