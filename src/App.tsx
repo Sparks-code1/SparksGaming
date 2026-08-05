@@ -11,6 +11,7 @@ import DiceRollScreen from '@/components/DiceRollScreen'
 import GameSetupScreen, { type PlayerSetup } from '@/components/GameSetupScreen'
 import DraftSetupScreen from '@/components/DraftSetupScreen'
 import PlayerSlotsScreen, { type SlotConfig, type PlayerSlotSetup } from '@/components/PlayerSlotsScreen'
+import { getCurrentUser, onAuthChange, type AuthUser } from '@/lib/auth'
 import ScarDealingScreen from '@/components/ScarDealingScreen'
 import GameBoard from '@/components/GameBoard'
 import { loadLegacyState, saveLegacyState, getActiveCampaignId } from '@/lib/legacyApi'
@@ -28,6 +29,9 @@ export default function App() {
   const [rosterIds, setRosterIds]               = useState<string[]>([])
   const [playerOrder, setPlayerOrder]           = useState<string[]>([])
   const [playerSetups, setPlayerSetups]         = useState<PlayerSetup[]>([])
+  /** Chosen on the slots screen: this GAME is played across machines. */
+  const [playOnline, setPlayOnline]             = useState(false)
+  const [user, setUser]                         = useState<AuthUser | null>(null)
   const [slotConfig, setSlotConfig]             = useState<Record<string, SlotConfig>>({})
   const [gameDeals, setGameDeals]               = useState<DealtScar[]>([])
   const [restoredGameState, setRestoredGameState] = useState<RestoredGameState | null>(null)
@@ -55,6 +59,11 @@ export default function App() {
       .catch(() => setScreen('between-games'))
   }, [])
 
+  useEffect(() => {
+    void getCurrentUser().then(setUser)
+    return onAuthChange(setUser)
+  }, [])
+
   // New-game flow: players (count/names/AI) → scar dealing → dice roll → setup
   function handleReadyForDiceRoll(ls: LegacyState) {
     setLegacy(ls)
@@ -63,7 +72,8 @@ export default function App() {
     setScreen('player-slots')
   }
 
-  async function handleSlotsChosen(slots: PlayerSlotSetup[]) {
+  async function handleSlotsChosen(slots: PlayerSlotSetup[], online = false) {
+    setPlayOnline(online)
     setSlotConfig(Object.fromEntries(slots.map(s => [s.playerId, { isAI: s.isAI, difficulty: s.difficulty }])))
     const ids = slots.map(s => s.playerId)
     setRosterIds(ids)
@@ -215,7 +225,7 @@ export default function App() {
       />
     )
   } else if (screen === 'player-slots') {
-    content = <PlayerSlotsScreen legacy={legacy} onConfirm={handleSlotsChosen} />
+    content = <PlayerSlotsScreen legacy={legacy} user={user} onConfirm={handleSlotsChosen} />
   } else if (screen === 'scar-dealing' && legacy) {
     content = (
       <ScarDealingScreen
@@ -252,6 +262,7 @@ export default function App() {
         initialLegacy={legacy}
         playerOrder={playerOrder}
         playerSetups={playerSetups}
+        playOnline={playOnline}
         restoredGameState={restoredGameState}
         onReturnToLobby={handleReturnToLobby}
       />

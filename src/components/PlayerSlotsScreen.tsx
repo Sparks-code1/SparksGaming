@@ -17,7 +17,10 @@ export interface PlayerSlotSetup {
 interface Props {
   /** Campaign state — supplies the roster once it has been locked in. */
   legacy?: LegacyState | null
-  onConfirm: (slots: PlayerSlotSetup[]) => void
+  onConfirm: (slots: PlayerSlotSetup[], playOnline: boolean) => void
+  /** Signed-in account, if any. Online play needs one — the server decides
+   *  whose turn it is from the JWT, so an anonymous client cannot act. */
+  user?: { id: string; email?: string | null } | null
 }
 
 const DIFFS: AIDifficulty[] = ['easy', 'medium', 'hard']
@@ -31,7 +34,8 @@ const GOLD = '#C8940A'
  *  the permanent roster. Every game after picks seats from that roster instead:
  *  names cannot be edited or added, and nobody can take two seats. The headcount
  *  may still change — a 5-player campaign can run a 4-player game. */
-export default function PlayerSlotsScreen({ legacy = null, onConfirm }: Props) {
+export default function PlayerSlotsScreen({ legacy = null, user = null, onConfirm }: Props) {
+  const [playOnline, setPlayOnline] = useState(false)
   const roster = getRoster(legacy)
   const locked = hasRoster(legacy)
   // With a roster, you can seat at most as many players as the campaign has.
@@ -68,6 +72,21 @@ export default function PlayerSlotsScreen({ legacy = null, onConfirm }: Props) {
   const setAiAt = (i: number, patch: Partial<{ isAI: boolean; difficulty: AIDifficulty }>) =>
     setAi(prev => prev.map((s, j) => (j === i ? { ...s, ...patch } : s)))
 
+  // Online needs an account per human seat: the edge function identifies the
+  // actor from their JWT, so a seat nobody is signed in as can never act.
+  const rosterOf = (id: string) => (legacy?.roster ?? []).find(m => m.id === id)
+  const humanSeatsWithoutAccount = activeSeats
+    .filter(i => !ai[i].isAI)
+    .map(i => (locked ? seatIds[i] : ROSTER_IDS[i]))
+    .filter(id => !!id && !rosterOf(id!)?.userId)
+  const canPlayOnline = !!user && humanSeatsWithoutAccount.length === 0
+  const onlineBlockedReason = !user
+    ? 'Sign in to play online — the server needs to know whose turn it is.'
+    : humanSeatsWithoutAccount.length > 0
+      ? `Every human seat needs a linked account. Not linked: ${humanSeatsWithoutAccount
+          .map(id => rosterOf(id!)?.name ?? id).join(', ')}.`
+      : null
+
   function confirm() {
     if (!canConfirm) return
     const slots: PlayerSlotSetup[] = activeSeats.map(i => {
@@ -77,7 +96,7 @@ export default function PlayerSlotsScreen({ legacy = null, onConfirm }: Props) {
         : names[i].trim()
       return { playerId, name, isAI: ai[i].isAI, difficulty: ai[i].difficulty }
     })
-    onConfirm(slots)
+    onConfirm(slots, playOnline && canPlayOnline)
   }
 
   return (
@@ -242,6 +261,49 @@ export default function PlayerSlotsScreen({ legacy = null, onConfirm }: Props) {
           </div>
         )}
 
+        {/* How this game is played. Hotseat is the default because it always
+            works; online has real prerequisites and says which are missing. */}
+        <div style={{
+          border: '1px solid rgba(200,148,10,0.25)', borderRadius: 8,
+          padding: '10px 12px', marginBottom: 12,
+        }}>
+          <div style={{ fontSize: 10, color: '#6a5030', letterSpacing: 1, marginBottom: 8 }}>
+            HOW ARE YOU PLAYING?
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {([
+              ['One screen', false, 'Everyone at this machine, passing it round.'],
+              ['Online', true, 'Each player on their own machine. The server rolls the dice.'],
+            ] as Array<[string, boolean, string]>).map(([label, value, blurb]) => {
+              const selected = playOnline === value
+              const disabled = value && !canPlayOnline
+              return (
+                <button
+                  key={label}
+                  onClick={() => !disabled && setPlayOnline(value)}
+                  disabled={disabled}
+                  title={disabled ? (onlineBlockedReason ?? undefined) : blurb}
+                  style={{
+                    flex: 1, padding: '9px 10px', borderRadius: 7, textAlign: 'left',
+                    border: `1.5px solid ${selected ? GOLD : 'rgba(200,148,10,0.22)'}`,
+                    background: selected ? 'rgba(200,148,10,0.16)' : 'transparent',
+                    color: disabled ? '#4a3820' : selected ? '#E8DCC8' : '#9a8060',
+                    cursor: disabled ? 'not-allowed' : 'pointer',
+                    fontFamily: 'Georgia, serif', fontSize: 12,
+                  }}>
+                  <div style={{ fontWeight: 'bold', marginBottom: 2 }}>{label}</div>
+                  <div style={{ fontSize: 9.5, opacity: 0.8, lineHeight: 1.4 }}>{blurb}</div>
+                </button>
+              )
+            })}
+          </div>
+          {!canPlayOnline && onlineBlockedReason && (
+            <div style={{ fontSize: 10, color: '#a07850', marginTop: 8, lineHeight: 1.5 }}>
+              {onlineBlockedReason}
+            </div>
+          )}
+        </div>
+
         <button
           onClick={confirm}
           disabled={!canConfirm}
@@ -253,7 +315,7 @@ export default function PlayerSlotsScreen({ legacy = null, onConfirm }: Props) {
             cursor: canConfirm ? 'pointer' : 'not-allowed',
             fontFamily: 'Georgia, serif', letterSpacing: 0.5,
           }}>
-          Continue → Deal Scar Cards &amp; Roll for First
+          {playOnline && canPlayOnline ? 'Continue Online → Deal Scar Cards & Roll' : 'Continue → Deal Scar Cards & Roll for First'}
         </button>
       </div>
     </div>

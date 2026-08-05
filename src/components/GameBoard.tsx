@@ -62,7 +62,7 @@ import SeaLinePlacementModal from './SeaLinePlacementModal'
 import { AI_DIFFICULTY_LABEL, AI_DIFFICULTY_BADGE } from '@/types/ai'
 import { dispatchAction } from '@/lib/actionDispatch'
 import { useMatchSync } from '@/lib/useMatchSync'
-import { findActiveMatch } from '@/lib/onlineMatch'
+import { findActiveMatch, createOnlineMatch, seatsFromGameState } from '@/lib/onlineMatch'
 import LiveStatusBadge from './LiveStatusBadge'
 import { aiReinforcePlacements, aiAttackPlan, aiFortifyMove, aiTradeInDecision, rivalsOnMatchPoint, aiBonusTroopTarget } from '@/lib/ai'
 import { playVictory, playElimination, playCoin, playCity, playMilestone, playTroop, startAmbient, stopAmbient } from '@/lib/sounds'
@@ -224,6 +224,8 @@ interface GameBoardProps {
   initialLegacy: LegacyState | null
   playerOrder: string[]
   playerSetups: PlayerSetup[]
+  /** Start this game ONLINE: create the match row and play through the server. */
+  playOnline?: boolean
   /** When provided, restore this saved game instead of building a fresh one from playerSetups. */
   restoredGameState?: Omit<GameState, 'legacySnapshot'> | null
   onReturnToLobby: () => void
@@ -232,7 +234,7 @@ interface GameBoardProps {
 /** Faction ability ids that apply in combat (used to avoid re-reading legacy in every render) */
 type AbilityId = string
 
-export default function GameBoard({ initialLegacy, playerOrder, playerSetups, restoredGameState, onReturnToLobby }: GameBoardProps) {
+export default function GameBoard({ initialLegacy, playerOrder, playerSetups, playOnline = false, restoredGameState, onReturnToLobby }: GameBoardProps) {
   const containerRef   = useRef<HTMLDivElement>(null)
   const appRef         = useRef<PIXI.Application | null>(null)
   const handlesRef     = useRef<Map<string, TerritoryHandles>>(new Map())
@@ -5426,6 +5428,45 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
 
   const advanceSrcTerritory = advanceSrcRef.current ? (gameState.territories[advanceSrcRef.current] ?? null) : null
   const advanceTgtTerritory = advanceTgtRef.current ? (gameState.territories[advanceTgtRef.current] ?? null) : null
+
+  /**
+   * Create the match for a game started online.
+   *
+   * Here rather than in App because this is the first place the initial board
+   * exists — the server needs a state to be authoritative over. Runs once: a
+   * restored game already has its match, and `activeMatchId` is the latch.
+   */
+  const creatingMatchRef = useRef(false)
+  useEffect(() => {
+    if (!playOnline || restoredGameState) return
+    if (legacyState.activeMatchId || creatingMatchRef.current) return
+    creatingMatchRef.current = true
+    void (async () => {
+      try {
+        const created = await createOnlineMatch(
+          legacyState.campaignId,
+          gameStateRef.current.gameNumber,
+          seatsFromGameState(gameStateRef.current, legacyStateRef.current),
+          gameStateRef.current,
+        )
+        onlineMatchRef.current = created
+        setOnlineMatch(created)
+        setLegacyState(prev => {
+          const next: LegacyState = { ...prev, activeMatchId: created.matchId }
+          legacyStateRef.current = next
+          saveLegacyState(next).catch(() => {})
+          return next
+        })
+        showWeaknessNotice('🌐 Online game started — everyone else can join from their own machine')
+      } catch (e) {
+        // Falling back to hotseat is the safe failure: the game is playable,
+        // and pretending to be online would mean moves going nowhere.
+        creatingMatchRef.current = false
+        console.error('[Online] could not create the match:', e)
+        showWeaknessNotice(`⚠ Could not start online play — continuing on this machine. ${String(e)}`)
+      }
+    })()
+  }, [playOnline, restoredGameState, legacyState.activeMatchId, legacyState.campaignId])
 
   // The online path lives in a stable ref, so it needs the current notice fn.
   showWeaknessNoticeRef.current = showWeaknessNotice
