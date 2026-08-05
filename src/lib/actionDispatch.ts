@@ -134,45 +134,16 @@ export async function dispatchAction(
 }
 
 /**
- * Subscribe to a match's authoritative updates.
+ * Live updates live in `matchSync.ts`, not here.
  *
- * Every client — including the one that acted — learns about applied actions
- * here. The acting client also gets the state back from `dispatchAction`, so
- * this is what keeps the OTHER players in step.
+ * An earlier version of this file had its own `subscribeToMatch`, which had no
+ * version guard and no reconnect — so a late echo could roll the board
+ * backwards and a dropped socket left the client silently stale. Use
+ * `startMatchSync` / `useMatchSync` instead.
  *
- * Returns an unsubscribe function.
+ * Feed the `version` this function returns to `MatchSync.noteApplied`, or the
+ * realtime echo of your own move is treated as news and re-rendered.
  */
-export function subscribeToMatch(
-  matchId: string,
-  onUpdate: (state: GameState, version: number) => void,
-  onAction?: (action: Action, effects: Effect[], seq: number) => void,
-): () => void {
-  const channel = supabase
-    .channel(`match:${matchId}`)
-    .on(
-      'postgres_changes',
-      { event: 'UPDATE', schema: 'public', table: 'matches', filter: `id=eq.${matchId}` },
-      (payload) => {
-        const row = payload.new as { state: GameState; version: number }
-        if (row?.state) onUpdate(row.state, row.version)
-      },
-    )
-    .on(
-      'postgres_changes',
-      { event: 'INSERT', schema: 'public', table: 'match_actions', filter: `match_id=eq.${matchId}` },
-      (payload) => {
-        const row = payload.new as { action: Action; effects: Effect[]; seq: number }
-        // Effects are how the rest of the game (sounds, modals, legacy writes)
-        // learns what happened — the state diff alone cannot say "a player was
-        // eliminated" or "these dice were rolled".
-        if (row?.action) onAction?.(row.action, row.effects ?? [], row.seq)
-      },
-    )
-    .subscribe()
-
-  return () => { void supabase.removeChannel(channel) }
-}
-
 /** Load a match's authoritative state — on join, and to resync after a conflict. */
 export async function loadMatchState(
   matchId: string,
