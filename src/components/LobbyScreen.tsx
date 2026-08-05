@@ -50,6 +50,9 @@ export default function LobbyScreen({ lobby: initial, legacy, user, onStart, onL
 
   useEffect(() => subscribeLobby(initial.matchId, next => {
     if (!next) { onLeave(); return }
+    // The host cancelled (or their start failed and the lobby was closed) —
+    // leave rather than waiting on a game that is never coming.
+    if (next.status === 'abandoned') { onLeave(); return }
     setLobby(next)
     // A joiner finds out the game has begun the same way they find out anything
     // else here — the row changed. No separate signal to miss. Latched: the

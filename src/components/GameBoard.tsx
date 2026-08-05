@@ -62,7 +62,7 @@ import SeaLinePlacementModal from './SeaLinePlacementModal'
 import { AI_DIFFICULTY_LABEL, AI_DIFFICULTY_BADGE } from '@/types/ai'
 import { dispatchAction } from '@/lib/actionDispatch'
 import { useMatchSync } from '@/lib/useMatchSync'
-import { findActiveMatch, createOnlineMatch, seatsFromGameState } from '@/lib/onlineMatch'
+import { findActiveMatch, createOnlineMatch, endOnlineMatch, seatsFromGameState } from '@/lib/onlineMatch'
 import { startLobby } from '@/lib/lobby'
 import { supabase } from '@/lib/supabase'
 import LiveStatusBadge from './LiveStatusBadge'
@@ -5371,7 +5371,17 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
 
   async function finalizeAndReturnToLobby(working: LegacyState) {
     gameFinishedRef.current = true
-    const completed = { ...working, gameInProgress: false, activeGameState: null, purchasedStars: {} }
+    // The game is over, so the match is too. Close BOTH pointers: the row (so
+    // nobody's campaign screen offers a dead game) and activeMatchId (so the
+    // NEXT game's start is not skipped as "already online" — a stale id here
+    // is exactly what left a joiner stranded on the setup-complete screen).
+    if (working.activeMatchId) {
+      void endOnlineMatch(working.activeMatchId, 'complete').catch(() => {})
+    }
+    const completed = {
+      ...working, gameInProgress: false, activeGameState: null,
+      purchasedStars: {}, activeMatchId: null,
+    }
 
     // The campaign ends after 15 games — or the moment the lead is unassailable.
     // Crown the champion here rather than returning to the lobby.
@@ -5477,17 +5487,56 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (!playOnline) return
     if (creatingMatchRef.current) return
 
+    const adopt = (live: { matchId: string; version: number }, save: boolean) => {
+      onlineMatchRef.current = live
+      setOnlineMatch(live)
+      setLegacyState(prev => {
+        if (prev.activeMatchId === live.matchId) return prev
+        const next: LegacyState = { ...prev, activeMatchId: live.matchId }
+        legacyStateRef.current = next
+        if (save) saveLegacyState(next).catch(() => {})
+        return next
+      })
+    }
+
+    // A lobby to start OUTRANKS everything else here. This board was built for
+    // THAT lobby; a `joinedMatch` or `activeMatchId` lying around is leftovers
+    // from a previous game on this client. Trusting either is exactly how a
+    // host once adopted last game's match, never flipped the new lobby, and
+    // left its joiners staring at "the game opens in a moment" forever.
+    if (lobbyToStart) {
+      creatingMatchRef.current = true
+      void (async () => {
+        try {
+          // Everyone is already seated; this only hands over the board. The
+          // status compare-and-swap inside means a second attempt — two
+          // machines, one lobby — is refused rather than duplicated.
+          await startLobby(lobbyToStart, gameStateRef.current)
+          const active = await findActiveMatch(legacyState.campaignId, gameStateRef.current.gameNumber)
+          adopt(active ?? { matchId: lobbyToStart, version: 0 }, true)
+          showWeaknessNotice('🌐 Online game started — everyone else is now on this board')
+        } catch (e) {
+          // Maybe the OTHER press won the compare-and-swap — then the match is
+          // live and the right move is to join it, not to declare failure.
+          const active = await findActiveMatch(legacyState.campaignId, gameStateRef.current.gameNumber)
+            .catch(() => null)
+          if (active?.matchId === lobbyToStart) { adopt(active, true); return }
+          // Truly failed. The joiners are WATCHING this lobby — a silent local
+          // fallback strands them on a wait that can never end, so the lobby
+          // is closed and their screens send them back to the campaign.
+          void endOnlineMatch(lobbyToStart, 'abandoned').catch(() => {})
+          creatingMatchRef.current = false
+          console.error('[Online] could not start the match:', e)
+          showWeaknessNotice(`⚠ Could not start online play — continuing on this machine. ${String(e)}`)
+        }
+      })()
+      return
+    }
+
     // Joining: the board came from the server, so there is nothing to create.
     if (joinedMatch) {
       creatingMatchRef.current = true
-      onlineMatchRef.current = joinedMatch
-      setOnlineMatch(joinedMatch)
-      setLegacyState(prev => {
-        if (prev.activeMatchId === joinedMatch.matchId) return prev
-        const next: LegacyState = { ...prev, activeMatchId: joinedMatch.matchId }
-        legacyStateRef.current = next
-        return next
-      })
+      adopt(joinedMatch, false)
       return
     }
 
@@ -5495,30 +5544,13 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     creatingMatchRef.current = true
     void (async () => {
       try {
-        let live: { matchId: string; version: number }
-        if (lobbyToStart) {
-          // Everyone is already seated in the lobby; this only hands over the
-          // board. The status compare-and-swap inside means a second attempt
-          // — two machines, one lobby — is refused rather than duplicating it.
-          await startLobby(lobbyToStart, gameStateRef.current)
-          const active = await findActiveMatch(legacyState.campaignId, gameStateRef.current.gameNumber)
-          live = active ?? { matchId: lobbyToStart, version: 0 }
-        } else {
-          live = await createOnlineMatch(
-            legacyState.campaignId,
-            gameStateRef.current.gameNumber,
-            seatsFromGameState(gameStateRef.current, legacyStateRef.current),
-            gameStateRef.current,
-          )
-        }
-        onlineMatchRef.current = live
-        setOnlineMatch(live)
-        setLegacyState(prev => {
-          const next: LegacyState = { ...prev, activeMatchId: live.matchId }
-          legacyStateRef.current = next
-          saveLegacyState(next).catch(() => {})
-          return next
-        })
+        const live = await createOnlineMatch(
+          legacyState.campaignId,
+          gameStateRef.current.gameNumber,
+          seatsFromGameState(gameStateRef.current, legacyStateRef.current),
+          gameStateRef.current,
+        )
+        adopt(live, true)
         showWeaknessNotice('🌐 Online game started — everyone else is now on this board')
       } catch (e) {
         // Falling back to hotseat is the safe failure: the game is playable,

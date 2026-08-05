@@ -93,6 +93,10 @@ export default function App() {
    */
   async function handleSlotsChosen(slots: PlayerSlotSetup[]) {
     setPlayOnline(false)
+    // A hotseat game must not inherit online leftovers from an earlier game.
+    setJoinedMatch(null)
+    setLobbyToStart(null)
+    setSetupLobby(null)
     let ls = legacy
     if (!ls) return
 
@@ -184,6 +188,8 @@ export default function App() {
     setPlayOnline(true)
 
     if (started.createdBy === user.id && started.status === 'lobby') {
+      // Hosting THIS game — anything joined earlier is a previous game.
+      setJoinedMatch(null)
       // Joiners wrote themselves onto the roster after this screen loaded it —
       // reconcile against what the server has, not what this machine remembers.
       let fresh = await loadLegacyState(started.campaignId)
@@ -237,8 +243,10 @@ export default function App() {
       [s.playerId, { isAI: s.isAI, difficulty: s.aiDifficulty ?? 'medium' }])))
     setRosterIds(started.seats.map(s => s.playerId))
     setJoinedMatch({ matchId: started.matchId, version: state.version })
+    setLobbyToStart(null)         // joining, not hosting — never both
     setRestoredGameState(state.state as RestoredGameState)
     setLobby(null)
+    setSetupLobby(null)
     setScreen('playing')
     return null
   }
@@ -247,6 +255,7 @@ export default function App() {
     setLobby(null)
     setSetupLobby(null)
     setLobbyToStart(null)
+    setJoinedMatch(null)
     setPlayOnline(false)
     setScreen('between-games')
   }
@@ -337,6 +346,15 @@ export default function App() {
 
   function handleReturnToLobby() {
     setRestoredGameState(null)
+    // Everything tying this client to A game must die with the game. A
+    // joinedMatch that outlives its game was adopted by the NEXT game's board,
+    // which then never flipped its own lobby — stranding every joiner on
+    // "the game opens in a moment".
+    setJoinedMatch(null)
+    setLobbyToStart(null)
+    setSetupLobby(null)
+    setLobby(null)
+    setPlayOnline(false)
     setScreen('between-games')
   }
 

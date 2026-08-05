@@ -105,6 +105,9 @@ export default function OnlineSetupScreen({ lobby: initial, legacy, user, onComp
       hostAdvance(ingestChoices(docRef.current, ctxRef.current, choices))
       return
     }
+    // A dead lobby ends the wait — the host cancelled, or their start failed
+    // and the board is never coming. Waiting politely forever helps nobody.
+    if (next.status === 'abandoned') { onLeave(); return }
     if (next.setup) {
       docRef.current = next.setup
       setDoc(next.setup)
