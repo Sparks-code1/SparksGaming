@@ -14,8 +14,10 @@ import CampaignPicker from './CampaignPicker'
 import AuthPanel from './AuthPanel'
 import { getCurrentUser, onAuthChange, type AuthUser } from '@/lib/auth'
 import {
-  claimRosterSeat, getRoster, validateRosterNames, ROSTER_IDS, MAX_ROSTER, MAX_ROSTER_NAME,
+  claimRosterSeat, getRoster, validateRosterNames, addRosterMember,
+  ROSTER_IDS, MAX_ROSTER, MAX_ROSTER_NAME,
 } from '@/lib/roster'
+import CampaignRosterPanel from './CampaignRosterPanel'
 
 interface Props {
   onReadyForDiceRoll: (legacy: LegacyState) => void
@@ -79,6 +81,29 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
       await saveLegacyState(updated)
     } catch (e) {
       return e instanceof Error ? e.message : 'Could not save the link'
+    }
+    setLegacy(updated)
+    return null
+  }
+
+  /**
+   * Add someone to the campaign roster mid-campaign. Returns an error, or null.
+   *
+   * Names are permanent; the roster SIZE is not. Someone joining the group at
+   * game four is ordinary, and the entry is created UNCLAIMED so the join code
+   * has something for them to take.
+   */
+  async function handleAddRosterMember(name: string): Promise<string | null> {
+    if (!legacy) return 'No campaign is open'
+    const result = addRosterMember(getRoster(legacy), name, legacy.currentGameNumber)
+    if (!result.ok) return result.reason ?? 'Could not add that player'
+    const updated: LegacyState = { ...legacy, roster: result.roster }
+    try {
+      await saveLegacyState(updated)
+    } catch (e) {
+      // Do NOT keep the local copy on a failed save — the next write would send
+      // a roster the server never agreed to.
+      return e instanceof Error ? e.message : 'Could not save the new player'
     }
     setLegacy(updated)
     return null
@@ -293,6 +318,11 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
         {(status === 'found' || status === 'error') && legacy && (
           <>
             {legacy.joinCode && <JoinCodeCard code={legacy.joinCode} />}
+
+            {/* Who the code lets in. Sits directly under it because the two are
+                one thought: a code is only useful while an unclaimed name
+                exists for the person you send it to. */}
+            <CampaignRosterPanel legacy={legacy} user={user} onAdd={handleAddRosterMember} />
 
             {lastSession && (
               <Section title="Last Game">

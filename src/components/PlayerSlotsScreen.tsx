@@ -2,7 +2,9 @@ import { useState } from 'react'
 import type { LegacyState } from '@/types/legacy'
 import type { AIDifficulty } from '@/types/ai'
 import { AI_DIFFICULTY_LABEL } from '@/types/ai'
-import { ROSTER_IDS, MAX_ROSTER, hasRoster, getRoster, validateSeats, validateRosterNames } from '@/lib/roster'
+import {
+  ROSTER_IDS, MAX_ROSTER, MIN_ROSTER, hasRoster, getRoster, validateSeats, validateRosterNames,
+} from '@/lib/roster'
 import JoinCodeCard from './JoinCodeCard'
 
 export interface SlotConfig { isAI: boolean; difficulty: AIDifficulty }
@@ -41,7 +43,16 @@ export default function PlayerSlotsScreen({ legacy = null, user = null, onConfir
   const locked = hasRoster(legacy)
   // With a roster, you can seat at most as many players as the campaign has.
   const maxCount = locked ? roster.length : MAX_ROSTER
-  const counts = [2, 3, 4, 5].filter(n => n <= maxCount)
+  const counts = [MIN_ROSTER, 3, 4, 5].filter(n => n <= maxCount)
+  /**
+   * A roster too small to seat a game at all.
+   *
+   * Reachable on campaigns made before setup created the roster — a single
+   * join-by-code entry would leave exactly one name. Without this the count
+   * picker renders no options at all and the screen offers to start a
+   * one-player game, which is not a thing.
+   */
+  const rosterTooSmall = locked && roster.length < MIN_ROSTER
 
   const [count, setCount] = useState(Math.min(4, maxCount))
   // Free-naming seats (first setup only): name typed per seat.
@@ -64,7 +75,7 @@ export default function PlayerSlotsScreen({ legacy = null, user = null, onConfir
     ? validateSeats(legacy, activeSeats.map(i => seatIds[i]))
     : validateRosterNames(trimmed)
 
-  const canConfirm = humanCount >= 1 && seatCheck.ok
+  const canConfirm = humanCount >= 1 && seatCheck.ok && !rosterTooSmall
 
   const setAiAt = (i: number, patch: Partial<{ isAI: boolean; difficulty: AIDifficulty }>) =>
     setAi(prev => prev.map((s, j) => (j === i ? { ...s, ...patch } : s)))
@@ -271,13 +282,17 @@ export default function PlayerSlotsScreen({ legacy = null, user = null, onConfir
           })}
         </div>
 
-        {(humanCount === 0 || !seatCheck.ok) && (
+        {(humanCount === 0 || !seatCheck.ok || rosterTooSmall) && (
           <div style={{
             padding: '8px 12px', borderRadius: 6, marginBottom: 12, fontSize: 11,
             background: 'rgba(231,76,60,0.10)', border: '1px solid rgba(231,76,60,0.40)',
-            color: '#e08070', textAlign: 'center',
+            color: '#e08070', textAlign: 'center', lineHeight: 1.5,
           }}>
-            {humanCount === 0 ? 'At least one player must be human' : seatCheck.reason}
+            {rosterTooSmall
+              ? `This campaign has only ${roster.length === 1 ? '1 player' : `${roster.length} players`} on its roster. `
+                + 'Add someone on the campaign screen — a game needs at least '
+                + `${MIN_ROSTER}.`
+              : humanCount === 0 ? 'At least one player must be human' : seatCheck.reason}
           </div>
         )}
 

@@ -8,7 +8,7 @@
 import {
   validateRosterNames, createRoster, claimRosterSeat, addRosterMember,
   hasRoster, validateSeats, unclaimedMembers, nextRosterId,
-  MAX_ROSTER, MAX_ROSTER_NAME, ROSTER_IDS,
+  MAX_ROSTER, MIN_ROSTER, MAX_ROSTER_NAME, ROSTER_IDS,
 } from '@/lib/roster'
 import type { RosterMember } from '@/types/legacy'
 
@@ -134,6 +134,68 @@ console.log('\n--- campaigns already in progress are untouched ---')
   check('and its roster keeps the game it was formed in',
     running.roster.every((m: RosterMember) => m.joinedInGame === 1), true)
 }
+
+// ─── 6. The roster can GROW — names are permanent, the size is not ────────
+console.log('\n--- adding someone mid-campaign ---')
+{
+  // The stuck state this exists to fix: one name, claimed, nothing to join as.
+  const stuck = createRoster(['Ryan'], 1)
+  const stuckClaimed = claimRosterSeat(stuck, 'p1', 'user-ryan', 'r@x.com').roster
+  check('a one-name roster is below the minimum a game needs',
+    stuckClaimed.length < MIN_ROSTER, true)
+  check('and offers a joiner nothing to claim',
+    unclaimedMembers({ roster: stuckClaimed } as any).length, 0)
+  check('yet it is not full, so the way out is to add someone',
+    nextRosterId(stuckClaimed), 'p2')
+
+  const rescued = addRosterMember(stuckClaimed, 'Chris', 4)
+  check('adding works on a fully claimed roster', rescued.ok, true)
+  check('the new entry is UNCLAIMED — that is the point',
+    rescued.roster.find(m => m.id === 'p2')?.userId ?? null, null)
+  check('so the join code now has something to hand out',
+    unclaimedMembers({ roster: rescued.roster } as any).map(m => m.name), ['Chris'])
+  check('and a game can finally be seated', rescued.roster.length >= MIN_ROSTER, true)
+
+  // Arriving at game four is recorded as arriving at game four.
+  check('joinedInGame records when they actually arrived',
+    rescued.roster.find(m => m.id === 'p2')?.joinedInGame, 4)
+  check('the people already there keep their own joinedInGame',
+    rescued.roster.find(m => m.id === 'p1')?.joinedInGame, 1)
+
+  // Adding must not disturb anyone's identity — every red star, city claim and
+  // signature in the campaign is keyed to these ids.
+  check('existing ids are untouched by the addition',
+    rescued.roster.map(m => m.id), ['p1', 'p2'])
+  check('and existing links survive',
+    rescued.roster.find(m => m.id === 'p1')?.userId, 'user-ryan')
+
+  // The rules that still apply to a late arrival.
+  check('a late arrival cannot duplicate an existing name',
+    addRosterMember(rescued.roster, 'ryan', 4).ok, false)
+  check('nor exceed the name length cap',
+    addRosterMember(rescued.roster, 'x'.repeat(MAX_ROSTER_NAME + 1), 4).ok, false)
+  check('nor be blank', addRosterMember(rescued.roster, '   ', 4).reason, 'Enter a name to join with')
+
+  // Growing stops at the board's limit.
+  let grown = rescued.roster
+  for (const n of ['Ana', 'Bo', 'Dee']) grown = addRosterMember(grown, n, 4).roster
+  check('the roster grows to the maximum', grown.length, MAX_ROSTER)
+  check('and refuses the one after that',
+    addRosterMember(grown, 'Eve', 4).reason, `This campaign is full (${MAX_ROSTER} players)`)
+  check('a full roster reports no room', nextRosterId(grown), null)
+
+  // Seating still works after growing — the added ids are real seats.
+  check('a game can seat the late arrival',
+    validateSeats({ roster: grown } as any, ['p1', 'p5']).ok, true)
+}
+
+// ─── 7. A campaign can never be CREATED in the stuck state ────────────────
+console.log('\n--- setup cannot produce a dead campaign ---')
+check('one name is refused at setup',
+  validateRosterNames(['Ryan']).reason, `A campaign needs at least ${MIN_ROSTER} players`)
+check('zero names is refused at setup', validateRosterNames([]).ok, false)
+check('the minimum is what a game can actually seat',
+  validateSeats({ roster: createRoster(['A', 'B'], 1) } as any, ['p1', 'p2']).ok, true)
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 

@@ -10,6 +10,16 @@ export const ROSTER_IDS = ['p1', 'p2', 'p3', 'p4', 'p5'] as const
 
 export const MAX_ROSTER = ROSTER_IDS.length
 
+/**
+ * Fewest people a campaign can hold.
+ *
+ * A one-name roster is a dead end rather than a small campaign: every name is
+ * claimed, so the join code hands a newcomer nothing to take, and no game can
+ * be seated from it. Campaign setup refuses to create one, and [addRosterMember]
+ * is the way out for any that already exist.
+ */
+export const MIN_ROSTER = 2
+
 /** True once the campaign roster is locked — every later game picks from it. */
 export function hasRoster(legacy: LegacyState | null | undefined): boolean {
   return (legacy?.roster?.length ?? 0) > 0
@@ -53,7 +63,9 @@ export const MAX_ROSTER_NAME = 24
  */
 export function validateRosterNames(names: string[]): { ok: boolean; reason?: string } {
   const trimmed = names.map(n => (n ?? '').trim())
-  if (trimmed.length < 2) return { ok: false, reason: 'A campaign needs at least 2 players' }
+  if (trimmed.length < MIN_ROSTER) {
+    return { ok: false, reason: `A campaign needs at least ${MIN_ROSTER} players` }
+  }
   if (trimmed.length > MAX_ROSTER) return { ok: false, reason: `A campaign holds at most ${MAX_ROSTER} players` }
   if (trimmed.some(n => n.length === 0)) return { ok: false, reason: 'Every player needs a name' }
   const tooLong = trimmed.find(n => n.length > MAX_ROSTER_NAME)
