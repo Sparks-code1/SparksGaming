@@ -8,7 +8,7 @@ import {
   lobbyReadiness, nextFreeSeat, seatRefusal, reconcileSeats, MIN_SEATS, MAX_SEATS,
   type LobbySeat,
 } from '@/lib/lobby'
-import { generateAiName, AI_NAME_POOL } from '@/lib/aiNames'
+import { generateAiName, nextAiSeatName, AI_NAME_POOL } from '@/lib/aiNames'
 
 let pass = true
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -194,6 +194,25 @@ console.log('\n--- AI names ---')
     generateAiName(all, () => 0), 'Computer 1')
   check('and the numbering itself never collides',
     generateAiName([...all, 'Computer 1'], () => 0), 'Computer 2')
+
+  // The Admiral Hark bug: on a FULL roster a fresh pool name can never be
+  // added, so it would be refused at Start. There, an AI seat must reuse a
+  // free campaign identity instead.
+  const fullRoster = [
+    { name: 'Ryan', userId: 'u-ryan' }, { name: 'Chris', userId: 'u-chris' },
+    { name: 'Hard' }, { name: 'Medium' }, { name: 'East' },
+  ]
+  check('a full roster reuses a free identity, not a fresh name',
+    nextAiSeatName(fullRoster, ['Ryan', 'Chris'], 5, () => 0), 'Hard')
+  check('identities already at the table are skipped',
+    nextAiSeatName(fullRoster, ['Ryan', 'Chris', 'Hard'], 5, () => 0), 'Medium')
+  check('claimed identities are never given to an AI',
+    nextAiSeatName(fullRoster, ['Hard', 'Medium', 'East'], 5, () => 0) !== 'Ryan', true)
+  check('a roster WITH room still generates from the pool',
+    AI_NAME_POOL.includes(nextAiSeatName(fullRoster.slice(0, 3), ['Ryan', 'Chris'], 5, () => 0) as never), true)
+  check('room is judged against names the table will ADD, not just size: '
+    + 'four on the roster plus one new human at the table is full',
+    nextAiSeatName(fullRoster.slice(0, 4), ['Ryan', 'Chris', 'Newcomer'], 5, () => 0), 'Hard')
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

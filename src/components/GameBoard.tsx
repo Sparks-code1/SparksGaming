@@ -64,6 +64,7 @@ import { dispatchAction } from '@/lib/actionDispatch'
 import { useMatchSync } from '@/lib/useMatchSync'
 import { findActiveMatch, createOnlineMatch, seatsFromGameState } from '@/lib/onlineMatch'
 import { startLobby } from '@/lib/lobby'
+import { supabase } from '@/lib/supabase'
 import LiveStatusBadge from './LiveStatusBadge'
 import { aiReinforcePlacements, aiAttackPlan, aiFortifyMove, aiTradeInDecision, rivalsOnMatchPoint, aiBonusTroopTarget } from '@/lib/ai'
 import { playVictory, playElimination, playCoin, playCity, playMilestone, playTroop, startAmbient, stopAmbient } from '@/lib/sounds'
@@ -272,6 +273,18 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
    */
   const onlineMatchRef = useRef<{ matchId: string; version: number } | null>(null)
   const [onlineMatch, setOnlineMatch] = useState<{ matchId: string; version: number } | null>(null)
+
+  /**
+   * May THIS machine drive AI turns?
+   *
+   * Hotseat: always. Online: only the match creator's — the server honours AI
+   * actions solely from the account that created the match, so anyone else's
+   * driver would spin against 403s while duplicating the host's every move.
+   * Held in a ref as well because the AI loop reads it from inside timers.
+   */
+  const [aiAuthority, setAiAuthority] = useState(true)
+  const aiAuthorityRef = useRef(true)
+  aiAuthorityRef.current = aiAuthority
 
   /**
    * Send an action to the server instead of applying it here.
@@ -2352,6 +2365,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     const cp = gameState.players[gameState.currentPlayerIndex]
     if (!cp?.isAI || cp.isEliminated || gameState.phase === 'game-over' || showWinScreen) return
     if (aiBusyRef.current) return
+    // Online, AI turns belong to the host's machine; everyone else just
+    // watches them arrive over realtime like any other player's turn.
+    if (onlineMatchRef.current && !aiAuthorityRef.current) return
 
     const isHuman = (pid: string | null | undefined) => {
       if (!pid) return false
@@ -2623,6 +2639,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     && !aiTurnPlayer.isEliminated
     && gameState.phase !== 'game-over'
     && !showWinScreen
+    // A joiner is not running this AI — "stalled" would be an accusation at a
+    // machine that is deliberately doing nothing.
+    && (!onlineMatch || aiAuthority)
   let troopSum = 0, ownerSum = 0
   for (const t of Object.values(gameState.territories)) {
     troopSum += t.troops
@@ -2668,6 +2687,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (cp?.isAI && !cp.isEliminated) return          // the main loop has it
     if (gameState.phase === 'game-over' || showWinScreen) return
     if (aiBusyRef.current) return
+    // Same authority rule as the main loop: online, AI choices are the host's.
+    if (onlineMatchRef.current && !aiAuthorityRef.current) return
 
     const isAiOwned = (pid: string | null | undefined) => {
       if (!pid) return false
@@ -5536,6 +5557,22 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     })
     return () => { cancelled = true }
   }, [legacyState.activeMatchId, legacyState.campaignId, gameState.gameNumber])
+
+  // Settle AI authority for the current match (see the state's doc above).
+  useEffect(() => {
+    if (!onlineMatch) { setAiAuthority(true); return }   // hotseat
+    if (joinedMatch?.matchId === onlineMatch.matchId) { setAiAuthority(false); return }
+    if (lobbyToStart === onlineMatch.matchId) { setAiAuthority(true); return }
+    // A resumed or adopted match: ask the row who created it.
+    let cancelled = false
+    void (async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      const { data } = await supabase
+        .from('matches').select('created_by').eq('id', onlineMatch.matchId).maybeSingle()
+      if (!cancelled) setAiAuthority(!!user && data?.created_by === user.id)
+    })()
+    return () => { cancelled = true }
+  }, [onlineMatch?.matchId, joinedMatch?.matchId, lobbyToStart])
 
   /**
    * Live updates. Null match id ⇒ hotseat ⇒ no channel, no fetch, no timers.

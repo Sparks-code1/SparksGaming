@@ -7,8 +7,8 @@ import {
   type Lobby, lobbyReadiness, subscribeLobby, setReady, leaveLobby, setLobbyShape,
   MIN_SEATS, MAX_SEATS,
 } from '@/lib/lobby'
-import { getRoster } from '@/lib/roster'
-import { generateAiName } from '@/lib/aiNames'
+import { getRoster, MAX_ROSTER } from '@/lib/roster'
+import { nextAiSeatName } from '@/lib/aiNames'
 import JoinCodeCard from './JoinCodeCard'
 
 interface Props {
@@ -22,6 +22,9 @@ interface Props {
    */
   onStart: (lobby: Lobby) => void | Promise<string | null>
   onLeave: () => void
+  /** The host has published a setup document — the dice are being rolled.
+   *  Joiners leave the lobby for the setup screen the moment this appears. */
+  onSetupStarted?: (lobby: Lobby) => void
 }
 
 const GOLD = '#C8940A'
@@ -35,7 +38,7 @@ const DIFFS: AIDifficulty[] = ['easy', 'medium', 'hard']
  * told "waiting for the host", neither can act and neither knows why. The same
  * `lobbyReadiness` line is shown to everybody; only the buttons differ.
  */
-export default function LobbyScreen({ lobby: initial, legacy, user, onStart, onLeave }: Props) {
+export default function LobbyScreen({ lobby: initial, legacy, user, onStart, onLeave, onSetupStarted }: Props) {
   const [lobby, setLobby] = useState<Lobby>(initial)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -52,6 +55,13 @@ export default function LobbyScreen({ lobby: initial, legacy, user, onStart, onL
     // else here — the row changed. No separate signal to miss. Latched: the
     // poll and the realtime push can both report 'active', and adopting the
     // board twice mid-adoption helps nobody.
+    // Setup begun (joiners): hand over to the setup screen, where this
+    // player's own die and picks happen. Latched like the start below.
+    if (next.setup && next.status === 'lobby' && onSetupStarted && !startedRef.current) {
+      startedRef.current = true
+      onSetupStarted(next)
+      return
+    }
     if (next.status === 'active' && !startedRef.current) {
       startedRef.current = true
       void Promise.resolve(onStart(next)).then(err => {
@@ -87,17 +97,14 @@ export default function LobbyScreen({ lobby: initial, legacy, user, onStart, onL
     })
 
   async function resize(humanSlots: number, aiCount: number) {
-    // Names survive a resize: generate only for seats that are actually new,
-    // avoiding every name at the table AND on the roster — reusing a campaign
-    // identity should be the host typing it on purpose, not luck.
+    // Names survive a resize: generate only for seats that are actually new.
+    // `nextAiSeatName` reuses a free campaign identity when the roster is full
+    // — the case where a fresh name could never be added and would be refused
+    // at Start with "rename it to an existing player".
     const kept = currentAis().slice(0, aiCount)
     while (kept.length < aiCount) {
-      const taken = [
-        ...lobby.seats.map(s => s.name),
-        ...roster.map(m => m.name),
-        ...kept.map(k => k.name),
-      ]
-      kept.push({ name: generateAiName(taken), difficulty: 'medium' })
+      const atTable = [...lobby.seats.map(s => s.name), ...kept.map(k => k.name)]
+      kept.push({ name: nextAiSeatName(roster, atTable, MAX_ROSTER), difficulty: 'medium' })
     }
     await applyAis(kept, humanSlots)
   }

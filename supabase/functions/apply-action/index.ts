@@ -166,15 +166,26 @@ Deno.serve(async (req: Request) => {
   const currentPlayerId: string | undefined = state?.players?.[state.currentPlayerIndex]?.id
 
   // ── Authorization ─────────────────────────────────────────────────────────
-  // Two independent checks. Turn ownership alone is not enough: an action
-  // carrying a `playerId` could name a different seat while it is legitimately
-  // your turn, so the payload is checked against your own slot as well.
-  const actionPlayerId = (action as { playerId?: string }).playerId
-  if (actionPlayerId && actionPlayerId !== mySlot.player_id) {
-    return json({ error: 'action belongs to another player', code: 'wrong-player' }, 403)
-  }
-  if (mySlot.player_id !== currentPlayerId) {
+  // Whose turn is it, and may THIS caller take it? Two ways to be allowed:
+  //
+  //   · it is your own seat's turn, or
+  //   · it is an AI seat's turn and you CREATED the match. AI seats have no
+  //     account — `user_id` is null — so somebody's machine must run them, and
+  //     the host's is the one that offered the game. Restricting it to the
+  //     creator (not any participant) means two machines never fight over one
+  //     AI turn, and a joiner can never puppet the computer players.
+  //
+  // The payload check stands separately: an action carrying a `playerId` must
+  // name the seat whose turn is being taken, whichever rule allowed the caller.
+  const currentSeat = seats.find((r) => r.player_id === currentPlayerId)
+  const actingForAi = !!currentSeat?.is_ai && match.created_by === user.id
+  const actingForSelf = mySlot.player_id === currentPlayerId
+  if (!actingForSelf && !actingForAi) {
     return json({ error: 'not your turn', code: 'not-your-turn', currentPlayerId }, 403)
+  }
+  const actionPlayerId = (action as { playerId?: string }).playerId
+  if (actionPlayerId && actionPlayerId !== currentPlayerId) {
+    return json({ error: 'action belongs to another player', code: 'wrong-player' }, 403)
   }
 
   // ── Optimistic concurrency (pre-check) ────────────────────────────────────
@@ -228,11 +239,14 @@ Deno.serve(async (req: Request) => {
   // Append to the authoritative log. Records the action AS RECEIVED, not the
   // sanitized one, so a client sending values the server had to replace leaves
   // evidence — that is the only way to notice a client probing the seams.
+  // `actor_player_id` is the SEAT that acted — the AI's when the host drove an
+  // AI turn — while `actor_user_id` stays the human who sent it, so the log
+  // still shows which machine every AI move came from.
   await admin.from('match_actions').insert({
     match_id: matchId,
     seq: match.action_seq,
     actor_user_id: user.id,
-    actor_player_id: mySlot.player_id,
+    actor_player_id: currentPlayerId ?? mySlot.player_id,
     action,
     effects,
   })

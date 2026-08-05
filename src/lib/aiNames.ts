@@ -36,3 +36,30 @@ export function generateAiName(
   while (used.has(`computer ${i}`)) i++
   return `Computer ${i}`
 }
+
+/**
+ * The name for a newly added AI seat, roster-aware.
+ *
+ * Normally a fresh pool name: reusing a campaign identity should be the host
+ * typing it on purpose, not luck. But a FULL roster inverts that — no new name
+ * can ever be added to it, so a fresh "Admiral Hark" is a name the game must
+ * refuse at Start with "rename it to an existing player". On a full roster the
+ * free identities (no account, not at this table) are exactly what the AI
+ * seats should be.
+ */
+export function nextAiSeatName(
+  roster: { name: string; userId?: string | null }[],
+  atTable: string[],
+  maxRoster: number,
+  random: () => number = Math.random,
+): string {
+  const lc = (s: string) => s.trim().toLowerCase()
+  const tableSet = new Set(atTable.map(lc))
+  const newAtTable = atTable.filter(n => !roster.some(m => lc(m.name) === lc(n))).length
+  const rosterHasRoom = roster.length + newAtTable < maxRoster
+  if (!rosterHasRoom) {
+    const free = roster.find(m => !m.userId && !tableSet.has(lc(m.name)))
+    if (free) return free.name
+  }
+  return generateAiName([...atTable, ...roster.map(m => m.name)], random)
+}

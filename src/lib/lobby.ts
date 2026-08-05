@@ -16,6 +16,7 @@ import { supabase } from '@/lib/supabase'
 import type { GameState } from '@/types/game'
 import type { AIDifficulty } from '@/types/ai'
 import type { RosterMember } from '@/types/legacy'
+import type { SetupDoc, SetupChoice } from '@/lib/setupFlow'
 import { nextRosterId } from '@/lib/roster'
 
 export const UNASSIGNED_FACTION = 'unassigned'
@@ -29,6 +30,8 @@ export interface LobbySeat {
   isAI: boolean
   aiDifficulty: AIDifficulty | null
   ready: boolean
+  /** This player's pending setup declaration — their roll, their pick. */
+  choice: SetupChoice | null
 }
 
 export interface Lobby {
@@ -39,6 +42,8 @@ export interface Lobby {
   humanSlots: number
   createdBy: string | null
   seats: LobbySeat[]
+  /** The synchronized setup document, once the host has begun setup. */
+  setup: SetupDoc | null
 }
 
 export interface SeatRequest {
@@ -246,6 +251,7 @@ function toSeat(row: Record<string, unknown>): LobbySeat {
     isAI: !!row.is_ai,
     aiDifficulty: (row.ai_difficulty as AIDifficulty | null) ?? null,
     ready: !!row.ready,
+    choice: (row.choice as SetupChoice | null) ?? null,
   }
 }
 
@@ -306,13 +312,13 @@ export async function createLobby(
 export async function readLobby(matchId: string): Promise<Lobby | null> {
   const { data: match, error } = await supabase
     .from('matches')
-    .select('id, campaign_id, game_number, status, human_slots, created_by')
+    .select('id, campaign_id, game_number, status, human_slots, created_by, setup')
     .eq('id', matchId)
     .maybeSingle()
   if (error || !match) return null
   const { data: seats } = await supabase
     .from('match_players')
-    .select('seat, player_id, user_id, name, faction_id, is_ai, ai_difficulty, ready')
+    .select('seat, player_id, user_id, name, faction_id, is_ai, ai_difficulty, ready, choice')
     .eq('match_id', matchId)
     .order('seat')
   return {
@@ -323,7 +329,39 @@ export async function readLobby(matchId: string): Promise<Lobby | null> {
     humanSlots: (match.human_slots as number) ?? 0,
     createdBy: (match.created_by as string | null) ?? null,
     seats: (seats ?? []).map(r => toSeat(r as Record<string, unknown>)),
+    setup: (match.setup as SetupDoc | null) ?? null,
   }
+}
+
+// ─── Setup sync ──────────────────────────────────────────────────────────────
+
+/**
+ * Publish the setup document. Host only — RLS scopes the write to the lobby's
+ * creator while it is still a lobby, which is the whole of setup: the board is
+ * only handed over (and the status flipped) after setup completes.
+ */
+export async function publishSetup(matchId: string, setup: SetupDoc): Promise<void> {
+  const { data, error } = await supabase
+    .from('matches')
+    .update({ setup, updated_at: new Date().toISOString() })
+    .eq('id', matchId)
+    .eq('status', 'lobby')
+    .select('id')
+    .maybeSingle()
+  if (error) throw new Error(`Could not publish setup: ${error.message}`)
+  if (!data) throw new Error('Setup could not be published — the game may have started or been cancelled')
+}
+
+/** Declare my roll or my pick — written to my own seat row, host validates. */
+export async function submitChoice(matchId: string, choice: SetupChoice): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('Sign in first')
+  const { error } = await supabase
+    .from('match_players')
+    .update({ choice })
+    .eq('match_id', matchId)
+    .eq('user_id', user.id)
+  if (error) throw new Error(`Could not submit your choice: ${error.message}`)
 }
 
 /**

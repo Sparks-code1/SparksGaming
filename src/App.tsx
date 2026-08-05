@@ -18,10 +18,12 @@ import { loadLegacyState, saveLegacyState, getActiveCampaignId } from '@/lib/leg
 import { dealScarCards } from '@/data/scarCards'
 import { MOCK_PLAYERS, applyRosterNames } from '@/data/mockGameState'
 import { hasRoster, getRoster, createRoster, addRosterMember } from '@/lib/roster'
-import { matchState, reconcileSeats, setLobbyShape, type Lobby } from '@/lib/lobby'
+import { matchState, reconcileSeats, setLobbyShape, readLobby, type Lobby } from '@/lib/lobby'
+import type { SetupDoc } from '@/lib/setupFlow'
 import LobbyScreen from '@/components/LobbyScreen'
+import OnlineSetupScreen from '@/components/OnlineSetupScreen'
 
-type Screen = 'loading' | 'between-games' | 'player-slots' | 'lobby' | 'scar-dealing' | 'dice-roll' | 'draft-setup' | 'game-setup' | 'playing'
+type Screen = 'loading' | 'between-games' | 'player-slots' | 'lobby' | 'online-setup' | 'scar-dealing' | 'dice-roll' | 'draft-setup' | 'game-setup' | 'playing'
 
 type RestoredGameState = Omit<GameState, 'legacySnapshot'>
 
@@ -46,6 +48,8 @@ export default function App() {
   const [lobbyToStart, setLobbyToStart]         = useState<string | null>(null)
   /** An already-running match this client joined. Its board comes from the server. */
   const [joinedMatch, setJoinedMatch]           = useState<{ matchId: string; version: number } | null>(null)
+  /** The reconciled lobby whose setup (dice, factions, HQs) is being played out. */
+  const [setupLobby, setSetupLobby]             = useState<Lobby | null>(null)
 
   // On mount: check Supabase for an in-progress game and resume it directly,
   // bypassing the between-game / dice-roll / setup screens entirely.
@@ -205,6 +209,10 @@ export default function App() {
         await setLobbyShape(started.matchId, started.humanSlots,
           finalAis.map(a => ({ playerId: a.playerId, name: a.name, difficulty: a.aiDifficulty ?? 'medium' })))
       }
+      // Re-read so the setup screen sees the reconciled seats, not provisional
+      // AI ids — every id shown from here on is a real roster identity.
+      const reconciled = await readLobby(started.matchId)
+      setSetupLobby(reconciled)
 
       setLegacy(fresh)
       applyRosterNames(getRoster(fresh))
@@ -237,9 +245,31 @@ export default function App() {
 
   function handleLeaveLobby() {
     setLobby(null)
+    setSetupLobby(null)
     setLobbyToStart(null)
     setPlayOnline(false)
     setScreen('between-games')
+  }
+
+  /**
+   * The host's setup document is complete — turn it into a board, exactly the
+   * way the hotseat setup screen would have: same PlayerSetup shape, same
+   * ability/weakness bookkeeping, same handler.
+   */
+  async function handleOnlineSetupComplete(doc: SetupDoc) {
+    const lobbySeats = setupLobby?.seats ?? []
+    if (!doc.order) return
+    const setups: PlayerSetup[] = doc.order.map(pid => ({
+      playerId: pid,
+      name: lobbySeats.find(s => s.playerId === pid)?.name ?? pid,
+      factionId: doc.factions[pid] ?? 'enclave-of-the-bear',
+      startingTerritoryId: doc.territories[pid] ?? '',
+    }))
+    await handleSetupComplete(
+      setups, doc.order,
+      { ...(legacy?.chosenFactionAbilities ?? {}), ...doc.abilities },
+      doc.weaknesses,
+    )
   }
 
   function handleOrderDetermined(orderedIds: string[]) {
@@ -368,6 +398,25 @@ export default function App() {
         user={user}
         onStart={handleLobbyStart}
         onLeave={handleLeaveLobby}
+        onSetupStarted={started => {
+          // The host has begun setup — the dice are about to be rolled, and
+          // this player rolls their own on the setup screen.
+          setPlayOnline(true)
+          setSetupLobby(started)
+          setLobby(null)
+          setScreen('online-setup')
+        }}
+      />
+    )
+  } else if (screen === 'online-setup' && setupLobby && legacy && user) {
+    content = (
+      <OnlineSetupScreen
+        lobby={setupLobby}
+        legacy={legacy}
+        user={user}
+        onComplete={doc => { void handleOnlineSetupComplete(doc) }}
+        onActive={handleLobbyStart}
+        onLeave={handleLeaveLobby}
       />
     )
   } else if (screen === 'scar-dealing' && legacy) {
@@ -376,7 +425,14 @@ export default function App() {
         legacy={legacy}
         gameDeals={gameDeals}
         players={rosterIds.map(id => MOCK_PLAYERS.find(p => p.id === id)!).filter(Boolean)}
-        onContinue={() => setScreen('dice-roll')}
+        onContinue={() => {
+          // Online, the dice and every pick happen on a shared document each
+          // player drives from their own screen. Draft-order campaigns still
+          // run their draft on the host — the draft board is not distributed
+          // yet — so they keep the classic host-side flow.
+          if (playOnline && setupLobby && !legacy?.draftOrderUnlocked) setScreen('online-setup')
+          else setScreen('dice-roll')
+        }}
       />
     )
   } else if (screen === 'dice-roll') {
