@@ -295,6 +295,14 @@ export interface LegacyState {
    *  each pair becomes a two-way sea-route adjacency in every future game */
   customSeaLines?: Array<[string, string]>
 
+  /**
+   * The match row holding the authoritative board, when this game is being
+   * played ONLINE. Null/absent means hotseat: no subscription, no dispatching
+   * to the server, and legacy writes are unguarded because only one machine is
+   * ever making them.
+   */
+  activeMatchId?: string | null
+
   /** True while a game is actively being played. False between games or when campaign is complete. */
   gameInProgress?: boolean
 

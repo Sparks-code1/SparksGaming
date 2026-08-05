@@ -203,6 +203,14 @@ async function fetchCampaignRow(campaignId: string) {
 export async function loadLegacyState(campaignId: string): Promise<LegacyState | null> {
   if (!campaignId) return null
   try {
+    // Record which version we are about to amend, so the next save can refuse
+    // to overwrite anyone who wrote in between. Its own query, because folding
+    // it into fetchCampaignRow would need a third missing-column fallback.
+    if (!legacyVersionColumnMissing) {
+      const v = await supabase.from('campaigns').select('legacy_version').eq('id', campaignId).maybeSingle()
+      if (isMissingVersionColumn(v.error)) noteMissingVersionColumn()
+      else if (typeof v.data?.legacy_version === 'number') noteLegacyVersion(campaignId, v.data.legacy_version)
+    }
     const { data, error } = await fetchCampaignRow(campaignId)
     if (error || !data) {
       // A failed LOAD is not the same as "no campaign yet" — returning null for
@@ -300,6 +308,74 @@ export async function retryLastSave(): Promise<void> {
   await saveLegacyState(lastAttemptedState)
 }
 
+/**
+ * The version of the campaign row this client last read or wrote.
+ *
+ * `legacy_state` is one whole blob, so a save is a full overwrite. On one
+ * machine that is fine. Across two it is not: both read, both append their own
+ * consequence, both write everything back, and the second erases the first. A
+ * scar, a founded city, a red star — gone, with no error anywhere.
+ *
+ * Tracked per campaign so a client that has two open does not confuse them.
+ */
+const legacyVersions = new Map<string, number>()
+
+/**
+ * True once the database has told us `legacy_version` does not exist.
+ *
+ * The column ships in supabase/online-play.sql, which is applied by hand. Until
+ * it is, every guarded write fails outright — so the first such failure flips
+ * this and saving falls back to the unguarded upsert. Single-machine play is
+ * unaffected; what is lost is the protection against two machines overwriting
+ * each other, so the fallback says so loudly.
+ */
+let legacyVersionColumnMissing = false
+let warnedAboutVersionColumn = false
+
+function isMissingVersionColumn(error: { message?: string; code?: string } | null): boolean {
+  if (!error) return false
+  const msg = (error.message ?? '').toLowerCase()
+  return msg.includes('legacy_version') &&
+    (msg.includes('does not exist') || msg.includes('schema cache') || error.code === '42703' || error.code === 'PGRST204')
+}
+
+function noteMissingVersionColumn() {
+  legacyVersionColumnMissing = true
+  if (!warnedAboutVersionColumn) {
+    warnedAboutVersionColumn = true
+    console.warn(
+      '[LegacySave] campaigns.legacy_version is missing — run supabase/online-play.sql. '
+      + 'Saving still works, but two machines in one campaign can silently overwrite each other.',
+    )
+  }
+}
+
+/** Whether concurrent writes are actually being guarded right now. */
+export function legacyWriteGuardActive(): boolean {
+  return !legacyVersionColumnMissing
+}
+
+/** Record the version that came with a row we just read. */
+export function noteLegacyVersion(campaignId: string, version: number | null | undefined): void {
+  if (typeof version === 'number') legacyVersions.set(campaignId, version)
+}
+
+export function knownLegacyVersion(campaignId: string): number | null {
+  return legacyVersions.get(campaignId) ?? null
+}
+
+/** Thrown when a save was built on a copy someone else has already replaced. */
+export class StaleCampaignError extends Error {
+  constructor(public campaignId: string, public expected: number, public actual: number | null) {
+    super(
+      `Another player has changed this campaign since you loaded it `
+      + `(you have v${expected}, the server is at v${actual ?? '?'}). `
+      + 'Your change was not saved — reload the campaign and try again.',
+    )
+    this.name = 'StaleCampaignError'
+  }
+}
+
 export async function saveLegacyState(state: LegacyState): Promise<void> {
   // supabase-js RESOLVES on failure with an `error` field rather than throwing.
   // Ignoring it — as this did — makes a rejected write indistinguishable from a
@@ -312,15 +388,75 @@ export async function saveLegacyState(state: LegacyState): Promise<void> {
   lastAttemptedState = state
   setConnection({ state: 'saving' })
   let message: string | null = null
+  const expected = legacyVersions.get(state.campaignId) ?? null
+
   try {
-    const { error } = await supabase.from('campaigns').upsert({
-      id: state.campaignId,
-      world_name: state.worldName,
-      legacy_state: state,
-      updated_at: new Date().toISOString(),
-    })
-    if (error) message = error.message || 'Unknown database error'
+    // ── Compare-and-swap when we know which version we are amending ────────
+    // `.eq('legacy_version', expected)` makes the write conditional: if anyone
+    // else has written since we read, zero rows match and nothing is
+    // overwritten. A trigger bumps the version, so no client can skip it.
+    //
+    // `expected` is null only before this client has ever read the row — the
+    // very first save of a brand-new campaign — where there is nothing to
+    // clobber and an unguarded upsert is correct.
+    if (expected !== null && !legacyVersionColumnMissing) {
+      const { data, error } = await supabase
+        .from('campaigns')
+        .update({
+          world_name: state.worldName,
+          legacy_state: state,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', state.campaignId)
+        .eq('legacy_version', expected)
+        .select('legacy_version')
+        .maybeSingle()
+
+      if (isMissingVersionColumn(error)) {
+        // Fall through to the unguarded path below on this and every later save.
+        noteMissingVersionColumn()
+        const { error: e2 } = await supabase.from('campaigns').upsert({
+          id: state.campaignId, world_name: state.worldName,
+          legacy_state: state, updated_at: new Date().toISOString(),
+        })
+        if (e2) message = e2.message || 'Unknown database error'
+      } else if (error) {
+        message = error.message || 'Unknown database error'
+      } else if (!data) {
+        // Nothing matched: someone else wrote first. Do NOT retry blindly —
+        // this state was computed from what we read, and re-sending it is
+        // exactly the overwrite the guard exists to prevent.
+        const { data: now } = await supabase
+          .from('campaigns').select('legacy_version').eq('id', state.campaignId).maybeSingle()
+        const actual = (now?.legacy_version as number | undefined) ?? null
+        setConnection({
+          state: 'error',
+          message: 'Another player changed this campaign — your change was not saved',
+          failures: connection.failures + 1,
+        })
+        throw new StaleCampaignError(state.campaignId, expected, actual)
+      } else {
+        legacyVersions.set(state.campaignId, data.legacy_version as number)
+      }
+    } else {
+      const { data, error } = await supabase.from('campaigns').upsert({
+        id: state.campaignId,
+        world_name: state.worldName,
+        legacy_state: state,
+        updated_at: new Date().toISOString(),
+      }).select('legacy_version').maybeSingle()
+      if (isMissingVersionColumn(error)) {
+        noteMissingVersionColumn()
+        const { error: e2 } = await supabase.from('campaigns').upsert({
+          id: state.campaignId, world_name: state.worldName,
+          legacy_state: state, updated_at: new Date().toISOString(),
+        })
+        if (e2) message = e2.message || 'Unknown database error'
+      } else if (error) message = error.message || 'Unknown database error'
+      else if (data) legacyVersions.set(state.campaignId, data.legacy_version as number)
+    }
   } catch (e) {
+    if (e instanceof StaleCampaignError) throw e
     message = e instanceof Error ? e.message : String(e)
   }
   if (message) {

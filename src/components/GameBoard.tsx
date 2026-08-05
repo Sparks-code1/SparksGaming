@@ -60,6 +60,10 @@ import { checkMission, computeHomelands, homelandContinentFor, canClaimTerritory
 import { isSeaLine, registerCustomSeaLines } from '@/data/seaLines'
 import SeaLinePlacementModal from './SeaLinePlacementModal'
 import { AI_DIFFICULTY_LABEL, AI_DIFFICULTY_BADGE } from '@/types/ai'
+import { dispatchAction } from '@/lib/actionDispatch'
+import { useMatchSync } from '@/lib/useMatchSync'
+import { findActiveMatch } from '@/lib/onlineMatch'
+import LiveStatusBadge from './LiveStatusBadge'
 import { aiReinforcePlacements, aiAttackPlan, aiFortifyMove, aiTradeInDecision, rivalsOnMatchPoint, aiBonusTroopTarget } from '@/lib/ai'
 import { playVictory, playElimination, playCoin, playCity, playMilestone, playTroop, startAmbient, stopAmbient } from '@/lib/sounds'
 import ConfettiBurst from './ConfettiBurst'
@@ -252,7 +256,79 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     setGameState(state)
     for (const e of effects) applyEffectRef.current(e)
   })
-  const dispatch = dispatchRef.current
+  /**
+   * The online match this game belongs to, or null for hotseat.
+   *
+   * Held in a ref as well as state because `dispatch` is a stable function
+   * created once — it cannot close over a changing prop, and every reader of it
+   * runs from a PIXI handler or a timer.
+   */
+  const onlineMatchRef = useRef<{ matchId: string; version: number } | null>(null)
+  const [onlineMatch, setOnlineMatch] = useState<{ matchId: string; version: number } | null>(null)
+
+  /**
+   * Send an action to the server instead of applying it here.
+   *
+   * Two shapes, because they are genuinely different:
+   *
+   *   PREDICTABLE actions (placing, phase changes, fortify, end turn) run the
+   *   local reducer FIRST so `gameStateRef` is updated synchronously — a dozen
+   *   call sites read it later in the same tick and would see stale state
+   *   otherwise. The server's answer arrives moments later and replaces the
+   *   board; the version guard makes an identical result a no-op.
+   *
+   *   DECLARE_ATTACK is not applied locally at all. The client cannot predict
+   *   dice it does not roll, so showing a guess and correcting it would mean
+   *   animating one battle and then silently swapping in another.
+   */
+  const dispatchOnlineRef = useRef(async (action: Action) => {
+    const match = onlineMatchRef.current
+    if (!match) { dispatchRef.current(action); return }
+
+    const predictable = action.type !== 'DECLARE_ATTACK'
+    if (predictable) dispatchRef.current(action)
+
+    const result = await dispatchAction(gameStateRef.current, action, match)
+    if (result.error) {
+      // The move did not land. Say so, and take the server's board rather than
+      // keeping an optimistic one it never accepted.
+      showWeaknessNoticeRef.current(`⚠ ${result.error.message}`)
+      const authoritative = result.error.serverState
+      if (authoritative) {
+        gameStateRef.current = authoritative
+        setGameState(authoritative)
+        if (typeof result.error.serverVersion === 'number') {
+          onlineMatchRef.current = { matchId: match.matchId, version: result.error.serverVersion }
+          setOnlineMatch(onlineMatchRef.current)
+        }
+      }
+      return
+    }
+    gameStateRef.current = result.state
+    setGameState(result.state)
+    if (typeof result.version === 'number') {
+      onlineMatchRef.current = { matchId: match.matchId, version: result.version }
+      setOnlineMatch(onlineMatchRef.current)
+      matchSyncRef.current?.noteApplied(result.version)
+    }
+    // Effects from the server describe what actually happened — including the
+    // dice it rolled — so they are interpreted exactly like local ones.
+    for (const e of result.effects) applyEffectRef.current(e)
+  })
+
+  /**
+   * The single entry point every call site already uses.
+   *
+   * Hotseat is byte-identical to before: same reducer, same synchronous ref
+   * mirror, no network and no auth. Online, the same call goes to the server.
+   */
+  const dispatch = (action: Action) => {
+    if (onlineMatchRef.current) void dispatchOnlineRef.current(action)
+    else dispatchRef.current(action)
+  }
+  /** Stable handle so the online path can reach the latest notice function. */
+  const showWeaknessNoticeRef = useRef<(m: string) => void>(() => {})
+  const matchSyncRef = useRef<{ noteApplied: (v: number) => void } | null>(null)
 
   // Synchronous per-turn state writer. Updates GameState.turn AND mirrors
   // gameStateRef immediately, so PIXI/timer closures that read the value later
@@ -5351,11 +5427,61 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
   const advanceSrcTerritory = advanceSrcRef.current ? (gameState.territories[advanceSrcRef.current] ?? null) : null
   const advanceTgtTerritory = advanceTgtRef.current ? (gameState.territories[advanceTgtRef.current] ?? null) : null
 
+  // The online path lives in a stable ref, so it needs the current notice fn.
+  showWeaknessNoticeRef.current = showWeaknessNotice
+
+  /**
+   * Adopt the match this game belongs to.
+   *
+   * `activeMatchId` on the saved campaign says the game WAS started online;
+   * findActiveMatch confirms it still is. A match abandoned on another machine
+   * drops this client back to hotseat rather than leaving it dispatching into
+   * a row nobody is serving.
+   */
+  useEffect(() => {
+    const id = legacyState.activeMatchId
+    if (!id) { onlineMatchRef.current = null; setOnlineMatch(null); return }
+    let cancelled = false
+    void findActiveMatch(legacyState.campaignId, gameState.gameNumber).then(found => {
+      if (cancelled) return
+      const next = found && found.matchId === id ? found : null
+      onlineMatchRef.current = next
+      setOnlineMatch(next)
+      if (!next) {
+        console.warn('[Online] activeMatchId is set but no active match exists — playing locally')
+      }
+    })
+    return () => { cancelled = true }
+  }, [legacyState.activeMatchId, legacyState.campaignId, gameState.gameNumber])
+
+  /**
+   * Live updates. Null match id ⇒ hotseat ⇒ no channel, no fetch, no timers.
+   *
+   * Incoming state REPLACES the board rather than being merged: the server is
+   * the authority and a merge would be this client re-deciding what happened.
+   */
+  const { status: liveStatus, sync: matchSync } = useMatchSync(
+    onlineMatch?.matchId ?? null,
+    {
+      onState: (state, version) => {
+        gameStateRef.current = state
+        setGameState(state)
+        onlineMatchRef.current = { matchId: onlineMatch!.matchId, version }
+        setOnlineMatch({ matchId: onlineMatch!.matchId, version })
+      },
+      // Effects carry what a state diff cannot say — which dice were rolled,
+      // who was eliminated. Only fires for messages received live.
+      onAction: (_action, effects) => { for (const e of effects) applyEffectRef.current(e) },
+    },
+  )
+  matchSyncRef.current = matchSync
+
   const fortifySrcTerritory = fortifySrcId ? (gameState.territories[fortifySrcId] ?? null) : null
   const fortifyDstTerritory = fortifyDstId ? (gameState.territories[fortifyDstId] ?? null) : null
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', background: '#C4A830' }}>
+      <LiveStatusBadge status={liveStatus} onRetry={() => { void matchSync?.resync() }} />
       {/* Header bar — sits above the map, never overlaps it */}
       <div style={{ position: 'relative', height: 56, flexShrink: 0, zIndex: 50 }}>
         <TurnControls
