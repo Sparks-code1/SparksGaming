@@ -55,6 +55,120 @@ export function mergeLegacyEdits<T extends MergeableLegacy>(
   return out
 }
 
+// ─── Riot ────────────────────────────────────────────────────────────────────
+
+/** The modified roll a major city must reach to come through a Riot unharmed. */
+export const RIOT_SAFE_ROLL = 6
+
+/** What a Riot did to one major city. */
+export interface RiotCityResult {
+  territoryId: string
+  territoryName: string
+  /** Who held it when the die was rolled. */
+  playerId: string
+  /** The die as rolled — this is the number of troops lost, NOT the modified one. */
+  roll: number
+  troops: number
+  hqCount: number
+  /** roll + troops + HQs. */
+  modified: number
+  suffers: boolean
+  troopsLost: number
+  /** Faction ids of HQs demolished here. */
+  hqFactionIds: string[]
+  /** No troops survived, so nobody holds it any more. */
+  becomesUncontrolled: boolean
+}
+
+/**
+ * Territories that roll in a Riot: the ones carrying a living MAJOR city.
+ *
+ * The World Capital is deliberately not one of them. It replaced the major city
+ * on its territory rather than sitting alongside it, so it has no `city:major`
+ * of its own — and it is exempt by rule, not by accident.
+ */
+export function riotCityTerritoryIds(territories: Record<string, Territory>): string[] {
+  return Object.values(territories)
+    .filter(t => !!t.occupyingPlayerId && livingCities(t).some(c => c.isMajor))
+    .map(t => t.id)
+    .sort()
+}
+
+/**
+ * Resolve a Riot across the whole board.
+ *
+ * One die PER MAJOR CITY, not per player — a player holding three of them rolls
+ * three times and can lose one while the others hold. Each roll is modified by
+ * that city's own garrison: +1 per troop and +1 per HQ standing on it, so a
+ * well-defended city is genuinely safer.
+ *
+ * Under `RIOT_SAFE_ROLL` the city suffers, and it loses troops equal to the
+ * NATURAL die — the modifier decides whether you are hit, never how hard. A big
+ * garrison protects you; it does not soften the blow if it fails.
+ *
+ * Pure: the die comes from the caller, so the server can own it.
+ */
+export function resolveRiot(
+  territories: Record<string, Territory>,
+  rollD6: () => number,
+): RiotCityResult[] {
+  return riotCityTerritoryIds(territories).map(id => {
+    const t = territories[id]!
+    const roll = rollD6()
+    const troops = t.troops ?? 0
+    const hqs = (t.cities ?? []).filter(c => c.headquartersFactionId && !c.isDestroyed)
+    const hqCount = hqs.length
+    const modified = roll + troops + hqCount
+    const suffers = modified < RIOT_SAFE_ROLL
+    const troopsLost = suffers ? Math.min(roll, troops) : 0
+    return {
+      territoryId: id,
+      territoryName: t.name,
+      playerId: t.occupyingPlayerId!,
+      roll, troops, hqCount, modified, suffers, troopsLost,
+      hqFactionIds: suffers ? hqs.map(c => c.headquartersFactionId!) : [],
+      becomesUncontrolled: suffers && troops - troopsLost <= 0,
+    }
+  })
+}
+
+// ─── Resistance ──────────────────────────────────────────────────────────────
+
+/** What a Resistance did to one minor city. */
+export interface ResistanceCityResult {
+  territoryId: string
+  territoryName: string
+  playerId: string
+  troopsBefore: number
+  becomesUncontrolled: boolean
+}
+
+/**
+ * Every minor city holding 1 or 2 troops loses one.
+ *
+ * No dice and no choices — the thinly-held minor cities simply slip. A city
+ * down to its last troop loses that too and the territory goes uncontrolled,
+ * which is the only thing on this card that can hand a territory back to nobody.
+ *
+ * A city at 3+ is untouched: this pressures thin garrisons, not real ones.
+ */
+export function resolveResistance(
+  territories: Record<string, Territory>,
+): ResistanceCityResult[] {
+  return Object.values(territories)
+    .filter(t => !!t.occupyingPlayerId
+      && livingCities(t).some(c => !c.isMajor)
+      && (t.troops ?? 0) >= 1 && (t.troops ?? 0) <= 2)
+    .map(t => ({
+      territoryId: t.id,
+      territoryName: t.name,
+      playerId: t.occupyingPlayerId!,
+      troopsBefore: t.troops ?? 0,
+      becomesUncontrolled: (t.troops ?? 0) - 1 <= 0,
+    }))
+    .sort((a, b) => a.territoryId.localeCompare(b.territoryId))
+}
+
 // ─── Fortify event ───────────────────────────────────────────────────────────
 
 /** Troops the Fortify event puts into EACH chosen city. */

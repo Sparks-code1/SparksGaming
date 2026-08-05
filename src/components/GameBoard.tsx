@@ -21,7 +21,7 @@ import WinScreen from './WinScreen'
 import LegacyPanel from './LegacyPanel'
 import CampaignCompleteScreen from './CampaignCompleteScreen'
 import { campaignOutcome, applyCampaignCompletion, championLabel, type CampaignOutcome } from '@/lib/campaign'
-import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALIEN_ISLAND_TERRITORY_ID, calcDraftTroops, applyHqReserveTroops, expandClickAction, legalJoinWarTerritoryIds, cardCoinValue, leadFactionId, resolveResourceDepletion, type ResourceDepletion, troopsAfterEntry, minTroopsToEnter, LEAD_FACTION_WORLD_CAPITAL_TROOPS, worldCapitalReplacedCities, citiesLostOn, mergeLegacyEdits, countCitiesOn, FORTIFICATION_SUPPLY, fortificationsPlaced, canPlaceFortification, FORTIFY_EVENT_TROOPS, FORTIFY_EVENT_CITIES } from '@/lib/gameLogic'
+import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALIEN_ISLAND_TERRITORY_ID, calcDraftTroops, applyHqReserveTroops, expandClickAction, legalJoinWarTerritoryIds, cardCoinValue, leadFactionId, resolveResourceDepletion, type ResourceDepletion, troopsAfterEntry, minTroopsToEnter, LEAD_FACTION_WORLD_CAPITAL_TROOPS, worldCapitalReplacedCities, citiesLostOn, mergeLegacyEdits, countCitiesOn, resolveRiot, resolveResistance, type RiotCityResult, FORTIFICATION_SUPPLY, fortificationsPlaced, canPlaceFortification, FORTIFY_EVENT_TROOPS, FORTIFY_EVENT_CITIES } from '@/lib/gameLogic'
 import {
   defaultLegacyState, saveLegacyState, loadLegacyState, awardRedStars,
   applyLegacyToTerritories, pickUnlocks, SCAR_META,
@@ -444,8 +444,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
   const pendingNuclearRef = useRef<PendingNuclear | null>(null)
   const [missilePowerPendingPlayerId, setMissilePowerPendingPlayerId] = useState<string | null>(null)
   // Resistance event: the player with the fewest territories places bonus troops
-  const [resistancePlacement, setResistancePlacement] = useState<{ playerId: string; troopsLeft: number } | null>(null)
-  const resistancePlacementRef = useRef<{ playerId: string; troopsLeft: number } | null>(null)
+
   /**
    * Join the Cause troop reward: the LARGEST-POPULATION player places 3 troops
    * in cities they control. That player is often not the one taking the turn,
@@ -492,9 +491,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
   const controlManeuverRef = useRef<{ playerId: string; srcId: string | null } | null>(null)
   const [controlManeuverDstId, setControlManeuverDstId] = useState<string | null>(null)
   // Riot event: die-roll results modal, then the loser removes 2 troops
-  const [riotResult, setRiotResult] = useState<{ rolls: Array<{ playerId: string; name: string; roll: number }>; loserId: string; loserName: string } | null>(null)
-  const [riotRemovalPlayerId, setRiotRemovalPlayerId] = useState<string | null>(null)
-  const riotRemovalRef = useRef<string | null>(null)
+  /** Per-city Riot rolls, purely for display — the card resolves itself. */
+  const [riotResult, setRiotResult] = useState<RiotCityResult[] | null>(null)
   // Players who drew a card this turn — they cannot claim the shared mission
   const drewCardPlayerIdsRef = useRef<Set<string>>(new Set())
   /**
@@ -1179,31 +1177,6 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
           return
         }
 
-        // ── RESISTANCE EVENT PLACEMENT (any phase) ───────────────────────────
-        const resistance = resistancePlacementRef.current
-        if (resistance && resistance.troopsLeft > 0) {
-          if (t.occupyingPlayerId !== resistance.playerId) {
-            const rp = state.players.find(p => p.id === resistance.playerId)
-            showWeaknessNotice(`✊ Resistance — ${rp?.name ?? 'the resistance player'} must place on their OWN territories`)
-            return
-          }
-          setGameState(prev => ({
-            ...prev,
-            territories: {
-              ...prev.territories,
-              [def.id]: { ...prev.territories[def.id], troops: prev.territories[def.id].troops + 1 },
-            },
-          }))
-          const remaining = resistance.troopsLeft - 1
-          if (remaining <= 0) {
-            resistancePlacementRef.current = null
-            setResistancePlacement(null)
-          } else {
-            resistancePlacementRef.current = { ...resistance, troopsLeft: remaining }
-            setResistancePlacement({ ...resistance, troopsLeft: remaining })
-          }
-          return
-        }
 
         // ── JOIN THE CAUSE: 3 troops, in CITIES the winner controls ──────────
         const joinCause = joinCausePlacementRef.current
@@ -1332,32 +1305,6 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
           return
         }
 
-        // ── RIOT EVENT: the losing player removes 2 troops from one territory ─
-        const riotPid = riotRemovalRef.current
-        if (riotPid) {
-          if (t.occupyingPlayerId !== riotPid) {
-            const rp = state.players.find(p => p.id === riotPid)
-            showWeaknessNotice(`🔥 Riot — ${rp?.name ?? 'the player'} must remove troops from their OWN territory`)
-            return
-          }
-          if ((t.troops ?? 0) <= 1) {
-            showWeaknessNotice('🔥 Riot — choose a territory with more than 1 troop')
-            return
-          }
-          const removed = Math.min(2, t.troops - 1)
-          setGameState(prev => ({
-            ...prev,
-            territories: {
-              ...prev.territories,
-              [def.id]: { ...prev.territories[def.id], troops: prev.territories[def.id].troops - removed },
-            },
-          }))
-          const rp = state.players.find(p => p.id === riotPid)
-          showWeaknessNotice(`🔥 Riot — ${rp?.name ?? 'Player'} lost ${removed} troop${removed !== 1 ? 's' : ''} at ${t.name}`)
-          riotRemovalRef.current = null
-          setRiotRemovalPlayerId(null)
-          return
-        }
 
         // ── SAHARA EARLY FORTIFY (reinforce or attack phase) ─────────────────
         if (saharaFortifyModeRef.current && !fortifyDoneRef.current && (phase === 'reinforce' || phase === 'attack')) {
@@ -2158,33 +2105,6 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     if (cityId) setGameState(prev => ({ ...prev, territories: { ...prev.territories, [cityId]: { ...prev.territories[cityId], troops: prev.territories[cityId].troops + 5 } } }))
     setControlPeopleChoice(null)
   }
-
-  /**
-   * An AI rolled lowest in a Riot: it pays from its own deepest stack.
-   *
-   * Says where, because a human watching the modal is otherwise told a player
-   * lost 2 troops and never shown from where. The AI picks its own casualties —
-   * the loss used to be routed through the same click-to-choose hint bar a human
-   * gets, which handed the human the job of deciding where an opponent bleeds.
-   */
-  function resolveAiRiot(loserId: string) {
-    const st = gameStateRef.current
-    const loser = st.players.find(p => p.id === loserId)
-    const loseFrom = Object.values(st.territories)
-      .filter(t => t.occupyingPlayerId === loserId && t.troops > 1)
-      .sort((a, b) => b.troops - a.troops)[0]
-    if (loseFrom) {
-      const rm = Math.min(2, loseFrom.troops - 1)
-      setGameState(prev => ({ ...prev, territories: { ...prev.territories, [loseFrom.id]: { ...prev.territories[loseFrom.id], troops: prev.territories[loseFrom.id].troops - rm } } }))
-      showWeaknessNotice(`🔥 Riot — ${loser?.name ?? 'Player'} lost ${rm} troop${rm !== 1 ? 's' : ''} at ${loseFrom.name}`)
-    } else {
-      showWeaknessNotice(`🔥 Riot — ${loser?.name ?? 'the loser'} has no territory above 1 troop; no loss`)
-    }
-    riotRemovalRef.current = null
-    setRiotRemovalPlayerId(null)
-    setRiotResult(null)
-  }
-
   /**
    * One step of an AI's Fortify event.
    *
@@ -2225,16 +2145,6 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     else updateFortifyEvent({ ...fe, citiesLeft: left, usedCityIds: [...fe.usedCityIds, targetId] })
   }
 
-  function stepAiResistancePlacement(rp: { playerId: string; troopsLeft: number }) {
-    // One troop per tick onto the most threatened border, recomputed each time
-    // so the troops spread across the front instead of stacking on one spot
-    // once the first has relieved the pressure there.
-    const targetId = aiBonusTroopTarget(gameStateRef.current, rp.playerId)
-    if (targetId) setGameState(prev => ({ ...prev, territories: { ...prev.territories, [targetId]: { ...prev.territories[targetId], troops: prev.territories[targetId].troops + 1 } } }))
-    const left = rp.troopsLeft - 1
-    if (left <= 0) { resistancePlacementRef.current = null; setResistancePlacement(null) }
-    else { const n = { ...rp, troopsLeft: left }; resistancePlacementRef.current = n; setResistancePlacement(n) }
-  }
 
   // ── Fortify event ──────────────────────────────────────────────────────────
 
@@ -2417,10 +2327,6 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     // through the same handler a human's click does — not just hide the modal.
     if (showEventCard) { run(() => resolveEventCardDismiss(currentEventCardId)); return }
     // AI-owned event choices — resolve simply
-    if (resistancePlacement && !isHuman(resistancePlacement.playerId)) {
-      run(() => stepAiResistancePlacement(resistancePlacement))
-      return
-    }
     if (joinCausePlacement && !isHuman(joinCausePlacement.playerId)) {
       run(() => stepAiJoinCausePlacement(joinCausePlacement))
       return
@@ -2469,10 +2375,6 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         run(() => resolveAiJoinCauseChoice(leaderId))
         return
       }
-    }
-    if (riotResult && !isHuman(riotResult.loserId)) {
-      run(() => resolveAiRiot(riotResult.loserId))
-      return
     }
 
     // Card draw belonging to the AI (end-of-turn / event / Balkania)
@@ -2701,27 +2603,15 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
     if (joinCausePlacement && isAiOwned(joinCausePlacement.playerId)) {
       step(() => stepAiJoinCausePlacement(joinCausePlacement)); return
     }
-    if (resistancePlacement && isAiOwned(resistancePlacement.playerId)) {
-      step(() => stepAiResistancePlacement(resistancePlacement)); return
-    }
     if (controlPeopleChoice && isAiOwned(controlPeopleChoice)) {
       step(() => resolveAiControlPeople(controlPeopleChoice)); return
     }
     if (fortifyEvent && isAiOwned(fortifyEvent.playerId)) {
       step(() => stepAiFortifyEvent(fortifyEvent)); return
     }
-    // Riot is deliberately absent. Its modal is the only place the rolls are
-    // ever shown, so on YOUR turn it waits for you to read it — the button
-    // resolves an AI loser itself. Auto-dismissing here would flash the dice
-    // past you and settle an event you never saw.
-    if (riotRemovalPlayerId && isAiOwned(riotRemovalPlayerId)) {
-      // Only reachable from a save written before the modal took this over.
-      step(() => resolveAiRiot(riotRemovalPlayerId)); return
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showJoinTheCause, joinCausePlacement, resistancePlacement, controlPeopleChoice,
-      fortifyEvent, riotRemovalPlayerId, showWinScreen, gameState.currentPlayerIndex,
-      gameState.phase, gameState.players])
+  }, [showJoinTheCause, joinCausePlacement, controlPeopleChoice, fortifyEvent,
+      showWinScreen, gameState.currentPlayerIndex, gameState.phase, gameState.players])
 
   // ── Missile replenishment: every game starts with one missile per career win ──
   useEffect(() => {
@@ -3215,18 +3105,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
       // Immediate troop effects
       if (effect.kind === 'population-boom') setTroopsToPlace(t => t + effect.bonusTroops)
       // Resistance: the player with the FEWEST territories immediately places bonus troops
-      if (effect.kind === 'resistance') {
-        const state = gameStateRef.current
-        const counts = state.players
-          .filter(p => !p.isEliminated)
-          .map(p => ({ p, count: Object.values(state.territories).filter(t => t.occupyingPlayerId === p.id).length }))
-        if (counts.length > 0) {
-          const min = Math.min(...counts.map(c => c.count))
-          const target = counts.find(c => c.count === min)!.p
-          resistancePlacementRef.current = { playerId: target.id, troopsLeft: effect.troops }
-          setResistancePlacement({ playerId: target.id, troopsLeft: effect.troops })
-        }
-      }
+      if (effect.kind === 'resistance') applyResistanceEvent()
       if (effect.kind === 'epidemic' || effect.kind === 'famine') {
         setGameState(gs => {
           let territories = { ...gs.territories }
@@ -4043,38 +3922,119 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
   }
 
   // ── Riot: every player rolls a die; the lowest loses 2 troops ─────────────
+  /**
+   * Riot — every MAJOR city rolls, and a thin garrison is what fails.
+   *
+   * One die per major city, modified by that city's own troops and HQs. Under
+   * 6 and it suffers, losing troops equal to the NATURAL die: the garrison
+   * decides whether you are hit, never how hard. No player chooses anything —
+   * the whole card resolves here and the modal only reports it.
+   *
+   * The World Capital does not roll; it carries no major city sticker.
+   */
   function applyRiotEvent() {
     const state = gameStateRef.current
-    const players = state.players.filter(p => !p.isEliminated)
-    if (players.length === 0) return
-    const d6 = () => Math.floor(Math.random() * 6) + 1
-    const rolls = new Map<string, number>(players.map(p => [p.id, d6()]))
-    // Ties for lowest re-roll (only the tied players), capped to avoid a loop
-    for (let iter = 0; iter < 30; iter++) {
-      const min = Math.min(...rolls.values())
-      const tied = players.filter(p => rolls.get(p.id) === min)
-      if (tied.length <= 1) break
-      for (const p of tied) rolls.set(p.id, d6())
+    const results = resolveRiot(state.territories, () => Math.floor(Math.random() * 6) + 1)
+    setRiotResult(results.length > 0 ? results : null)
+    if (results.length === 0) {
+      showWeaknessNotice('🔥 Riot — there are no major cities on the board; nothing happens')
+      logHistory('🔥 Riot — no major cities on the board; nothing happened')
+      return
     }
-    const min = Math.min(...rolls.values())
-    const loser = players.find(p => rolls.get(p.id) === min)!
-    setRiotResult({
-      rolls: players.map(p => ({ playerId: p.id, name: p.name, roll: rolls.get(p.id)! })),
-      loserId: loser.id,
-      loserName: loser.name,
+
+    const hit = results.filter(r => r.suffers)
+    setGameState(prev => {
+      const territories = { ...prev.territories }
+      for (const r of hit) {
+        const t = territories[r.territoryId]
+        if (!t) continue
+        const troops = Math.max(0, t.troops - r.troopsLost)
+        territories[r.territoryId] = {
+          ...t,
+          troops,
+          // Losing the last troop hands the territory back to nobody.
+          occupyingPlayerId: r.becomesUncontrolled ? null : t.occupyingPlayerId,
+          activeHqPlayerId: r.hqFactionIds.length > 0 ? undefined : t.activeHqPlayerId,
+          cities: (t.cities ?? []).map(c =>
+            c.headquartersFactionId && !c.isDestroyed ? { ...c, isDestroyed: true } : c),
+        }
+      }
+      const next = { ...prev, territories }
+      gameStateRef.current = next
+      return next
     })
+
+    // HQs demolished here are campaign-permanent, like a Ruin's.
+    const demolished = hit.filter(r => r.hqFactionIds.length > 0)
     setLegacyState(prev => {
       const next: LegacyState = {
         ...prev,
+        stickers: prev.stickers.filter(s =>
+          !(demolished.some(d => d.territoryId === s.targetId) && s.description.startsWith('HQ:'))),
+        destroyedHqs: [
+          ...(prev.destroyedHqs ?? []),
+          ...demolished.flatMap(d => d.hqFactionIds.map(factionId => ({
+            territoryId: d.territoryId,
+            factionId,
+            destroyedInGame: state.gameNumber,
+            destroyedByPlayerId: 'riot',
+          }))),
+        ],
         historyLog: [...prev.historyLog, {
           gameNumber: state.gameNumber,
-          entry: `🔥 Riot — ${players.map(p => `${p.name} 🎲${rolls.get(p.id)}`).join(', ')} → ${loser.name} must lose 2 troops`,
+          entry: `🔥 Riot — ${results.map(r =>
+            `${r.territoryName} 🎲${r.roll}+${r.troops + r.hqCount}=${r.modified}`
+            + (r.suffers ? ` ✗ −${r.troopsLost}${r.hqFactionIds.length ? ' HQ demolished' : ''}${r.becomesUncontrolled ? ' (abandoned)' : ''}` : ' ✓')
+          ).join(' · ')}`,
           timestamp: new Date().toISOString(),
         }],
       }
+      legacyStateRef.current = next
       saveLegacyState(next).catch(() => {})
       return next
     })
+
+    showWeaknessNotice(hit.length === 0
+      ? '🔥 Riot — every major city held'
+      : `🔥 Riot — ${hit.map(r => `${r.territoryName} lost ${r.troopsLost}`).join(', ')}`)
+  }
+
+  /**
+   * Resistance — every minor city holding 1 or 2 troops loses one.
+   *
+   * No dice and no choices. A city on its last troop loses that too and the
+   * territory goes uncontrolled, which is the only way this card hands ground
+   * back to nobody. A city at 3+ is untouched: it pressures thin garrisons.
+   */
+  function applyResistanceEvent() {
+    const state = gameStateRef.current
+    const results = resolveResistance(state.territories)
+    if (results.length === 0) {
+      showWeaknessNotice('✊ Resistance — no minor city is thinly held; nothing happens')
+      logHistory('✊ Resistance — no minor city held 1 or 2 troops; nothing happened')
+      return
+    }
+    setGameState(prev => {
+      const territories = { ...prev.territories }
+      for (const r of results) {
+        const t = territories[r.territoryId]
+        if (!t) continue
+        const troops = Math.max(0, t.troops - 1)
+        territories[r.territoryId] = {
+          ...t, troops,
+          occupyingPlayerId: troops <= 0 ? null : t.occupyingPlayerId,
+        }
+      }
+      const next = { ...prev, territories }
+      gameStateRef.current = next
+      return next
+    })
+    const lost = results.filter(r => r.becomesUncontrolled)
+    logHistory(`✊ Resistance — ${results.map(r =>
+      `${r.territoryName} −1${r.becomesUncontrolled ? ' (abandoned)' : ''}`).join(', ')}`)
+    showWeaknessNotice(
+      `✊ Resistance — ${results.length} minor ${results.length === 1 ? 'city' : 'cities'} lost a troop`
+      + (lost.length > 0 ? `; ${lost.map(r => r.territoryName).join(', ')} abandoned` : ''))
   }
 
   // ── Control the People: largest-population player picks a reward ──────────
@@ -7183,18 +7143,6 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         )
       })()}
 
-      {/* Hint bar for Resistance event placement */}
-      {resistancePlacement && (() => {
-        const rp = gameState.players.find(p => p.id === resistancePlacement.playerId)
-        return (
-          <HintBar color="#d4a020">
-            ✊ <strong>Resistance</strong> — {rp?.name ?? 'Player'} has the fewest territories:
-            click your territories to place <strong>{resistancePlacement.troopsLeft}</strong> more
-            troop{resistancePlacement.troopsLeft !== 1 ? 's' : ''}
-          </HintBar>
-        )
-      })()}
-
       {/* Hint bar for Join the Cause troop placement */}
       {joinCausePlacement && (() => {
         const jp = gameState.players.find(p => p.id === joinCausePlacement.playerId)
@@ -7386,27 +7334,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
         />
       )}
 
-      {/* Hint bar for Riot removal */}
-      {riotRemovalPlayerId && (() => {
-        const rp = gameState.players.find(p => p.id === riotRemovalPlayerId)
-        return (
-          <HintBar color="#e05a30">
-            🔥 <strong>Riot</strong> — {rp?.name ?? 'Player'} rolled lowest: click one of your territories (2+ troops) to lose <strong>2 troops</strong>
-          </HintBar>
-        )
-      })()}
 
-      {/* Riot roll results modal */}
+      {/* Riot results — informational. The card already resolved itself. */}
       {riotResult && (() => {
-        const sorted = [...riotResult.rolls].sort((a, b) => a.roll - b.roll)
-        const loser = gameState.players.find(p => p.id === riotResult.loserId)
-        const loserCanLose = Object.values(gameState.territories).some(
-          t => t.occupyingPlayerId === riotResult.loserId && (t.troops ?? 0) > 1,
-        )
-        // An AI picks its own casualties. Handing a human the click meant
-        // choosing where an opponent bleeds — and on your own turn the board
-        // would sit waiting for you to do it.
-        const loserIsAI = !!loser?.isAI
+        const hit = riotResult.filter(r => r.suffers)
         return (
           <div style={{
             position: 'fixed', inset: 0, zIndex: 8000,
@@ -7417,59 +7348,53 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, re
             <div style={{
               background: 'linear-gradient(155deg,#2a1206 0%,#140802 100%)',
               border: '2px solid rgba(224,90,48,0.6)', borderRadius: 14,
-              padding: '24px 28px', width: 420, maxWidth: '92vw', color: '#E8DCC8',
-              boxShadow: '0 0 50px rgba(224,90,48,0.2)',
+              padding: '24px 28px', width: 480, maxWidth: '92vw', color: '#E8DCC8',
+              boxShadow: '0 0 50px rgba(224,90,48,0.2)', maxHeight: '84vh', overflowY: 'auto',
             }}>
-              <div style={{ textAlign: 'center', marginBottom: 16 }}>
+              <div style={{ textAlign: 'center', marginBottom: 14 }}>
                 <div style={{ fontSize: 34 }}>🔥</div>
                 <div style={{ fontSize: 18, fontWeight: 'bold', color: '#e05a30', letterSpacing: 1 }}>RIOT</div>
-                <div style={{ fontSize: 11, color: '#a07050', marginTop: 4 }}>Lowest roll loses 2 troops</div>
+                <div style={{ fontSize: 11, color: '#a07050', marginTop: 4 }}>
+                  Every major city rolls · troops and HQs add to the roll · under 6 it suffers
+                </div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 18 }}>
-                {sorted.map(r => {
-                  const isLoser = r.playerId === riotResult.loserId
+                {riotResult.map(r => {
+                  const owner = gameState.players.find(p => p.id === r.playerId)
                   return (
-                    <div key={r.playerId} style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      padding: '8px 12px', borderRadius: 7,
-                      background: isLoser ? 'rgba(224,90,48,0.14)' : 'rgba(255,255,255,0.03)',
-                      border: isLoser ? '1.5px solid rgba(224,90,48,0.55)' : '1px solid rgba(200,148,10,0.12)',
+                    <div key={r.territoryId} style={{
+                      padding: '9px 12px', borderRadius: 7,
+                      background: r.suffers ? 'rgba(224,90,48,0.14)' : 'rgba(255,255,255,0.03)',
+                      border: r.suffers ? '1.5px solid rgba(224,90,48,0.55)' : '1px solid rgba(200,148,10,0.12)',
                     }}>
-                      <span style={{ fontSize: 13, color: isLoser ? '#ffb090' : '#c0a870', fontWeight: isLoser ? 'bold' : 'normal' }}>
-                        {r.name}
-                      </span>
-                      <span style={{ fontSize: 15, fontWeight: 'bold', color: isLoser ? '#e05a30' : '#8a7060' }}>
-                        🎲 {r.roll}{isLoser ? '  ← loses 2' : ''}
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                        <span style={{ fontSize: 13, color: r.suffers ? '#ffb090' : '#c0a870', fontWeight: r.suffers ? 'bold' : 'normal' }}>
+                          {r.territoryName}
+                          <span style={{ fontSize: 10, color: '#7a6040', marginLeft: 6 }}>{owner?.name ?? '—'}</span>
+                        </span>
+                        <span style={{ fontSize: 12, color: r.suffers ? '#e05a30' : '#8a7060', fontFamily: 'Menlo, Consolas, monospace' }}>
+                          🎲{r.roll} + {r.troops + r.hqCount} = <strong>{r.modified}</strong>
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 10.5, color: r.suffers ? '#e0a070' : '#5a4020', marginTop: 3 }}>
+                        {r.suffers
+                          ? `Lost ${r.troopsLost} troop${r.troopsLost === 1 ? '' : 's'}`
+                            + (r.hqFactionIds.length > 0 ? ' · HQ demolished' : '')
+                            + (r.becomesUncontrolled ? ' · territory abandoned' : '')
+                          : 'Held'}
+                      </div>
                     </div>
                   )
                 })}
               </div>
               <button
-                onClick={() => {
-                  if (loserIsAI) {
-                    resolveAiRiot(riotResult.loserId)
-                    return
-                  }
-                  if (loserCanLose) {
-                    riotRemovalRef.current = riotResult.loserId
-                    setRiotRemovalPlayerId(riotResult.loserId)
-                  } else {
-                    showWeaknessNotice(`🔥 Riot — ${loser?.name ?? 'the loser'} has no territory above 1 troop; no loss`)
-                  }
-                  setRiotResult(null)
-                }}
+                onClick={() => setRiotResult(null)}
                 style={{
                   width: '100%', padding: '12px', borderRadius: 8, fontSize: 14, fontWeight: 'bold',
                   border: '2px solid rgba(224,90,48,0.7)', background: 'rgba(224,90,48,0.16)',
                   color: '#E8DCC8', cursor: 'pointer', fontFamily: 'Georgia, serif',
-                }}
-              >
-                {!loserCanLose
-                  ? 'Acknowledge'
-                  : loserIsAI
-                    ? `🔥 ${loser?.name ?? 'Loser'} takes the losses →`
-                    : `🔥 ${loser?.name ?? 'Loser'} removes 2 troops →`}
+                }}>
+                {hit.length === 0 ? 'Every city held — Continue' : `${hit.length} city${hit.length === 1 ? '' : ' cities'} rioted — Continue`}
               </button>
             </div>
           </div>

@@ -253,19 +253,19 @@ export const NINTH_CITY_EVENT_CARDS: EventCard[] = [
   {
     kind: 'event', id: 'ec-riot',
     name: 'Riot',
-    description: 'Each player rolls 1 die. The player with the lowest roll immediately loses 2 troops from any single territory they control (their choice, minimum 1 remains). Ties re-roll.',
+    description: 'Every major city rolls 1 die, adding 1 for each troop and each HQ standing on it. If the modified roll is less than 6, that city loses troops equal to the NATURAL die roll and any HQ there is demolished. A city that loses its last troop becomes uncontrolled.',
     removeAfterUse: false,
   },
   {
     kind: 'event', id: 'ec-resistance-1',
     name: 'Resistance',
-    description: 'The player controlling the fewest territories immediately gains 3 troops, placed anywhere they choose. This card is removed from the game after use.',
+    description: 'Every minor city holding 1 or 2 troops loses 1 troop. A city reduced to 0 becomes uncontrolled. This card is removed from the game after use.',
     removeAfterUse: true,
   },
   {
     kind: 'event', id: 'ec-resistance-2',
     name: 'Resistance',
-    description: 'The player controlling the fewest territories immediately gains 3 troops, placed anywhere they choose. This card is removed from the game after use.',
+    description: 'Every minor city holding 1 or 2 troops loses 1 troop. A city reduced to 0 becomes uncontrolled. This card is removed from the game after use.',
     removeAfterUse: true,
   },
 ]

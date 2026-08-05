@@ -64,8 +64,8 @@ const EFFECT_DURATION: Record<string, string> = {
   'famine':              'Immediate effect',
   'fortify-city':        'Largest population chooses — immediate',
   'control-the-people':  'Largest population chooses — immediate',
-  'riot':                'Immediate — each player rolls',
-  'resistance':          'Immediate effect',
+  'riot':                'Immediate — every major city rolls',
+  'resistance':          'Immediate — thin minor cities slip',
   'join-the-cause':      'Largest population player chooses',
   'die-humans':          'Alien player chooses — immediate',
   'beam-down':           'Aliens choose — immediate',
@@ -185,14 +185,17 @@ export default function EventCardDisplay({ card, effect, roundNumber, onDismiss 
         )}
         {effect.kind === 'riot' && (
           <EffectDetail color={color}>
-            Each player rolls 1 die. The player with the <strong>lowest roll loses 2 troops</strong> from
-            a single territory of their choice (minimum 1 remains). Ties re-roll.
+            Every <strong>major city</strong> rolls <strong>1 die</strong>, adding <strong>+1</strong> for
+            each troop and each HQ standing on it.
+            <br />If the modified roll is <strong>less than 6</strong>, that city loses troops equal to the
+            <strong> natural</strong> die roll and any <strong>HQ there is demolished</strong>.
+            <br />A city that loses its last troop becomes <strong>uncontrolled</strong>.
           </EffectDetail>
         )}
         {effect.kind === 'resistance' && (
           <EffectDetail color={color}>
-            The player controlling the <strong>fewest territories</strong> immediately gains
-            <strong> +{effect.troops} troops</strong> to place anywhere.
+            Every <strong>minor city</strong> holding <strong>1 or 2 troops</strong> loses
+            <strong>1 troop</strong>. A city reduced to 0 becomes <strong>uncontrolled</strong>.
             This card is <strong>removed from the game</strong> after use.
           </EffectDetail>
         )}
