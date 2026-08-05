@@ -5,6 +5,7 @@ import { getInitialScarDeck } from '@/data/scarCards'
 import { storeGet, storeSet, storeRemove } from './appStore'
 import { generateJoinCode, normalizeJoinCode, isValidJoinCode } from './joinCode'
 import { addRosterMember, claimRosterSeat, getRoster, createRoster, validateRosterNames } from './roster'
+import { SerialQueue } from './serialQueue'
 
 // ─── Campaign identity ────────────────────────────────────────────────────────
 // Campaigns are keyed by a generated UUID, so any number of them coexist in the
@@ -376,15 +377,38 @@ export class StaleCampaignError extends Error {
   }
 }
 
-export async function saveLegacyState(state: LegacyState): Promise<void> {
-  // supabase-js RESOLVES on failure with an `error` field rather than throwing.
-  // Ignoring it — as this did — makes a rejected write indistinguishable from a
-  // successful one, so play continues on state that was never persisted.
+/**
+ * Is anyone else in a position to write this campaign?
+ *
+ * The compare-and-swap only earns its keep when two machines share a campaign.
+ * On one machine there is no second writer, so a CAS miss cannot mean what the
+ * error says — it can only be this client colliding with itself, and refusing
+ * the write loses real progress to protect against nobody.
+ *
+ * Shared means: the game is being played online, or two accounts have claimed
+ * roster seats (so two people can each open the lobby and edit the roster).
+ */
+export function campaignIsShared(state: Pick<LegacyState, 'activeMatchId' | 'roster'>): boolean {
+  if (state.activeMatchId) return true
+  return (state.roster ?? []).filter(m => m.userId).length >= 2
+}
+
+/** One save at a time per campaign — see [SerialQueue] for why. */
+const saveQueue = new SerialQueue()
+
+export function saveLegacyState(state: LegacyState): Promise<void> {
   // The row is keyed by the state's OWN campaign id, so every caller writes to
   // the campaign it is holding — no ambient "current campaign" to get wrong.
   if (!state.campaignId) {
-    throw new Error('Campaign save failed: state has no campaignId')
+    return Promise.reject(new Error('Campaign save failed: state has no campaignId'))
   }
+  return saveQueue.run(state.campaignId, () => performSave(state))
+}
+
+async function performSave(state: LegacyState): Promise<void> {
+  // supabase-js RESOLVES on failure with an `error` field rather than throwing.
+  // Ignoring it — as this did — makes a rejected write indistinguishable from a
+  // successful one, so play continues on state that was never persisted.
   lastAttemptedState = state
   setConnection({ state: 'saving' })
   let message: string | null = null
@@ -399,7 +423,7 @@ export async function saveLegacyState(state: LegacyState): Promise<void> {
     // `expected` is null only before this client has ever read the row — the
     // very first save of a brand-new campaign — where there is nothing to
     // clobber and an unguarded upsert is correct.
-    if (expected !== null && !legacyVersionColumnMissing) {
+    if (expected !== null && !legacyVersionColumnMissing && campaignIsShared(state)) {
       const { data, error } = await supabase
         .from('campaigns')
         .update({
@@ -429,6 +453,12 @@ export async function saveLegacyState(state: LegacyState): Promise<void> {
         const { data: now } = await supabase
           .from('campaigns').select('legacy_version').eq('id', state.campaignId).maybeSingle()
         const actual = (now?.legacy_version as number | undefined) ?? null
+        // Adopt the server's version even though this write is being refused.
+        // Without it the cached version stays behind forever and every later
+        // save misses too — one conflict silently ends persistence for the
+        // session, which is far worse than the overwrite being guarded against.
+        // The NEXT save carries newer state and is a legitimate write.
+        noteLegacyVersion(state.campaignId, actual)
         setConnection({
           state: 'error',
           message: 'Another player changed this campaign — your change was not saved',
@@ -488,13 +518,35 @@ async function takenCodes(): Promise<Set<string>> {
   return out
 }
 
-/** Write a code onto a campaign row. Resolves false on a uniqueness collision. */
+/**
+ * Write a code onto a campaign row. Resolves false on a uniqueness collision.
+ *
+ * Reads `legacy_version` back because the bump trigger fires on EVERY update,
+ * not just the ones that touch `legacy_state`. Setting a join code therefore
+ * moves the version, and a client that did not notice would fail its very next
+ * save with "another player changed this campaign" — on a campaign it had just
+ * created by itself, seconds earlier.
+ */
 async function tryWriteCode(campaignId: string, code: string): Promise<boolean> {
-  const { error } = await supabase
-    .from('campaigns')
-    .update({ join_code: code })
-    .eq('id', campaignId)
+  const write = () => supabase.from('campaigns').update({ join_code: code }).eq('id', campaignId)
+
+  if (!legacyVersionColumnMissing) {
+    const { data, error } = await write().select('legacy_version').maybeSingle()
+    if (!error) {
+      noteLegacyVersion(campaignId, data?.legacy_version as number | undefined)
+      return true
+    }
+    // Asking for a column that is not there must not look like a failed write.
+    if (!isMissingVersionColumn(error)) return handleCodeWriteError(error)
+    noteMissingVersionColumn()
+  }
+
+  const { error } = await write()
   if (!error) return true
+  return handleCodeWriteError(error)
+}
+
+function handleCodeWriteError(error: { message?: string; code?: string }): boolean {
   if (isMissingJoinCodeColumn(error)) { noteMissingColumn(); return false }
   // 23505 = unique_violation: someone else took this exact code first.
   if (error.code === '23505') return false
