@@ -61,7 +61,7 @@ type WinStep =
 
 interface Props {
   winner: Player
-  winCondition: 'mission' | 'elimination'
+  winCondition: 'mission' | 'elimination' | 'stars'
   gameNumber: number
   players: Player[]
   territories: Record<string, Territory>
@@ -195,7 +195,10 @@ export default function WinScreen({
       // faction changes between games, so only the roster id identifies who won.
       { gameNumber, winnerName: winName, winnerPlayerId: winner.id, factionId: winner.factionId, winCondition },
     ]
-    const entry = `${winName} (${factionName}) won Game #${gameNumber} by ${winCondition === 'mission' ? 'completing their mission' : 'last faction standing'}`
+    const entry = `${winName} (${factionName}) won Game #${gameNumber} by ${
+      winCondition === 'mission' ? 'completing their mission'
+      : winCondition === 'stars' ? 'holding 4 red stars'
+      : 'last faction standing'}`
     const updated: LegacyState = {
       ...workingLegacy, missiles: newMissiles, playerWins: newPlayerWins, victoryLog: newVictoryLog,
       historyLog: [...workingLegacy.historyLog, { gameNumber, timestamp: new Date().toISOString(), entry }],
@@ -558,11 +561,13 @@ export default function WinScreen({
 // ─── Announce ─────────────────────────────────────────────────────────────────
 
 function AnnounceStep({ winner, winCondition, gameNumber, factionColor, factionName, rgb, onNext }: {
-  winner: Player; winCondition: 'mission' | 'elimination'; gameNumber: number
+  winner: Player; winCondition: 'mission' | 'elimination' | 'stars'; gameNumber: number
   factionColor: string; factionName: string; rgb: { r: number; g: number; b: number }
   onNext: () => void
 }) {
-  const conditionText = winCondition === 'mission' ? '🎯 Mission Accomplished' : '⚔ Last Faction Standing'
+  const conditionText = winCondition === 'mission' ? '🎯 Mission Accomplished'
+    : winCondition === 'stars' ? '★ Four Red Stars'
+    : '⚔ Last Faction Standing'
   return (
     <div style={{ textAlign: 'center', padding: '0 20px', maxWidth: 560 }}>
       <ConfettiBurst count={130} originY={30} duration={3400} />

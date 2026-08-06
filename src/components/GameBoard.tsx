@@ -21,7 +21,7 @@ import WinScreen from './WinScreen'
 import LegacyPanel from './LegacyPanel'
 import CampaignCompleteScreen from './CampaignCompleteScreen'
 import { campaignOutcome, applyCampaignCompletion, championLabel, type CampaignOutcome } from '@/lib/campaign'
-import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALIEN_ISLAND_TERRITORY_ID, calcDraftTroops, applyHqReserveTroops, expandClickAction, legalJoinWarTerritoryIds, cardCoinValue, leadFactionId, resolveResourceDepletion, type ResourceDepletion, troopsAfterEntry, minTroopsToEnter, LEAD_FACTION_WORLD_CAPITAL_TROOPS, worldCapitalReplacedCities, citiesLostOn, mergeLegacyEdits, countCitiesOn, resolveRiot, resolveResistance, type RiotCityResult, FORTIFICATION_SUPPLY, fortificationsPlaced, canPlaceFortification, FORTIFY_EVENT_TROOPS, FORTIFY_EVENT_CITIES } from '@/lib/gameLogic'
+import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALIEN_ISLAND_TERRITORY_ID, calcDraftTroops, applyHqReserveTroops, expandClickAction, legalJoinWarTerritoryIds, cardCoinValue, leadFactionId, resolveResourceDepletion, type ResourceDepletion, troopsAfterEntry, minTroopsToEnter, LEAD_FACTION_WORLD_CAPITAL_TROOPS, worldCapitalReplacedCities, citiesLostOn, mergeLegacyEdits, countCitiesOn, resolveRiot, resolveResistance, type RiotCityResult, FORTIFICATION_SUPPLY, fortificationsPlaced, canPlaceFortification, FORTIFY_EVENT_TROOPS, FORTIFY_EVENT_CITIES , canSpendForStar, starPurchaseSelection } from '@/lib/gameLogic'
 import {
   defaultLegacyState, saveLegacyState, loadLegacyState, awardRedStars,
   applyLegacyToTerritories, pickUnlocks, SCAR_META,
@@ -635,12 +635,23 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   const conqueredFromPlayerIdsRef = useRef<Set<string>>(new Set())
   // Game-star totals at game start — in-game earns (not starting tokens) trigger missile power picks
   const redStarBaselineRef = useRef<Record<string, number>>({ ...(initialLegacy?.purchasedStars ?? {}) })
+
+  /** True while a star purchase is committing — a same-tick duplicate firing
+   *  of the buy handler bounces off this instead of minting a second star. */
+  const buyStarBusyRef = useRef(false)
+  useEffect(() => { buyStarBusyRef.current = false })
+  /** The quick-buy button arms on the first click and buys on the second —
+   *  a star should never be a single silent click. */
+  const [buyStarArmed, setBuyStarArmed] = useState(false)
   // Mysterious Island: an immediate (non-fortify-phase) sideboard draw is pending
   const [eventDrawActive,         setEventDrawActive]         = useState(false)
   const [showJoinTheCause,        setShowJoinTheCause]        = useState(false)
   const [unlockOptions,    setUnlockOptions]    = useState<UnlockOption[]>([])
   const [winnerPlayerId,   setWinnerPlayerId]   = useState<string | null>(null)
-  const [winCondition,     setWinCondition]     = useState<'mission' | 'elimination'>('elimination')
+  // 'stars' has always been a legal way to win — the victory log's type says
+  // so — but this state never admitted it, so 4-star wins were recorded as
+  // mission wins for the whole campaign history.
+  const [winCondition,     setWinCondition]     = useState<'mission' | 'elimination' | 'stars'>('elimination')
   /** Set the moment the game is finalised — stops the in-progress autosave. */
   const gameFinishedRef = useRef(false)
   // "← Menu" sits beside Legacy in the toolbar and is easy to hit by accident,
@@ -3593,9 +3604,25 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   }
 
   // ── 4 cards = ★: spend exactly 4 cards to buy a red star ──────────────────
+  // A new picker or a new phase disarms the quick-buy — an armed confirm must
+  // never survive into a different player's turn.
+  useEffect(() => { setBuyStarArmed(false) }, [gameState.currentPlayerIndex, gameState.phase])
+
+  /**
+   * The ONE way a star gets bought — the card-hand modal and the quick-buy
+   * button both come here. They used to be two near-copies, and the copy
+   * without a guard once double-fired: one payment of four cards, two stars,
+   * and a game that ended a turn early on a star nobody bought.
+   */
   function handleBuyStar(cardIds: string[]) {
     const player = gameState.players[gameState.currentPlayerIndex]
-    if (!player || cardIds.length !== 4) return
+    if (!player) return
+    // Absorb a same-tick duplicate firing — cleared once the commit lands.
+    if (buyStarBusyRef.current) return
+    // The four ids must be distinct and every one still in the hand. A
+    // duplicate submission replays ids that were just spent and dies here.
+    if (!canSpendForStar(cardState.playerHands[player.id] ?? [], cardIds)) return
+    buyStarBusyRef.current = true
     const spentSet = new Set(cardIds)
 
     // Remove the spent cards (territory cards → discard, coin cards return to
@@ -3649,6 +3676,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       return next
     })
     setShowCardHand(false)
+    setBuyStarArmed(false)
+    // Say it happened, loudly — a purchase nobody notices is how one gets
+    // repeated "because the first click did nothing".
+    showWeaknessNotice(`★ ${player.name} bought a red star — 4 cards spent (${purchasedAfter} bought this game)`)
 
     // 4-star victory check (HQ stars + purchased stars)
     const hqStars = Object.values(gameStateRef.current.territories).filter(
@@ -3656,7 +3687,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     ).length
     if (hqStars + purchasedAfter >= 4) {
       setWinnerPlayerId(player.id)
-      setWinCondition('mission')
+      // It IS a star victory — recording it as 'mission' was a lie the
+      // victory log told about every 4-star win.
+      setWinCondition('stars')
       setUnlockOptions(pickUnlocks(gameStateRef.current.gameNumber))
       setGameState(prev => ({ ...prev, phase: 'game-over', winnerId: player.id }))
       setTimeout(() => setShowWinScreen(true), 300)
@@ -7069,73 +7102,34 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         </button>
       )}
 
-      {/* Red Star purchase — spend any 4 cards during reinforce */}
+      {/* Red Star purchase — spend any 4 cards during reinforce. Two clicks
+          on purpose: the first arms, the second buys through the SAME handler
+          the card-hand modal uses. The old inline copy of the buy had no
+          guard, no history line, no confirmation — and once double-fired,
+          selling one star for four cards and recording two. */}
       {currentPlayer && gameState.phase === 'reinforce' && (() => {
         const hand = cardState.playerHands[currentPlayer.id] ?? []
-        if (hand.length < 4) return null
-        // Prefer spending coin cards first, then territory cards
-        const coinIds = hand.filter(id => !!getCoinCard(id))
-        const nonCoinIds = hand.filter(id => !getCoinCard(id))
-        const toSpendArr = [...coinIds, ...nonCoinIds].slice(0, 4)
+        const toSpendArr = starPurchaseSelection(hand, id => !!getCoinCard(id))
+        if (!toSpendArr) return null
         return (
           <button
             onClick={() => {
-              const playerId = currentPlayer.id
-              const toSpend = new Set(toSpendArr)
-
-              // 1. Compute new card state synchronously
-              let removed = 0
-              const newHand = (cardState.playerHands[playerId] ?? []).filter(id => {
-                if (toSpend.has(id) && removed < 4) { removed++; return false }
-                return true
-              })
-              const newCardState = { ...cardState, playerHands: { ...cardState.playerHands, [playerId]: newHand } }
-
-              // 2. Single setLegacyState — merges card hand + star award
-              setLegacyState(ls => {
-                const purchased = { ...(ls.purchasedStars ?? {}), [playerId]: ((ls.purchasedStars ?? {})[playerId] ?? 0) + 1 }
-                const newLs = { ...ls, purchasedStars: purchased, activeGameCards: newCardState }
-                legacyStateRef.current = newLs
-                saveLegacyState(newLs).catch(() => {})
-                return newLs
-              })
-              setCardState(() => newCardState)
-
-              // 3. Sync gameState player cards
-              setGameState(prev => ({
-                ...prev,
-                players: prev.players.map(p =>
-                  p.id === playerId
-                    ? { ...p, cards: newHand }
-                    : p
-                ),
-              }))
-
-              // 4. Check 4-star win condition
-              const state = gameStateRef.current
-              const hqStars = Object.values(state.territories).filter(
-                t => t.occupyingPlayerId === playerId && !!t.activeHqPlayerId,
-              ).length
-              const prevPurchased = (legacyStateRef.current.purchasedStars ?? {})[playerId] ?? 0
-              const newTotal = hqStars + prevPurchased + 1
-              if (newTotal >= 4) {
-                setWinnerPlayerId(playerId)
-                setWinCondition('mission')
-                setUnlockOptions(pickUnlocks(state.gameNumber))
-                setGameState(prev => ({ ...prev, phase: 'game-over', winnerId: playerId }))
-                setTimeout(() => setShowWinScreen(true), 300)
-              }
+              if (!buyStarArmed) { setBuyStarArmed(true); return }
+              handleBuyStar(toSpendArr)
             }}
+            onMouseLeave={() => setBuyStarArmed(false)}
             style={{
               position: 'absolute', bottom: 88, right: 14,
               padding: '6px 14px', borderRadius: 5, fontSize: 11, zIndex: 20,
-              border: '2px solid rgba(241,196,15,0.70)',
-              background: 'rgba(241,196,15,0.18)',
-              color: '#F1C40F', cursor: 'pointer', fontFamily: 'Georgia, serif',
+              border: `2px solid ${buyStarArmed ? 'rgba(231,76,60,0.85)' : 'rgba(241,196,15,0.70)'}`,
+              background: buyStarArmed ? 'rgba(231,76,60,0.22)' : 'rgba(241,196,15,0.18)',
+              color: buyStarArmed ? '#FFB3A7' : '#F1C40F', cursor: 'pointer', fontFamily: 'Georgia, serif',
               backdropFilter: 'blur(6px)', letterSpacing: 0.5,
             }}
           >
-            <span style={{ color: '#e74c3c' }}>★</span> Buy Red Star (4 cards)
+            {buyStarArmed
+              ? <>⚠ Confirm — spend 4 cards for <span style={{ color: '#e74c3c' }}>★</span></>
+              : <><span style={{ color: '#e74c3c' }}>★</span> Buy Red Star (4 cards)</>}
           </button>
         )
       })()}

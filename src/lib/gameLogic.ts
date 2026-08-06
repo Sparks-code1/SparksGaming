@@ -874,3 +874,40 @@ export function citiesLostOn(
     replacedNames: covered.map(s => s.name),
   }
 }
+
+// ─── Buying a red star ────────────────────────────────────────────────────────
+
+/** Cards a red star costs. */
+export const STAR_PURCHASE_COST = 4
+
+/**
+ * May these exact cards be spent on a star right now?
+ *
+ * The rule that earns its keep: all four ids must be DISTINCT and every one
+ * must still be in the hand. A duplicate firing of a buy — a double-click, a
+ * replayed handler — re-submits ids that were just spent, and this is the
+ * check that makes the second submission bounce instead of minting a star the
+ * player never paid for. That exact phantom star once ended a game a turn
+ * early.
+ */
+export function canSpendForStar(hand: string[], cardIds: string[]): boolean {
+  if (cardIds.length !== STAR_PURCHASE_COST) return false
+  if (new Set(cardIds).size !== cardIds.length) return false
+  const held = new Set(hand)
+  return cardIds.every(id => held.has(id))
+}
+
+/**
+ * The four cards the quick-buy button offers to spend: coins first — they are
+ * the cheapest to part with — then territory cards. Null when the hand cannot
+ * afford a star, which is also what hides the button.
+ */
+export function starPurchaseSelection(
+  hand: string[],
+  isCoin: (cardId: string) => boolean,
+): string[] | null {
+  if (hand.length < STAR_PURCHASE_COST) return null
+  const coins = hand.filter(isCoin)
+  const rest = hand.filter(id => !isCoin(id))
+  return [...coins, ...rest].slice(0, STAR_PURCHASE_COST)
+}
