@@ -12,7 +12,7 @@
 // The transport is injected, so all of that is exercised here without a
 // database, a socket, or a wall clock.
 import {
-  startMatchSync, reconnectDelay, RECONNECT_DELAYS,
+  startMatchSync, reconnectDelay, RECONNECT_DELAYS, LIVE_POLL_MS,
   type SyncTransport, type MatchRow, type LiveStatus,
 } from '@/lib/matchSync'
 import type { GameState } from '@/types/game'
@@ -159,7 +159,8 @@ console.log('\n— a dropped connection retries with backoff —')
 
   t.status!('error', 'socket closed')
   check('a dropped channel reports reconnecting', sync.status().state === 'reconnecting')
-  check('and a retry is scheduled', t.pendingTimers() === 1)
+  // Two timers: the retry, plus the standing poll that never goes away.
+  check('and a retry is scheduled', t.pendingTimers() === 2, String(t.pendingTimers()))
   check('nothing reopened yet', t.opens === 1)
 
   t.advance(RECONNECT_DELAYS[0])
@@ -167,7 +168,7 @@ console.log('\n— a dropped connection retries with backoff —')
 
   // Still failing: the delay grows.
   t.status!('error')
-  check('a second failure schedules again', t.pendingTimers() === 1)
+  check('a second failure schedules again', t.pendingTimers() === 2, String(t.pendingTimers()))
   t.advance(RECONNECT_DELAYS[0])
   check('the shorter delay is no longer enough', t.opens === 2, String(t.opens))
   t.advance(RECONNECT_DELAYS[1] - RECONNECT_DELAYS[0])
@@ -243,6 +244,44 @@ console.log('\n— a failed fetch does not wedge it —')
   sync.stop()
 }
 
+console.log('\n— the poll catches what realtime never delivers —')
+{
+  // The bug this exists for: a channel that reports SUBSCRIBED while RLS
+  // silently filters every event — an anonymous socket. Nothing arrives, no
+  // error fires, and the badge says live. The poll is what still moves the
+  // board.
+  const t = fakeTransport(row(1))
+  const seen: number[] = []
+  const sync = startMatchSync('m1', { onState: (_s, v) => seen.push(v) }, t.transport)
+  t.status!('subscribed')
+  await settle()
+  check('applied 1 on connect', seen.join(',') === '1')
+
+  // The match advances on the server; the channel delivers NOTHING.
+  t.stored = row(2)
+  t.advance(LIVE_POLL_MS)
+  await settle()
+  check('the poll finds version 2 anyway', seen.join(',') === '1,2', seen.join(','))
+
+  // And again — the loop reschedules itself.
+  t.stored = row(3)
+  t.advance(LIVE_POLL_MS)
+  await settle()
+  check('and keeps finding newer rows', seen.join(',') === '1,2,3', seen.join(','))
+
+  // A quiet interval applies nothing — the version guard makes polling free.
+  const before = seen.length
+  t.advance(LIVE_POLL_MS)
+  await settle()
+  check('an unchanged row is not re-rendered', seen.length === before)
+
+  const fetches = t.fetches
+  sync.stop()
+  t.advance(LIVE_POLL_MS * 10)
+  await settle()
+  check('stop ends the polling', t.fetches === fetches, String(t.fetches))
+}
+
 console.log('\n— stop() really stops —')
 {
   const t = fakeTransport(row(1))
@@ -269,9 +308,9 @@ console.log('\n— a pending retry is cancelled on stop —')
   t.status!('subscribed')
   await settle()
   t.status!('error')
-  check('a retry is pending', t.pendingTimers() === 1)
+  check('a retry is pending', t.pendingTimers() === 2, String(t.pendingTimers()))
   sync.stop()
-  check('stop clears it', t.pendingTimers() === 0)
+  check('stop clears it — retry AND poll', t.pendingTimers() === 0)
   const opensBefore = t.opens
   t.advance(60_000)
   check('and it never fires', t.opens === opensBefore)

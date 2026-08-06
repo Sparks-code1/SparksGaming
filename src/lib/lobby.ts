@@ -508,6 +508,16 @@ export function subscribeLobby(matchId: string, onChange: (lobby: Lobby | null) 
     const lobby = await readLobby(matchId)
     if (!stopped) onChange(lobby)
   }
+  // Give the realtime socket the caller's JWT — RLS filters events per
+  // subscriber, and a socket authenticated before the session finished
+  // restoring receives nothing, silently. The poll below already bounded the
+  // damage here (which is why lobby sync always FELT live); this makes the
+  // push path actually push too.
+  void supabase.auth.getSession()
+    .then(({ data }) => {
+      if (data.session?.access_token) supabase.realtime.setAuth(data.session.access_token)
+    })
+    .catch(() => {})
   // A channel NAME is a handle: asking for one that already exists returns the
   // existing channel, and adding handlers to an already-subscribed channel
   // throws. Two lobby screens, or one remounted — which React does routinely —

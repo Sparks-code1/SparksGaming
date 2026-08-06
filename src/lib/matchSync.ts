@@ -5,7 +5,7 @@
  * client never computes what another player's move did — it receives the whole
  * resulting board and renders that.
  *
- * Three things make it trustworthy rather than merely fast:
+ * Four things make it trustworthy rather than merely fast:
  *
  *   1. VERSION GUARD. Every payload carries the row's version. Anything at or
  *      below what the client has already applied is dropped. Realtime can
@@ -21,6 +21,14 @@
  *   3. A VISIBLE STATUS. A board that has stopped updating looks exactly like a
  *      board where nobody is moving. The status is published so the player is
  *      told which one they are looking at.
+ *
+ *   4. A STANDING POLL. `SUBSCRIBED` proves a channel exists, not that events
+ *      reach it: realtime delivery is RLS-filtered per subscriber, and a socket
+ *      that authenticated before the session finished restoring is an ANONYMOUS
+ *      subscriber — every event silently dropped, no error anywhere, badge says
+ *      "live". The poll reads the row over REST (which always carries the JWT),
+ *      so the worst a broken channel can do is delay a move by one interval.
+ *      This is the same net that made lobby setup feel live all along.
  *
  * Hotseat never touches this file: `startMatchSync` is only called with a
  * match id, and there is no match id in a local game.
@@ -98,6 +106,11 @@ export interface SyncHandlers {
 /** Backoff between reconnection attempts, in ms. The last value repeats. */
 export const RECONNECT_DELAYS = [1_000, 2_000, 5_000, 10_000, 30_000]
 
+/** How often the row is read outright regardless of channel health — the
+ *  bound on how stale a board can get when realtime is silently delivering
+ *  nothing. Matches the lobby's poll. */
+export const LIVE_POLL_MS = 5_000
+
 export function reconnectDelay(attempt: number): number {
   return RECONNECT_DELAYS[Math.min(Math.max(0, attempt), RECONNECT_DELAYS.length - 1)]
 }
@@ -128,6 +141,7 @@ export function startMatchSync(
   let stopped = false
   let closeChannel: (() => void) | null = null
   let retryHandle: unknown = null
+  let pollHandle: unknown = null
   let status: LiveStatus = { state: 'connecting', version: -1, attempts: 0, lastSyncAt: null }
 
   const publish = (next: Partial<LiveStatus>) => {
@@ -196,12 +210,23 @@ export function startMatchSync(
     }
   }
 
+  /** The standing poll: one loop, started once, survives channel churn. */
+  const schedulePoll = () => {
+    if (stopped) return
+    pollHandle = transport.setTimer(() => {
+      pollHandle = null
+      void resync().then(schedulePoll)
+    }, LIVE_POLL_MS)
+  }
+
   connect()
+  schedulePoll()
 
   return {
     stop() {
       stopped = true
       if (retryHandle !== null) transport.clearTimer(retryHandle)
+      if (pollHandle !== null) transport.clearTimer(pollHandle)
       closeChannel?.()
       closeChannel = null
       publish({ state: 'idle', message: undefined })
@@ -221,36 +246,59 @@ export function startMatchSync(
 
 export const supabaseTransport: SyncTransport = {
   open(matchId, onRow, onAction, onStatus) {
-    // Unique per subscription. A channel name is a handle — reusing one that
-    // is already subscribed throws when handlers are added, which a reconnect
-    // or a remount does routinely. Same crash the lobby channel had.
-    const channel = supabase
-      .channel(`match:${matchId}:${Math.random().toString(36).slice(2, 10)}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'matches', filter: `id=eq.${matchId}` },
-        payload => {
-          const row = payload.new as { state?: GameState; version?: number }
-          if (row?.state && typeof row.version === 'number') {
-            onRow({ state: row.state, version: row.version })
-          }
-        },
-      )
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'match_actions', filter: `match_id=eq.${matchId}` },
-        payload => {
-          const row = payload.new as { action?: Action; effects?: Effect[]; seq?: number }
-          if (row?.action) onAction(row.action, row.effects ?? [], row.seq ?? 0)
-        },
-      )
-      .subscribe((s, err) => {
-        if (s === 'SUBSCRIBED') onStatus('subscribed')
-        else if (s === 'CHANNEL_ERROR') onStatus('error', err?.message ?? 'Channel error')
-        else if (s === 'TIMED_OUT') onStatus('error', 'Connection timed out')
-        else if (s === 'CLOSED') onStatus('closed', 'Connection closed')
+    let channel: ReturnType<typeof supabase.channel> | null = null
+    let cancelled = false
+
+    const subscribeNow = () => {
+      if (cancelled) return
+      // Unique per subscription. A channel name is a handle — reusing one that
+      // is already subscribed throws when handlers are added, which a reconnect
+      // or a remount does routinely. Same crash the lobby channel had.
+      channel = supabase
+        .channel(`match:${matchId}:${Math.random().toString(36).slice(2, 10)}`)
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'matches', filter: `id=eq.${matchId}` },
+          payload => {
+            const row = payload.new as { state?: GameState; version?: number }
+            if (row?.state && typeof row.version === 'number') {
+              onRow({ state: row.state, version: row.version })
+            }
+          },
+        )
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'match_actions', filter: `match_id=eq.${matchId}` },
+          payload => {
+            const row = payload.new as { action?: Action; effects?: Effect[]; seq?: number }
+            if (row?.action) onAction(row.action, row.effects ?? [], row.seq ?? 0)
+          },
+        )
+        .subscribe((s, err) => {
+          if (s === 'SUBSCRIBED') onStatus('subscribed')
+          else if (s === 'CHANNEL_ERROR') onStatus('error', err?.message ?? 'Channel error')
+          else if (s === 'TIMED_OUT') onStatus('error', 'Connection timed out')
+          else if (s === 'CLOSED') onStatus('closed', 'Connection closed')
+        })
+    }
+
+    // The socket must carry the CALLER's JWT before the channel subscribes.
+    // Realtime filters every event through RLS per subscriber, and a socket
+    // that authenticated before the session finished restoring — an async IPC
+    // round trip on desktop — is an ANONYMOUS subscriber: `is_match_participant`
+    // is false, every event is dropped, and no error is ever raised. That is a
+    // frozen board wearing a "live" badge.
+    void supabase.auth.getSession()
+      .then(({ data }) => {
+        if (data.session?.access_token) supabase.realtime.setAuth(data.session.access_token)
       })
-    return () => { void supabase.removeChannel(channel) }
+      .catch(() => {})     // no session readable — subscribe anyway; the poll covers us
+      .then(subscribeNow)
+
+    return () => {
+      cancelled = true
+      if (channel) void supabase.removeChannel(channel)
+    }
   },
 
   async fetch(matchId) {
