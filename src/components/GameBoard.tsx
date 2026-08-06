@@ -312,6 +312,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (result.error) {
       // The move did not land. Say so, and take the server's board rather than
       // keeping an optimistic one it never accepted.
+      console.error('[Online] server refused', action.type, result.error.code, result.error.message)
       showWeaknessNoticeRef.current(`⚠ ${result.error.message}`)
       const authoritative = result.error.serverState
       if (authoritative) {
@@ -342,7 +343,14 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
    * Hotseat is byte-identical to before: same reducer, same synchronous ref
    * mirror, no network and no auth. Online, the same call goes to the server.
    */
+  /** Last routing decision, so the log records CHANGES rather than every click. */
+  const lastRouteRef = useRef<'server' | 'local' | null>(null)
   const dispatch = (action: Action) => {
+    const route = onlineMatchRef.current ? 'server' : 'local'
+    if (route !== lastRouteRef.current) {
+      lastRouteRef.current = route
+      console.info(`[Online] dispatch routing → ${route.toUpperCase()} (first such action: ${action.type})`)
+    }
     if (onlineMatchRef.current) void dispatchOnlineRef.current(action)
     else dispatchRef.current(action)
   }
@@ -5608,17 +5616,23 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
    * a row nobody is serving.
    */
   useEffect(() => {
+    // The start effect OWNS the match while it is creating or flipping one.
+    // This adoption pass is only for games that arrive with a match already
+    // attached (a resume, a join). Running it during a start was a race: the
+    // mount-time pass could carry a STALE activeMatchId, resolve its lookup
+    // late, and null the very reference the start effect had just set — after
+    // which every dispatch quietly went local and the server stayed at v0.
+    if (creatingMatchRef.current) return
     const id = legacyState.activeMatchId
     if (!id) { onlineMatchRef.current = null; setOnlineMatch(null); return }
     let cancelled = false
     void findActiveMatch(legacyState.campaignId, gameState.gameNumber).then(found => {
       if (cancelled) return
       const next = found && found.matchId === id ? found : null
+      console.info('[Online] adopt-by-activeMatchId:', id.slice(0, 8),
+        next ? `→ adopted v${next.version}` : '→ NO ACTIVE MATCH — playing locally')
       onlineMatchRef.current = next
       setOnlineMatch(next)
-      if (!next) {
-        console.warn('[Online] activeMatchId is set but no active match exists — playing locally')
-      }
     })
     return () => { cancelled = true }
   }, [legacyState.activeMatchId, legacyState.campaignId, gameState.gameNumber])
@@ -5666,7 +5680,11 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', background: '#C4A830' }}>
-      <LiveStatusBadge status={liveStatus} onRetry={() => { void matchSync?.resync() }} />
+      <LiveStatusBadge
+        status={liveStatus}
+        onRetry={() => { void matchSync?.resync() }}
+        expectedOnline={playOnline || !!legacyState.activeMatchId}
+      />
       {/* Header bar — sits above the map, never overlaps it */}
       <div style={{ position: 'relative', height: 56, flexShrink: 0, zIndex: 50 }}>
         <TurnControls

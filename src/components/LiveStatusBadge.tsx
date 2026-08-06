@@ -12,11 +12,35 @@ import type { LiveStatus } from '@/lib/matchSync'
  * Renders nothing in hotseat: there is no connection to report on.
  */
 export default function LiveStatusBadge({
-  status, onRetry,
+  status, onRetry, expectedOnline = false,
 }: {
   status: LiveStatus
   onRetry?: () => void
+  /** This GAME is supposed to be online. Idle then stops meaning "hotseat,
+   *  nothing to report" and starts meaning "your moves are going nowhere". */
+  expectedOnline?: boolean
 }) {
+  // The state that cost a whole evening of testing: an online game whose sync
+  // never attached, playing perfectly — locally. Every click looked fine on
+  // this screen and reached nobody. That must never again be SILENT.
+  if (status.state === 'idle' && expectedOnline) {
+    return (
+      <div style={{
+        position: 'fixed', top: 8, left: 8, zIndex: 9000,
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '8px 14px', borderRadius: 20,
+        background: 'rgba(224,60,40,0.20)', border: '1.5px solid rgba(224,60,40,0.85)',
+        backdropFilter: 'blur(6px)',
+        fontFamily: 'Georgia, serif', fontSize: 11.5, color: '#ff9a86', fontWeight: 'bold',
+      }}>
+        <span style={{
+          width: 9, height: 9, borderRadius: '50%', background: '#ff5a3c', flexShrink: 0,
+          animation: 'pulse 1.4s ease-in-out infinite',
+        }} />
+        <span>⚠ NOT CONNECTED — moves are staying on this machine</span>
+      </div>
+    )
+  }
   if (status.state === 'idle') return null
 
   const look = {
