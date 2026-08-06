@@ -226,8 +226,11 @@ export default function App() {
         [r.playerId, { isAI: r.isAI, difficulty: r.aiDifficulty ?? 'medium' }])))
       setRosterIds(rec.resolved.map(r => r.playerId))
       setLobbyToStart(started.matchId)
-      setLobby(null)
+      // The lobby is cleared only AFTER the next screen is set. Clearing it
+      // first left one await during which App rendered screen='lobby' with no
+      // lobby — the gap the phantom-GameBoard fall-through lived in.
       await dealScarsAndContinue(fresh, rec.resolved.map(r => r.playerId))
+      setLobby(null)
       return null
     }
 
@@ -474,7 +477,7 @@ export default function App() {
         onSetupComplete={handleSetupComplete}
       />
     )
-  } else {
+  } else if (screen === 'playing') {
     content = (
       <GameBoard
         initialLegacy={legacy}
@@ -486,6 +489,23 @@ export default function App() {
         restoredGameState={restoredGameState}
         onReturnToLobby={handleReturnToLobby}
       />
+    )
+  } else {
+    // A screen whose data is momentarily missing must NEVER fall through to
+    // the board. GameBoard was the catch-all here, and a one-await gap in the
+    // host's start flow (screen still 'lobby', lobby already null) mounted a
+    // PHANTOM board — whose start effect flipped the lobby to active with a
+    // default board. The real setup then could not publish, the joiner
+    // adopted garbage, and every genuine move bounced off it as
+    // "not your turn". The board renders for 'playing' and nothing else.
+    content = (
+      <div style={{
+        position: 'fixed', inset: 0, background: '#0A0500',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontFamily: 'Georgia, serif', color: '#C8940A', fontSize: 14, letterSpacing: 2,
+      }}>
+        …
+      </div>
     )
   }
 
