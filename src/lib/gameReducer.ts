@@ -603,6 +603,55 @@ export function clampCombatModifiers(m: Partial<CombatModifiers> | null | undefi
 }
 
 /**
+ * Bound a client-rolled combat result to what the board could actually allow.
+ *
+ * The interim trust model for online combat: the ACTOR's machine rolls (the
+ * interactive modal — missiles, per-round retreats — cannot ride a one-shot
+ * server roll yet), and the server applies the claimed result only after
+ * forcing it through these bounds, derived from ITS OWN board:
+ *
+ *   · losses cannot exceed the troops actually present
+ *   · a capture REQUIRES every defender dead — `captured: true` with
+ *     survivors is the flag most worth forging, and it is simply recomputed
+ *   · the advance cannot exceed the attacker's survivors minus the one troop
+ *     that must stay behind, and entry costs cannot be negative
+ *
+ * A forged result can still shade dice luck; it can no longer conjure a
+ * capture, teleport troops, or send a negative cost. Full dice authority is
+ * DECLARE_ATTACK's job, when the combat UI learns to ride it.
+ */
+export function clampCombatResolution(
+  state: Pick<GameState, 'territories'>,
+  a: {
+    srcId: string; tgtId: string
+    totalAtkLoss: number; totalDefLoss: number
+    captured: boolean; troopsToAdvance: number
+    entryCostTotal?: number; defenderCloningBonus?: number
+  },
+): typeof a {
+  const int = (v: unknown, lo: number, hi: number) =>
+    typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.trunc(v))) : lo
+  const src = state.territories[a.srcId]
+  const tgt = state.territories[a.tgtId]
+  const srcTroops = src?.troops ?? 0
+  const tgtTroops = tgt?.troops ?? 0
+  // The attacker must keep one troop home, so at most troops-1 can die.
+  const totalAtkLoss = int(a.totalAtkLoss, 0, Math.max(0, srcTroops - 1))
+  const totalDefLoss = int(a.totalDefLoss, 0, tgtTroops)
+  const captured = !!a.captured && totalDefLoss >= tgtTroops && tgtTroops > 0
+  const survivors = srcTroops - totalAtkLoss
+  return {
+    ...a,
+    totalAtkLoss,
+    totalDefLoss,
+    captured,
+    troopsToAdvance: captured ? int(a.troopsToAdvance, 1, Math.max(1, survivors - 1)) : 0,
+    entryCostTotal: int(a.entryCostTotal, 0, 12),
+    defenderCloningBonus: int(a.defenderCloningBonus, 0, 12),
+  }
+}
+
+/**
  * Apply a decided combat result to the board.
  *
  * Shared by both combat paths so they can never disagree about what a capture

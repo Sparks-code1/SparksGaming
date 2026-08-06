@@ -669,6 +669,26 @@ function clampCombatModifiers(m) {
     attackerRerollOnes: !!m?.attackerRerollOnes
   };
 }
+function clampCombatResolution(state, a) {
+  const int = (v, lo, hi) => typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.trunc(v))) : lo;
+  const src = state.territories[a.srcId];
+  const tgt = state.territories[a.tgtId];
+  const srcTroops = src?.troops ?? 0;
+  const tgtTroops = tgt?.troops ?? 0;
+  const totalAtkLoss = int(a.totalAtkLoss, 0, Math.max(0, srcTroops - 1));
+  const totalDefLoss = int(a.totalDefLoss, 0, tgtTroops);
+  const captured = !!a.captured && totalDefLoss >= tgtTroops && tgtTroops > 0;
+  const survivors = srcTroops - totalAtkLoss;
+  return {
+    ...a,
+    totalAtkLoss,
+    totalDefLoss,
+    captured,
+    troopsToAdvance: captured ? int(a.troopsToAdvance, 1, Math.max(1, survivors - 1)) : 0,
+    entryCostTotal: int(a.entryCostTotal, 0, 12),
+    defenderCloningBonus: int(a.defenderCloningBonus, 0, 12)
+  };
+}
 function applyCombatOutcome(state, action) {
   const only = (s) => ({ state: s, effects: [] });
   const src0 = state.territories[action.srcId];
@@ -833,6 +853,7 @@ export {
   canStartFortify,
   checkReinforcementPlacement,
   clampCombatModifiers,
+  clampCombatResolution,
   compareRolls,
   computeTurnAdvance,
   createMathRng,

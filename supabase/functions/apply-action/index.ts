@@ -33,6 +33,7 @@ import {
   gameReducer,
   createSeededRng,
   clampCombatModifiers,
+  clampCombatResolution,
   endTurnTerritories,
   type Action,
 } from '../_shared/gameReducer.gen.ts'
@@ -58,11 +59,6 @@ const json = (body: unknown, status = 200) =>
  *
  * An allowlist, not a blocklist: a reducer action added later is refused until
  * someone has decided it is safe for an untrusted caller to send.
- *
- * `RESOLVE_COMBAT` is deliberately absent. It takes the losses and the capture
- * flag as INPUTS — in hotseat the client has already rolled — so accepting it
- * would mean honouring `{ totalDefLoss: 99, captured: true }` from anyone.
- * Online clients send `DECLARE_ATTACK` instead and the dice are rolled here.
  */
 const SERVER_ACTIONS = new Set([
   'PLACE_REINFORCEMENT',
@@ -70,6 +66,16 @@ const SERVER_ACTIONS = new Set([
   'END_REINFORCE_PHASE',
   'END_ATTACK_PHASE',
   'DECLARE_ATTACK',
+  // INTERIM, and said out loud: the combat UI still rolls on the actor's
+  // machine (interactive missiles and per-round retreats cannot ride a
+  // one-shot server roll), so the server accepts the claimed result — after
+  // clampCombatResolution rebounds it against the server's OWN board. A
+  // forged result can shade dice luck; it cannot conjure a capture with
+  // defenders still standing, kill troops that are not there, or advance
+  // more than survived. Before this, combat never reached the server AT ALL:
+  // captures lived only on the actor's screen until END_TURN's recompute
+  // erased them. Full dice authority stays DECLARE_ATTACK's job.
+  'RESOLVE_COMBAT',
   'RETREAT',
   'CONFIRM_FORTIFY',
   'END_TURN',
@@ -106,6 +112,15 @@ function sanitize(
       // can refuse impossible ones, so a forged stack cannot conjure 9-dice
       // defenders or a +99 die bonus.
       return { ...action, mods: clampCombatModifiers(action.mods) }
+
+    case 'RESOLVE_COMBAT': {
+      // The client rolled; the server rebinds the claimed result to what ITS
+      // board allows — losses within troops present, capture only when every
+      // defender died, advance within survivors. See SERVER_ACTIONS above for
+      // why this is accepted at all.
+      const st = state as Parameters<typeof clampCombatResolution>[0]
+      return { ...action, ...clampCombatResolution(st, action as Parameters<typeof clampCombatResolution>[1]) }
+    }
 
     case 'END_TURN': {
       // `endTerritories` is an ENTIRE replacement board. Recompute it; whatever

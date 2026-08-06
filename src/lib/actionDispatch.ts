@@ -50,15 +50,20 @@ export interface OnlineMatch {
 }
 
 /**
- * Actions the server decides, and their local equivalents.
+ * Actions that must never be POSTed, throwing rather than failing quietly at
+ * the network boundary.
  *
- * `RESOLVE_COMBAT` carries a result the CLIENT rolled. That is correct in
- * hotseat and unacceptable online, so online callers must send `DECLARE_ATTACK`
- * — intent only — and let the server roll. Sending the wrong one is a
- * programming error, not a user error, so it throws rather than failing quietly
- * at the network boundary.
+ * Currently empty — and that emptiness has a history. `RESOLVE_COMBAT` sat
+ * here because it carries a result the CLIENT rolled, which the design said
+ * online callers must replace with `DECLARE_ATTACK`. But the combat UI was
+ * never rewired, so every online battle dispatched RESOLVE_COMBAT anyway, this
+ * throw killed it silently mid-flight, and combat simply never reached the
+ * server: captures lived on the actor's screen until END_TURN's server-side
+ * recompute erased them. The server now ACCEPTS RESOLVE_COMBAT, re-bounded
+ * against its own board (`clampCombatResolution`) — the trust-the-table
+ * interim until the combat UI can ride the server's dice.
  */
-const CLIENT_ONLY_ACTIONS = new Set(['RESOLVE_COMBAT'])
+const CLIENT_ONLY_ACTIONS = new Set<string>([])
 
 /**
  * Apply one action.

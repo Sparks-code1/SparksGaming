@@ -308,7 +308,18 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     const predictable = action.type !== 'DECLARE_ATTACK'
     if (predictable) dispatchRef.current(action)
 
-    const result = await dispatchAction(gameStateRef.current, action, match)
+    let result: Awaited<ReturnType<typeof dispatchAction>>
+    try {
+      result = await dispatchAction(gameStateRef.current, action, match)
+    } catch (e) {
+      // A THROW here once vanished into an unhandled rejection — every online
+      // battle died this way, silently, for days. Whatever throws from now on
+      // is shown, because an action that goes nowhere must never look like an
+      // action that landed.
+      console.error('[Online] dispatch threw for', action.type, e)
+      showWeaknessNoticeRef.current(`⚠ ${action.type} was not sent to the server: ${String(e)}`)
+      return
+    }
     if (result.error) {
       // The move did not land. Say so, and take the server's board rather than
       // keeping an optimistic one it never accepted.
