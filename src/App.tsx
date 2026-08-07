@@ -18,6 +18,7 @@ import { loadLegacyState, saveLegacyState, getActiveCampaignId } from '@/lib/leg
 import { dealScarCards } from '@/data/scarCards'
 import { MOCK_PLAYERS, applyRosterNames } from '@/data/mockGameState'
 import { hasRoster, getRoster, createRoster, addRosterMember } from '@/lib/roster'
+import { BUILD_STAMP } from '@/lib/buildStamp'
 import { matchState, reconcileSeats, setLobbyShape, readLobby, type Lobby } from '@/lib/lobby'
 import type { SetupDoc } from '@/lib/setupFlow'
 import LobbyScreen from '@/components/LobbyScreen'
@@ -74,6 +75,7 @@ export default function App() {
       .catch(() => setScreen('between-games'))
   }, [])
 
+  useEffect(() => { console.info(`[Build] ${BUILD_STAMP}`) }, [])
   useEffect(() => {
     void getCurrentUser().then(setUser)
     return onAuthChange(setUser)

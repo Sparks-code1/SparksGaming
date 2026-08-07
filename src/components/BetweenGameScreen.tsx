@@ -15,6 +15,7 @@ import AuthPanel from './AuthPanel'
 import { getCurrentUser, onAuthChange, type AuthUser } from '@/lib/auth'
 import { claimRosterSeat, getRoster, addRosterMember, MAX_ROSTER_NAME } from '@/lib/roster'
 import CampaignRosterPanel from './CampaignRosterPanel'
+import { BUILD_STAMP } from '@/lib/buildStamp'
 import { findOpenLobby, takeSeat, createLobby, type Lobby } from '@/lib/lobby'
 
 interface Props {
@@ -692,6 +693,7 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
           </>
         )}
       </div>
+      <div style={{ position: 'fixed', bottom: 6, right: 10, fontSize: 9, color: '#4a3820', fontFamily: 'Menlo, Consolas, monospace' }}>{BUILD_STAMP}</div>
     </FullScreen>
   )
 }
