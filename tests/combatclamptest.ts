@@ -65,6 +65,38 @@ console.log('\n--- the forgeries ---')
     [garbage.totalAtkLoss, garbage.totalDefLoss, garbage.captured], [0, 0, false])
 }
 
+console.log('\n--- uncontested expansion ---')
+{
+  // Walking into genuinely empty land: no dice, no losses, and the board this
+  // is judged against is the SERVER's — an empty territory there is the only
+  // thing that makes "uncontested" true.
+  const empty = { territories: { src: { troops: 10 }, tgt: { troops: 0 } } } as never
+  const walk = clampCombatResolution(empty, claim({
+    uncontested: true, totalAtkLoss: 0, totalDefLoss: 0, troopsToAdvance: 4,
+  }))
+  check('an empty territory can be occupied', walk.captured, true)
+  check('the advance stands', walk.troopsToAdvance, 4)
+  check('losses are forced to zero on an uncontested move',
+    [walk.totalAtkLoss, walk.totalDefLoss], [0, 0])
+
+  // "Uncontested" against a DEFENDED territory is the same forgery as a
+  // capture without the kills — the server's board says someone lives there.
+  const lie = clampCombatResolution(board(10, 4), claim({
+    uncontested: true, totalAtkLoss: 0, totalDefLoss: 0, troopsToAdvance: 4,
+  }))
+  check('claiming uncontested against defenders is refused', lie.captured, false)
+  check('and moves nothing', lie.troopsToAdvance, 0)
+
+  // Zero troops but an OWNER on record (a fallout-emptied holding, say) is
+  // still not free land.
+  const owned0 = { territories: { src: { troops: 10 }, tgt: { troops: 0, occupyingPlayerId: 'p9' } } } as never
+  const squat = clampCombatResolution(owned0, claim({ uncontested: true, totalAtkLoss: 0, totalDefLoss: 0 }))
+  check('an owned-but-empty territory is not uncontested', squat.captured, false)
+
+  // The flag survives the clamp so the reducer can suppress the card award.
+  check('the uncontested flag rides through', walk.uncontested, true)
+}
+
 console.log('\n--- the board edges ---')
 {
   const emptyTgt = clampCombatResolution(board(10, 0), claim({ totalDefLoss: 0, captured: true }))

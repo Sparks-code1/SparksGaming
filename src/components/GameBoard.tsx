@@ -2433,6 +2433,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // Online, AI turns belong to the host's machine; everyone else just
     // watches them arrive over realtime like any other player's turn.
     if (onlineMatchRef.current && !aiAuthorityRef.current) return
+    // An online game whose match is not adopted yet must WAIT, not act. The
+    // AI opens the very first turn while the lobby flip is still in flight,
+    // and anything dispatched in that window plays out locally only — one of
+    // the AI's three opening placements went missing from the server exactly
+    // this way. This effect re-runs when the adoption lands.
+    if (playOnline && !onlineMatchRef.current) return
 
     const isHuman = (pid: string | null | undefined) => {
       if (!pid) return false
@@ -2667,16 +2673,21 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       const move = aiFortifyMove(gameState, cp.id, (srcId) => connectedOwnedIds(srcId, cp.id, gameState.territories, fzNoTraverse()))
       run(() => {
         if (move) {
-          setGameState(prev => {
-            const s = prev.territories[move.srcId], d = prev.territories[move.dstId]
-            if (!s || !d) return prev
-            const n = Math.min(move.troops, s.troops - 1)
-            if (n < 1) return prev
-            return { ...prev, territories: { ...prev.territories, [move.srcId]: { ...s, troops: s.troops - n }, [move.dstId]: { ...d, troops: d.troops + n } } }
-          })
+          // Through the reducer, like the human fortify — a bare setGameState
+          // here was invisible online: the AI's fortify move existed only on
+          // the host's screen and evaporated at the next server echo.
+          const s = gameStateRef.current.territories[move.srcId]
+          const n = Math.min(move.troops, (s?.troops ?? 1) - 1)
+          if (n >= 1) {
+            dispatch({
+              type: 'CONFIRM_FORTIFY',
+              srcId: move.srcId, dstId: move.dstId,
+              troopsRemoved: n, troopsArriving: n,
+            })
+          }
         }
         // Stay "busy" across the inner delay. `run` clears the flag before this
-        // callback, and the setGameState above re-renders — without re-arming it
+        // callback, and the dispatch above re-renders — without re-arming it
         // the (dependency-free) driver would re-enter the still-'fortify' phase
         // and queue a SECOND handleNextPhase, ending the next player's turn too.
         aiBusyRef.current = true
@@ -5027,23 +5038,26 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     const currentPlayerId = gameStateRef.current.players[gameStateRef.current.currentPlayerIndex]?.id
     const currentPlayer2 = gameStateRef.current.players[gameStateRef.current.currentPlayerIndex]
     const factionId2 = currentPlayer2?.factionId ?? ''
-    setGameState(prev => {
-      const territories = { ...prev.territories }
-      const tgt = prev.territories[tgtId]
-      // Unoccupied expansion — the ONLY path where city/fortification entry losses apply
-      const cost = entryCostBreakdown(tgtId, tgt, factionId2, true)
-      // The World Capital's −5 entry cost is already folded into cost.total,
-      // like a city. A 0 here means the cost could not be paid, which the
-      // Advance panel and the AI both refuse upstream — leave the board alone
-      // rather than rounding the survivors up and refunding the cost.
-      const finalTroops = troopsAfterEntry(troops, cost)
-      if (finalTroops < 1) {
-        console.warn(`[Advance] ${troops} troops cannot pay the ${cost.total}-troop entry at ${tgtId} — move refused`)
-        return prev
-      }
-      territories[tgtId] = { ...territories[tgtId], occupyingPlayerId: currentPlayerId, troops: finalTroops }
-      territories[srcId] = { ...territories[srcId], troops: Math.max(1, territories[srcId].troops - troops) }
-      return { ...prev, territories }
+    // Unoccupied expansion — the ONLY path where city/fortification entry losses apply
+    const cost = entryCostBreakdown(tgtId, gameStateRef.current.territories[tgtId], factionId2, true)
+    // The World Capital's −5 entry cost is already folded into cost.total,
+    // like a city. Below 1 survivor the cost could not be paid, which the
+    // Advance panel and the AI both refuse upstream — leave the board alone
+    // rather than rounding the survivors up and refunding the cost.
+    if (troopsAfterEntry(troops, cost) < 1) {
+      console.warn(`[Advance] ${troops} troops cannot pay the ${cost.total}-troop entry at ${tgtId} — move refused`)
+      return
+    }
+    // Through the reducer, not a local board write. This used to be a bare
+    // setGameState — fine in hotseat, invisible online: the expansion existed
+    // only on the actor's screen, and since a turn-one attack phase is almost
+    // ALL walking into empty territories, most of early play never reached
+    // the server at all. `uncontested` keeps the no-card rule for empty land.
+    dispatch({
+      type: 'RESOLVE_COMBAT', srcId, tgtId, uncontested: true,
+      totalAtkLoss: 0, totalDefLoss: 0, captured: true, troopsToAdvance: troops,
+      entryCostTotal: cost.total, entryCostFalloutHalf: cost.falloutHalf,
+      defenderCloningBonus: 0,
     })
 
     // Uncontested advances count as expansions too — Balkania's Imperial

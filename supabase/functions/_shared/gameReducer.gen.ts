@@ -677,13 +677,15 @@ function clampCombatResolution(state, a) {
   const tgtTroops = tgt?.troops ?? 0;
   const totalAtkLoss = int(a.totalAtkLoss, 0, Math.max(0, srcTroops - 1));
   const totalDefLoss = int(a.totalDefLoss, 0, tgtTroops);
-  const captured = !!a.captured && totalDefLoss >= tgtTroops && tgtTroops > 0;
+  const uncontested = !!a.uncontested;
+  const captured = uncontested ? !!a.captured && !!tgt && tgtTroops === 0 && !tgt.occupyingPlayerId : !!a.captured && totalDefLoss >= tgtTroops && tgtTroops > 0;
   const survivors = srcTroops - totalAtkLoss;
   return {
     ...a,
-    totalAtkLoss,
-    totalDefLoss,
+    totalAtkLoss: uncontested ? 0 : totalAtkLoss,
+    totalDefLoss: uncontested ? 0 : totalDefLoss,
     captured,
+    uncontested,
     troopsToAdvance: captured ? int(a.troopsToAdvance, 1, Math.max(1, survivors - 1)) : 0,
     entryCostTotal: int(a.entryCostTotal, 0, 12),
     defenderCloningBonus: int(a.defenderCloningBonus, 0, 12)
@@ -726,7 +728,9 @@ function applyCombatOutcome(state, action) {
     if (preHqPlayerId && preHqPlayerId !== defenderId) {
       effects.push({ kind: "hq-captured", territoryId: action.tgtId, territoryName: tgt0.name, hqPlayerId: preHqPlayerId, byPlayerId: attackerId });
     }
-    effects.push({ kind: "territory-captured", territoryId: action.tgtId, fromPlayerId: defenderId, byPlayerId: attackerId, firstCaptureThisTurn: !state.turn.captured });
+    if (!action.uncontested) {
+      effects.push({ kind: "territory-captured", territoryId: action.tgtId, fromPlayerId: defenderId, byPlayerId: attackerId, firstCaptureThisTurn: !state.turn.captured });
+    }
     const eliminatedIds = players.filter((p) => !p.isEliminated && !Object.values(territories).some((t) => t.occupyingPlayerId === p.id)).map((p) => p.id);
     if (eliminatedIds.length > 0) {
       const capturedCards = players.filter((p) => eliminatedIds.includes(p.id)).flatMap((p) => p.cards);

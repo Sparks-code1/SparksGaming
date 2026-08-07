@@ -147,6 +147,14 @@ export type Action =
       entryCostFalloutHalf: boolean
       /** Extra defender troops from Mutant Unstable Cloning on a repelled attack (0 if N/A). */
       defenderCloningBonus: number
+      /**
+       * Walking into an UNOCCUPIED territory — no dice, no defender, losses 0.
+       * Same board mutation as a capture (occupy, advance, entry costs), but
+       * deliberately NO `territory-captured` effect: expanding into empty land
+       * earns no card, and this flag is what keeps that rule when the move
+       * travels through the reducer instead of a local board write.
+       */
+      uncontested?: boolean
     }
   /**
    * Declare an attack and let the RESOLVER roll it. The server-authoritative
@@ -627,6 +635,7 @@ export function clampCombatResolution(
     totalAtkLoss: number; totalDefLoss: number
     captured: boolean; troopsToAdvance: number
     entryCostTotal?: number; defenderCloningBonus?: number
+    uncontested?: boolean
   },
 ): typeof a {
   const int = (v: unknown, lo: number, hi: number) =>
@@ -638,13 +647,22 @@ export function clampCombatResolution(
   // The attacker must keep one troop home, so at most troops-1 can die.
   const totalAtkLoss = int(a.totalAtkLoss, 0, Math.max(0, srcTroops - 1))
   const totalDefLoss = int(a.totalDefLoss, 0, tgtTroops)
-  const captured = !!a.captured && totalDefLoss >= tgtTroops && tgtTroops > 0
+  // Two legal ways to take a territory, judged against the SERVER's board:
+  //   conquest  — every defender present died in the claimed fighting
+  //   expansion — the territory is genuinely empty (no troops, no owner);
+  //               claiming "uncontested" against a defended territory is the
+  //               same forgery as claiming a capture without the kills
+  const uncontested = !!a.uncontested
+  const captured = uncontested
+    ? !!a.captured && !!tgt && tgtTroops === 0 && !tgt.occupyingPlayerId
+    : !!a.captured && totalDefLoss >= tgtTroops && tgtTroops > 0
   const survivors = srcTroops - totalAtkLoss
   return {
     ...a,
-    totalAtkLoss,
-    totalDefLoss,
+    totalAtkLoss: uncontested ? 0 : totalAtkLoss,
+    totalDefLoss: uncontested ? 0 : totalDefLoss,
     captured,
+    uncontested,
     troopsToAdvance: captured ? int(a.troopsToAdvance, 1, Math.max(1, survivors - 1)) : 0,
     entryCostTotal: int(a.entryCostTotal, 0, 12),
     defenderCloningBonus: int(a.defenderCloningBonus, 0, 12),
@@ -670,6 +688,7 @@ function applyCombatOutcome(
     entryCostTotal: number
     entryCostFalloutHalf: boolean
     defenderCloningBonus: number
+    uncontested?: boolean
   },
 ): ReducerResult {
   const only = (s: GameState): ReducerResult => ({ state: s, effects: [] })
@@ -727,7 +746,12 @@ function applyCombatOutcome(
         if (preHqPlayerId && preHqPlayerId !== defenderId) {
           effects.push({ kind: 'hq-captured', territoryId: action.tgtId, territoryName: tgt0.name, hqPlayerId: preHqPlayerId, byPlayerId: attackerId })
         }
-        effects.push({ kind: 'territory-captured', territoryId: action.tgtId, fromPlayerId: defenderId, byPlayerId: attackerId, firstCaptureThisTurn: !state.turn.captured })
+        // An UNCONTESTED expansion is the same board mutation but not a
+        // conquest: no card is earned walking into empty land, so the effect
+        // that awards one is deliberately not emitted.
+        if (!action.uncontested) {
+          effects.push({ kind: 'territory-captured', territoryId: action.tgtId, fromPlayerId: defenderId, byPlayerId: attackerId, firstCaptureThisTurn: !state.turn.captured })
+        }
 
         // Elimination: any non-eliminated player who now holds 0 territories is
         // out. Mark them, wipe their hand, and transfer their cards to the
