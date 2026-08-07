@@ -65,6 +65,7 @@ import { useMatchSync } from '@/lib/useMatchSync'
 import { findActiveMatch, createOnlineMatch, endOnlineMatch, seatsFromGameState } from '@/lib/onlineMatch'
 import { startLobby } from '@/lib/lobby'
 import { supabase } from '@/lib/supabase'
+import { SerialQueue } from '@/lib/serialQueue'
 import LiveStatusBadge from './LiveStatusBadge'
 import { aiReinforcePlacements, aiAttackPlan, aiFortifyMove, aiTradeInDecision, rivalsOnMatchPoint, aiBonusTroopTarget } from '@/lib/ai'
 import { playVictory, playElimination, playCoin, playCity, playMilestone, playTroop, startAmbient, stopAmbient } from '@/lib/sounds'
@@ -301,51 +302,85 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
    *   dice it does not roll, so showing a guess and correcting it would mean
    *   animating one battle and then silently swapping in another.
    */
-  const dispatchOnlineRef = useRef(async (action: Action) => {
-    const match = onlineMatchRef.current
-    if (!match) { dispatchRef.current(action); return }
+  /**
+   * POSTs for one match run ONE AT A TIME, each reading the version its
+   * predecessor just wrote. Fired concurrently — as they were — a burst of
+   * placements all carried the same stale expectedVersion: the first landed,
+   * every other one bounced as a version conflict, and since the server only
+   * logs actions it APPLIES, the action log showed one placement per turn
+   * while the actor's screen showed eight troops.
+   */
+  const onlinePostQueue = useRef(new SerialQueue()).current
+  /** Actions queued or in flight — board echoes are skipped until the last. */
+  const onlinePostsPending = useRef(0)
 
+  const dispatchOnlineRef = useRef(async (action: Action) => {
+    if (!onlineMatchRef.current) { dispatchRef.current(action); return }
+    const matchId = onlineMatchRef.current.matchId
+
+    // Optimistic and SYNCHRONOUS — a dozen same-tick readers of gameStateRef
+    // depend on it. The server's answer replaces the board later.
     const predictable = action.type !== 'DECLARE_ATTACK'
     if (predictable) dispatchRef.current(action)
 
-    let result: Awaited<ReturnType<typeof dispatchAction>>
-    try {
-      result = await dispatchAction(gameStateRef.current, action, match)
-    } catch (e) {
-      // A THROW here once vanished into an unhandled rejection — every online
-      // battle died this way, silently, for days. Whatever throws from now on
-      // is shown, because an action that goes nowhere must never look like an
-      // action that landed.
-      console.error('[Online] dispatch threw for', action.type, e)
-      showWeaknessNoticeRef.current(`⚠ ${action.type} was not sent to the server: ${String(e)}`)
-      return
-    }
-    if (result.error) {
-      // The move did not land. Say so, and take the server's board rather than
-      // keeping an optimistic one it never accepted.
-      console.error('[Online] server refused', action.type, result.error.code, result.error.message)
-      showWeaknessNoticeRef.current(`⚠ ${result.error.message}`)
-      const authoritative = result.error.serverState
-      if (authoritative) {
-        gameStateRef.current = authoritative
-        setGameState(authoritative)
-        if (typeof result.error.serverVersion === 'number') {
-          onlineMatchRef.current = { matchId: match.matchId, version: result.error.serverVersion }
-          setOnlineMatch(onlineMatchRef.current)
+    onlinePostsPending.current++
+    await onlinePostQueue.run(matchId, async () => {
+      try {
+        // Read the match FRESH inside the queue: the previous task updated the
+        // version, and sending anything older is asking for a conflict.
+        const match = onlineMatchRef.current
+        if (!match || match.matchId !== matchId) return
+
+        // Replacing the board with a response that predates still-queued
+        // actions would erase their optimistic applies and snap the troop
+        // count around; only the LAST response settles the board. Versions and
+        // effects are taken from every response either way.
+        const isLast = () => onlinePostsPending.current === 1
+
+        let result: Awaited<ReturnType<typeof dispatchAction>>
+        try {
+          result = await dispatchAction(gameStateRef.current, action, match)
+        } catch (e) {
+          // A THROW here once vanished into an unhandled rejection — every
+          // online battle died this way, silently, for days. Whatever throws
+          // from now on is shown, because an action that goes nowhere must
+          // never look like an action that landed.
+          console.error('[Online] dispatch threw for', action.type, e)
+          showWeaknessNoticeRef.current(`⚠ ${action.type} was not sent to the server: ${String(e)}`)
+          return
         }
+        if (result.error) {
+          // The move did not land. Say so, and take the server's board rather
+          // than keeping an optimistic one it never accepted.
+          console.error('[Online] server refused', action.type, result.error.code, result.error.message)
+          showWeaknessNoticeRef.current(`⚠ ${result.error.message}`)
+          if (typeof result.error.serverVersion === 'number') {
+            onlineMatchRef.current = { matchId, version: result.error.serverVersion }
+            setOnlineMatch(onlineMatchRef.current)
+          }
+          const authoritative = result.error.serverState
+          if (authoritative && isLast()) {
+            gameStateRef.current = authoritative
+            setGameState(authoritative)
+          }
+          return
+        }
+        if (typeof result.version === 'number') {
+          onlineMatchRef.current = { matchId, version: result.version }
+          setOnlineMatch(onlineMatchRef.current)
+          matchSyncRef.current?.noteApplied(result.version)
+        }
+        if (isLast()) {
+          gameStateRef.current = result.state
+          setGameState(result.state)
+        }
+        // Effects from the server describe what actually happened — including
+        // the dice it rolled — so they are interpreted exactly like local ones.
+        for (const e of result.effects) applyEffectRef.current(e)
+      } finally {
+        onlinePostsPending.current--
       }
-      return
-    }
-    gameStateRef.current = result.state
-    setGameState(result.state)
-    if (typeof result.version === 'number') {
-      onlineMatchRef.current = { matchId: match.matchId, version: result.version }
-      setOnlineMatch(onlineMatchRef.current)
-      matchSyncRef.current?.noteApplied(result.version)
-    }
-    // Effects from the server describe what actually happened — including the
-    // dice it rolled — so they are interpreted exactly like local ones.
-    for (const e of result.effects) applyEffectRef.current(e)
+    })
   })
 
   /**
