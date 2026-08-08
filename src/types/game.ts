@@ -154,8 +154,51 @@ export interface GameState {
    */
   cards?: ServerCardPiles | null
 
+  /**
+   * The battle currently being fought between two humans online — offer,
+   * auto-resolve consent, and each side's raw dice. Absent in hotseat and in
+   * AI battles. Cleared by RESOLVE_COMBAT / RETREAT / END_TURN.
+   */
+  combat?: ActiveCombat | null
+
   createdAt: string
   updatedAt: string
+}
+
+/**
+ * A battle in progress between two HUMANS in an online match — shared state,
+ * so the defender's machine can participate and every other screen can watch.
+ *
+ * The dice here are RAW rolls, posted by the machine that owns each side.
+ * Modifiers and losses are still computed by the attacker's machine (the
+ * interim trust model RESOLVE_COMBAT already lives with); what this adds is
+ * that the defender's dice are genuinely the defender's, the auto-resolve
+ * needs BOTH players' consent, and the whole exchange rides match state —
+ * which every client syncs by poll — instead of best-effort broadcasts.
+ */
+export interface ActiveCombat {
+  /** Unique per battle; stale-keyed posts are refused. */
+  key: string
+  srcId: string
+  tgtId: string
+  attackerId: string
+  defenderId: string
+  /** The attacker asked to auto-resolve the whole battle. */
+  autoProposed: boolean
+  /** The defender's answer: null = still deciding, false forces manual dice. */
+  defenderAuto: boolean | null
+  /** Most defense dice the defender may roll (bonus caps included) — computed
+   *  by the attacker's machine, which already knows the modifier stack. */
+  defDiceMax: number
+  /** 1-based round counter; dice slots clear when the round advances. */
+  round: number
+  /** This round's raw attacker dice, posted the moment the attacker rolls —
+   *  they never wait for the defender. */
+  atkDice: number[] | null
+  defDice: number[] | null
+  /** 'attacker-idle' marks a defense roll the attacker's machine made after
+   *  the defender sat idle too long — visible in the log, honest at the table. */
+  defDiceBy?: 'defender' | 'attacker-idle'
 }
 
 /** The shared card piles an online match's server state owns. */

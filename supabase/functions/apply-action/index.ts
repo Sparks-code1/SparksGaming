@@ -118,6 +118,16 @@ const SERVER_ACTIONS = new Set([
   // refuses it outright once `state.cards` is present, so it can only ever
   // fire once per match.
   'SEED_CARD_PILES',
+  // Interactive combat between two humans: the session (offer, auto-consent,
+  // per-round raw dice) is match state so the DEFENDER participates from
+  // their own machine and everyone else watches state, not broadcasts. The
+  // defender-side actions carry their own authorization branch below.
+  'COMBAT_OFFER',
+  'COMBAT_PROPOSE_AUTO',
+  'COMBAT_DEFENSE_CHOICE',
+  'POST_COMBAT_DICE',
+  'COMBAT_NEXT_ROUND',
+  'CLEAR_COMBAT',
 ])
 
 /** Deterministic per-action seed: fold the match's base seed with the action
@@ -271,6 +281,22 @@ Deno.serve(async (req: Request) => {
         'not-a-spectator': 'players in the battle use their own missile phase',
       }
       return json({ error: words[refusal] ?? refusal, code: refusal }, 409)
+    }
+  } else if (
+    action.type === 'COMBAT_DEFENSE_CHOICE'
+    || (action.type === 'POST_COMBAT_DICE' && (action as { side?: string }).side === 'def')
+  ) {
+    // The DEFENDER's half of an interactive battle — legitimately sent while
+    // it is the ATTACKER's turn. The caller must hold the defending seat,
+    // except for the idle fallback: after the defender has sat on a roll too
+    // long, the attacker's machine may roll for them, marked as such.
+    const combat = state?.combat
+    if (!combat) return json({ error: 'no battle in progress', code: 'action-not-allowed' }, 409)
+    const idleRoll = action.type === 'POST_COMBAT_DICE'
+      && (action as { by?: string }).by === 'attacker-idle'
+      && mySlot.player_id === combat.attackerId
+    if (!idleRoll && mySlot.player_id !== combat.defenderId) {
+      return json({ error: 'only the defender answers for the defense', code: 'wrong-player' }, 403)
     }
   } else if (action.type === 'APPLY_EVENT_TROOPS' || action.type === 'SEED_CARD_PILES') {
     // APPLY_EVENT_TROOPS: event rewards belong to a player the BOARD picked

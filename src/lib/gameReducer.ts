@@ -25,7 +25,7 @@
  * next, one verified stage at a time.
  */
 
-import { initialTurnState, type GameState, type ServerCardPiles } from '@/types/game'
+import { initialTurnState, type ActiveCombat, type GameState, type ServerCardPiles } from '@/types/game'
 import type { Territory } from '@/types/territory'
 import { applyCustomSeaLines, applyHqReserveTroops, continentsHeldInFull, injectAlienIslandTerritory, legalJoinWarTerritoryIds, troopsAfterEntry } from '@/lib/gameLogic'
 
@@ -224,6 +224,24 @@ export type Action =
    * the first seed through the version guard wins.
    */
   | { type: 'SEED_CARD_PILES'; cards: ServerCardPiles; hands: Record<string, string[]> }
+  /**
+   * INTERACTIVE ONLINE COMBAT — a battle between two humans becomes shared
+   * state so the defender participates and everyone else can watch.
+   *
+   * COMBAT_OFFER opens the session (attacker's machine, on the battle modal).
+   * COMBAT_PROPOSE_AUTO asks to auto-resolve; COMBAT_DEFENSE_CHOICE is the
+   * defender's answer — auto only happens when BOTH said yes, either side
+   * preferring dice forces a manual battle. POST_COMBAT_DICE carries one
+   * side's RAW roll for the current round (the attacker posts theirs without
+   * waiting); COMBAT_NEXT_ROUND clears the slots for the next roll.
+   * RESOLVE_COMBAT / RETREAT / END_TURN all close the session.
+   */
+  | { type: 'COMBAT_OFFER'; key: string; srcId: string; tgtId: string; attackerId: string; defenderId: string; defDiceMax: number }
+  | { type: 'COMBAT_PROPOSE_AUTO'; key: string }
+  | { type: 'COMBAT_DEFENSE_CHOICE'; key: string; accept: boolean }
+  | { type: 'POST_COMBAT_DICE'; key: string; round: number; side: 'atk' | 'def'; dice: number[]; by?: 'defender' | 'attacker-idle' }
+  | { type: 'COMBAT_NEXT_ROUND'; key: string; round: number }
+  | { type: 'CLEAR_COMBAT' }
   /**
    * Move troops between two owned territories during fortify. `troopsRemoved`
    * leaves the source; `troopsArriving` reaches the destination (they differ
@@ -661,8 +679,9 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
       return applyCombatOutcome(state, action)
 
     case 'RETREAT':
-      // No GameState change — the attacker simply stops. Selection/modal state
-      // is component-owned UI today.
+      // The attacker stops. The only shared state a retreat touches is an
+      // open interactive-combat session, which closes with the battle.
+      if (state.combat) return only({ ...state, combat: null })
       return only(state)
 
     case 'OPEN_COMBAT_WINDOW': {
@@ -921,6 +940,71 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
       })
     }
 
+    case 'COMBAT_OFFER': {
+      // A fresh session, judged against the board: the attacker must own the
+      // source, the named defender must hold the target, and both must be
+      // real players. A stale session from an abandoned battle is replaced.
+      const src = state.territories[action.srcId]
+      const tgt = state.territories[action.tgtId]
+      if (!src || !tgt) return only(state)
+      if (src.occupyingPlayerId !== action.attackerId) return only(state)
+      if (tgt.occupyingPlayerId !== action.defenderId) return only(state)
+      if (action.attackerId === action.defenderId) return only(state)
+      const combat: ActiveCombat = {
+        key: String(action.key).slice(0, 80),
+        srcId: action.srcId, tgtId: action.tgtId,
+        attackerId: action.attackerId, defenderId: action.defenderId,
+        defDiceMax: typeof action.defDiceMax === 'number' && Number.isFinite(action.defDiceMax)
+          ? Math.max(1, Math.min(3, Math.trunc(action.defDiceMax))) : 2,
+        autoProposed: false, defenderAuto: null,
+        round: 1, atkDice: null, defDice: null,
+      }
+      return only({ ...state, combat })
+    }
+
+    case 'COMBAT_PROPOSE_AUTO': {
+      const c = state.combat
+      if (!c || c.key !== action.key) return only(state)
+      return only({ ...state, combat: { ...c, autoProposed: true } })
+    }
+
+    case 'COMBAT_DEFENSE_CHOICE': {
+      const c = state.combat
+      if (!c || c.key !== action.key) return only(state)
+      if (c.defenderAuto !== null) return only(state)   // one answer per battle
+      return only({ ...state, combat: { ...c, defenderAuto: !!action.accept } })
+    }
+
+    case 'POST_COMBAT_DICE': {
+      const c = state.combat
+      if (!c || c.key !== action.key || c.round !== action.round) return only(state)
+      if (!Array.isArray(action.dice) || action.dice.length === 0) return only(state)
+      const dice = action.dice.slice(0, 3).map(d =>
+        typeof d === 'number' && Number.isFinite(d) ? Math.max(1, Math.min(6, Math.trunc(d))) : 1)
+      if (action.side === 'atk') {
+        if (c.atkDice) return only(state)               // this round's roll stands
+        return only({ ...state, combat: { ...c, atkDice: dice } })
+      }
+      if (c.defDice) return only(state)
+      return only({
+        ...state,
+        combat: { ...c, defDice: dice, defDiceBy: action.by === 'attacker-idle' ? 'attacker-idle' : 'defender' },
+      })
+    }
+
+    case 'COMBAT_NEXT_ROUND': {
+      const c = state.combat
+      if (!c || c.key !== action.key || c.round !== action.round) return only(state)
+      return only({
+        ...state,
+        combat: { ...c, round: c.round + 1, atkDice: null, defDice: null, defDiceBy: undefined },
+      })
+    }
+
+    case 'CLEAR_COMBAT':
+      if (!state.combat) return only(state)
+      return only({ ...state, combat: null })
+
     case 'SEED_CARD_PILES': {
       // Only a match that PREDATES the card piles may be seeded — on any other
       // board this is a no-op, which is what makes racing seeds harmless.
@@ -1047,8 +1131,9 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
               nextPlayerId, reserve.territories,
             ).length,
           },
-          // A window cannot outlive the turn that opened it.
+          // Neither a missile window nor a battle session outlives the turn.
           combatWindow: null,
+          combat: null,
         },
         effects: reserve.grantedTerritoryIds.length > 0
           ? [{ kind: 'hq-reserve', playerId: nextPlayerId, territoryIds: reserve.grantedTerritoryIds }]
@@ -1393,8 +1478,8 @@ function applyCombatOutcome(
         }
       }
 
-      // The battle has resolved — any missile window for it is over.
-      return { state: { ...state, territories, players, turn, combatWindow: null }, effects }
+      // The battle has resolved — its session and any missile window are over.
+      return { state: { ...state, territories, players, turn, combatWindow: null, combat: null }, effects }
 }
 
 // ─── Combat engine (pure) ─────────────────────────────────────────────────────

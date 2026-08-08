@@ -3,11 +3,12 @@ import type { Territory } from '@/types/territory'
 import type { Player } from '@/types/player'
 import { playDice } from '@/lib/sounds'
 import { resolveCombat, createMathRng, singleDieDelta, singleDieBonus, defenderDieSteps, type CombatModifiers, type CombatOutcome, type CombatRoundLog } from '@/lib/gameReducer'
+import type { ActiveCombat } from '@/types/game'
 import { troopsAfterEntry, minTroopsToEnter, type EntryCost } from '@/lib/gameLogic'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type Phase = 'setup' | 'rolling' | 'modifiers' | 'missile-phase' | 'spectator-window' | 'results' | 'auto-animating' | 'auto-results'
+type Phase = 'setup' | 'awaiting-consent' | 'waiting-defense' | 'rolling' | 'modifiers' | 'missile-phase' | 'spectator-window' | 'results' | 'auto-animating' | 'auto-results'
 
 /** One animated die-modifier application (Bunker, Ammo Shortage, Bear Trap…) */
 interface ModStep {
@@ -141,6 +142,20 @@ interface Props {
     open: (dice: { atk: number[]; def: number[] }) => string
     peekFlips: (roundKey: string) => Array<{ side: 'atk' | 'def'; dieIndex: number; playerName: string }>
     close: (roundKey: string) => Promise<Array<{ side: 'atk' | 'def'; dieIndex: number }>>
+  }
+  /**
+   * Online battle against a HUMAN defender: the fight is a shared session.
+   * Auto-resolve needs the defender's consent; manual rounds use the RAW dice
+   * the defender's own machine posts (the attacker never waits to roll their
+   * own). Absent for hotseat and any battle involving an AI.
+   */
+  interactiveDefense?: {
+    offer: (defDiceMax: number) => string
+    getCombat: () => ActiveCombat | null
+    proposeAuto: () => void
+    postDice: (round: number, side: 'atk' | 'def', dice: number[], by?: 'attacker-idle') => void
+    nextRound: (round: number) => void
+    defenderName: string
   }
   onClose: () => void
   onApplyResult: (r: CombatResolution) => void
@@ -391,6 +406,7 @@ export default function AttackModal({
   autoPlayFast = false,
   resolveAuto,
   spectatorWindow,
+  interactiveDefense,
   onClose,
   onApplyResult,
 }: Props) {
@@ -500,6 +516,12 @@ export default function AttackModal({
     roundHistoryRef.current.push({ atkDice: [...fa], defDice: [...fd], aLoss: r.aLoss, dLoss: r.dLoss })
     if (markResolved) resolvedRef.current = true
     if (fd.length >= 2 && fd.every(d => d === 6)) onDefenseDoubleMax?.()
+    // Interactive battles: clear the session's dice slots so a next round can
+    // be rolled by either side.
+    if (interactiveDefense) {
+      const c = interactiveDefense.getCombat()
+      if (c) interactiveDefense.nextRound(c.round)
+    }
     setPhase('results')
   }
 
@@ -546,6 +568,61 @@ export default function AttackModal({
     return () => clearInterval(t)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase])
+
+  // ── Interactive defense (online human-vs-human) ───────────────────────────
+  /** Dice already rolled elsewhere (the attacker's early roll, the defender's
+   *  posted roll) that the next 'rolling' pass must USE instead of rolling. */
+  const providedRollRef = useRef<{ atk: number[] | null; def: number[] | null }>({ atk: null, def: null })
+  const [defenseWaitSeconds, setDefenseWaitSeconds] = useState(0)
+  const [manualForced, setManualForced] = useState(false)
+  const offeredRef = useRef(false)
+
+  // Open the shared session the moment the battle modal opens, so the
+  // defender's machine can already see who is attacking what.
+  useEffect(() => {
+    if (!interactiveDefense || autoPlay || offeredRef.current) return
+    offeredRef.current = true
+    interactiveDefense.offer(maxDefDice)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [interactiveDefense, autoPlay])
+
+  // Awaiting the defender's answer to "auto-resolve?".
+  useEffect(() => {
+    if (phase !== 'awaiting-consent' || !interactiveDefense) return
+    const t = setInterval(() => {
+      const c = interactiveDefense.getCombat()
+      if (!c) return
+      if (c.defenderAuto === true) { clearInterval(t); doAutoResolve() }
+      else if (c.defenderAuto === false) {
+        clearInterval(t)
+        setManualForced(true)
+        setPhase('setup')
+      }
+    }, 300)
+    return () => clearInterval(t)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, interactiveDefense])
+
+  // Waiting for the defender's dice. The attacker has already rolled and
+  // posted; the round continues the instant the defense lands. After a long
+  // idle the attacker may roll for them — marked as such in the session.
+  useEffect(() => {
+    if (phase !== 'waiting-defense' || !interactiveDefense) return
+    const started = Date.now()
+    const t = setInterval(() => {
+      setDefenseWaitSeconds(Math.floor((Date.now() - started) / 1000))
+      const c = interactiveDefense.getCombat()
+      if (c?.defDice) {
+        clearInterval(t)
+        providedRollRef.current.def = [...c.defDice]
+        setAnimAtk(providedRollRef.current.atk ?? [])
+        setAnimDef(c.defDice)
+        setPhase('rolling')
+      }
+    }, 300)
+    return () => clearInterval(t)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, interactiveDefense])
 
   // Live flips: show a die turning to 6 the moment the server confirms it.
   useEffect(() => {
@@ -603,8 +680,12 @@ export default function AttackModal({
     resolvedRef.current = false
     maxAtkDiceUsedRef.current = Math.max(maxAtkDiceUsedRef.current, safeAtkDice)
 
-    const rawAtk = rollN(safeAtkDice, attackerRerollOnes)
-    const rawDef = rollN(maxDefDice).sort((a, b) => b - a)
+    // Interactive defense provides both rolls (the attacker's early one and
+    // the defender's posted one); everything else rolls here as always.
+    const provided = providedRollRef.current
+    providedRollRef.current = { atk: null, def: null }
+    const rawAtk = provided.atk ?? rollN(safeAtkDice, attackerRerollOnes)
+    const rawDef = (provided.def ? [...provided.def] : rollN(maxDefDice)).sort((a, b) => b - a)
     // Natural doubles counted before any bonuses (Mutant Unstable Cloning)
     if (hasDoubles(rawDef)) defDoublesRef.current += 1
     roundsFoughtRef.current += 1
@@ -717,6 +798,21 @@ export default function AttackModal({
   }, [phase, autoAnimIdx, autoResult, autoPlay, autoPlayFast])
 
   function handleAutoResolve() {
+    // Against a human defender, auto-resolve is an OFFER, not a decision —
+    // both players must want it. A declined offer forces dice.
+    if (interactiveDefense && !autoPlay) {
+      const c = interactiveDefense.getCombat()
+      if (c?.defenderAuto !== true) {
+        if (c?.defenderAuto === false) { setManualForced(true); return }
+        interactiveDefense.proposeAuto()
+        setPhase('awaiting-consent')
+        return
+      }
+    }
+    doAutoResolve()
+  }
+
+  function doAutoResolve() {
     playDice()
     const mods: CombatModifiers = {
       attackerMaxDiceOverride,
@@ -809,6 +905,27 @@ export default function AttackModal({
     setRoundResult(null)
     setAtkDice([])
     setDefDice([])
+    // Against a human defender the attacker rolls NOW — their dice post to
+    // the shared session immediately — and the round resolves whenever the
+    // defense lands. Nobody's roll waits on anybody's click.
+    if (interactiveDefense && !autoPlay) {
+      const c = interactiveDefense.getCombat()
+      const myAtk = rollN(safeAtkDice, attackerRerollOnes)
+      providedRollRef.current.atk = myAtk
+      if (c && !c.atkDice) interactiveDefense.postDice(c.round, 'atk', myAtk)
+      setAnimAtk(myAtk)
+      const def = interactiveDefense.getCombat()?.defDice ?? null
+      if (def) {
+        providedRollRef.current.def = [...def]
+        setAnimDef(def)
+        setPhase('rolling')
+      } else {
+        setDefenseWaitSeconds(0)
+        setAnimDef([])
+        setPhase('waiting-defense')
+      }
+      return
+    }
     setAnimAtk(rollN(safeAtkDice))
     setAnimDef(rollN(maxDefDice))
     setPhase('rolling')
@@ -1070,9 +1187,16 @@ export default function AttackModal({
               </div>
             )}
 
+            {manualForced && (
+              <div style={{ fontSize: 11, color: '#F1C40F', textAlign: 'center', marginBottom: 8 }}>
+                🎲 {interactiveDefense?.defenderName ?? 'The defender'} wants to roll — this battle is fought with dice.
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 10 }}>
               <button onClick={onClose} style={btnStyle('ghost')}>Cancel</button>
-              <button onClick={handleAutoResolve} style={btnStyle('secondary')}>⚡ Auto Resolve</button>
+              {!manualForced && (
+                <button onClick={handleAutoResolve} style={btnStyle('secondary')}>⚡ Auto Resolve</button>
+              )}
               <button onClick={handleRoll} style={btnStyle('primary')}>⚔ Roll Dice</button>
             </div>
           </>
@@ -1240,8 +1364,23 @@ export default function AttackModal({
           )
         })()}
 
+        {/* ── Awaiting the defender's consent to auto-resolve ── */}
+        {phase === 'awaiting-consent' && (
+          <div style={{ textAlign: 'center', margin: '18px 0' }}>
+            <div style={{ fontSize: 14, color: '#F1C40F', fontWeight: 'bold', letterSpacing: 1, marginBottom: 8 }}>
+              ⏳ AUTO-RESOLVE OFFERED
+            </div>
+            <div style={{ fontSize: 12, color: '#a09070', marginBottom: 14 }}>
+              Waiting for {interactiveDefense?.defenderName ?? 'the defender'} to accept — declining means dice.
+            </div>
+            <button onClick={() => setPhase('setup')} style={btnStyle('secondary')}>
+              Never mind — roll dice instead
+            </button>
+          </div>
+        )}
+
         {/* ── Rolling / Modifiers / Missile-phase / Spectator-window / Results ── */}
-        {(phase === 'rolling' || phase === 'modifiers' || phase === 'missile-phase' || phase === 'spectator-window' || phase === 'results') && (
+        {(phase === 'waiting-defense' || phase === 'rolling' || phase === 'modifiers' || phase === 'missile-phase' || phase === 'spectator-window' || phase === 'results') && (
           <>
             {/* Dice arena */}
             <div
@@ -1256,7 +1395,7 @@ export default function AttackModal({
                   ATTACKER
                 </div>
                 <div style={{ display: 'flex', gap: 7, justifyContent: 'center' }}>
-                  {(phase === 'rolling' || phase === 'modifiers' ? animAtk : phase === 'missile-phase' ? pendingAtkDice : atkDice).map((v, i) => {
+                  {(phase === 'rolling' || phase === 'modifiers' || phase === 'waiting-defense' ? animAtk : phase === 'missile-phase' ? pendingAtkDice : atkDice).map((v, i) => {
                     const won  = phase === 'results' && i < pairWinners.length && pairWinners[i] === 'atk'
                     const lost = phase === 'results' && i < pairWinners.length && pairWinners[i] === 'def'
                     const modFlash = phase === 'modifiers' && flashInfo?.side === 'atk' && flashInfo.indices.has(i)
@@ -1304,7 +1443,7 @@ export default function AttackModal({
                   DEFENDER
                 </div>
                 <div style={{ display: 'flex', gap: 7, justifyContent: 'center' }}>
-                  {(phase === 'rolling' || phase === 'modifiers' ? animDef : phase === 'missile-phase' ? pendingDefDice : defDice).map((v, i) => {
+                  {(phase === 'rolling' || phase === 'modifiers' || phase === 'waiting-defense' ? animDef : phase === 'missile-phase' ? pendingDefDice : defDice).map((v, i) => {
                     const won  = phase === 'results' && i < pairWinners.length && pairWinners[i] === 'def'
                     const lost = phase === 'results' && i < pairWinners.length && pairWinners[i] === 'atk'
                     const modFlash = phase === 'modifiers' && flashInfo?.side === 'def' && flashInfo.indices.has(i)
@@ -1384,6 +1523,31 @@ export default function AttackModal({
                 <button onClick={resolveMissilePhase} style={btnStyle('primary')}>
                   ⚔ Resolve Battle
                 </button>
+              </div>
+            )}
+
+            {/* ── Waiting for the defender's own dice ── */}
+            {phase === 'waiting-defense' && (
+              <div style={{ textAlign: 'center', marginBottom: 14 }}>
+                <div style={{ fontSize: 13, color: '#7fb3d3', fontWeight: 'bold', letterSpacing: 1, marginBottom: 6 }}>
+                  🎲 YOUR DICE ARE IN — {interactiveDefense?.defenderName ?? 'the defender'} rolls the defense
+                </div>
+                <div style={{ fontSize: 11, color: '#a09070', marginBottom: 8 }}>
+                  waiting {defenseWaitSeconds}s…
+                </div>
+                {defenseWaitSeconds >= 20 && (
+                  <button
+                    onClick={() => {
+                      const c = interactiveDefense?.getCombat()
+                      if (!c || c.defDice) return
+                      // Marked in the session as an idle roll — honest at the table.
+                      interactiveDefense!.postDice(c.round, 'def', rollN(maxDefDice), 'attacker-idle')
+                    }}
+                    style={btnStyle('secondary')}
+                  >
+                    🎲 Defender idle — roll for them
+                  </button>
+                )}
               </div>
             )}
 

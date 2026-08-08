@@ -696,6 +696,7 @@ function gameReducer(state, action, rng) {
     case "RESOLVE_COMBAT":
       return applyCombatOutcome(state, action);
     case "RETREAT":
+      if (state.combat) return only({ ...state, combat: null });
       return only(state);
     case "OPEN_COMBAT_WINDOW": {
       const die = (v) => typeof v === "number" && Number.isFinite(v) ? Math.max(1, Math.min(6, Math.trunc(v))) : 1;
@@ -914,6 +915,65 @@ function gameReducer(state, action, rng) {
         }
       });
     }
+    case "COMBAT_OFFER": {
+      const src = state.territories[action.srcId];
+      const tgt = state.territories[action.tgtId];
+      if (!src || !tgt) return only(state);
+      if (src.occupyingPlayerId !== action.attackerId) return only(state);
+      if (tgt.occupyingPlayerId !== action.defenderId) return only(state);
+      if (action.attackerId === action.defenderId) return only(state);
+      const combat = {
+        key: String(action.key).slice(0, 80),
+        srcId: action.srcId,
+        tgtId: action.tgtId,
+        attackerId: action.attackerId,
+        defenderId: action.defenderId,
+        defDiceMax: typeof action.defDiceMax === "number" && Number.isFinite(action.defDiceMax) ? Math.max(1, Math.min(3, Math.trunc(action.defDiceMax))) : 2,
+        autoProposed: false,
+        defenderAuto: null,
+        round: 1,
+        atkDice: null,
+        defDice: null
+      };
+      return only({ ...state, combat });
+    }
+    case "COMBAT_PROPOSE_AUTO": {
+      const c = state.combat;
+      if (!c || c.key !== action.key) return only(state);
+      return only({ ...state, combat: { ...c, autoProposed: true } });
+    }
+    case "COMBAT_DEFENSE_CHOICE": {
+      const c = state.combat;
+      if (!c || c.key !== action.key) return only(state);
+      if (c.defenderAuto !== null) return only(state);
+      return only({ ...state, combat: { ...c, defenderAuto: !!action.accept } });
+    }
+    case "POST_COMBAT_DICE": {
+      const c = state.combat;
+      if (!c || c.key !== action.key || c.round !== action.round) return only(state);
+      if (!Array.isArray(action.dice) || action.dice.length === 0) return only(state);
+      const dice = action.dice.slice(0, 3).map((d) => typeof d === "number" && Number.isFinite(d) ? Math.max(1, Math.min(6, Math.trunc(d))) : 1);
+      if (action.side === "atk") {
+        if (c.atkDice) return only(state);
+        return only({ ...state, combat: { ...c, atkDice: dice } });
+      }
+      if (c.defDice) return only(state);
+      return only({
+        ...state,
+        combat: { ...c, defDice: dice, defDiceBy: action.by === "attacker-idle" ? "attacker-idle" : "defender" }
+      });
+    }
+    case "COMBAT_NEXT_ROUND": {
+      const c = state.combat;
+      if (!c || c.key !== action.key || c.round !== action.round) return only(state);
+      return only({
+        ...state,
+        combat: { ...c, round: c.round + 1, atkDice: null, defDice: null, defDiceBy: void 0 }
+      });
+    }
+    case "CLEAR_COMBAT":
+      if (!state.combat) return only(state);
+      return only({ ...state, combat: null });
     case "SEED_CARD_PILES": {
       if (state.cards) return only(state);
       const c = action.cards;
@@ -1011,8 +1071,9 @@ function gameReducer(state, action, rng) {
               reserve.territories
             ).length
           },
-          // A window cannot outlive the turn that opened it.
-          combatWindow: null
+          // Neither a missile window nor a battle session outlives the turn.
+          combatWindow: null,
+          combat: null
         },
         effects: reserve.grantedTerritoryIds.length > 0 ? [{ kind: "hq-reserve", playerId: nextPlayerId, territoryIds: reserve.grantedTerritoryIds }] : []
       };
@@ -1174,7 +1235,7 @@ function applyCombatOutcome(state, action) {
       } : {}
     };
   }
-  return { state: { ...state, territories, players, turn, combatWindow: null }, effects };
+  return { state: { ...state, territories, players, turn, combatWindow: null, combat: null }, effects };
 }
 function singleDieDelta(part) {
   const { highest, lowest } = part;

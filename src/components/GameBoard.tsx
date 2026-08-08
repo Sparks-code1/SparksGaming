@@ -68,6 +68,7 @@ import { supabase } from '@/lib/supabase'
 import { SerialQueue } from '@/lib/serialQueue'
 import LiveStatusBadge from './LiveStatusBadge'
 import SpectatorCombatOverlay, { SpectatorLiveRound, type LiveRoundView } from './SpectatorCombatOverlay'
+import DefenderBattlePrompt from './DefenderBattlePrompt'
 import { buildSpectatorReport, spectatorDisplayMs, type SpectatorCombatReport } from '@/lib/spectatorCombat'
 import { aiReinforcePlacements, aiAttackPlan, aiFortifyMove, aiTradeInDecision, rivalsOnMatchPoint, aiBonusTroopTarget } from '@/lib/ai'
 import { playVictory, playElimination, playCoin, playCity, playMilestone, playTroop, startAmbient, stopAmbient } from '@/lib/sounds'
@@ -424,6 +425,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     'APPLY_EVENT_TROOPS',   // event rewards belong to board-picked players
     'JOIN_WAR', 'FORFEIT_WAR', // the hand-off machine drives the offer
     'SEED_CARD_PILES',      // the retro-fit fires whenever the host notices
+    // The defender's half of an interactive battle happens during the
+    // ATTACKER's turn by definition; the edge validates the defending seat.
+    'COMBAT_DEFENSE_CHOICE',
+    'POST_COMBAT_DICE',
   ])
   const dispatch = (action: Action) => {
     // ── The turn gate ──────────────────────────────────────────────────────
@@ -868,6 +873,40 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       dispatch({ type: 'CLOSE_COMBAT_WINDOW', roundKey: key })
       spectatorFlipsRef.current = null
       return flips.map(f => ({ side: f.side, dieIndex: f.dieIndex }))
+    },
+  })
+
+  // ── Interactive defense (online human-vs-human battles) ──────────────────
+  // The api the AttackModal drives; every call is a reducer dispatch, so the
+  // whole exchange rides match state and both machines see the same battle.
+  const combatKeyRef = useRef<string | null>(null)
+  const interactiveDefenseApiRef = useRef({
+    offer: (defDiceMax: number) => {
+      const srcId = attackSrcRef.current ?? '', tgtId = attackTgtRef.current ?? ''
+      const st = gameStateRef.current
+      const attackerId = st.territories[srcId]?.occupyingPlayerId ?? ''
+      const defenderId = st.territories[tgtId]?.occupyingPlayerId ?? ''
+      const key = `${srcId}>${tgtId}@${st.turnNumber}.${Date.now() % 1000000}`
+      combatKeyRef.current = key
+      dispatch({ type: 'COMBAT_OFFER', key, srcId, tgtId, attackerId, defenderId, defDiceMax })
+      return key
+    },
+    getCombat: () => {
+      const c = gameStateRef.current.combat
+      return c && c.key === combatKeyRef.current ? c : null
+    },
+    proposeAuto: () => {
+      if (combatKeyRef.current) dispatch({ type: 'COMBAT_PROPOSE_AUTO', key: combatKeyRef.current })
+    },
+    postDice: (round: number, side: 'atk' | 'def', dice: number[], by?: 'attacker-idle') => {
+      if (combatKeyRef.current) dispatch({ type: 'POST_COMBAT_DICE', key: combatKeyRef.current, round, side, dice, by })
+    },
+    nextRound: (round: number) => {
+      if (combatKeyRef.current) dispatch({ type: 'COMBAT_NEXT_ROUND', key: combatKeyRef.current, round })
+    },
+    clear: () => {
+      combatKeyRef.current = null
+      if (gameStateRef.current.combat) dispatch({ type: 'CLEAR_COMBAT' })
     },
   })
 
@@ -5277,6 +5316,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     setShowCombat(false)
     setAttackTgtId(null)
     attackTgtRef.current = null
+    // A battle abandoned from setup leaves its session open — close it so the
+    // defender's prompt doesn't sit on their screen forever. After a real
+    // resolution this is a no-op (RESOLVE_COMBAT already cleared it).
+    interactiveDefenseApiRef.current.clear()
   }
 
   // ── Advance confirm (uncontested capture) ────────────────────────────────
@@ -5996,6 +6039,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       // interpreter to spectating: sounds and refs, no card-draw modals and no
       // duplicate history writes for a player this machine does not control.
       onAction: (action, effects) => {
+        // Breadcrumb for "the dice aren't showing": if this line never prints
+        // on a spectator machine, delivery is the broken link; if it prints
+        // and nothing shows, the display path is.
+        console.info(`[Spectate] action ${action.type} arrived (${effects.length} effects)`)
         // A round holding still for missiles: show it live, button and all.
         if (action.type === 'OPEN_COMBAT_WINDOW') {
           liveBattleSeenRef.current = { srcId: action.srcId, tgtId: action.tgtId }
@@ -6036,8 +6083,49 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         onRetry={() => { void matchSync?.resync() }}
         expectedOnline={playOnline || !!legacyState.activeMatchId}
       />
+      {/* YOU are being attacked: consent to auto-resolve or roll your defense. */}
+      {gameState.combat && localSeatId === gameState.combat.defenderId && (() => {
+        const c = gameState.combat
+        return (
+          <DefenderBattlePrompt
+            combat={c}
+            attackerName={gameState.players.find(p => p.id === c.attackerId)?.name ?? 'The attacker'}
+            srcName={gameState.territories[c.srcId]?.name ?? c.srcId}
+            tgtName={gameState.territories[c.tgtId]?.name ?? c.tgtId}
+            onConsent={accept => dispatch({ type: 'COMBAT_DEFENSE_CHOICE', key: c.key, accept })}
+            onRollDefense={dice => dispatch({ type: 'POST_COMBAT_DICE', key: c.key, round: c.round, side: 'def', dice })}
+          />
+        )
+      })()}
+      {/* Someone else's battle in progress — watch it straight from match
+          state, which syncs by poll even when broadcasts do not. */}
+      {gameState.combat && localSeatId !== gameState.combat.defenderId
+        && localSeatId !== gameState.combat.attackerId && (() => {
+        const c = gameState.combat
+        const glyph = (v: number) => ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'][Math.max(1, Math.min(6, v))]
+        return (
+          <div style={{
+            position: 'fixed', top: 74, left: '50%', transform: 'translateX(-50%)',
+            zIndex: 890, pointerEvents: 'none',
+            background: 'linear-gradient(155deg, rgba(44,26,8,0.95) 0%, rgba(22,12,2,0.95) 100%)',
+            border: '2px solid rgba(200,148,10,0.6)', borderRadius: 12,
+            padding: '12px 20px', minWidth: 300, color: '#E8DCC8',
+            textAlign: 'center', fontFamily: 'Georgia, serif',
+          }}>
+            <div style={{ fontSize: 14, fontWeight: 'bold', color: '#C8940A' }}>
+              ⚔ {gameState.players.find(p => p.id === c.attackerId)?.name ?? 'Attacker'} attacks{' '}
+              {gameState.territories[c.tgtId]?.name ?? c.tgtId} — round {c.round}
+            </div>
+            <div style={{ marginTop: 6, fontSize: 24 }}>
+              <span style={{ color: '#e74c3c' }}>{c.atkDice ? c.atkDice.map(glyph).join(' ') : '· · ·'}</span>
+              <span style={{ fontSize: 12, color: '#7a6a50', margin: '0 10px' }}>vs</span>
+              <span style={{ color: '#5dade2' }}>{c.defDice ? c.defDice.map(glyph).join(' ') : '· ·'}</span>
+            </div>
+          </div>
+        )
+      })()}
       {/* A battle happening on another machine, replayed for this audience. */}
-      {spectatorCombat && !liveRound && <SpectatorCombatOverlay report={spectatorCombat} />}
+      {spectatorCombat && !liveRound && !gameState.combat && <SpectatorCombatOverlay report={spectatorCombat} />}
       {/* A round LIVE right now on the actor's machine — dice shown as they
           stand, and a missile button for spectators who hold one. */}
       {liveRound && (() => {
@@ -6046,6 +6134,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         const isSpectatorSeat = !!localSeatId
           && src?.occupyingPlayerId !== localSeatId
           && tgt?.occupyingPlayerId !== localSeatId
+        // Battle sides have their own views (the attacker's modal, the
+        // defender's prompt) — this overlay is for the audience only.
+        if (localSeatId && !isSpectatorSeat) return null
         // Missiles this seat can still spend: campaign count minus this
         // game's server-side spend ledger.
         const spectatorMissilesLeft = localSeatId
@@ -7457,6 +7548,11 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             // Online only: hold each round open briefly for spectator missiles.
             // AutoPlay battles skip the window inside the modal.
             spectatorWindow={onlineMatch ? spectatorWindowApiRef.current : undefined}
+            // Human vs human online: the defender rolls their own dice from
+            // their machine, and auto-resolve needs their consent.
+            interactiveDefense={onlineMatch && !currentPlayer.isAI && defenderPlayer && !defenderPlayer.isAI
+              ? { ...interactiveDefenseApiRef.current, defenderName: defenderPlayer.name }
+              : undefined}
           />
         )
       })()}
