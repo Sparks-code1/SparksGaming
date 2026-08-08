@@ -25,7 +25,7 @@ function check(name: string, cond: boolean, detail = '') {
 
 /** A board distinguishable by version, so we can tell which state was applied. */
 const boardAt = (v: number) => ({ turnNumber: v, players: [], territories: {} } as unknown as GameState)
-const row = (v: number): MatchRow => ({ state: boardAt(v), version: v })
+const row = (v: number, actionSeq?: number): MatchRow => ({ state: boardAt(v), version: v, actionSeq })
 
 /** A fake channel + row store with a manual clock. */
 function fakeTransport(initial: MatchRow = row(0)) {
@@ -39,6 +39,9 @@ function fakeTransport(initial: MatchRow = row(0)) {
     pushAction: null as null | ((action: unknown, effects: unknown[], seq: number) => void),
     status: null as null | ((s: 'subscribed' | 'error' | 'closed', m?: string) => void),
     fetchThrows: false,
+    actionFetches: 0,
+    /** The server-side match_actions log the poll reads from. */
+    actionLog: [] as Array<{ action: never; effects: never[]; seq: number }>,
 
     transport: {
       open(_matchId, onRow, onAction, onStatus) {
@@ -52,6 +55,10 @@ function fakeTransport(initial: MatchRow = row(0)) {
         t.fetches++
         if (t.fetchThrows) throw new Error('network down')
         return t.stored
+      },
+      async fetchActions(_matchId, afterSeq) {
+        t.actionFetches++
+        return t.actionLog.filter(a => a.seq > afterSeq).sort((x, y) => x.seq - y.seq).slice(0, 30)
       },
       setTimer(fn, ms) { const id = nextId++; timers.push({ id, fn, due: now + ms }); return id },
       clearTimer(handle) {
@@ -352,6 +359,66 @@ console.log('\n— an action is applied at most once —')
   sync.stop()
   pushAction({}, [], 4)
   check('an action landing after stop is ignored', seqs.join(',') === '0,1,3')
+}
+
+console.log('\n— the poll delivers the dice realtime never did —')
+{
+  // The bug this exists for: matches state had a poll net, match_actions did
+  // not — a spectator whose socket silently filtered the action feed saw the
+  // BOARD move but never a die. Now the resync fetches missed actions too.
+  const logEntry = (seq: number) => ({ action: {} as never, effects: [] as never[], seq })
+  const t = fakeTransport(row(5, 3))          // 3 actions already in history
+  t.actionLog = [logEntry(0), logEntry(1), logEntry(2)]
+  const seqs: number[] = []
+  const sync = startMatchSync('m1', { onState: () => {}, onAction: (_a, _e, s) => seqs.push(s) }, t.transport)
+  t.status!('subscribed')
+  await settle()
+  check('joining baselines PAST the history — no replay', seqs.length === 0, seqs.join(','))
+
+  // Two battles happen; realtime delivers NOTHING. The poll catches up.
+  t.actionLog.push(logEntry(3), logEntry(4))
+  t.stored = row(7, 5)
+  t.advance(LIVE_POLL_MS)
+  await settle()
+  check('the poll delivers the missed actions in order', seqs.join(',') === '3,4', seqs.join(','))
+
+  // Live delivery resumes; the poll must not re-apply what live already did.
+  t.actionLog.push(logEntry(5))
+  t.pushAction!({}, [], 5)
+  t.stored = row(8, 6)
+  t.advance(LIVE_POLL_MS)
+  await settle()
+  check('live and poll interleave without duplicates', seqs.join(',') === '3,4,5', seqs.join(','))
+
+  // A quiet interval fetches and applies nothing new.
+  const before = seqs.length
+  t.advance(LIVE_POLL_MS)
+  await settle()
+  check('a quiet poll applies nothing', seqs.length === before)
+  sync.stop()
+}
+
+console.log('\n— a reconnect never replays history at the joiner —')
+{
+  const logEntry = (seq: number) => ({ action: {} as never, effects: [] as never[], seq })
+  const t = fakeTransport(row(9, 12))
+  t.actionLog = Array.from({ length: 12 }, (_, i) => logEntry(i))
+  const seqs: number[] = []
+  const sync = startMatchSync('m1', { onState: () => {}, onAction: (_a, _e, s) => seqs.push(s) }, t.transport)
+  t.status!('subscribed')
+  await settle()
+  check('a mid-game joiner sees zero historical actions', seqs.length === 0)
+
+  // The connection drops and comes back — still nothing replayed, and the one
+  // action fought while offline arrives exactly once.
+  t.status!('error')
+  t.actionLog.push(logEntry(12))
+  t.stored = row(10, 13)
+  t.advance(RECONNECT_DELAYS[0])
+  t.status!('subscribed')
+  await settle()
+  check('only the genuinely new action arrives after reconnect', seqs.join(',') === '12', seqs.join(','))
+  sync.stop()
 }
 
 console.log('\n— hotseat opens nothing —')

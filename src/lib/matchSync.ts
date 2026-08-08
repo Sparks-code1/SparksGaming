@@ -63,6 +63,11 @@ export interface LiveStatus {
 export interface MatchRow {
   state: GameState
   version: number
+  /** matches.action_seq — the NEXT action sequence number the server will
+   *  assign. `actionSeq - 1` is the newest action already applied to `state`,
+   *  which is what lets a joiner baseline PAST the history instead of
+   *  replaying every battle of the game at itself. */
+  actionSeq?: number
 }
 
 /**
@@ -82,6 +87,13 @@ export interface SyncTransport {
   ): () => void
   /** Read the row as it stands right now. */
   fetch(matchId: string): Promise<MatchRow | null>
+  /**
+   * Read actions NEWER than `afterSeq`, oldest first. The poll-side of the
+   * action feed: realtime delivery of match_actions is best-effort (an
+   * RLS-filtered socket drops every event without an error), and dice a
+   * spectator never receives are a battle that — for them — never happened.
+   */
+  fetchActions(matchId: string, afterSeq: number): Promise<Array<{ action: Action; effects: Effect[]; seq: number }>>
   /** Wall clock, injectable so tests do not sleep. */
   setTimer(fn: () => void, ms: number): unknown
   clearTimer(handle: unknown): void
@@ -170,10 +182,25 @@ export function startMatchSync(
     // that has unmounted.
     if (stopped) return
     if (!row) return
+    // FIRST sight of the match: baseline the action feed at the newest action
+    // already folded into this state. Everything older is history a joiner or
+    // reconnector must never have replayed at them; everything newer is live.
+    if (actionApplied === -1 && typeof row.actionSeq === 'number') {
+      actionApplied = row.actionSeq - 1
+    }
     if (row.version <= applied) return      // stale or duplicate — drop it
     applied = row.version
     publish({ lastSyncAt: Date.now(), state: source === 'live' ? 'live' : status.state })
     handlers.onState(row.state, row.version)
+  }
+
+  /** Apply one action at most once, in order — shared by the live channel and
+   *  the poll, so however a message arrives it cannot arrive twice. */
+  const applyAction = (action: Action, effects: Effect[], seq: number) => {
+    if (stopped) return
+    if (seq <= actionApplied) return        // own echo or duplicate — drop it
+    actionApplied = seq
+    handlers.onAction?.(action, effects, seq)
   }
 
   const scheduleRetry = () => {
@@ -195,12 +222,7 @@ export function startMatchSync(
     closeChannel = transport.open(
       matchId,
       row => applyRow(row, 'live'),
-      (action, effects, seq) => {
-        if (stopped) return
-        if (seq <= actionApplied) return    // own echo or duplicate — drop it
-        actionApplied = seq
-        handlers.onAction?.(action, effects, seq)
-      },
+      applyAction,
       (s, message) => {
         if (stopped) return
         if (s === 'subscribed') {
@@ -223,6 +245,14 @@ export function startMatchSync(
     try {
       const row = await transport.fetch(matchId)
       applyRow(row, 'fetch')
+      // The action feed's net: whatever realtime failed to deliver since the
+      // last look is picked up here, in order, at most once. After the very
+      // first fetch the baseline set by applyRow makes this a no-op — a
+      // joiner is caught up by the STATE, never by a replay of the log.
+      if (actionApplied >= 0) {
+        const missed = await transport.fetchActions(matchId, actionApplied)
+        for (const a of missed) applyAction(a.action, a.effects, a.seq)
+      }
       publish({ lastSyncAt: Date.now() })
     } catch (e) {
       publish({ state: 'reconnecting', message: `Could not read the match: ${String(e)}` })
@@ -282,9 +312,9 @@ export const supabaseTransport: SyncTransport = {
           'postgres_changes',
           { event: 'UPDATE', schema: 'public', table: 'matches', filter: `id=eq.${matchId}` },
           payload => {
-            const row = payload.new as { state?: GameState; version?: number }
+            const row = payload.new as { state?: GameState; version?: number; action_seq?: number }
             if (row?.state && typeof row.version === 'number') {
-              onRow({ state: row.state, version: row.version })
+              onRow({ state: row.state, version: row.version, actionSeq: row.action_seq })
             }
           },
         )
@@ -325,10 +355,30 @@ export const supabaseTransport: SyncTransport = {
 
   async fetch(matchId) {
     const { data, error } = await supabase
-      .from('matches').select('state, version').eq('id', matchId).single()
+      .from('matches').select('state, version, action_seq').eq('id', matchId).single()
     if (error) throw new Error(error.message)
     if (!data?.state) return null
-    return { state: data.state as GameState, version: data.version as number }
+    return {
+      state: data.state as GameState,
+      version: data.version as number,
+      actionSeq: typeof data.action_seq === 'number' ? data.action_seq : undefined,
+    }
+  },
+
+  async fetchActions(matchId, afterSeq) {
+    const { data, error } = await supabase
+      .from('match_actions')
+      .select('action, effects, seq')
+      .eq('match_id', matchId)
+      .gt('seq', afterSeq)
+      .order('seq', { ascending: true })
+      .limit(30)
+    if (error) throw new Error(error.message)
+    return (data ?? []).map(r => ({
+      action: r.action as Action,
+      effects: (r.effects ?? []) as Effect[],
+      seq: r.seq as number,
+    }))
   },
 
   setTimer: (fn, ms) => setTimeout(fn, ms),
