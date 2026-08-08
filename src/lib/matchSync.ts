@@ -129,6 +129,15 @@ export interface MatchSync {
    * be treated as new and re-rendered for no reason.
    */
   noteApplied: (version: number) => void
+  /**
+   * Record an action seq this client applied from its own POST response.
+   * `onAction` drops anything at or below it. Without this the realtime INSERT
+   * of the client's OWN action fired `onAction` a second time — and effects
+   * are not idempotent: the double-fired territory-captured effect queued two
+   * card draws per capture, which is how one AI ended a game holding the
+   * entire resource deck.
+   */
+  noteActionApplied: (seq: number) => void
 }
 
 export function startMatchSync(
@@ -137,6 +146,11 @@ export function startMatchSync(
   transport: SyncTransport = supabaseTransport,
 ): MatchSync {
   let applied = -1
+  /** Highest match_actions seq whose effects have run here — from the client's
+   *  own POST responses (noteActionApplied) or from live delivery. Actions are
+   *  applied AT MOST ONCE, in order; a duplicate or out-of-order echo is
+   *  dropped exactly like a stale state row. */
+  let actionApplied = -1
   let attempts = 0
   let stopped = false
   let closeChannel: (() => void) | null = null
@@ -181,7 +195,12 @@ export function startMatchSync(
     closeChannel = transport.open(
       matchId,
       row => applyRow(row, 'live'),
-      (action, effects, seq) => handlers.onAction?.(action, effects, seq),
+      (action, effects, seq) => {
+        if (stopped) return
+        if (seq <= actionApplied) return    // own echo or duplicate — drop it
+        actionApplied = seq
+        handlers.onAction?.(action, effects, seq)
+      },
       (s, message) => {
         if (stopped) return
         if (s === 'subscribed') {
@@ -238,6 +257,9 @@ export function startMatchSync(
         applied = version
         publish({ lastSyncAt: Date.now() })
       }
+    },
+    noteActionApplied(seq: number) {
+      if (seq > actionApplied) actionApplied = seq
     },
   }
 }

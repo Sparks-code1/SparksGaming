@@ -60,13 +60,15 @@ import { checkMission, computeHomelands, homelandContinentFor, canClaimTerritory
 import { isSeaLine, registerCustomSeaLines } from '@/data/seaLines'
 import SeaLinePlacementModal from './SeaLinePlacementModal'
 import { AI_DIFFICULTY_LABEL, AI_DIFFICULTY_BADGE } from '@/types/ai'
-import { dispatchAction } from '@/lib/actionDispatch'
+import { dispatchAction, sendSpectatorMissile, loadMatchState } from '@/lib/actionDispatch'
 import { useMatchSync } from '@/lib/useMatchSync'
 import { findActiveMatch, createOnlineMatch, endOnlineMatch, seatsFromGameState } from '@/lib/onlineMatch'
 import { startLobby } from '@/lib/lobby'
 import { supabase } from '@/lib/supabase'
 import { SerialQueue } from '@/lib/serialQueue'
 import LiveStatusBadge from './LiveStatusBadge'
+import SpectatorCombatOverlay, { SpectatorLiveRound, type LiveRoundView } from './SpectatorCombatOverlay'
+import { buildSpectatorReport, spectatorDisplayMs, type SpectatorCombatReport } from '@/lib/spectatorCombat'
 import { aiReinforcePlacements, aiAttackPlan, aiFortifyMove, aiTradeInDecision, rivalsOnMatchPoint, aiBonusTroopTarget } from '@/lib/ai'
 import { playVictory, playElimination, playCoin, playCity, playMilestone, playTroop, startAmbient, stopAmbient } from '@/lib/sounds'
 import ConfettiBurst from './ConfettiBurst'
@@ -255,7 +257,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   // Effect interpreter — reducer actions can emit `Effect`s (consequences that
   // touch legacy/deck/modal state the pure reducer can't own). It's kept in a
   // ref so the stable `dispatch` can call the latest closure each render.
-  const applyEffectRef = useRef<(e: Effect) => void>(() => {})
+  const applyEffectRef = useRef<(e: Effect, remote?: boolean) => void>(() => {})
   // dispatch: run the reducer from the current state, commit the next state
   // (mirroring gameStateRef synchronously so same-tick reads see it, like
   // setTurn), then interpret any emitted effects.
@@ -358,10 +360,24 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             onlineMatchRef.current = { matchId, version: result.error.serverVersion }
             setOnlineMatch(onlineMatchRef.current)
           }
-          const authoritative = result.error.serverState
+          let authoritative = result.error.serverState
+          if (!authoritative) {
+            // Refusals like not-your-turn carry no board — but the optimistic
+            // apply already landed here, and since the server's version did
+            // not move, the poll's version guard would never roll it back.
+            // Fetch the truth outright and re-apply it unconditionally.
+            const row = await loadMatchState(matchId).catch(() => null)
+            if (row) {
+              authoritative = row.state
+              onlineMatchRef.current = { matchId, version: row.version }
+              setOnlineMatch(onlineMatchRef.current)
+              matchSyncRef.current?.noteApplied(row.version)
+            }
+          }
           if (authoritative && isLast()) {
             gameStateRef.current = authoritative
             setGameState(authoritative)
+            mirrorServerCardsRef.current(authoritative)
           }
           return
         }
@@ -370,13 +386,25 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
           setOnlineMatch(onlineMatchRef.current)
           matchSyncRef.current?.noteApplied(result.version)
         }
+        if (typeof result.seq === 'number') {
+          // Our own action is about to come back around on the realtime
+          // channel; mark its seq applied so the echo cannot re-run effects.
+          matchSyncRef.current?.noteActionApplied(result.seq)
+        }
         if (isLast()) {
           gameStateRef.current = result.state
           setGameState(result.state)
+          mirrorServerCardsRef.current(result.state)
         }
-        // Effects from the server describe what actually happened — including
-        // the dice it rolled — so they are interpreted exactly like local ones.
-        for (const e of result.effects) applyEffectRef.current(e)
+        // Effects are applied EXACTLY ONCE per action. A predictable action
+        // already ran them in the optimistic local apply above — the same
+        // reducer, so the same effects — and re-running the server's copy here
+        // queued a second card draw for every capture. Only an action the
+        // client could NOT predict (DECLARE_ATTACK: the server rolled) takes
+        // its effects from the response.
+        if (!predictable) {
+          for (const e of result.effects) applyEffectRef.current(e)
+        }
       } finally {
         onlinePostsPending.current--
       }
@@ -391,7 +419,33 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
    */
   /** Last routing decision, so the log records CHANGES rather than every click. */
   const lastRouteRef = useRef<'server' | 'local' | null>(null)
+  /** Actions a machine may legitimately send during SOMEONE ELSE's turn. */
+  const OFF_TURN_ACTIONS = new Set<string>([
+    'APPLY_EVENT_TROOPS',   // event rewards belong to board-picked players
+    'JOIN_WAR', 'FORFEIT_WAR', // the hand-off machine drives the offer
+    'SEED_CARD_PILES',      // the retro-fit fires whenever the host notices
+  ])
   const dispatch = (action: Action) => {
+    // ── The turn gate ──────────────────────────────────────────────────────
+    // Online, a HUMAN's turn may only be played from the machine holding that
+    // seat, and an AI's only by the host. The server refuses off-turn actions
+    // anyway — but the OPTIMISTIC apply used to land first, the 403 carried no
+    // board to roll back to, and the version guard kept the poll from
+    // correcting it. Net effect: one player could apparently play another's
+    // whole turn on their own screen. Refuse HERE, before anything applies.
+    // With no seat resolved yet (auth still loading), fall through and let the
+    // server be the judge rather than locking a player out of their own turn.
+    if (onlineMatchRef.current && !OFF_TURN_ACTIONS.has(action.type)) {
+      const st = gameStateRef.current
+      const cur = st.players[st.currentPlayerIndex]
+      const allowed = !cur
+        || (cur.isAI ? aiAuthorityRef.current
+            : localSeatRef.current === null || localSeatRef.current === cur.id)
+      if (!allowed) {
+        showWeaknessNoticeRef.current(`✋ It's ${cur.name}'s turn — their machine makes the moves`)
+        return
+      }
+    }
     const route = onlineMatchRef.current ? 'server' : 'local'
     if (route !== lastRouteRef.current) {
       lastRouteRef.current = route
@@ -402,13 +456,20 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   }
   /** Stable handle so the online path can reach the latest notice function. */
   const showWeaknessNoticeRef = useRef<(m: string) => void>(() => {})
-  const matchSyncRef = useRef<{ noteApplied: (v: number) => void } | null>(null)
+  const matchSyncRef = useRef<{ noteApplied: (v: number) => void; noteActionApplied: (seq: number) => void } | null>(null)
 
   // Synchronous per-turn state writer. Updates GameState.turn AND mirrors
   // gameStateRef immediately, so PIXI/timer closures that read the value later
   // in the same tick see it before React re-renders — exactly the old
   // setState()+ref.current= dual-write these fields used before they moved into
-  // GameState. (Interim shim: RESOLVE_COMBAT/END_TURN will own these writes.)
+  // GameState.
+  //
+  // ONLINE WARNING: a setTurn patch exists only on this machine, and the next
+  // server echo replaces the whole GameState — combat tracking written this way
+  // was wiped mid-turn, which is why RESOLVE_COMBAT/END_TURN own those fields
+  // in the reducer now. What remains here is CARD-layer tracking the server
+  // cannot know yet (trade-ins, rich-card eligibility, scar shields); it is
+  // still echo-vulnerable online until card actions reach the server (#25).
   const setTurnRef = useRef((patch: Partial<GameState['turn']>) => {
     setGameState(prev => ({ ...prev, turn: { ...prev.turn, ...patch } }))
     gameStateRef.current = { ...gameStateRef.current, turn: { ...gameStateRef.current.turn, ...patch } }
@@ -713,6 +774,103 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   // every phase boundary and can be resumed from the campaign screen.
   const [showMenuConfirm, setShowMenuConfirm] = useState(false)
 
+  // A battle fought on ANOTHER machine, replayed for this one — dice, sides,
+  // outcome. Set from the live action feed, cleared by its own timer. Purely
+  // an audience view; nothing here can act on the battle.
+  const [spectatorCombat, setSpectatorCombat] = useState<SpectatorCombatReport | null>(null)
+  const spectatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const showSpectatorCombat = (report: SpectatorCombatReport) => {
+    if (spectatorTimerRef.current) clearTimeout(spectatorTimerRef.current)
+    setSpectatorCombat(report)
+    spectatorTimerRef.current = setTimeout(() => {
+      spectatorTimerRef.current = null
+      setSpectatorCombat(null)
+    }, spectatorDisplayMs(report))
+  }
+
+  // ── Spectator missiles ────────────────────────────────────────────────────
+  // Actor side: the flips the server has confirmed for the round currently
+  // held open (the AttackModal polls this through the spectatorWindow api).
+  const windowSeqRef = useRef(0)
+  const spectatorFlipsRef = useRef<{ key: string; flips: Array<{ playerId: string; side: 'atk' | 'def'; dieIndex: number }> } | null>(null)
+  // Iron Shield (Die Mechaniker): a defending double-6 during the current
+  // battle seals the territory. Carried on the RESOLVE_COMBAT dispatch, so
+  // the reducer records it where echoes cannot un-seal it.
+  const sealDefenderRef = useRef(false)
+  // Spectator side: the round currently open on the ACTOR's machine, shown
+  // live with a missile button. Replay suppression remembers the battle so the
+  // post-battle summary doesn't re-animate what was just watched.
+  const [liveRound, setLiveRound] = useState<LiveRoundView | null>(null)
+  const liveBattleSeenRef = useRef<{ srcId: string; tgtId: string } | null>(null)
+  /** This machine's own seat in the online match (match_players.player_id). */
+  const [localSeatId, setLocalSeatId] = useState<string | null>(null)
+  // Ref mirror for the stable dispatch() closure — the turn gate reads it.
+  const localSeatRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!onlineMatch?.matchId) { setLocalSeatId(null); localSeatRef.current = null; return }
+    let cancelled = false
+    void (async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user || cancelled) return
+      const { data } = await supabase
+        .from('match_players').select('player_id')
+        .eq('match_id', onlineMatch.matchId).eq('user_id', user.id).maybeSingle()
+      if (!cancelled) {
+        setLocalSeatId(data?.player_id ?? null)
+        localSeatRef.current = data?.player_id ?? null
+      }
+    })()
+    return () => { cancelled = true }
+  }, [onlineMatch?.matchId])
+
+
+  // Stale live rounds die on their own: if the CLOSE never reaches this
+  // machine (poll-only connection), the overlay still leaves the screen.
+  useEffect(() => {
+    if (!liveRound) return
+    const ms = Math.max(0, liveRound.endsAt + 3_000 - Date.now())
+    const t = setTimeout(() => setLiveRound(prev => (prev?.roundKey === liveRound.roundKey ? null : prev)), ms)
+    return () => clearTimeout(t)
+  }, [liveRound])
+
+  /** The api handed to AttackModal — online battles only. Refs throughout, so
+   *  the object can be created once and stay stable across renders. */
+  const spectatorWindowApiRef = useRef({
+    windowMs: 5_000,
+    open: (dice: { atk: number[]; def: number[] }) => {
+      const srcId = attackSrcRef.current ?? '', tgtId = attackTgtRef.current ?? ''
+      const key = `${srcId}>${tgtId}#${gameStateRef.current.turnNumber}.${++windowSeqRef.current}`
+      spectatorFlipsRef.current = { key, flips: [] }
+      dispatch({ type: 'OPEN_COMBAT_WINDOW', roundKey: key, srcId, tgtId, atkDice: dice.atk, defDice: dice.def })
+      return key
+    },
+    peekFlips: (key: string) => {
+      const cur = spectatorFlipsRef.current
+      if (!cur || cur.key !== key) return []
+      return cur.flips.map(f => ({
+        side: f.side, dieIndex: f.dieIndex,
+        playerName: gameStateRef.current.players.find(p => p.id === f.playerId)?.name ?? 'A spectator',
+      }))
+    },
+    close: async (key: string) => {
+      // The server has the final word on which flips landed — one accepted in
+      // the last instant may not have reached this machine's feed yet.
+      let flips = spectatorFlipsRef.current?.key === key ? spectatorFlipsRef.current.flips : []
+      const match = onlineMatchRef.current
+      if (match) {
+        try {
+          const row = await loadMatchState(match.matchId)
+          const w = row?.state.combatWindow
+          if (w && w.roundKey === key) flips = w.flips
+        } catch { /* keep what was delivered live */ }
+      }
+      dispatch({ type: 'CLOSE_COMBAT_WINDOW', roundKey: key })
+      spectatorFlipsRef.current = null
+      return flips.map(f => ({ side: f.side, dieIndex: f.dieIndex }))
+    },
+  })
+
   // Resource-deck depletion notice: either a star awarded to the territory
   // leader, or a shared lead in which case no star is given.
   const [coinDeckStarWinner, setCoinDeckStarWinner] = useState<
@@ -832,6 +990,65 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       playerHands: { ...fresh.playerHands, ...coinHands },
     }
   })
+  // Ref mirror for closures created once (match creation seeds the server's
+  // card piles from whatever the deal is at that moment).
+  const cardStateRef = useRef(cardState)
+  cardStateRef.current = cardState
+
+  // ── Retro-fit: seed the card piles into a pre-migration match ─────────────
+  // A match created before GameState.cards existed silently no-ops every card
+  // action — hands die on echoes exactly as they did before the migration.
+  // The HOST's machine (one seeder, no races between machines that both
+  // notice) seeds piles + hands from its own card state, once. The reducer
+  // refuses the action the moment piles exist, so even a duplicate is inert.
+  const seededMatchRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!onlineMatch?.matchId || !aiAuthority) return
+    // Read through the ref (state isn't declared yet at this point in the
+    // component). If the server's board turns out to have piles after all,
+    // the reducer refuses the seed — a redundant one is inert.
+    if (gameStateRef.current.cards) return
+    if (seededMatchRef.current === onlineMatch.matchId) return
+    seededMatchRef.current = onlineMatch.matchId
+    console.info('[Online] match predates card piles — seeding from this machine\'s deal')
+    dispatch({
+      type: 'SEED_CARD_PILES',
+      cards: {
+        territoryDeck: [...(cardStateRef.current.territoryDeck ?? [])],
+        sideboard: [...(cardStateRef.current.sideboard ?? [])],
+        resourceDeck: [...(cardStateRef.current.resourceDeck ?? cardStateRef.current.coinDeck ?? [])],
+        territoryDiscard: [...(cardStateRef.current.territoryDiscard ?? [])],
+      },
+      hands: Object.fromEntries(
+        Object.entries(cardStateRef.current.playerHands ?? {}).map(([pid, h]) => [pid, [...(h ?? [])]])),
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onlineMatch?.matchId, aiAuthority])
+
+  /**
+   * Adopt the SERVER's card piles + hands into the display cardState.
+   *
+   * Online, the piles live in matches.state (`GameState.cards`) and hands in
+   * players[].cards — this brings every incoming board's card truth onto the
+   * screen: the joiner's first sync replaces its independently-built deal, a
+   * remote draw appears when the state lands, and the actor's own drift gets
+   * echo-corrected. Event/mission decks and per-game flags stay client-side.
+   * A state without `cards` (hotseat, pre-migration matches) changes nothing.
+   */
+  const mirrorServerCardsRef = useRef<(s: GameState) => void>(() => {})
+  mirrorServerCardsRef.current = (s: GameState) => {
+    const piles = s.cards
+    if (!piles) return
+    setCardState(prev => ({
+      ...prev,
+      territoryDeck: [...piles.territoryDeck],
+      sideboard: [...piles.sideboard],
+      resourceDeck: [...piles.resourceDeck],
+      territoryDiscard: [...piles.territoryDiscard],
+      playerHands: Object.fromEntries(s.players.map(p => [p.id, [...p.cards]])),
+    }))
+  }
+
   const [currentEventCardId, setCurrentEventCardId] = useState<string | null>(null)
   const [showEventCard, setShowEventCard] = useState(false)
   const [showCardHand, setShowCardHand] = useState(false)
@@ -1293,19 +1510,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             return
           }
           const hqOwnerId = src.activeHqPlayerId!
-          setGameState(prev => {
-            const next: GameState = {
-              ...prev,
-              territories: {
-                ...prev.territories,
-                [srcId]:  { ...prev.territories[srcId],  activeHqPlayerId: undefined },
-                [def.id]: { ...prev.territories[def.id], activeHqPlayerId: hqOwnerId },
-              },
-              activeHqs: { ...prev.activeHqs, [hqOwnerId]: def.id },
-            }
-            gameStateRef.current = next
-            return next
-          })
+          // Through the reducer: an HQ token that moved only on this machine
+          // was un-moved by the next server echo.
+          dispatch({ type: 'MOVE_HQ', playerId: hqOwnerId, fromId: srcId, toId: def.id })
           mobileHqUsedRef.current = true;  setMobileHqUsed(true)
           mobileHqModeRef.current = false; setMobileHqMode(false)
           mobileHqSrcRef.current = null;   setMobileHqSrcId(null)
@@ -1353,13 +1560,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             showWeaknessNotice(`🫂 Join the Cause — troops go in a CITY; ${t.name} has none`)
             return
           }
-          setGameState(prev => ({
-            ...prev,
-            territories: {
-              ...prev.territories,
-              [def.id]: { ...prev.territories[def.id], troops: prev.territories[def.id].troops + 1 },
-            },
-          }))
+          dispatch({
+            type: 'APPLY_EVENT_TROOPS', note: `Join the Cause — ${jp?.name ?? 'the winner'} reinforced ${t.name}`,
+            changes: [{ territoryId: def.id, delta: 1 }],
+          })
           const remaining = joinCause.troopsLeft - 1
           if (remaining <= 0) {
             joinCausePlacementRef.current = null
@@ -1396,13 +1600,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             showWeaknessNotice(`⛨ Fortify — ${t.name} already took its troops; choose a different city`)
             return
           }
-          setGameState(prev => ({
-            ...prev,
-            territories: {
-              ...prev.territories,
-              [def.id]: { ...prev.territories[def.id], troops: prev.territories[def.id].troops + FORTIFY_EVENT_TROOPS },
-            },
-          }))
+          dispatch({
+            type: 'APPLY_EVENT_TROOPS', note: `Fortify — ${fp?.name ?? 'Player'} reinforced ${t.name}`,
+            changes: [{ territoryId: def.id, delta: FORTIFY_EVENT_TROOPS }],
+          })
           const left = fe.citiesLeft - 1
           showWeaknessNotice(
             `⛨ Fortify — ${fp?.name ?? 'Player'} reinforced ${t.name} with ${FORTIFY_EVENT_TROOPS} troops`
@@ -1426,10 +1627,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             showWeaknessNotice('🏛 Control the People — that territory has no city; choose a city you control')
             return
           }
-          setGameState(prev => ({
-            ...prev,
-            territories: { ...prev.territories, [def.id]: { ...prev.territories[def.id], troops: prev.territories[def.id].troops + 5 } },
-          }))
+          dispatch({
+            type: 'APPLY_EVENT_TROOPS', note: `Control the People — 5 troops raised in ${t.name}`,
+            changes: [{ territoryId: def.id, delta: 5 }],
+          })
           const cp = state.players.find(p => p.id === ctrlTroopsPid)
           showWeaknessNotice(`🏛 Control the People — ${cp?.name ?? 'Player'} raised 5 troops in ${t.name}`)
           controlTroopsRef.current = null
@@ -2085,7 +2286,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         setWinnerPlayerId(p.id)
         setWinCondition('mission')
         setUnlockOptions(pickUnlocks(gameState.gameNumber))
-        setGameState(prev => ({ ...prev, phase: 'game-over', winnerId: p.id }))
+        dispatch({ type: 'END_GAME', winnerId: p.id, condition: 'mission' })
         setTimeout(() => setShowWinScreen(true), 300)
         break
       }
@@ -2237,7 +2438,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // Restricted to cities, so the border heuristic runs over those only.
     const cityIds = new Set(ownedCityIds(jc.playerId))
     const targetId = aiBonusTroopTarget(gameStateRef.current, jc.playerId, t => cityIds.has(t.id))
-    if (targetId) setGameState(prev => ({ ...prev, territories: { ...prev.territories, [targetId]: { ...prev.territories[targetId], troops: prev.territories[targetId].troops + 1 } } }))
+    if (targetId) dispatch({ type: 'APPLY_EVENT_TROOPS', note: 'Join the Cause — troops placed', changes: [{ territoryId: targetId, delta: 1 }] })
     const left = targetId ? jc.troopsLeft - 1 : 0
     if (left <= 0) { joinCausePlacementRef.current = null; setJoinCausePlacement(null) }
     else { const n = { ...jc, troopsLeft: left }; joinCausePlacementRef.current = n; setJoinCausePlacement(n) }
@@ -2263,7 +2464,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   function resolveAiControlPeople(playerId: string) {
     const eligible = new Set(ownedCityIds(playerId))
     const cityId = aiBonusTroopTarget(gameStateRef.current, playerId, t => eligible.has(t.id))
-    if (cityId) setGameState(prev => ({ ...prev, territories: { ...prev.territories, [cityId]: { ...prev.territories[cityId], troops: prev.territories[cityId].troops + 5 } } }))
+    if (cityId) dispatch({ type: 'APPLY_EVENT_TROOPS', note: 'Control the People — 5 troops raised', changes: [{ territoryId: cityId, delta: 5 }] })
     setControlPeopleChoice(null)
   }
   /**
@@ -2297,10 +2498,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     const unused = new Set([...eligible].filter(id => !fe.usedCityIds.includes(id)))
     if (unused.size === 0) { finishFortifyTroops(fe.cardId); return }
     const targetId = best(unused)
-    setGameState(prev => ({
-      ...prev,
-      territories: { ...prev.territories, [targetId]: { ...prev.territories[targetId], troops: prev.territories[targetId].troops + FORTIFY_EVENT_TROOPS } },
-    }))
+    dispatch({
+      type: 'APPLY_EVENT_TROOPS', note: 'Fortify — city reinforced',
+      changes: [{ territoryId: targetId, delta: FORTIFY_EVENT_TROOPS }],
+    })
     const left = fe.citiesLeft - 1
     if (left <= 0) finishFortifyTroops(fe.cardId)
     else updateFortifyEvent({ ...fe, citiesLeft: left, usedCityIds: [...fe.usedCityIds, targetId] })
@@ -3166,21 +3367,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     })
 
     // The board reads cities off gameState, so drop the covered ones there too —
-    // otherwise the old city keeps paying population until the next game rebuild.
-    const covered = new Set(replaced.replaced.map(r => r.cityId))
-    if (covered.size > 0) {
-      const t = gameStateRef.current.territories[territoryId]
-      if (t) {
-        const patched = {
-          ...t,
-          cities: t.cities.map(c => covered.has(c.id)
-            ? { ...c, isDestroyed: true, destroyedInGame: gameNumber }
-            : c),
-        }
-        const territories = { ...gameStateRef.current.territories, [territoryId]: patched }
-        gameStateRef.current = { ...gameStateRef.current, territories }
-        setGameState(prev => ({ ...prev, territories: { ...prev.territories, [territoryId]: patched } }))
-      }
+    // through the reducer, or the burial exists on this machine only.
+    const covered = [...new Set(replaced.replaced.map(r => r.cityId))]
+    if (covered.length > 0) {
+      dispatch({ type: 'DESTROY_CITIES', territoryId, cityIds: covered })
     }
 
     showWeaknessNotice(
@@ -3431,7 +3621,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         setWinnerPlayerId(winner.id)
         setWinCondition('mission')
         setUnlockOptions(pickUnlocks(state.gameNumber))
-        setGameState(prev => ({ ...prev, phase: 'game-over', winnerId: winner.id }))
+        dispatch({ type: 'END_GAME', winnerId: winner.id, condition: 'mission' })
         setTimeout(() => setShowWinScreen(true), 300)
       }
       setCoinDeckStarWinner({ kind: 'award', name: winner.name, count: depletion.count })
@@ -3463,6 +3653,14 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // grant from the event, resolved the moment it fires rather than after
     // fortifying, so it leaves the mission claimable.
     if (!consumeEventDrawCredit(playerId)) drewCardPlayerIdsRef.current.add(playerId)
+
+    // Online, the card leaves a SERVER-owned pile — this is what makes the
+    // draw exist on every machine (a hand kept only in local state was wiped
+    // by the next echo) and what makes drawing the same card twice impossible.
+    // The local bookkeeping below still runs: same math, display + legacy.
+    if (onlineMatchRef.current) {
+      dispatch({ type: 'DRAW_CARD', playerId, cardId, source: isCoin ? 'coin' : 'face-up' })
+    }
 
     // ── 1. Compute new card state synchronously from current snapshot ──────
     const prevCards = cardState
@@ -3516,12 +3714,16 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       }
     }
     setTroopsToPlace(troops)
-    setGameState(prev => ({
-      ...prev,
-      players: prev.players.map(p =>
-        p.id === playerId ? { ...p, cards: [...p.cards, cardId] } : p,
-      ),
-    }))
+    // Online, the DRAW_CARD dispatch above already put the card in the hand
+    // (optimistic reducer apply) — adding it again here would double it.
+    if (!onlineMatchRef.current) {
+      setGameState(prev => ({
+        ...prev,
+        players: prev.players.map(p =>
+          p.id === playerId ? { ...p, cards: [...p.cards, cardId] } : p,
+        ),
+      }))
+    }
 
     // ── 5. Post-award effects ──────────────────────────────────────────────
     announceDepletion(depletion, starAwardPurchasedAfter)
@@ -3560,6 +3762,11 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // Drawing a card forfeits the shared mission for this turn
     drewCardPlayerIdsRef.current.add(playerId)
 
+    // Same server-owned pile rule as a normal draw (see handleCardDrawSelect).
+    if (onlineMatchRef.current) {
+      dispatch({ type: 'DRAW_CARD', playerId, cardId, source: isCoin ? 'coin' : 'face-up' })
+    }
+
     // Computed synchronously from the current snapshot, like handleCardDrawSelect
     // — the depletion check has to see the deck this draw leaves behind.
     const prevCards = cardState
@@ -3592,12 +3799,15 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     }
     const purchasedAfter = commitCardsAndStar(newCardState, depletion)
 
-    setGameState(prev => ({
-      ...prev,
-      players: prev.players.map(p =>
-        p.id === playerId ? { ...p, cards: [...p.cards, cardId] } : p,
-      ),
-    }))
+    // Online, the DRAW_CARD dispatch above already put the card in the hand.
+    if (!onlineMatchRef.current) {
+      setGameState(prev => ({
+        ...prev,
+        players: prev.players.map(p =>
+          p.id === playerId ? { ...p, cards: [...p.cards, cardId] } : p,
+        ),
+      }))
+    }
 
     announceDepletion(depletion, purchasedAfter)
 
@@ -3611,6 +3821,14 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (!playerId) return
     playCoin()
     const tradedSet = new Set(cardIds)
+
+    // Online, the trade must leave the SERVER's hand and piles — coins back to
+    // the pile, territory cards to the discard — or the next echo restores the
+    // spent cards. The troop bonus stays client-side: it arrives as ordinary
+    // placements, which are already server actions.
+    if (onlineMatchRef.current) {
+      dispatch({ type: 'TRADE_IN_CARDS', playerId, cardIds: [...cardIds] })
+    }
 
     // Private missions Advanced Tactics / Advanced Training both trigger on the
     // act of trading in, so record the totals now — by the time the mission is
@@ -3643,12 +3861,15 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       saveLegacyState(newLegacy).catch(() => {})
       return newLegacy
     })
-    setGameState(prev => ({
-      ...prev,
-      players: prev.players.map(p =>
-        p.id === playerId ? { ...p, cards: p.cards.filter(id => !tradedSet.has(id)) } : p,
-      ),
-    }))
+    // Online, the TRADE_IN_CARDS dispatch above already removed them.
+    if (!onlineMatchRef.current) {
+      setGameState(prev => ({
+        ...prev,
+        players: prev.players.map(p =>
+          p.id === playerId ? { ...p, cards: p.cards.filter(id => !tradedSet.has(id)) } : p,
+        ),
+      }))
+    }
     // Alien Collaborator weakness power: +1 troop on card trade-in
     const currentPlayer = gameState.players[gameState.currentPlayerIndex]
     const isAlienCollaborator = currentPlayer &&
@@ -3690,6 +3911,13 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     buyStarBusyRef.current = true
     const spentSet = new Set(cardIds)
 
+    // Online this is a trade-in as far as the CARDS are concerned: they must
+    // leave the server's hand and piles or the next echo refunds the purchase.
+    // The star itself is legacy-side, awarded below as before.
+    if (onlineMatchRef.current) {
+      dispatch({ type: 'TRADE_IN_CARDS', playerId: player.id, cardIds: [...cardIds] })
+    }
+
     // Remove the spent cards (territory cards → discard, coin cards return to
     // the bottom of the resource deck so the depletion star takes longer)
     const spentCoinIds = cardIds.filter(id => !getTerritoryCard(id))
@@ -3703,12 +3931,15 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       const resourceDeck = [...(prev.resourceDeck ?? prev.coinDeck ?? []), ...spentCoinIds]
       return { ...prev, playerHands, territoryDiscard, resourceDeck }
     })
-    setGameState(prev => ({
-      ...prev,
-      players: prev.players.map(p =>
-        p.id === player.id ? { ...p, cards: p.cards.filter(id => !spentSet.has(id)) } : p,
-      ),
-    }))
+    // Online, the TRADE_IN_CARDS dispatch above already removed them.
+    if (!onlineMatchRef.current) {
+      setGameState(prev => ({
+        ...prev,
+        players: prev.players.map(p =>
+          p.id === player.id ? { ...p, cards: p.cards.filter(id => !spentSet.has(id)) } : p,
+        ),
+      }))
+    }
 
     // Award the purchased star; compute the new total from known values so a
     // stale ref can never miss the just-awarded star
@@ -3756,7 +3987,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       // victory log told about every 4-star win.
       setWinCondition('stars')
       setUnlockOptions(pickUnlocks(gameStateRef.current.gameNumber))
-      setGameState(prev => ({ ...prev, phase: 'game-over', winnerId: player.id }))
+      dispatch({ type: 'END_GAME', winnerId: player.id, condition: 'stars' })
       setTimeout(() => setShowWinScreen(true), 300)
     }
   }
@@ -3775,8 +4006,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       saveLegacyState(next).catch(() => {})
       return next
     })
-    // The island appears on the board immediately as an occupiable territory
-    setGameState(prev => ({ ...prev, territories: injectAlienIslandTerritory(prev.territories, island) }))
+    // The island appears on the board immediately as an occupiable territory —
+    // injected via the reducer so it exists on every board, not just this one.
+    dispatch({ type: 'INJECT_ALIEN_ISLAND', island })
     setShowAlienMilestone(false)
   }
 
@@ -3893,21 +4125,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     const territoryName = gameStateRef.current.territories[territoryId]?.name ?? territoryId
     const alienPlayer = gameStateRef.current.players.find(p => p.factionId === 'aliens')
 
-    // Remove all troops and the occupier; clear the territory's city list and any HQ
-    setGameState(prev => {
-      const activeHqs = { ...prev.activeHqs }
-      for (const [factionId, tId] of Object.entries(activeHqs)) {
-        if (tId === territoryId) delete activeHqs[factionId]
-      }
-      return {
-        ...prev,
-        activeHqs,
-        territories: {
-          ...prev.territories,
-          [territoryId]: { ...prev.territories[territoryId], occupyingPlayerId: null, troops: 0, cities: [] },
-        },
-      }
-    })
+    // Remove all troops and the occupier; clear the territory's city list and
+    // any HQ — through the reducer, so the Ruin exists on every board.
+    dispatch({ type: 'OBLITERATE_TERRITORY', territoryId })
 
     setLegacyState(prev => {
       // Demolished HQ record (if an HQ sticker was on the ruined territory)
@@ -3983,13 +4203,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     const alienPlayer = gameStateRef.current.players.find(p => p.factionId === 'aliens')
     if (!alienPlayer) { setBeamDownActive(false); return }
     const territoryName = gameStateRef.current.territories[territoryId]?.name ?? territoryId
-    setGameState(prev => ({
-      ...prev,
-      territories: {
-        ...prev.territories,
-        [territoryId]: { ...prev.territories[territoryId], occupyingPlayerId: alienPlayer.id, troops: 5 },
-      },
-    }))
+    // Settling empty land: the reducer only honours the occupant on a
+    // territory that is genuinely unoccupied.
+    dispatch({
+      type: 'APPLY_EVENT_TROOPS', note: `Beam Down — the Aliens materialized 5 troops at ${territoryName}`,
+      changes: [{ territoryId, delta: 5, occupyingPlayerId: alienPlayer.id }],
+    })
     setLegacyState(prev => {
       const next = {
         ...prev,
@@ -4014,25 +4233,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     const territoryName = gameStateRef.current.territories[falloutTerritoryId]?.name ?? falloutTerritoryId
     const bringerName = gameStateRef.current.players.find(p => p.id === bringerPlayerId)?.name ?? 'Unknown'
 
-    // Fallout Zone: obliterate everything on the territory
-    setGameState(prev => {
-      const activeHqs = { ...prev.activeHqs }
-      for (const [pid, tId] of Object.entries(activeHqs)) {
-        if (tId === falloutTerritoryId) delete activeHqs[pid]
-      }
-      return {
-        ...prev,
-        activeHqs,
-        territories: {
-          ...prev.territories,
-          [falloutTerritoryId]: {
-            ...prev.territories[falloutTerritoryId],
-            occupyingPlayerId: null, troops: 0, cities: [], scars: [],
-            activeHqPlayerId: undefined,
-          },
-        },
-      }
-    })
+    // Fallout Zone: obliterate everything on the territory — through the
+    // reducer, so the crater is the same crater on every board.
+    dispatch({ type: 'OBLITERATE_TERRITORY', territoryId: falloutTerritoryId, clearScars: true })
 
     setLegacyState(prev => {
       const hqSticker = prev.stickers.find(s => s.targetId === falloutTerritoryId && s.description.startsWith('HQ:'))
@@ -4096,14 +4299,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       if (loss > 0) results.push({ id: adjId, name: t.name, loss, roll })
     }
     if (results.length > 0) {
-      setGameState(prev => {
-        let territories = { ...prev.territories }
-        for (const r of results) {
-          const t = territories[r.id]
-          if (!t) continue
-          territories = { ...territories, [r.id]: { ...t, troops: Math.max(1, t.troops - r.loss) } }
-        }
-        return { ...prev, territories }
+      dispatch({
+        type: 'APPLY_EVENT_TROOPS', note: 'Fallout — radiation spread from the Fallout Zone',
+        changes: results.map(r => ({ territoryId: r.id, delta: -r.loss })),
       })
     }
     const summary = results.map(r => `${r.name} −${r.loss} (🎲${r.roll})`).join(' · ')
@@ -4145,26 +4343,26 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     }
 
     const hit = results.filter(r => r.suffers)
-    setGameState(prev => {
-      const territories = { ...prev.territories }
-      for (const r of hit) {
-        const t = territories[r.territoryId]
-        if (!t) continue
-        const troops = Math.max(0, t.troops - r.troopsLost)
-        territories[r.territoryId] = {
-          ...t,
-          troops,
-          // Losing the last troop hands the territory back to nobody.
-          occupyingPlayerId: r.becomesUncontrolled ? null : t.occupyingPlayerId,
-          activeHqPlayerId: r.hqFactionIds.length > 0 ? undefined : t.activeHqPlayerId,
-          cities: (t.cities ?? []).map(c =>
-            c.headquartersFactionId && !c.isDestroyed ? { ...c, isDestroyed: true } : c),
-        }
+    // Troop losses (and any vacate) go through the reducer so every machine
+    // agrees on them; the floor-at-zero drops the owner exactly as before.
+    if (hit.length > 0) {
+      dispatch({
+        type: 'APPLY_EVENT_TROOPS', note: 'Riot — thin garrisons failed',
+        changes: hit.map(r => ({ territoryId: r.territoryId, delta: -r.troopsLost })),
+      })
+    }
+    // HQ demolition: the HQ cities are destroyed and the HQ field cleared,
+    // through the reducer so every board loses them together.
+    const demolishedHit = hit.filter(r => r.hqFactionIds.length > 0)
+    for (const r of demolishedHit) {
+      const t = gameStateRef.current.territories[r.territoryId]
+      const hqCityIds = (t?.cities ?? [])
+        .filter(c => c.headquartersFactionId && !c.isDestroyed)
+        .map(c => c.id)
+      if (hqCityIds.length > 0 || t?.activeHqPlayerId) {
+        dispatch({ type: 'DESTROY_CITIES', territoryId: r.territoryId, cityIds: hqCityIds, demolishHq: true })
       }
-      const next = { ...prev, territories }
-      gameStateRef.current = next
-      return next
-    })
+    }
 
     // HQs demolished here are campaign-permanent, like a Ruin's.
     const demolished = hit.filter(r => r.hqFactionIds.length > 0)
@@ -4216,20 +4414,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       logHistory('✊ Resistance — no minor city held 1 or 2 troops; nothing happened')
       return
     }
-    setGameState(prev => {
-      const territories = { ...prev.territories }
-      for (const r of results) {
-        const t = territories[r.territoryId]
-        if (!t) continue
-        const troops = Math.max(0, t.troops - 1)
-        territories[r.territoryId] = {
-          ...t, troops,
-          occupyingPlayerId: troops <= 0 ? null : t.occupyingPlayerId,
-        }
-      }
-      const next = { ...prev, territories }
-      gameStateRef.current = next
-      return next
+    dispatch({
+      type: 'APPLY_EVENT_TROOPS', note: 'Resistance — thin garrisons lost a troop',
+      changes: results.map(r => ({ territoryId: r.territoryId, delta: -1 })),
     })
     const lost = results.filter(r => r.becomesUncontrolled)
     logHistory(`✊ Resistance — ${results.map(r =>
@@ -4312,9 +4499,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   function handlePlaceSeaLine(a: string, b: string) {
     const na = gameStateRef.current.territories[a]?.name ?? a
     const nb = gameStateRef.current.territories[b]?.name ?? b
-    // Live game: both territories become adjacent immediately, as a sea route
+    // Live game: both territories become adjacent immediately, as a sea route.
+    // The adjacency edit goes through the reducer (every board gains the
+    // route); the isSeaLine registry stays a local module-global, which other
+    // machines rebuild from customSeaLines on their next campaign load.
     registerCustomSeaLines([[a, b]])
-    setGameState(prev => ({ ...prev, territories: applyCustomSeaLines(prev.territories, [[a, b]]) }))
+    dispatch({ type: 'PLACE_SEA_LINE', a, b })
     // Campaign-permanent record
     setLegacyState(prev => {
       const next: LegacyState = {
@@ -4457,32 +4647,18 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   function handleJoinWar(territoryId: string) {
     const playerId = joinTheWarPlayerId
     if (!playerId) return
-    setGameState(prev => ({
-      ...prev,
-      players: prev.players.map(p =>
-        p.id === playerId
-          ? { ...p, isEliminated: false, joinedWarThisGame: true, troops: 0 }
-          : p,
-      ),
-      territories: {
-        ...prev.territories,
-        [territoryId]: { ...prev.territories[territoryId], occupyingPlayerId: playerId, troops: 3 },
-      },
-      phase: 'reinforce',
-    }))
+    // Through the reducer: a re-entry that existed on one machine only left
+    // the other boards showing a dead player holding live territory.
+    dispatch({ type: 'JOIN_WAR', playerId, territoryId })
     setJoinTheWarPlayerId(null)
   }
 
   function handleForfeitWar() {
     const playerId = joinTheWarPlayerId
     if (!playerId) return
-    // Mark as having used their Join the War option (forfeited)
-    setGameState(prev => ({
-      ...prev,
-      players: prev.players.map(p =>
-        p.id === playerId ? { ...p, joinedWarThisGame: false } : p,
-      ),
-    }))
+    // Recorded through the reducer, or an echo restoring "undecided" would
+    // re-open this offer on the next hand-off.
+    dispatch({ type: 'FORFEIT_WAR', playerId })
     setJoinTheWarPlayerId(null)
     // Advance to the next player
     handleNextPhase()
@@ -4565,7 +4741,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       setWinnerPlayerId(playerId)
       setWinCondition('mission')
       setUnlockOptions(pickUnlocks(gameStateRef.current.gameNumber))
-      setGameState(prev => ({ ...prev, phase: 'game-over', winnerId: playerId }))
+      dispatch({ type: 'END_GAME', winnerId: playerId, condition: 'mission' })
       setTimeout(() => setShowWinScreen(true), 300)
       return 'won'
     }
@@ -4748,7 +4924,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       setWinnerPlayerId(playerId)
       setWinCondition('mission')
       setUnlockOptions(pickUnlocks(gameStateRef.current.gameNumber))
-      setGameState(prev => ({ ...prev, phase: 'game-over', winnerId: playerId }))
+      dispatch({ type: 'END_GAME', winnerId: playerId, condition: 'mission' })
       setTimeout(() => setShowWinScreen(true), 300)
       return true
     }
@@ -4758,9 +4934,18 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   // ── Combat effect interpreter ─────────────────────────────────────────────
   // Applies the legacy/deck/modal consequences the pure reducer emits but can't
   // own itself. Kept current via applyEffectRef (assigned below on every render).
-  function applyCombatEffect(e: Effect) {
+  //
+  // `remote` marks effects that arrived from ANOTHER machine's action (live
+  // match_actions broadcast) rather than from a dispatch made here. A remote
+  // machine spectates: it plays the sounds and keeps its refs current, but it
+  // must not open interactive follow-ups for a player it does not control —
+  // queuing the capture card draw here put the draw modal on every machine in
+  // the match, and each one that clicked mutated its own copy of the deck.
+  // It also must not write the shared history line the actor already writes.
+  function applyCombatEffect(e: Effect, remote = false) {
     switch (e.kind) {
       case 'hq-captured': {
+        if (remote) break   // the actor's machine writes this line
         const state = gameStateRef.current
         const capturedPlayer  = state.players.find(p => p.id === e.hqPlayerId)
         const capturingPlayer = state.players.find(p => p.id === e.byPlayerId)
@@ -4778,12 +4963,82 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         })
         break
       }
+      case 'hq-reserve': {
+        const state = gameStateRef.current
+        const who = state.players.find(p => p.id === e.playerId)?.name ?? 'Khan'
+        const names = e.territoryIds.map(id => state.territories[id]?.name ?? id)
+        showWeaknessNotice(`⚙ Strategic Reserve — ${who} reinforces ${names.join(', ')} with +1 troop each`)
+        break
+      }
+      case 'event-troops': {
+        // The board change came with the state; announce it on machines that
+        // did not resolve the event themselves.
+        if (remote && e.note) showWeaknessNotice(`⚡ ${e.note}`)
+        break
+      }
+      case 'joined-war': {
+        if (remote) {
+          const who = gameStateRef.current.players.find(p => p.id === e.playerId)?.name ?? 'A player'
+          const where = gameStateRef.current.territories[e.territoryId]?.name ?? e.territoryId
+          showWeaknessNotice(`⚔ ${who} rejoined the war at ${where}`)
+        }
+        break
+      }
+      case 'game-ended': {
+        // The board is already frozen (phase game-over rode the state). On the
+        // machines that did not detect the win, surface it loudly; the full
+        // win-screen flow (unlocks, signatures) stays on the detecting machine
+        // — one writer for the campaign consequences.
+        if (remote) {
+          const who = gameStateRef.current.players.find(p => p.id === e.winnerId)?.name ?? 'Someone'
+          setWinnerPlayerId(e.winnerId)
+          showWeaknessNotice(`🏆 GAME OVER — ${who} wins (${e.condition})`)
+        }
+        break
+      }
+      case 'card-drawn': {
+        // The pile/hand change itself arrives with the next state (mirrored in
+        // onState) — the effect is the announcement.
+        if (remote) {
+          const who = gameStateRef.current.players.find(p => p.id === e.playerId)?.name ?? 'A player'
+          showWeaknessNotice(e.source === 'coin'
+            ? `🪙 ${who} drew a coin card`
+            : `🃏 ${who} took a face-up territory card`)
+        }
+        break
+      }
+      case 'cards-traded': {
+        if (remote) {
+          const who = gameStateRef.current.players.find(p => p.id === e.playerId)?.name ?? 'A player'
+          showWeaknessNotice(`🔁 ${who} traded in ${e.cardIds.length} cards`)
+        }
+        break
+      }
+      case 'spectator-missile': {
+        // Server-confirmed die flip. Actor: feed the open window (the modal
+        // polls it and turns the die). Spectators: flip it on the live view.
+        const cur = spectatorFlipsRef.current
+        if (cur && cur.key === e.roundKey
+            && !cur.flips.some(f => f.side === e.side && f.dieIndex === e.dieIndex)) {
+          cur.flips.push({ playerId: e.playerId, side: e.side, dieIndex: e.dieIndex })
+        }
+        setLiveRound(prev => prev && prev.roundKey === e.roundKey ? {
+          ...prev,
+          atkDice: e.side === 'atk' ? prev.atkDice.map((d, i) => (i === e.dieIndex ? 6 : d)) : prev.atkDice,
+          defDice: e.side === 'def' ? prev.defDice.map((d, i) => (i === e.dieIndex ? 6 : d)) : prev.defDice,
+          flips: [...prev.flips, { playerId: e.playerId, side: e.side, dieIndex: e.dieIndex }],
+        } : prev)
+        const shooter = gameStateRef.current.players.find(p => p.id === e.playerId)?.name ?? 'A spectator'
+        showWeaknessNotice(`🚀 ${shooter} fired a missile — ${e.side === 'atk' ? "an attacker's" : "a defender's"} die turns into a 6`)
+        break
+      }
       case 'territory-captured': {
         playVictory()
         // Mindshackle: remember whose territory was conquered this turn
         if (e.fromPlayerId) conqueredFromPlayerIdsRef.current.add(e.fromPlayerId)
-        // Territory card on the FIRST capture of the turn
-        if (e.firstCaptureThisTurn) {
+        // Territory card on the FIRST capture of the turn — queued only on the
+        // machine that performed the capture (its dispatch, its modal/AI pick).
+        if (e.firstCaptureThisTurn && !remote) {
           console.log(`[CardAward] First capture this turn by ${e.byPlayerId} — queuing card draw`)
           awardTerritoryCard(e.byPlayerId)
         }
@@ -4847,11 +5102,13 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // Troops have now fought — an earlier Mobile Forces fortify is locked in.
     sealFortifyUndo()
 
-    // Mark the defender territory as having had combat this turn — blocks bunker/ammo shortage scar placement
-    {
-      const prevAttacked = gameStateRef.current.turn.attackedTerritoryIds
-      if (!prevAttacked.includes(tgtId)) setTurn({ attackedTerritoryIds: [...prevAttacked, tgtId] })
-    }
+    // Per-turn combat tracking (attacked territories, bear trap, capture count,
+    // conquest lists) is applied by the RESOLVE_COMBAT reducer case below — NOT
+    // patched here. A local setTurn survives hotseat but not online: the server
+    // echo replaces the whole GameState, and a server that never saw the patch
+    // wipes it within a round-trip. That wipe is how every capture became "the
+    // first of the turn" (a card per capture, the resource deck drained by the
+    // AI) and how Balkania's 4th-capture count never passed 1.
 
     // Captured — animate the troop bubble moving into the conquered territory
     if (r.captured) {
@@ -4889,7 +5146,17 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         totalAtkLoss: r.totalAtkLoss, totalDefLoss: r.totalDefLoss,
         captured: r.captured, troopsToAdvance: r.troopsToAdvance,
         entryCostTotal, entryCostFalloutHalf, defenderCloningBonus,
+        // Computed here because campaign-placed sea lines live in legacy state
+        // the reducer cannot read. Feeds turn.conqueredViaSeaIds (missions).
+        viaSea: isSeaLine(srcId, tgtId),
+        // Iron Shield double-6 during this battle → the reducer seals the
+        // territory in turn.shieldedTerritoryIds.
+        sealDefender: sealDefenderRef.current,
+        // The dice as rolled, so spectators on other machines watch the same
+        // battle. Cosmetic: the reducer applies the totals above, never this.
+        rounds: r.rounds,
       })
+      sealDefenderRef.current = false
     }
 
     // Fortification uses: every combat roll against the territory consumes one
@@ -4948,37 +5215,24 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       })
     }
 
-    // Turn tracking on capture: capture count, conquest lists (mission checks),
-    // first-capture flag, and the Balkania 4th-capture trigger. The victory
-    // sound, HQ history log, territory-card award and Mindshackle tracking are
-    // all handled by the effects RESOLVE_COMBAT emits.
+    // The RESOLVE_COMBAT dispatch above already folded this combat into
+    // gameStateRef.current.turn (capture count, conquest lists, attacked
+    // territories, bear trap, first-capture flag) — the optimistic apply is
+    // synchronous. Read the tracked values back; do not recompute them.
     if (r.captured) {
       const state = gameStateRef.current
       const currentPId = state.players[state.currentPlayerIndex]?.id
-      const newCount = gameStateRef.current.turn.captureCount + 1
-      const newConqueredIds = [...gameStateRef.current.turn.conqueredIds, tgtId!]
-      const newConqueredViaSeaIds = srcId && tgtId && isSeaLine(srcId, tgtId)
-        ? [...gameStateRef.current.turn.conqueredViaSeaIds, tgtId]
-        : gameStateRef.current.turn.conqueredViaSeaIds
-      setTurn({ captureCount: newCount, conqueredIds: newConqueredIds, conqueredViaSeaIds: newConqueredViaSeaIds })
-      if (currentPId) {
-        if (!gameStateRef.current.turn.captured) setTurn({ captured: true })
-        // Balkania: immediately show card-pick modal on 4th capture (during attack phase)
-        if (newCount === 4 && playerAbility(currentPId) === 'balk-expansion-card') {
-          setBalkExpansionPending(currentPId)
-        }
+      // Balkania: immediately show card-pick modal on 4th capture (during attack phase)
+      if (currentPId && state.turn.captureCount === 4 && playerAbility(currentPId) === 'balk-expansion-card') {
+        setBalkExpansionPending(currentPId)
       }
     }
 
-    // Bear Trap: lock in the first territory attacked this turn — it keeps the
-    // -1 for every subsequent roll until conquered; other territories don't
-    setTurn({ bearTrapTerritoryId: gameStateRef.current.turn.bearTrapTerritoryId ?? tgtId ?? null })
-
     // Scars are only placed before a dice roll (immediate trigger), never post-capture.
 
-    // Snapshot conquest state before async check. The setTurn mirror above has
-    // already folded this capture into gameStateRef.current.turn, so this reads
-    // the post-capture values directly.
+    // Snapshot conquest state before async check. The reducer has already
+    // folded this capture into gameStateRef.current.turn, so this reads the
+    // post-capture values directly.
     const conquestSnapshot: TurnConquestState = {
       conqueredIds: gameStateRef.current.turn.conqueredIds,
       conqueredViaSeaIds: gameStateRef.current.turn.conqueredViaSeaIds,
@@ -5003,7 +5257,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         setWinnerPlayerId(fourStarWinner.id)
         setWinCondition('mission')
         setUnlockOptions(pickUnlocks(state.gameNumber))
-        setGameState(prev => ({ ...prev, phase: 'game-over', winnerId: fourStarWinner.id }))
+        dispatch({ type: 'END_GAME', winnerId: fourStarWinner.id, condition: 'mission' })
         setTimeout(() => setShowWinScreen(true), 300)
       } else if (!checkMissions(state.territories, state.players, conquestSnapshot)) {
         // Check overall win (mission / elimination)
@@ -5012,7 +5266,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
           setWinnerPlayerId(winnerId)
           setWinCondition('elimination')
           setUnlockOptions(pickUnlocks(state.gameNumber))
-          setGameState(prev => ({ ...prev, phase: 'game-over', winnerId }))
+          dispatch({ type: 'END_GAME', winnerId, condition: 'elimination' })
           setTimeout(() => setShowWinScreen(true), 300)
         }
       }
@@ -5061,18 +5315,11 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     })
 
     // Uncontested advances count as expansions too — Balkania's Imperial
-    // Expansion triggers on the 4th expansion of the turn, conquest or not
-    const newCount = gameStateRef.current.turn.captureCount + 1
-    setTurn({ captureCount: newCount })
-
-    // Resourceful comeback power: remember that this turn's expansion landed on
-    // a city territory. This path is the ONLY way to take an unoccupied
-    // territory, and it deliberately does not set `turn.captured` — so no card
-    // is awarded here; the end-of-turn check grants one.
-    const advTgt = gameStateRef.current.territories[tgtId]
-    if ((advTgt?.cities ?? []).some(c => !c.isDestroyed)) {
-      setTurn({ expandedIntoCity: true })
-    }
+    // Expansion triggers on the 4th expansion of the turn, conquest or not.
+    // The reducer tracked it (captureCount, expandedIntoCity) during the
+    // dispatch above; a local setTurn here would only be wiped by the next
+    // server echo online.
+    const newCount = gameStateRef.current.turn.captureCount
     if (newCount === 4 && currentPlayerId && playerAbility(currentPlayerId) === 'balk-expansion-card') {
       console.log(`[CardAward] Balkania 4th expansion (uncontested advance) — showing immediate card pick for ${currentPlayerId}`)
       setBalkExpansionPending(currentPlayerId)
@@ -5139,12 +5386,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   function handleUndoFortify() {
     if (!lastFortify) return
     const { srcId, dstId, troops } = lastFortify
-    setGameState(prev => {
-      const territories = { ...prev.territories }
-      territories[srcId] = { ...territories[srcId], troops: territories[srcId].troops + troops }
-      territories[dstId] = { ...territories[dstId], troops: territories[dstId].troops - troops }
-      return { ...prev, territories }
-    })
+    // The undo is the fortify run backwards, THROUGH the reducer: a bare
+    // reversal existed only on this machine, and online the next echo simply
+    // re-fortified. `lastFortify.troops` records the SURVIVORS (a Fallout
+    // Zone crossing halves arrivals; the dead stay dead), so the reverse move
+    // is symmetric by construction.
+    dispatch({ type: 'CONFIRM_FORTIFY', srcId: dstId, dstId: srcId, troopsRemoved: troops, troopsArriving: troops })
     setFortifyDone(false)
     setFortifyMovesLeft(prev => prev + 1)
     setLastFortify(null)
@@ -5257,16 +5504,17 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       const nextPlayer = gameState.players[nextIdx]
 
       // ── START-OF-TURN Strategic Reserve for the INCOMING player ───────────
-      // Khan Industries places +1 troop directly on each HQ they control. This
-      // is the ONE turn hand-off, so the troops land exactly once: both the
-      // normal path and the Join the War early-return below commit
-      // `endTerritories`, and a reload never re-runs it.
-      const hqReserve = applyHqReserveTroops(scarResult.territories, nextPlayerId, playerAbility(nextPlayerId))
-      const endTerritories = hqReserve.territories
-      if (hqReserve.grantedTerritoryIds.length > 0) {
-        const names = hqReserve.grantedTerritoryIds.map(id => endTerritories[id]?.name ?? id)
-        showWeaknessNotice(`⚙ Strategic Reserve — ${nextPlayer.name} reinforces ${names.join(', ')} with +1 troop each`)
-      }
+      // Khan's +1/HQ is applied by the REDUCER inside END_TURN now (the
+      // 'hq-reserve' effect carries the notice). It used to be pre-folded into
+      // `endTerritories` here — which the server's recompute discarded, so an
+      // online Khan lost their ability at every turn end. The board below is
+      // therefore the post-scar, PRE-reserve board; the one place that still
+      // commits it directly (the Join the War early-return) hands the turn to
+      // an eliminated player, who controls no HQs, so no reserve is owed there.
+      const endTerritories = scarResult.territories
+      const hqReservePlayerIds = gameState.players
+        .filter(p => playerAbility(p.id) === 'khan-hq-troops')
+        .map(p => p.id)
 
       // Clear fortify state — runs BEFORE the Join the War early-return so
       // per-turn state (attacked territories, capture counts, missile powers…)
@@ -5373,7 +5621,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       setTroopsToPlace(nextTroops)
       setPlacementHistory([])
 
-      dispatch({ type: 'END_TURN', endTerritories })
+      dispatch({ type: 'END_TURN', endTerritories, hqReservePlayerIds })
     }
   }
 
@@ -5399,19 +5647,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // Which card triggered this placement (if any)
     const placingCardId = triggeredCard?.id ?? activeCardId
 
-    // Apply scar to territory in game state
-    setGameState(prev => {
-      const t = prev.territories[territory.id]
-      if (!t) return prev
-      const newScar: import('@/types/territory').Scar = { type, appliedInGame: gameNumber }
-      return {
-        ...prev,
-        territories: {
-          ...prev.territories,
-          [territory.id]: { ...t, scars: [...t.scars, newScar] },
-        },
-      }
-    })
+    // Apply scar to territory in game state — through the reducer, so the
+    // scar's combat modifiers exist on every board, not just the placer's.
+    dispatch({ type: 'PLACE_SCAR', territoryId: territory.id, scarType: type })
 
     // If triggered by a held card, mark it as placed and remove from held set
     if (placingCardId) {
@@ -5479,9 +5717,18 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (working.activeMatchId) {
       void endOnlineMatch(working.activeMatchId, 'complete').catch(() => {})
     }
+    // Spectator missiles were charged into the MATCH ledger (the server never
+    // writes the legacy blob — single-writer rule). This is the one moment the
+    // ledger flows back: fold the spends into the campaign's missile counts.
+    const spends = gameStateRef.current.missileSpends ?? {}
+    const missiles = Object.keys(spends).length > 0
+      ? Object.fromEntries(Object.entries(working.missiles ?? {}).map(
+          ([pid, n]) => [pid, Math.max(0, (n ?? 0) - (spends[pid] ?? 0))],
+        ))
+      : working.missiles
     const completed = {
       ...working, gameInProgress: false, activeGameState: null,
-      purchasedStars: {}, activeMatchId: null,
+      purchasedStars: {}, activeMatchId: null, missiles,
     }
 
     // The campaign ends after 15 games — or the moment the lead is unassailable.
@@ -5649,7 +5896,18 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
           legacyState.campaignId,
           gameStateRef.current.gameNumber,
           seatsFromGameState(gameStateRef.current, legacyStateRef.current),
-          gameStateRef.current,
+          // The contended card piles become SERVER state for the match's
+          // lifetime — that is what makes two clients drawing the same card
+          // impossible. Hands are already in players[].cards.
+          {
+            ...gameStateRef.current,
+            cards: {
+              territoryDeck: [...(cardStateRef.current.territoryDeck ?? [])],
+              sideboard: [...(cardStateRef.current.sideboard ?? [])],
+              resourceDeck: [...(cardStateRef.current.resourceDeck ?? cardStateRef.current.coinDeck ?? [])],
+              territoryDiscard: [...(cardStateRef.current.territoryDiscard ?? [])],
+            },
+          },
         )
         adopt(live, true)
         showWeaknessNotice('🌐 Online game started — everyone else is now on this board')
@@ -5725,12 +5983,45 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       onState: (state, version) => {
         gameStateRef.current = state
         setGameState(state)
+        // The server's card piles ride the state — keep the display deck/hands
+        // on the server's truth.
+        mirrorServerCardsRef.current(state)
         onlineMatchRef.current = { matchId: onlineMatch!.matchId, version }
         setOnlineMatch({ matchId: onlineMatch!.matchId, version })
       },
       // Effects carry what a state diff cannot say — which dice were rolled,
-      // who was eliminated. Only fires for messages received live.
-      onAction: (_action, effects) => { for (const e of effects) applyEffectRef.current(e) },
+      // who was eliminated. Only fires for messages received live, and only for
+      // actions OTHER machines performed (matchSync drops seqs this client
+      // already applied from its own POST responses). `remote: true` keeps the
+      // interpreter to spectating: sounds and refs, no card-draw modals and no
+      // duplicate history writes for a player this machine does not control.
+      onAction: (action, effects) => {
+        // A round holding still for missiles: show it live, button and all.
+        if (action.type === 'OPEN_COMBAT_WINDOW') {
+          liveBattleSeenRef.current = { srcId: action.srcId, tgtId: action.tgtId }
+          setLiveRound({
+            roundKey: action.roundKey, srcId: action.srcId, tgtId: action.tgtId,
+            atkDice: [...action.atkDice], defDice: [...action.defDice],
+            flips: [], endsAt: Date.now() + 5_000,
+          })
+        }
+        if (action.type === 'CLOSE_COMBAT_WINDOW') {
+          setLiveRound(prev => (prev?.roundKey === action.roundKey ? null : prev))
+        }
+        if (action.type === 'RESOLVE_COMBAT') setLiveRound(null)
+
+        // A battle fought elsewhere: replay its dice for this audience — but a
+        // battle already WATCHED live round-by-round gets only the summary.
+        const report = buildSpectatorReport(action, effects, gameStateRef.current)
+        if (report) {
+          const seen = liveBattleSeenRef.current
+          const watchedLive = !!seen && action.type === 'RESOLVE_COMBAT'
+            && action.srcId === seen.srcId && action.tgtId === seen.tgtId
+          if (watchedLive) liveBattleSeenRef.current = null
+          showSpectatorCombat(watchedLive ? { ...report, summary: true } : report)
+        }
+        for (const e of effects) applyEffectRef.current(e, true)
+      },
     },
   )
   matchSyncRef.current = matchSync
@@ -5745,6 +6036,38 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         onRetry={() => { void matchSync?.resync() }}
         expectedOnline={playOnline || !!legacyState.activeMatchId}
       />
+      {/* A battle happening on another machine, replayed for this audience. */}
+      {spectatorCombat && !liveRound && <SpectatorCombatOverlay report={spectatorCombat} />}
+      {/* A round LIVE right now on the actor's machine — dice shown as they
+          stand, and a missile button for spectators who hold one. */}
+      {liveRound && (() => {
+        const src = gameState.territories[liveRound.srcId]
+        const tgt = gameState.territories[liveRound.tgtId]
+        const isSpectatorSeat = !!localSeatId
+          && src?.occupyingPlayerId !== localSeatId
+          && tgt?.occupyingPlayerId !== localSeatId
+        // Missiles this seat can still spend: campaign count minus this
+        // game's server-side spend ledger.
+        const spectatorMissilesLeft = localSeatId
+          ? Math.max(0, ((legacyState.missiles ?? {})[localSeatId] ?? 0) - ((gameState.missileSpends ?? {})[localSeatId] ?? 0))
+          : 0
+        return (
+          <SpectatorLiveRound
+            round={liveRound}
+            attackerName={gameState.players.find(p => p.id === src?.occupyingPlayerId)?.name ?? 'Attacker'}
+            srcName={src?.name ?? liveRound.srcId}
+            tgtName={tgt?.name ?? liveRound.tgtId}
+            missilesLeft={isSpectatorSeat ? spectatorMissilesLeft : 0}
+            onFire={async (side, dieIndex) => {
+              const match = onlineMatchRef.current
+              if (!match) return false
+              const res = await sendSpectatorMissile(match.matchId, liveRound.roundKey, side, dieIndex)
+              if (!res.ok) showWeaknessNotice(`🚀 ${res.message}`)
+              return res.ok
+            }}
+          />
+        )
+      })()}
       {/* Header bar — sits above the map, never overlaps it */}
       <div style={{ position: 'relative', height: 56, flexShrink: 0, zIndex: 50 }}>
         <TurnControls
@@ -7125,11 +7448,15 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
               setPendingNuclear(pendingNuclearRef.current)
             }}
             onDefenseDoubleMax={dmShield ? () => {
-              const prevShielded = gameStateRef.current.turn.shieldedTerritoryIds
-              if (!prevShielded.includes(attackTgtTerritory.id)) setTurn({ shieldedTerritoryIds: [...prevShielded, attackTgtTerritory.id] })
+              // Applied via RESOLVE_COMBAT's sealDefender flag when the battle
+              // resolves — a setTurn patch here was un-sealed by the next echo.
+              sealDefenderRef.current = true
             } : undefined}
             onClose={closeCombatModal}
             onApplyResult={handleCombatResult}
+            // Online only: hold each round open briefly for spectator missiles.
+            // AutoPlay battles skip the window inside the modal.
+            spectatorWindow={onlineMatch ? spectatorWindowApiRef.current : undefined}
           />
         )
       })()}

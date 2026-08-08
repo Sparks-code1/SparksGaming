@@ -7,6 +7,26 @@
 // bytes: a divergence here is two machines playing different games while both
 // believe they agree.
 
+// src/types/game.ts
+function initialTurnState() {
+  return {
+    captured: false,
+    captureCount: 0,
+    conqueredIds: [],
+    conqueredViaSeaIds: [],
+    bearTrapTerritoryId: null,
+    attackedTerritoryIds: [],
+    shieldedTerritoryIds: [],
+    expandedIntoCity: false,
+    richCardsTradedIn: 0,
+    resourcesTradedIn: 0,
+    knockedOutRichPlayer: false,
+    continentsAtTurnStart: 0,
+    eligibleForRichCard: false,
+    richCardTerritoryIds: []
+  };
+}
+
 // src/data/territoryData.ts
 function r(x1, y1, x2, y2) {
   return [[x1, y1], [x2, y1], [x2, y2], [x1, y2]];
@@ -411,6 +431,72 @@ var CONTINENT_SIZES = TERRITORY_DEFINITIONS.reduce(
   (acc, d) => ({ ...acc, [d.continentId]: (acc[d.continentId] ?? 0) + 1 }),
   {}
 );
+function continentsHeldInFull(playerId, territories) {
+  const counts = {};
+  for (const t of Object.values(territories)) {
+    if (t.occupyingPlayerId !== playerId) continue;
+    counts[t.continentId] = (counts[t.continentId] ?? 0) + 1;
+  }
+  return Object.entries(counts).filter(([cId, n]) => n >= (CONTINENT_SIZES[cId] ?? Infinity)).map(([cId]) => cId);
+}
+function applyCustomSeaLines(territories, pairs) {
+  let result = territories;
+  for (const [a, b] of pairs ?? []) {
+    const ta = result[a];
+    const tb = result[b];
+    if (!ta || !tb) continue;
+    if (!ta.adjacentIds.includes(b)) {
+      result = { ...result, [a]: { ...ta, adjacentIds: [...ta.adjacentIds, b] } };
+    }
+    if (!result[b].adjacentIds.includes(a)) {
+      result = { ...result, [b]: { ...result[b], adjacentIds: [...result[b].adjacentIds, a] } };
+    }
+  }
+  return result;
+}
+var ALIEN_ISLAND_TERRITORY_ID = "alien-island";
+function injectAlienIslandTerritory(territories, island) {
+  if (!island) return territories;
+  const result = { ...territories };
+  if (!result[ALIEN_ISLAND_TERRITORY_ID]) {
+    const r2 = 22;
+    const poly = Array.from({ length: 8 }, (_, i) => {
+      const a = Math.PI / 4 * i + Math.PI / 8;
+      return [Math.round(island.x + r2 * Math.cos(a)), Math.round(island.y + r2 * Math.sin(a))];
+    });
+    result[ALIEN_ISLAND_TERRITORY_ID] = {
+      id: ALIEN_ISLAND_TERRITORY_ID,
+      name: "Alien Island",
+      continentId: "alien-island",
+      shape: JSON.stringify(poly),
+      labelX: island.x,
+      labelY: island.y,
+      adjacentIds: [...island.connectedTerritoryIds],
+      occupyingPlayerId: null,
+      troops: 0,
+      scars: [],
+      cities: []
+    };
+  }
+  for (const cid of island.connectedTerritoryIds) {
+    const t = result[cid];
+    if (t && !t.adjacentIds.includes(ALIEN_ISLAND_TERRITORY_ID)) {
+      result[cid] = { ...t, adjacentIds: [...t.adjacentIds, ALIEN_ISLAND_TERRITORY_ID] };
+    }
+  }
+  return result;
+}
+function controlledHqTerritoryIds(playerId, territories) {
+  return Object.values(territories).filter((t) => t.occupyingPlayerId === playerId && !!t.activeHqPlayerId).map((t) => t.id);
+}
+function applyHqReserveTroops(territories, playerId, ability) {
+  if (ability !== "khan-hq-troops") return { territories, grantedTerritoryIds: [] };
+  const ids = controlledHqTerritoryIds(playerId, territories);
+  if (ids.length === 0) return { territories, grantedTerritoryIds: [] };
+  const next = { ...territories };
+  for (const id of ids) next[id] = { ...next[id], troops: next[id].troops + 1 };
+  return { territories: next, grantedTerritoryIds: ids };
+}
 function legalJoinWarTerritoryIds(territories, hqTerritoryIds, falloutZoneTerritoryId) {
   const blocked = new Set(hqTerritoryIds);
   for (const hqId of hqTerritoryIds) {
@@ -611,10 +697,283 @@ function gameReducer(state, action, rng) {
       return applyCombatOutcome(state, action);
     case "RETREAT":
       return only(state);
+    case "OPEN_COMBAT_WINDOW": {
+      const die = (v) => typeof v === "number" && Number.isFinite(v) ? Math.max(1, Math.min(6, Math.trunc(v))) : 1;
+      return only({
+        ...state,
+        combatWindow: {
+          roundKey: String(action.roundKey).slice(0, 80),
+          srcId: action.srcId,
+          tgtId: action.tgtId,
+          atkDice: (Array.isArray(action.atkDice) ? action.atkDice : []).slice(0, 3).map(die),
+          defDice: (Array.isArray(action.defDice) ? action.defDice : []).slice(0, 3).map(die),
+          flips: []
+        }
+      });
+    }
+    case "SPECTATOR_MISSILE": {
+      const w = state.combatWindow;
+      if (!w || w.roundKey !== action.roundKey) return only(state);
+      const dice = action.side === "atk" ? w.atkDice : w.defDice;
+      if (action.dieIndex < 0 || action.dieIndex >= dice.length) return only(state);
+      if (w.flips.some((f) => f.side === action.side && f.dieIndex === action.dieIndex)) return only(state);
+      const flipped = dice.map((d, i) => i === action.dieIndex ? 6 : d);
+      return {
+        state: {
+          ...state,
+          combatWindow: {
+            ...w,
+            atkDice: action.side === "atk" ? flipped : w.atkDice,
+            defDice: action.side === "def" ? flipped : w.defDice,
+            flips: [...w.flips, { playerId: action.playerId, side: action.side, dieIndex: action.dieIndex }]
+          },
+          missileSpends: {
+            ...state.missileSpends ?? {},
+            [action.playerId]: ((state.missileSpends ?? {})[action.playerId] ?? 0) + 1
+          }
+        },
+        effects: [{
+          kind: "spectator-missile",
+          roundKey: w.roundKey,
+          playerId: action.playerId,
+          side: action.side,
+          dieIndex: action.dieIndex,
+          srcId: w.srcId,
+          tgtId: w.tgtId
+        }]
+      };
+    }
+    case "CLOSE_COMBAT_WINDOW":
+      if (state.combatWindow && state.combatWindow.roundKey !== action.roundKey) return only(state);
+      return only({ ...state, combatWindow: null });
+    case "DRAW_CARD": {
+      const piles = state.cards;
+      if (!piles) return only(state);
+      const player = state.players.find((p) => p.id === action.playerId);
+      if (!player) return only(state);
+      if (action.source === "face-up") {
+        const at = piles.sideboard.indexOf(action.cardId);
+        if (at < 0) return only(state);
+        const deck = [...piles.territoryDeck];
+        const newSpot1Id = deck.length > 0 ? deck.shift() : null;
+        const sideboard = [
+          ...newSpot1Id ? [newSpot1Id] : [],
+          ...piles.sideboard.filter((id) => id !== action.cardId)
+        ];
+        return {
+          state: {
+            ...state,
+            cards: { ...piles, territoryDeck: deck, sideboard },
+            players: state.players.map((p) => p.id === action.playerId ? { ...p, cards: [...p.cards, action.cardId] } : p)
+          },
+          effects: [{ kind: "card-drawn", playerId: action.playerId, cardId: action.cardId, source: "face-up", newSpot1Id }]
+        };
+      }
+      if (!piles.resourceDeck.includes(action.cardId)) return only(state);
+      return {
+        state: {
+          ...state,
+          cards: { ...piles, resourceDeck: piles.resourceDeck.filter((id) => id !== action.cardId) },
+          players: state.players.map((p) => p.id === action.playerId ? { ...p, cards: [...p.cards, action.cardId] } : p)
+        },
+        effects: [{ kind: "card-drawn", playerId: action.playerId, cardId: action.cardId, source: "coin", newSpot1Id: null }]
+      };
+    }
+    case "APPLY_EVENT_TROOPS": {
+      if (!Array.isArray(action.changes) || action.changes.length === 0) return only(state);
+      const territories = { ...state.territories };
+      const applied = [];
+      for (const c of action.changes.slice(0, 12)) {
+        const t = territories[c?.territoryId];
+        if (!t) continue;
+        const delta = typeof c.delta === "number" && Number.isFinite(c.delta) ? Math.max(-6, Math.min(6, Math.trunc(c.delta))) : 0;
+        if (delta === 0) continue;
+        const troops = Math.max(0, t.troops + delta);
+        const settling = typeof c.occupyingPlayerId === "string" && !t.occupyingPlayerId && t.troops === 0 && delta > 0 && state.players.some((p) => p.id === c.occupyingPlayerId);
+        territories[c.territoryId] = {
+          ...t,
+          troops,
+          occupyingPlayerId: settling ? c.occupyingPlayerId : troops === 0 ? null : t.occupyingPlayerId
+        };
+        applied.push({ territoryId: c.territoryId, delta });
+      }
+      if (applied.length === 0) return only(state);
+      return {
+        state: { ...state, territories },
+        effects: [{ kind: "event-troops", note: String(action.note ?? "").slice(0, 120), changes: applied }]
+      };
+    }
+    case "MOVE_HQ": {
+      const from = state.territories[action.fromId];
+      const to = state.territories[action.toId];
+      if (!from || !to) return only(state);
+      if (from.activeHqPlayerId !== action.playerId) return only(state);
+      if (to.activeHqPlayerId) return only(state);
+      if (from.occupyingPlayerId !== action.playerId || to.occupyingPlayerId !== action.playerId) return only(state);
+      return only({
+        ...state,
+        territories: {
+          ...state.territories,
+          [action.fromId]: { ...from, activeHqPlayerId: void 0 },
+          [action.toId]: { ...to, activeHqPlayerId: action.playerId }
+        },
+        activeHqs: { ...state.activeHqs, [action.playerId]: action.toId }
+      });
+    }
+    case "JOIN_WAR": {
+      const player = state.players.find((p) => p.id === action.playerId);
+      if (!player || !player.isEliminated || player.joinedWarThisGame !== void 0) return only(state);
+      const legal = legalJoinWarTerritoryIds(
+        state.territories,
+        Object.values(state.activeHqs ?? {}),
+        state.legacySnapshot?.falloutZoneTerritoryId
+      );
+      if (!legal.includes(action.territoryId)) return only(state);
+      const t = state.territories[action.territoryId];
+      return {
+        state: {
+          ...state,
+          territories: {
+            ...state.territories,
+            // 3 troops on re-entry — the same number the component always used.
+            [action.territoryId]: { ...t, occupyingPlayerId: action.playerId, troops: 3 }
+          },
+          players: state.players.map((p) => p.id === action.playerId ? { ...p, isEliminated: false, joinedWarThisGame: true } : p),
+          // Rejoining IS the start of their turn.
+          phase: "reinforce"
+        },
+        effects: [{ kind: "joined-war", playerId: action.playerId, territoryId: action.territoryId }]
+      };
+    }
+    case "FORFEIT_WAR": {
+      const player = state.players.find((p) => p.id === action.playerId);
+      if (!player || !player.isEliminated || player.joinedWarThisGame !== void 0) return only(state);
+      return only({
+        ...state,
+        players: state.players.map((p) => p.id === action.playerId ? { ...p, joinedWarThisGame: false } : p)
+      });
+    }
+    case "END_GAME": {
+      const winner = state.players.find((p) => p.id === action.winnerId);
+      if (!winner || winner.isEliminated) return only(state);
+      if (state.phase === "game-over") return only(state);
+      return {
+        state: { ...state, phase: "game-over", winnerId: action.winnerId },
+        effects: [{ kind: "game-ended", winnerId: action.winnerId, condition: action.condition }]
+      };
+    }
+    case "PLACE_SEA_LINE": {
+      if (action.a === action.b) return only(state);
+      if (!state.territories[action.a] || !state.territories[action.b]) return only(state);
+      return only({ ...state, territories: applyCustomSeaLines(state.territories, [[action.a, action.b]]) });
+    }
+    case "INJECT_ALIEN_ISLAND": {
+      const island = action.island;
+      if (!island || !Number.isFinite(island.x) || !Number.isFinite(island.y)) return only(state);
+      const [c1, c2] = island.connectedTerritoryIds ?? [];
+      if (!state.territories[c1] || !state.territories[c2] || c1 === c2) return only(state);
+      return only({ ...state, territories: injectAlienIslandTerritory(state.territories, island) });
+    }
+    case "OBLITERATE_TERRITORY": {
+      const t = state.territories[action.territoryId];
+      if (!t) return only(state);
+      const activeHqs = Object.fromEntries(
+        Object.entries(state.activeHqs ?? {}).filter(([, tId]) => tId !== action.territoryId)
+      );
+      return only({
+        ...state,
+        activeHqs,
+        territories: {
+          ...state.territories,
+          [action.territoryId]: {
+            ...t,
+            occupyingPlayerId: null,
+            troops: 0,
+            cities: [],
+            activeHqPlayerId: void 0,
+            scars: action.clearScars ? [] : t.scars
+          }
+        }
+      });
+    }
+    case "DESTROY_CITIES": {
+      const t = state.territories[action.territoryId];
+      if (!t || !Array.isArray(action.cityIds)) return only(state);
+      if (action.cityIds.length === 0 && !action.demolishHq) return only(state);
+      const doomed = new Set(action.cityIds.slice(0, 4).map(String));
+      const cities = (t.cities ?? []).map((c) => doomed.has(c.id) && !c.isDestroyed ? { ...c, isDestroyed: true, destroyedInGame: state.gameNumber } : c);
+      return only({
+        ...state,
+        territories: {
+          ...state.territories,
+          [action.territoryId]: {
+            ...t,
+            cities,
+            activeHqPlayerId: action.demolishHq ? void 0 : t.activeHqPlayerId
+          }
+        }
+      });
+    }
+    case "SEED_CARD_PILES": {
+      if (state.cards) return only(state);
+      const c = action.cards;
+      if (!c || !Array.isArray(c.territoryDeck) || !Array.isArray(c.sideboard) || !Array.isArray(c.resourceDeck) || !Array.isArray(c.territoryDiscard)) return only(state);
+      const clean = (a) => a.slice(0, 60).map(String);
+      const hands = action.hands ?? {};
+      return only({
+        ...state,
+        cards: {
+          territoryDeck: clean(c.territoryDeck),
+          sideboard: clean(c.sideboard),
+          resourceDeck: clean(c.resourceDeck),
+          territoryDiscard: clean(c.territoryDiscard)
+        },
+        players: state.players.map((p) => Array.isArray(hands[p.id]) ? { ...p, cards: clean(hands[p.id]) } : p)
+      });
+    }
+    case "PLACE_SCAR": {
+      const t = state.territories[action.territoryId];
+      if (!t) return only(state);
+      if ((t.scars?.length ?? 0) > 0) return only(state);
+      const scarType = String(action.scarType).slice(0, 40);
+      return only({
+        ...state,
+        territories: {
+          ...state.territories,
+          [action.territoryId]: {
+            ...t,
+            scars: [...t.scars, { type: scarType, appliedInGame: state.gameNumber }]
+          }
+        }
+      });
+    }
+    case "TRADE_IN_CARDS": {
+      const piles = state.cards;
+      if (!piles) return only(state);
+      const player = state.players.find((p) => p.id === action.playerId);
+      if (!player) return only(state);
+      const ids = [...new Set(action.cardIds)];
+      if (ids.length === 0 || !ids.every((id) => player.cards.includes(id))) return only(state);
+      const coins = ids.filter((id) => id.startsWith("resource-"));
+      const territory = ids.filter((id) => !coins.includes(id));
+      return {
+        state: {
+          ...state,
+          cards: {
+            ...piles,
+            resourceDeck: [...piles.resourceDeck, ...coins],
+            territoryDiscard: [...piles.territoryDiscard, ...territory]
+          },
+          players: state.players.map((p) => p.id === action.playerId ? { ...p, cards: p.cards.filter((id) => !ids.includes(id)) } : p)
+        },
+        effects: [{ kind: "cards-traded", playerId: action.playerId, cardIds: ids }]
+      };
+    }
     case "CONFIRM_FORTIFY": {
       const src = state.territories[action.srcId];
       const dst = state.territories[action.dstId];
       if (!src || !dst) return only(state);
+      if (action.troopsRemoved < 0 || action.troopsArriving < 0 || src.troops - action.troopsRemoved < 1) return only(state);
       return only({
         ...state,
         territories: {
@@ -630,12 +989,33 @@ function gameReducer(state, action, rng) {
         territories: { ...state.territories, ...action.endTerritories }
       };
       const { nextIdx, isNewRound } = computeTurnAdvance(withEnd);
-      return only({
-        ...withEnd,
-        phase: "reinforce",
-        currentPlayerIndex: nextIdx,
-        turnNumber: isNewRound ? state.turnNumber + 1 : state.turnNumber
-      });
+      const nextPlayerId = withEnd.players[nextIdx]?.id ?? "";
+      const reserve = (action.hqReservePlayerIds ?? []).includes(nextPlayerId) ? applyHqReserveTroops(withEnd.territories, nextPlayerId, "khan-hq-troops") : { territories: withEnd.territories, grantedTerritoryIds: [] };
+      return {
+        state: {
+          ...withEnd,
+          territories: reserve.territories,
+          phase: "reinforce",
+          currentPlayerIndex: nextIdx,
+          turnNumber: isNewRound ? state.turnNumber + 1 : state.turnNumber,
+          // A fresh turn for the incoming player. Without this the SERVER's
+          // copy of `turn` was never reset (or set at all) — it served the
+          // initial board's zeroes forever, and every echo overwrote the
+          // client's own tracking with them mid-turn.
+          turn: {
+            ...initialTurnState(),
+            // Wide Border is judged at the start of a turn: snapshot the
+            // incoming player's whole-continent count off the end-of-turn board.
+            continentsAtTurnStart: continentsHeldInFull(
+              nextPlayerId,
+              reserve.territories
+            ).length
+          },
+          // A window cannot outlive the turn that opened it.
+          combatWindow: null
+        },
+        effects: reserve.grantedTerritoryIds.length > 0 ? [{ kind: "hq-reserve", playerId: nextPlayerId, territoryIds: reserve.grantedTerritoryIds }] : []
+      };
     }
     default:
       return only(state);
@@ -680,6 +1060,13 @@ function clampCombatResolution(state, a) {
   const uncontested = !!a.uncontested;
   const captured = uncontested ? !!a.captured && !!tgt && tgtTroops === 0 && !tgt.occupyingPlayerId : !!a.captured && totalDefLoss >= tgtTroops && tgtTroops > 0;
   const survivors = srcTroops - totalAtkLoss;
+  const rounds = !uncontested && Array.isArray(a.rounds) ? a.rounds.slice(0, 40).flatMap((r2) => {
+    const dice = (v) => Array.isArray(v) ? v.slice(0, 3).map((d) => int(d, 1, 6)) : [];
+    const atkDice = dice(r2?.atkDice);
+    const defDice = dice(r2?.defDice);
+    if (atkDice.length === 0 || defDice.length === 0) return [];
+    return [{ atkDice, defDice, aLoss: int(r2.aLoss, 0, 99), dLoss: int(r2.dLoss, 0, 99) }];
+  }) : void 0;
   return {
     ...a,
     totalAtkLoss: uncontested ? 0 : totalAtkLoss,
@@ -688,8 +1075,24 @@ function clampCombatResolution(state, a) {
     uncontested,
     troopsToAdvance: captured ? int(a.troopsToAdvance, 1, Math.max(1, survivors - 1)) : 0,
     entryCostTotal: int(a.entryCostTotal, 0, 12),
-    defenderCloningBonus: int(a.defenderCloningBonus, 0, 12)
+    defenderCloningBonus: int(a.defenderCloningBonus, 0, 12),
+    // Mission bookkeeping only, but untrusted input still gets a type: any
+    // JSON value collapses to a plain boolean here.
+    viaSea: !!a.viaSea,
+    sealDefender: !!a.sealDefender,
+    rounds
   };
+}
+function spectatorMissileRefusal(state, action, spenderId, opts) {
+  if (opts.isBattleSide) return "not-a-spectator";
+  const w = state.combatWindow;
+  if (!w || w.roundKey !== action.roundKey) return "window-closed";
+  const dice = action.side === "atk" ? w.atkDice : w.defDice;
+  if (!Number.isInteger(action.dieIndex) || action.dieIndex < 0 || action.dieIndex >= dice.length) return "bad-die";
+  if (w.flips.some((f) => f.side === action.side && f.dieIndex === action.dieIndex)) return "die-taken";
+  const spent = (state.missileSpends ?? {})[spenderId] ?? 0;
+  if (opts.legacyMissiles - spent < 1) return "no-missiles";
+  return null;
 }
 function applyCombatOutcome(state, action) {
   const only = (s) => ({ state: s, effects: [] });
@@ -703,7 +1106,7 @@ function applyCombatOutcome(state, action) {
   const preHqPlayerId = tgt0.activeHqPlayerId;
   src.troops -= action.totalAtkLoss;
   if (action.captured) {
-    const moving = Math.max(1, action.troopsToAdvance);
+    const moving = Math.min(Math.max(1, action.troopsToAdvance), Math.max(1, src.troops - 1));
     tgt.occupyingPlayerId = src.occupyingPlayerId;
     const survivors = troopsAfterEntry(moving, {
       total: action.entryCostTotal,
@@ -742,7 +1145,36 @@ function applyCombatOutcome(state, action) {
       effects.push({ kind: "players-eliminated", playerIds: eliminatedIds, byPlayerId: attackerId, capturedCardIds: capturedCards });
     }
   }
-  return { state: { ...state, territories, players }, effects };
+  const t0 = state.turn;
+  let turn = t0;
+  if (action.uncontested) {
+    if (action.captured) {
+      turn = {
+        ...t0,
+        // Uncontested advances count toward Balkania's Imperial Expansion.
+        captureCount: t0.captureCount + 1,
+        // Resourceful comeback power: the turn's expansion landed on a city.
+        expandedIntoCity: t0.expandedIntoCity || (tgt0.cities ?? []).some((c) => !c.isDestroyed)
+      };
+    }
+  } else {
+    turn = {
+      ...t0,
+      // Blocks bunker/ammo-shortage scar placement on a fought-over territory.
+      attackedTerritoryIds: t0.attackedTerritoryIds.includes(action.tgtId) ? t0.attackedTerritoryIds : [...t0.attackedTerritoryIds, action.tgtId],
+      // Bear Trap locks onto the first territory attacked this turn.
+      bearTrapTerritoryId: t0.bearTrapTerritoryId ?? action.tgtId,
+      // Iron Shield: a defending double-6 seals the territory this turn.
+      shieldedTerritoryIds: action.sealDefender && !t0.shieldedTerritoryIds.includes(action.tgtId) ? [...t0.shieldedTerritoryIds, action.tgtId] : t0.shieldedTerritoryIds,
+      ...action.captured ? {
+        captured: true,
+        captureCount: t0.captureCount + 1,
+        conqueredIds: [...t0.conqueredIds, action.tgtId],
+        conqueredViaSeaIds: action.viaSea ? [...t0.conqueredViaSeaIds, action.tgtId] : t0.conqueredViaSeaIds
+      } : {}
+    };
+  }
+  return { state: { ...state, territories, players, turn, combatWindow: null }, effects };
 }
 function singleDieDelta(part) {
   const { highest, lowest } = part;
@@ -868,5 +1300,6 @@ export {
   hasDoubles,
   resolveCombat,
   singleDieBonus,
-  singleDieDelta
+  singleDieDelta,
+  spectatorMissileRefusal
 };

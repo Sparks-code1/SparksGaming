@@ -27,6 +27,10 @@ export interface DispatchResult {
   effects: Effect[]
   /** Server version this state is at. `null` in local mode — nothing to sync. */
   version: number | null
+  /** The action's match_actions sequence number. Feed it to
+   *  `MatchSync.noteActionApplied` so the realtime echo of this same action is
+   *  dropped instead of re-running its effects. `null` in local mode. */
+  seq?: number | null
   /** Set when the action did NOT apply. The caller shows it and does not advance. */
   error?: DispatchError
 }
@@ -35,6 +39,8 @@ export interface DispatchError {
   code: 'stale' | 'not-your-turn' | 'wrong-player' | 'action-not-allowed'
     | 'not-participant' | 'not-active' | 'not-started' | 'reducer-error'
     | 'unauthenticated' | 'network'
+    // Spectator-missile refusals. All of them mean the missile was NOT spent.
+    | 'window-closed' | 'bad-die' | 'die-taken' | 'no-missiles' | 'not-a-spectator'
   message: string
   /** On a `stale` conflict the server returns where it actually is, so the
    *  client can resync instead of guessing or reloading the whole app. */
@@ -135,7 +141,10 @@ export async function dispatchAction(
     }
   }
 
-  return { state: body.state, effects: body.effects ?? [], version: body.version }
+  return {
+    state: body.state, effects: body.effects ?? [], version: body.version,
+    seq: typeof body.seq === 'number' ? body.seq : null,
+  }
 }
 
 /**
@@ -149,6 +158,57 @@ export async function dispatchAction(
  * Feed the `version` this function returns to `MatchSync.noteApplied`, or the
  * realtime echo of your own move is treated as news and re-rendered.
  */
+/**
+ * Spend one spectator missile on a die of the open combat window.
+ *
+ * NOT routed through `dispatchAction`: the spectator is not the acting player,
+ * their tracked match version routinely lags the battle they are watching, and
+ * an optimistic local apply would be a client declaring a 6 — the exact thing
+ * the server exists to arbitrate. So this POSTs with NO expectedVersion (the
+ * server's own conditional UPDATE still makes two missiles on one die
+ * impossible), applies nothing locally, and retries a couple of times when it
+ * merely raced another write — a race is not a refusal.
+ *
+ * Every refusal means the missile was never charged.
+ */
+export async function sendSpectatorMissile(
+  matchId: string,
+  roundKey: string,
+  side: 'atk' | 'def',
+  dieIndex: number,
+): Promise<{ ok: true } | { ok: false; code: DispatchError['code']; message: string }> {
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) return { ok: false, code: 'unauthenticated', message: 'Sign in to play online.' }
+
+  const action = { type: 'SPECTATOR_MISSILE', roundKey, side, dieIndex, playerId: '' }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let res: Response
+    try {
+      res = await fetch(`${SUPABASE_URL}/functions/v1/apply-action`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ matchId, action }),
+      })
+    } catch (e) {
+      return { ok: false, code: 'network', message: `Could not reach the server: ${String(e)}` }
+    }
+    const body = await res.json().catch(() => ({}))
+    if (res.ok) return { ok: true }
+    // Only a version RACE retries — the window may still be open and the die
+    // still free; every other code is a final answer.
+    if (body.code === 'stale' && attempt < 2) continue
+    return {
+      ok: false,
+      code: (body.code ?? 'network') as DispatchError['code'],
+      message: body.error ?? `Server refused the missile (${res.status})`,
+    }
+  }
+  return { ok: false, code: 'stale', message: 'The match kept moving — missile not spent.' }
+}
+
 /** Load a match's authoritative state — on join, and to resync after a conflict. */
 export async function loadMatchState(
   matchId: string,

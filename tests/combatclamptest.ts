@@ -63,6 +63,13 @@ console.log('\n--- the forgeries ---')
   const garbage = clampCombatResolution(board(), claim({ totalAtkLoss: NaN, totalDefLoss: 'yes', troopsToAdvance: Infinity }))
   check('garbage numbers collapse to the floor, not to a crash',
     [garbage.totalAtkLoss, garbage.totalDefLoss, garbage.captured], [0, 0, false])
+
+  // viaSea only feeds mission bookkeeping, but it is still untrusted input:
+  // whatever JSON arrives must leave as a plain boolean.
+  const sea = clampCombatResolution(board(), claim({ viaSea: 'yes' }))
+  check('a truthy viaSea collapses to boolean true', sea.viaSea, true)
+  const noSea = clampCombatResolution(board(), claim())
+  check('an absent viaSea collapses to boolean false', noSea.viaSea, false)
 }
 
 console.log('\n--- uncontested expansion ---')

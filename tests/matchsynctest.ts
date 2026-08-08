@@ -36,15 +36,17 @@ function fakeTransport(initial: MatchRow = row(0)) {
     online: true,
     stored: initial,
     push: null as null | ((r: MatchRow) => void),
+    pushAction: null as null | ((action: unknown, effects: unknown[], seq: number) => void),
     status: null as null | ((s: 'subscribed' | 'error' | 'closed', m?: string) => void),
     fetchThrows: false,
 
     transport: {
-      open(_matchId, onRow, _onAction, onStatus) {
+      open(_matchId, onRow, onAction, onStatus) {
         t.opens++
         t.push = onRow
+        t.pushAction = onAction as typeof t.pushAction
         t.status = onStatus
-        return () => { t.closes++; t.push = null; t.status = null }
+        return () => { t.closes++; t.push = null; t.pushAction = null; t.status = null }
       },
       async fetch() {
         t.fetches++
@@ -314,6 +316,42 @@ console.log('\n— a pending retry is cancelled on stop —')
   const opensBefore = t.opens
   t.advance(60_000)
   check('and it never fires', t.opens === opensBefore)
+}
+
+console.log('\n— an action is applied at most once —')
+{
+  // Effects are NOT idempotent: the territory-captured effect queues a card
+  // draw, and the acting client used to receive its own action twice — once
+  // from the POST response, once from the realtime INSERT — so every capture
+  // queued two draws. This is the filter that makes that impossible.
+  const t = fakeTransport(row(1))
+  const seqs: number[] = []
+  const sync = startMatchSync('m1', {
+    onState: () => {},
+    onAction: (_a, _e, seq) => seqs.push(seq),
+  }, t.transport)
+  t.status!('subscribed')
+  await settle()
+
+  t.pushAction!({}, [], 0)
+  check('the first action fires the handler', seqs.join(',') === '0')
+  t.pushAction!({}, [], 0)
+  check('a re-delivery of the same seq is dropped', seqs.join(',') === '0')
+  t.pushAction!({}, [], 1)
+  check('the next seq still flows', seqs.join(',') === '0,1')
+
+  // The acting client applied seq 2 itself from its POST response…
+  sync.noteActionApplied(2)
+  t.pushAction!({}, [], 2)
+  check('…so the realtime echo of its OWN action is dropped', seqs.join(',') === '0,1')
+  t.pushAction!({}, [], 3)
+  check("another machine's later action is unaffected", seqs.join(',') === '0,1,3')
+
+  // Teardown is not instant — an action already in flight can land after stop.
+  const pushAction = t.pushAction!
+  sync.stop()
+  pushAction({}, [], 4)
+  check('an action landing after stop is ignored', seqs.join(',') === '0,1,3')
 }
 
 console.log('\n— hotseat opens nothing —')

@@ -122,6 +122,63 @@ export interface GameState {
   /** Per-turn transient state, reset every turn. */
   turn: TurnState
 
+  /**
+   * An online combat round holding still for spectator missiles.
+   *
+   * Set by OPEN_COMBAT_WINDOW after a round's dice are final, cleared by
+   * CLOSE_COMBAT_WINDOW / RESOLVE_COMBAT / END_TURN. While set, the edge
+   * function accepts SPECTATOR_MISSILE from match participants who are not a
+   * side in the battle — the ONLY action a non-current-turn seat may take.
+   * Absent in hotseat and in every match created before this existed.
+   */
+  combatWindow?: CombatWindowState | null
+
+  /**
+   * Missiles spent by SPECTATORS this game, by player id — the match-side
+   * ledger. Campaign missile counts live in the legacy blob, which the server
+   * never writes (single-writer rule); the server records spends HERE instead,
+   * clients display `legacy count − ledger`, and the ledger is folded into the
+   * blob once when the game is finalised.
+   */
+  missileSpends?: Record<string, number>
+
+  /**
+   * The CONTENDED card piles, server-owned in an online match.
+   *
+   * Hands already live in `players[].cards`; these are the shared piles two
+   * clients could otherwise race on. Present only in online matches (the host
+   * seeds it from its deal at match creation) — absent in hotseat, where the
+   * component's `cardState` remains the sole owner and the reducer's card
+   * actions refuse to run. Event/mission decks and per-game card flags stay
+   * client-side (`ActiveGameCards` in the legacy blob) for now.
+   */
+  cards?: ServerCardPiles | null
+
   createdAt: string
   updatedAt: string
+}
+
+/** The shared card piles an online match's server state owns. */
+export interface ServerCardPiles {
+  /** Face-down territory deck, ordered — the head refills face-up spot 1. */
+  territoryDeck: string[]
+  /** The four face-up territory cards (spot 1 first). */
+  sideboard: string[]
+  /** The coin pile. Traded-in coins return here. */
+  resourceDeck: string[]
+  /** Territory cards spent in trade-ins. */
+  territoryDiscard: string[]
+}
+
+/** One combat round's final dice, held open for spectator missiles. */
+export interface CombatWindowState {
+  /** Unique per roll — a missile naming a stale key is refused ("window closed"). */
+  roundKey: string
+  srcId: string
+  tgtId: string
+  /** Dice AFTER every scar/ability modifier — what the attacker's screen shows. */
+  atkDice: number[]
+  defDice: number[]
+  /** Missile flips already applied, in arrival order. First claim on a die wins. */
+  flips: Array<{ playerId: string; side: 'atk' | 'def'; dieIndex: number }>
 }

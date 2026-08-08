@@ -2,12 +2,12 @@ import { useState, useEffect, useRef, type CSSProperties } from 'react'
 import type { Territory } from '@/types/territory'
 import type { Player } from '@/types/player'
 import { playDice } from '@/lib/sounds'
-import { resolveCombat, createMathRng, singleDieDelta, singleDieBonus, defenderDieSteps, type CombatModifiers, type CombatOutcome } from '@/lib/gameReducer'
+import { resolveCombat, createMathRng, singleDieDelta, singleDieBonus, defenderDieSteps, type CombatModifiers, type CombatOutcome, type CombatRoundLog } from '@/lib/gameReducer'
 import { troopsAfterEntry, minTroopsToEnter, type EntryCost } from '@/lib/gameLogic'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type Phase = 'setup' | 'rolling' | 'modifiers' | 'missile-phase' | 'results' | 'auto-animating' | 'auto-results'
+type Phase = 'setup' | 'rolling' | 'modifiers' | 'missile-phase' | 'spectator-window' | 'results' | 'auto-animating' | 'auto-results'
 
 /** One animated die-modifier application (Bunker, Ammo Shortage, Bear Trap…) */
 interface ModStep {
@@ -60,6 +60,9 @@ export interface CombatResolution {
   defNaturalDoublesRounds?: number
   /** Total dice rolls fought this battle (fortification charge depletion — 1 per roll) */
   roundsFought?: number
+  /** Every round's final dice (post-modifier), in order — carried on the online
+   *  action so SPECTATORS watch the same battle the attacker saw. */
+  rounds?: CombatRoundLog[]
 }
 
 interface Props {
@@ -124,6 +127,21 @@ interface Props {
    * where a server will later supply the resolved outcome.
    */
   resolveAuto?: (atkTroops: number, defTroops: number, mods: CombatModifiers) => CombatOutcome
+  /**
+   * Online only: hold each round's final dice open for SPECTATOR missiles.
+   *
+   * `open` publishes the dice (returns the round key), `peekFlips` reads the
+   * flips delivered so far, `close` re-reads the server's authoritative window,
+   * dispatches the CLOSE, and returns the final flips to fold into the round.
+   * Absent in hotseat and ignored during auto-resolve — the window only exists
+   * where a remote audience does.
+   */
+  spectatorWindow?: {
+    windowMs: number
+    open: (dice: { atk: number[]; def: number[] }) => string
+    peekFlips: (roundKey: string) => Array<{ side: 'atk' | 'def'; dieIndex: number; playerName: string }>
+    close: (roundKey: string) => Promise<Array<{ side: 'atk' | 'def'; dieIndex: number }>>
+  }
   onClose: () => void
   onApplyResult: (r: CombatResolution) => void
 }
@@ -372,6 +390,7 @@ export default function AttackModal({
   autoPlay = false,
   autoPlayFast = false,
   resolveAuto,
+  spectatorWindow,
   onClose,
   onApplyResult,
 }: Props) {
@@ -438,6 +457,112 @@ export default function AttackModal({
   const defDoublesRef = useRef(0)
   // Total dice rolls fought this battle (fortification depletes 1 charge per roll)
   const roundsFoughtRef = useRef(0)
+  // Every round's FINAL dice + losses, in order — the spectator log carried on
+  // the online action so other machines can replay the battle they never saw.
+  const roundHistoryRef = useRef<CombatRoundLog[]>([])
+
+  // ── Spectator missile window (online interactive rounds only) ────────────
+  const windowKeyRef  = useRef<string | null>(null)
+  const windowDiceRef = useRef<{ fa: number[]; fd: number[] }>({ fa: [], fd: [] })
+  /** Whether the current round marked resolvedRef when it settles (the two
+   *  resolution paths differ on this and the window must preserve each). */
+  const windowMarkResolvedRef = useRef(false)
+  const windowClosingRef = useRef(false)
+  const [windowSecondsLeft, setWindowSecondsLeft] = useState(0)
+  /** Flips shown live while the window is open (names for the banner). */
+  const [windowFlips, setWindowFlips] = useState<Array<{ side: 'atk' | 'def'; dieIndex: number; playerName: string }>>([])
+
+  /**
+   * The shared round tail: fold in any spectator flips, re-sort for pairing
+   * (a flipped 6 re-pairs exactly as rearranging physical dice would), compute
+   * losses, and land on the results phase. Both resolution paths and the
+   * window all end here, so they can never disagree.
+   */
+  function finishRound(fa0: number[], fd0: number[], flips: Array<{ side: 'atk' | 'def'; dieIndex: number }>, markResolved: boolean) {
+    let fa = [...fa0], fd = [...fd0]
+    for (const f of flips) {
+      if (f.side === 'atk' && f.dieIndex >= 0 && f.dieIndex < fa.length) fa[f.dieIndex] = 6
+      if (f.side === 'def' && f.dieIndex >= 0 && f.dieIndex < fd.length) fd[f.dieIndex] = 6
+    }
+    if (flips.length > 0) {
+      fa = [...fa].sort((a, b) => b - a)
+      fd = [...fd].sort((a, b) => b - a)
+    }
+    const baseResult = compareRolls(fa, fd, attackerSixesWin)
+    const r = nuclearFallout
+      ? { aLoss: baseResult.aLoss + 1, dLoss: baseResult.dLoss + 1 }
+      : baseResult
+    setAtkDice(fa)
+    setDefDice(fd)
+    setRoundResult(r)
+    setCumulAtkLoss(prev => prev + r.aLoss)
+    setCumulDefLoss(prev => prev + r.dLoss)
+    roundHistoryRef.current.push({ atkDice: [...fa], defDice: [...fd], aLoss: r.aLoss, dLoss: r.dLoss })
+    if (markResolved) resolvedRef.current = true
+    if (fd.length >= 2 && fd.every(d => d === 6)) onDefenseDoubleMax?.()
+    setPhase('results')
+  }
+
+  /** Route a settled roll through the spectator window when one applies. */
+  function windowThenFinish(fa: number[], fd: number[], markResolved: boolean) {
+    if (!spectatorWindow || autoPlay) { finishRound(fa, fd, [], markResolved); return }
+    if (markResolved) resolvedRef.current = true
+    windowKeyRef.current = spectatorWindow.open({ atk: fa, def: fd })
+    windowDiceRef.current = { fa: [...fa], fd: [...fd] }
+    windowMarkResolvedRef.current = markResolved
+    windowClosingRef.current = false
+    setWindowFlips([])
+    setWindowSecondsLeft(Math.ceil(spectatorWindow.windowMs / 1000))
+    setAtkDice(fa)
+    setDefDice(fd)
+    setPhase('spectator-window')
+  }
+
+  /** Close the window (timer or Skip): take the server's final word on which
+   *  flips landed, fold them in, resume the battle. */
+  async function endSpectatorWindow() {
+    if (windowClosingRef.current) return
+    windowClosingRef.current = true
+    const key = windowKeyRef.current
+    windowKeyRef.current = null
+    const { fa, fd } = windowDiceRef.current
+    let flips: Array<{ side: 'atk' | 'def'; dieIndex: number }> = []
+    if (key && spectatorWindow) {
+      try { flips = await spectatorWindow.close(key) }
+      catch { flips = spectatorWindow.peekFlips(key) }
+    }
+    finishRound(fa, fd, flips, false)   // resolvedRef already set on entry
+  }
+
+  // Window countdown; hitting zero closes it exactly like Skip.
+  useEffect(() => {
+    if (phase !== 'spectator-window') return
+    const t = setInterval(() => {
+      setWindowSecondsLeft(prev => {
+        if (prev <= 1) { clearInterval(t); void endSpectatorWindow(); return 0 }
+        return prev - 1
+      })
+    }, 1_000)
+    return () => clearInterval(t)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase])
+
+  // Live flips: show a die turning to 6 the moment the server confirms it.
+  useEffect(() => {
+    if (phase !== 'spectator-window' || !spectatorWindow) return
+    const t = setInterval(() => {
+      const key = windowKeyRef.current
+      if (!key) return
+      const flips = spectatorWindow.peekFlips(key)
+      setWindowFlips(prev => (flips.length !== prev.length ? flips : prev))
+      if (flips.length > 0) {
+        setAtkDice(windowDiceRef.current.fa.map((d, i) => flips.some(f => f.side === 'atk' && f.dieIndex === i) ? 6 : d))
+        setDefDice(windowDiceRef.current.fd.map((d, i) => flips.some(f => f.side === 'def' && f.dieIndex === i) ? 6 : d))
+      }
+    }, 300)
+    return () => clearInterval(t)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, spectatorWindow])
 
   // Auto-resolve state
   const [autoResult, setAutoResult] = useState<AutoResult | null>(null)
@@ -466,19 +591,9 @@ export default function AttackModal({
       rollMissileCountRef.current = 0
       setPhase('missile-phase')
     } else {
-      // No missiles: resolve immediately
-      const baseResult = compareRolls(fa, fd, attackerSixesWin)
-      const r = nuclearFallout
-        ? { aLoss: baseResult.aLoss + 1, dLoss: baseResult.dLoss + 1 }
-        : baseResult
-      setAtkDice(fa)
-      setDefDice(fd)
-      setRoundResult(r)
-      setCumulAtkLoss(prev => prev + r.aLoss)
-      setCumulDefLoss(prev => prev + r.dLoss)
-      resolvedRef.current = true
-      if (fd.length >= 2 && fd.every(d => d === 6)) onDefenseDoubleMax?.()
-      setPhase('results')
+      // No battle-side missiles: the round is final — offer it to spectators,
+      // then resolve. Hotseat and auto-resolve skip straight through.
+      windowThenFinish(fa, fd, true)
     }
   }
 
@@ -645,6 +760,7 @@ export default function AttackModal({
       atkDiceUsed: autoResult.maxAtkDiceUsed,
       defNaturalDoublesRounds: autoResult.defDoublesRounds,
       roundsFought: autoResult.rounds.length,
+      rounds: autoResult.rounds.map(r => ({ atkDice: r.atkDice, defDice: r.defDice, aLoss: r.aLoss, dLoss: r.dLoss })),
     })
     onClose()
   }
@@ -663,21 +779,11 @@ export default function AttackModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoPlay, autoPlayFast, phase])
 
-  // ── Resolve missile phase → results ──────────────────────────────────────
+  // ── Resolve missile phase → spectator window → results ───────────────────
+  // The battle players' own missiles land first; the dice they leave behind
+  // are what the spectator window shows.
   function resolveMissilePhase() {
-    const fa = pendingAtkDice
-    const fd = pendingDefDice
-    const baseResult = compareRolls(fa, fd, attackerSixesWin)
-    const r = nuclearFallout
-      ? { aLoss: baseResult.aLoss + 1, dLoss: baseResult.dLoss + 1 }
-      : baseResult
-    setAtkDice(fa)
-    setDefDice(fd)
-    setRoundResult(r)
-    setCumulAtkLoss(prev => prev + r.aLoss)
-    setCumulDefLoss(prev => prev + r.dLoss)
-    if (fd.length >= 2 && fd.every(d => d === 6)) onDefenseDoubleMax?.()
-    setPhase('results')
+    windowThenFinish(pendingAtkDice, pendingDefDice, false)
   }
 
   // ── Pair comparison helper ────────────────────────────────────────────────
@@ -738,6 +844,7 @@ export default function AttackModal({
       defMissileUsed: mslDefUsed,
       defNaturalDoublesRounds: defDoublesRef.current,
       roundsFought: roundsFoughtRef.current,
+      rounds: roundHistoryRef.current,
     })
     onClose()
   }
@@ -1133,8 +1240,8 @@ export default function AttackModal({
           )
         })()}
 
-        {/* ── Rolling / Modifiers / Missile-phase / Results phase ── */}
-        {(phase === 'rolling' || phase === 'modifiers' || phase === 'missile-phase' || phase === 'results') && (
+        {/* ── Rolling / Modifiers / Missile-phase / Spectator-window / Results ── */}
+        {(phase === 'rolling' || phase === 'modifiers' || phase === 'missile-phase' || phase === 'spectator-window' || phase === 'results') && (
           <>
             {/* Dice arena */}
             <div
@@ -1276,6 +1383,27 @@ export default function AttackModal({
                 </div>
                 <button onClick={resolveMissilePhase} style={btnStyle('primary')}>
                   ⚔ Resolve Battle
+                </button>
+              </div>
+            )}
+
+            {/* ── Spectator missile window ── */}
+            {phase === 'spectator-window' && (
+              <div style={{ textAlign: 'center', marginBottom: 14 }}>
+                <div style={{ fontSize: 13, color: '#F1C40F', fontWeight: 'bold', marginBottom: 6, letterSpacing: 1 }}>
+                  ✦ SPECTATOR MISSILES — {windowSecondsLeft}s
+                </div>
+                <div style={{ fontSize: 11, color: '#a09070', marginBottom: 8 }}>
+                  Players outside this battle may fire a missile at one die.
+                  A hit turns it into an unmodifiable 6.
+                </div>
+                {windowFlips.map((f, i) => (
+                  <div key={i} style={{ fontSize: 11, color: '#2ecc71', marginBottom: 4 }}>
+                    🚀 {f.playerName} turned {f.side === 'atk' ? "an attacker's" : "a defender's"} die into a 6
+                  </div>
+                ))}
+                <button onClick={() => { void endSpectatorWindow() }} style={btnStyle('secondary')}>
+                  Skip ▸
                 </button>
               </div>
             )}

@@ -35,6 +35,7 @@ import {
   clampCombatModifiers,
   clampCombatResolution,
   endTurnTerritories,
+  spectatorMissileRefusal,
   type Action,
 } from '../_shared/gameReducer.gen.ts'
 
@@ -79,6 +80,44 @@ const SERVER_ACTIONS = new Set([
   'RETREAT',
   'CONFIRM_FORTIFY',
   'END_TURN',
+  // Spectator missiles. OPEN/CLOSE come from the actor like any turn action;
+  // SPECTATOR_MISSILE is the one action a NON-current-turn seat may send, and
+  // it carries its own authorization branch below (participant, human, not a
+  // side in the battle, missile actually available).
+  'OPEN_COMBAT_WINDOW',
+  'SPECTATOR_MISSILE',
+  'CLOSE_COMBAT_WINDOW',
+  // Card piles are server state in online matches: a draw removes the card
+  // from the pile atomically under the version guard, so two clients can
+  // never hold the same card. WHICH pick is legal (face-up-first, Purist,
+  // homelands) is still judged client-side against legacy state — the trust
+  // seam is the same one RESOLVE_COMBAT lives with, and the payload is logged
+  // as received either way.
+  'DRAW_CARD',
+  'TRADE_IN_CARDS',
+  // Event-card board effects + the last bare-write stragglers. Each is either
+  // self-clamping in the reducer (APPLY_EVENT_TROOPS bounds deltas, MOVE_HQ /
+  // JOIN_WAR / END_GAME are structural checks against the server's own board)
+  // or carries nothing worth forging. Before these, every event's troops,
+  // every HQ move, every re-entry and every WIN existed only on the machine
+  // that resolved it.
+  'APPLY_EVENT_TROOPS',
+  'MOVE_HQ',
+  'JOIN_WAR',
+  'FORFEIT_WAR',
+  'END_GAME',
+  // Map surgery — campaign-permanent board changes, each structural and
+  // self-limiting in the reducer (idempotent island inject, one scar per
+  // territory, at most four cities named, obliterate only what exists).
+  'PLACE_SEA_LINE',
+  'INJECT_ALIEN_ISLAND',
+  'OBLITERATE_TERRITORY',
+  'DESTROY_CITIES',
+  'PLACE_SCAR',
+  // Retro-fit for matches created before the card piles existed. The reducer
+  // refuses it outright once `state.cards` is present, so it can only ever
+  // fire once per match.
+  'SEED_CARD_PILES',
 ])
 
 /** Deterministic per-action seed: fold the match's base seed with the action
@@ -102,7 +141,7 @@ function actionSeed(baseSeed: number, seq: number): number {
 function sanitize(
   action: Action,
   state: Record<string, unknown>,
-  legacy: { falloutZoneTerritoryId?: string | null } | null,
+  legacy: { falloutZoneTerritoryId?: string | null; chosenFactionAbilities?: Record<string, string> } | null,
   factionOf: (playerId: string) => string | undefined,
 ): Action {
   switch (action.type) {
@@ -124,15 +163,23 @@ function sanitize(
 
     case 'END_TURN': {
       // `endTerritories` is an ENTIRE replacement board. Recompute it; whatever
-      // the client sent is discarded unread.
+      // the client sent is discarded unread. `hqReservePlayerIds` (Khan's
+      // Strategic Reserve at the hand-off) is likewise re-derived from the
+      // campaign's chosen abilities — the reducer applies the reserve itself
+      // now, so the recompute no longer strips it.
       const st = state as Parameters<typeof endTurnTerritories>[0]
       const endingId = st.players?.[st.currentPlayerIndex]?.id ?? ''
+      const abilities = legacy?.chosenFactionAbilities ?? {}
+      const players = (st.players ?? []) as Array<{ id: string; factionId?: string }>
       return {
         ...action,
         endTerritories: endTurnTerritories(st, {
           endingIsMutant: factionOf(endingId) === 'mutants',
           falloutZoneId: legacy?.falloutZoneTerritoryId ?? null,
         }),
+        hqReservePlayerIds: players
+          .filter((p) => p.factionId && abilities[p.factionId] === 'khan-hq-troops')
+          .map((p) => p.id),
       }
     }
 
@@ -193,14 +240,64 @@ Deno.serve(async (req: Request) => {
   // The payload check stands separately: an action carrying a `playerId` must
   // name the seat whose turn is being taken, whichever rule allowed the caller.
   const currentSeat = seats.find((r) => r.player_id === currentPlayerId)
-  const actingForAi = !!currentSeat?.is_ai && match.created_by === user.id
-  const actingForSelf = mySlot.player_id === currentPlayerId
-  if (!actingForSelf && !actingForAi) {
-    return json({ error: 'not your turn', code: 'not-your-turn', currentPlayerId }, 403)
-  }
-  const actionPlayerId = (action as { playerId?: string }).playerId
-  if (actionPlayerId && actionPlayerId !== currentPlayerId) {
-    return json({ error: 'action belongs to another player', code: 'wrong-player' }, 403)
+  if (action.type === 'SPECTATOR_MISSILE') {
+    // The one action that does NOT belong to the current turn: any HUMAN
+    // participant may send it — provided they are a spectator to the open
+    // battle, hold a missile, and the die is still unclaimed. All of that is
+    // judged here against the SERVER's window and the campaign's missile
+    // counts; a refusal happens before anything is charged, which is what
+    // "first click wins, the loser is refunded" means in practice.
+    if (mySlot.is_ai) return json({ error: 'AI seats do not spend spectator missiles', code: 'not-a-spectator' }, 403)
+    const w = state?.combatWindow
+    const battleSideIds = new Set([
+      w ? state?.territories?.[w.srcId]?.occupyingPlayerId : null,
+      w ? state?.territories?.[w.tgtId]?.occupyingPlayerId : null,
+    ].filter(Boolean))
+    const { data: campaignRow } = await admin
+      .from('campaigns').select('legacy_state').eq('id', match.campaign_id).single()
+    const legacyMissiles = Number(campaignRow?.legacy_state?.missiles?.[mySlot.player_id] ?? 0)
+    const refusal = spectatorMissileRefusal(
+      state,
+      action as { roundKey: string; side: 'atk' | 'def'; dieIndex: number },
+      mySlot.player_id,
+      { legacyMissiles, isBattleSide: battleSideIds.has(mySlot.player_id) },
+    )
+    if (refusal) {
+      const words: Record<string, string> = {
+        'window-closed': 'the missile window has closed',
+        'bad-die': 'no such die in this round',
+        'die-taken': 'another missile already claimed that die — yours is refunded',
+        'no-missiles': 'no missiles left to spend',
+        'not-a-spectator': 'players in the battle use their own missile phase',
+      }
+      return json({ error: words[refusal] ?? refusal, code: refusal }, 409)
+    }
+  } else if (action.type === 'APPLY_EVENT_TROOPS' || action.type === 'SEED_CARD_PILES') {
+    // APPLY_EVENT_TROOPS: event rewards belong to a player the BOARD picked
+    // (largest population, fewest territories, lowest roll) — usually NOT
+    // whoever's turn it is, and possibly seated at another machine. Any
+    // participant may resolve one; the reducer bounds every delta and refuses
+    // ownership tricks.
+    // SEED_CARD_PILES: the retro-fit fires whenever the host's machine notices
+    // the match predates the piles, regardless of whose turn is running; the
+    // reducer refuses it the moment piles exist.
+  } else {
+    const actingForAi = !!currentSeat?.is_ai && match.created_by === user.id
+    const actingForSelf = mySlot.player_id === currentPlayerId
+    if (!actingForSelf && !actingForAi) {
+      return json({ error: 'not your turn', code: 'not-your-turn', currentPlayerId }, 403)
+    }
+    const actionPlayerId = (action as { playerId?: string }).playerId
+    // JOIN_WAR / FORFEIT_WAR are exempt: the current actor's machine drives
+    // the Join the War offer at the turn hand-off (hotseat convention carried
+    // online), so the action legitimately names the ELIMINATED player, not
+    // the current one. The reducer refuses either unless that player is
+    // genuinely eliminated and undecided (and, for JOIN_WAR, the territory
+    // is legal).
+    if (action.type !== 'JOIN_WAR' && action.type !== 'FORFEIT_WAR'
+        && actionPlayerId && actionPlayerId !== currentPlayerId) {
+      return json({ error: 'action belongs to another player', code: 'wrong-player' }, 403)
+    }
   }
 
   // ── Optimistic concurrency (pre-check) ────────────────────────────────────
@@ -217,7 +314,11 @@ Deno.serve(async (req: Request) => {
   const legacy = campaign?.legacy_state ?? null
   const factionOf = (pid: string) => seats.find((s) => s.player_id === pid)?.faction_id
 
-  const safeAction = sanitize(action, state, legacy, factionOf)
+  // A spectator missile is stamped with the CALLER's seat — whatever playerId
+  // the client wrote is discarded, so nobody spends a missile they don't own.
+  const safeAction = action.type === 'SPECTATOR_MISSILE'
+    ? { ...action, playerId: mySlot.player_id }
+    : sanitize(action, state, legacy, factionOf)
   const seed = actionSeed(Number(match.rng_seed), match.action_seq)
 
   let nextState, effects
@@ -267,6 +368,10 @@ Deno.serve(async (req: Request) => {
   })
 
   // Clients also receive this via Realtime; returning it lets the caller apply
-  // the result immediately instead of waiting for the round trip.
-  return json({ state: nextState, effects, version: updated.version })
+  // the result immediately instead of waiting for the round trip. `seq` is the
+  // log row's sequence number: the caller hands it to MatchSync so the realtime
+  // echo of this same action is recognised as already-applied and dropped —
+  // effects are not idempotent, and a double-fired capture queues two card
+  // draws.
+  return json({ state: nextState, effects, version: updated.version, seq: match.action_seq })
 })
