@@ -301,6 +301,11 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
               : combat.atkDice ? 'Dice are in — resolving…' : `Your dice are in — waiting for ${attackerName} to roll.`}
           </div>
         )}
+        {!isDefender && combat.defDiceBy === 'ai' && !settled && (
+          <div style={{ textAlign: 'center', fontSize: 11, color: '#b09870' }}>
+            {defenderName} defends on instinct — the AI's dice are thrown by the attacking machine.
+          </div>
+        )}
         {!isDefender && combat.autoProposed && combat.defenderAuto === null && (
           <div style={{ textAlign: 'center', fontSize: 11, color: '#b09870' }}>
             {attackerName} offered auto-resolve — waiting on {defenderName}.

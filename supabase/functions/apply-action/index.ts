@@ -294,10 +294,19 @@ Deno.serve(async (req: Request) => {
     // long, the attacker's machine may roll for them, marked as such.
     const combat = state?.combat
     if (!combat) return json({ error: 'no battle in progress', code: 'action-not-allowed' }, 409)
+    const by = (action as { by?: string }).by
+    // Two legitimate ways the ATTACKER's machine throws the defense: the
+    // defender idled out, or the defender is an AI seat (checked against the
+    // roster — a human defender's dice can never be rolled out from under
+    // them by relabelling).
     const idleRoll = action.type === 'POST_COMBAT_DICE'
-      && (action as { by?: string }).by === 'attacker-idle'
+      && by === 'attacker-idle'
       && mySlot.player_id === combat.attackerId
-    if (!idleRoll && mySlot.player_id !== combat.defenderId) {
+    const aiDefense = action.type === 'POST_COMBAT_DICE'
+      && by === 'ai'
+      && mySlot.player_id === combat.attackerId
+      && !!seats.find((s) => s.player_id === combat.defenderId)?.is_ai
+    if (!idleRoll && !aiDefense && mySlot.player_id !== combat.defenderId) {
       return json({ error: 'only the defender answers for the defense', code: 'wrong-player' }, 403)
     }
   } else if (action.type === 'APPLY_EVENT_TROOPS' || action.type === 'SEED_CARD_PILES') {

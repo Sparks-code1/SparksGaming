@@ -909,7 +909,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     proposeAuto: () => {
       if (combatKeyRef.current) dispatch({ type: 'COMBAT_PROPOSE_AUTO', key: combatKeyRef.current })
     },
-    postDice: (round: number, side: 'atk' | 'def', dice: number[], by?: 'attacker-idle') => {
+    postDice: (round: number, side: 'atk' | 'def', dice: number[], by?: 'attacker-idle' | 'ai') => {
       if (combatKeyRef.current) dispatch({ type: 'POST_COMBAT_DICE', key: combatKeyRef.current, round, side, dice, by })
     },
     postMissiles: (round: number, flips: Array<{ side: 'atk' | 'def'; dieIndex: number }>) => {
@@ -7607,10 +7607,13 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             // Online only: hold each round open briefly for spectator missiles.
             // AutoPlay battles skip the window inside the modal.
             spectatorWindow={onlineMatch ? spectatorWindowApiRef.current : undefined}
-            // Human vs human online: the defender rolls their own dice from
-            // their machine, and auto-resolve needs their consent.
-            interactiveDefense={onlineMatch && !currentPlayer.isAI && defenderPlayer && !defenderPlayer.isAI
-              ? { ...interactiveDefenseApiRef.current, defenderName: defenderPlayer.name }
+            // Every online battle a human starts runs through the shared
+            // session — that is what puts the animated battle on every other
+            // screen. A human defender rolls their own dice and answers the
+            // auto-resolve offer; an AI defender's dice are thrown here, and
+            // the OTHER humans still watch the same fight as spectators.
+            interactiveDefense={onlineMatch && !currentPlayer.isAI && defenderPlayer
+              ? { ...interactiveDefenseApiRef.current, defenderName: defenderPlayer.name, defenderIsHuman: !defenderPlayer.isAI }
               : undefined}
           />
         )

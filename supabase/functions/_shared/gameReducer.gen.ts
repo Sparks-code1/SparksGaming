@@ -966,7 +966,11 @@ function gameReducer(state, action, rng) {
       if (c.defDice) return only(state);
       return only({
         ...state,
-        combat: { ...c, defDice: dice, defDiceBy: action.by === "attacker-idle" ? "attacker-idle" : "defender" }
+        combat: {
+          ...c,
+          defDice: dice,
+          defDiceBy: action.by === "attacker-idle" ? "attacker-idle" : action.by === "ai" ? "ai" : "defender"
+        }
       });
     }
     case "POST_COMBAT_MISSILES": {

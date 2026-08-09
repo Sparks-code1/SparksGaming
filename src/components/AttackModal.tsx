@@ -153,10 +153,14 @@ interface Props {
     offer: (defDiceMax: number) => string
     getCombat: () => ActiveCombat | null
     proposeAuto: () => void
-    postDice: (round: number, side: 'atk' | 'def', dice: number[], by?: 'attacker-idle') => void
+    postDice: (round: number, side: 'atk' | 'def', dice: number[], by?: 'attacker-idle' | 'ai') => void
     postMissiles: (round: number, flips: Array<{ side: 'atk' | 'def'; dieIndex: number }>) => void
     nextRound: (round: number) => void
     defenderName: string
+    /** False when the defending seat is an AI: no consent to wait for, and
+     *  this machine throws the defense itself — the session still carries
+     *  every roll so SPECTATORS watch the same animated battle. */
+    defenderIsHuman: boolean
   }
   onClose: () => void
   onApplyResult: (r: CombatResolution) => void
@@ -803,8 +807,9 @@ export default function AttackModal({
 
   function handleAutoResolve() {
     // Against a human defender, auto-resolve is an OFFER, not a decision —
-    // both players must want it. A declined offer forces dice.
-    if (interactiveDefense && !autoPlay) {
+    // both players must want it. A declined offer forces dice. An AI defender
+    // has no opinion to wait for.
+    if (interactiveDefense && interactiveDefense.defenderIsHuman && !autoPlay) {
       const c = interactiveDefense.getCombat()
       if (c?.defenderAuto !== true) {
         if (c?.defenderAuto === false) { setManualForced(true); return }
@@ -922,13 +927,22 @@ export default function AttackModal({
     setDefDice([])
     // Against a human defender the attacker rolls NOW — their dice post to
     // the shared session immediately — and the round resolves whenever the
-    // defense lands. Nobody's roll waits on anybody's click.
+    // defense lands. Nobody's roll waits on anybody's click. An AI defender's
+    // dice are thrown right here, posted so spectators watch the same battle.
     if (interactiveDefense && !autoPlay) {
       const c = interactiveDefense.getCombat()
       const myAtk = rollN(safeAtkDice, attackerRerollOnes)
       providedRollRef.current.atk = myAtk
       if (c && !c.atkDice) interactiveDefense.postDice(c.round, 'atk', myAtk)
       setAnimAtk(myAtk)
+      if (!interactiveDefense.defenderIsHuman) {
+        const aiDef = rollN(maxDefDice)
+        if (c && !c.defDice) interactiveDefense.postDice(c.round, 'def', aiDef, 'ai')
+        providedRollRef.current.def = aiDef
+        setAnimDef(aiDef)
+        setPhase('rolling')
+        return
+      }
       const def = interactiveDefense.getCombat()?.defDice ?? null
       if (def) {
         providedRollRef.current.def = [...def]

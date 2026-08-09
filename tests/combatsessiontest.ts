@@ -87,6 +87,10 @@ console.log('\nâ€” dice post once per side per round; the attacker never waits â
   // Idle fallback: the attacker's machine rolled for a sleeping defender.
   const { state: idle } = gameReducer(s2, { type: 'POST_COMBAT_DICE', key: 'k1', round: 1, side: 'def', dice: [2, 2], by: 'attacker-idle' } as Action, rng)
   check('an idle roll is labelled as such', idle.combat?.defDiceBy === 'attacker-idle')
+  // AI defender: the attacker's machine throws the defense, honestly labelled,
+  // so the OTHER humans still get the animated battle as spectators.
+  const { state: ai } = gameReducer(s2, { type: 'POST_COMBAT_DICE', key: 'k1', round: 1, side: 'def', dice: [4, 1], by: 'ai' } as Action, rng)
+  check('an AI defense is labelled as such', ai.combat?.defDiceBy === 'ai')
 
   const { state: s4 } = gameReducer(s3, { type: 'COMBAT_NEXT_ROUND', key: 'k1', round: 1 } as Action, rng)
   check('the next round clears both slots', s4.combat?.round === 2 && s4.combat.atkDice === null && s4.combat.defDice === null)

@@ -196,9 +196,10 @@ export interface ActiveCombat {
    *  they never wait for the defender. */
   atkDice: number[] | null
   defDice: number[] | null
-  /** 'attacker-idle' marks a defense roll the attacker's machine made after
-   *  the defender sat idle too long — visible in the log, honest at the table. */
-  defDiceBy?: 'defender' | 'attacker-idle'
+  /** Who threw the defense: the defender's own machine, the attacker's after
+   *  the defender idled too long, or the attacker's on behalf of an AI
+   *  defender — labelled so every screen can say so honestly. */
+  defDiceBy?: 'defender' | 'attacker-idle' | 'ai'
   /** Battle-side missile conversions this round (a die forced to an
    *  unmodifiable 6 during the missile phase), posted by the attacker's
    *  machine so every screen replays the same final dice. */

@@ -242,7 +242,7 @@ export type Action =
   | { type: 'COMBAT_SET_EMP'; key: string }
   | { type: 'COMBAT_PROPOSE_AUTO'; key: string }
   | { type: 'COMBAT_DEFENSE_CHOICE'; key: string; accept: boolean }
-  | { type: 'POST_COMBAT_DICE'; key: string; round: number; side: 'atk' | 'def'; dice: number[]; by?: 'defender' | 'attacker-idle' }
+  | { type: 'POST_COMBAT_DICE'; key: string; round: number; side: 'atk' | 'def'; dice: number[]; by?: 'defender' | 'attacker-idle' | 'ai' }
   /** Battle-side missile conversions this round — dice forced to unmodifiable
    *  6s during the missile phase, posted so every screen replays them. */
   | { type: 'POST_COMBAT_MISSILES'; key: string; round: number; flips: Array<{ side: 'atk' | 'def'; dieIndex: number }> }
@@ -1001,7 +1001,12 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
       if (c.defDice) return only(state)
       return only({
         ...state,
-        combat: { ...c, defDice: dice, defDiceBy: action.by === 'attacker-idle' ? 'attacker-idle' : 'defender' },
+        combat: {
+          ...c, defDice: dice,
+          defDiceBy: action.by === 'attacker-idle' ? 'attacker-idle'
+            : action.by === 'ai' ? 'ai'
+            : 'defender',
+        },
       })
     }
 
