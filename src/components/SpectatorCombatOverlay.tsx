@@ -189,7 +189,9 @@ export function SpectatorLiveRound({ round, attackerName, srcName, tgtName, miss
     <div
       style={{
         position: 'fixed', top: 74, left: '50%', transform: 'translateX(-50%)',
-        zIndex: 900,
+        // Above the full battle screen (z 900): a spectator watching the
+        // battle modal must still be able to fire a missile from here.
+        zIndex: 960,
         background: 'linear-gradient(155deg, rgba(44,26,8,0.97) 0%, rgba(22,12,2,0.97) 100%)',
         border: '2px solid rgba(200,148,10,0.65)', borderRadius: 12,
         padding: '14px 22px 12px', minWidth: 340, maxWidth: 480,

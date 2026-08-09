@@ -802,6 +802,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   // battle seals the territory. Carried on the RESOLVE_COMBAT dispatch, so
   // the reducer records it where echoes cannot un-seal it.
   const sealDefenderRef = useRef(false)
+  /** A spectator stepped out of the battle screen for this battle key. */
+  const [battleViewHidden, setBattleViewHidden] = useState<string | null>(null)
   // Spectator side: the round currently open on the ACTOR's machine, shown
   // live with a missile button. Replay suppression remembers the battle so the
   // post-battle summary doesn't re-animate what was just watched.
@@ -900,6 +902,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     },
     postDice: (round: number, side: 'atk' | 'def', dice: number[], by?: 'attacker-idle') => {
       if (combatKeyRef.current) dispatch({ type: 'POST_COMBAT_DICE', key: combatKeyRef.current, round, side, dice, by })
+    },
+    postMissiles: (round: number, flips: Array<{ side: 'atk' | 'def'; dieIndex: number }>) => {
+      if (combatKeyRef.current) dispatch({ type: 'POST_COMBAT_MISSILES', key: combatKeyRef.current, round, flips })
     },
     nextRound: (round: number) => {
       if (combatKeyRef.current) dispatch({ type: 'COMBAT_NEXT_ROUND', key: combatKeyRef.current, round })
@@ -6083,10 +6088,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         onRetry={() => { void matchSync?.resync() }}
         expectedOnline={playOnline || !!legacyState.activeMatchId}
       />
-      {/* YOU are being attacked: the same battle screen the attacker has —
-          their dice spin in as they roll, yours when you do. */}
-      {gameState.combat && localSeatId === gameState.combat.defenderId && (() => {
+      {/* The battle screen for everyone who isn't the attacker: the defender
+          with controls, spectators watching the same animation. */}
+      {gameState.combat && localSeatId !== gameState.combat.attackerId
+        && battleViewHidden !== gameState.combat.key && (() => {
         const c = gameState.combat
+        const role: 'defender' | 'spectator' = localSeatId === c.defenderId ? 'defender' : 'spectator'
         const srcT = gameState.territories[c.srcId]
         const tgtT = gameState.territories[c.tgtId]
         const attacker = gameState.players.find(p => p.id === c.attackerId)
@@ -6122,7 +6129,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         return (
           <DefenderBattlePrompt
             combat={c}
+            role={role}
             attackerName={attacker?.name ?? 'The attacker'}
+            defenderName={gameState.players.find(p => p.id === c.defenderId)?.name ?? 'The defender'}
             srcName={srcT?.name ?? c.srcId}
             tgtName={tgtT?.name ?? c.tgtId}
             srcTroops={srcT?.troops ?? 0}
@@ -6137,36 +6146,29 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             }}
             onConsent={accept => dispatch({ type: 'COMBAT_DEFENSE_CHOICE', key: c.key, accept })}
             onRollDefense={dice => dispatch({ type: 'POST_COMBAT_DICE', key: c.key, round: c.round, side: 'def', dice })}
+            onDismiss={role === 'spectator' ? () => setBattleViewHidden(c.key) : undefined}
           />
         )
       })()}
-      {/* Someone else's battle in progress — watch it straight from match
-          state, which syncs by poll even when broadcasts do not. */}
-      {gameState.combat && localSeatId !== gameState.combat.defenderId
-        && localSeatId !== gameState.combat.attackerId && (() => {
-        const c = gameState.combat
-        const glyph = (v: number) => ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'][Math.max(1, Math.min(6, v))]
-        return (
-          <div style={{
+      {/* A spectator who stepped out of the battle screen keeps a thin banner
+          with the way back in. */}
+      {gameState.combat && battleViewHidden === gameState.combat.key
+        && localSeatId !== gameState.combat.attackerId
+        && localSeatId !== gameState.combat.defenderId && (
+        <button
+          onClick={() => setBattleViewHidden(null)}
+          style={{
             position: 'fixed', top: 74, left: '50%', transform: 'translateX(-50%)',
-            zIndex: 890, pointerEvents: 'none',
+            zIndex: 890, cursor: 'pointer',
             background: 'linear-gradient(155deg, rgba(44,26,8,0.95) 0%, rgba(22,12,2,0.95) 100%)',
             border: '2px solid rgba(200,148,10,0.6)', borderRadius: 12,
-            padding: '12px 20px', minWidth: 300, color: '#E8DCC8',
-            textAlign: 'center', fontFamily: 'Georgia, serif',
-          }}>
-            <div style={{ fontSize: 14, fontWeight: 'bold', color: '#C8940A' }}>
-              ⚔ {gameState.players.find(p => p.id === c.attackerId)?.name ?? 'Attacker'} attacks{' '}
-              {gameState.territories[c.tgtId]?.name ?? c.tgtId} — round {c.round}
-            </div>
-            <div style={{ marginTop: 6, fontSize: 24 }}>
-              <span style={{ color: '#e74c3c' }}>{c.atkDice ? c.atkDice.map(glyph).join(' ') : '· · ·'}</span>
-              <span style={{ fontSize: 12, color: '#7a6a50', margin: '0 10px' }}>vs</span>
-              <span style={{ color: '#5dade2' }}>{c.defDice ? c.defDice.map(glyph).join(' ') : '· ·'}</span>
-            </div>
-          </div>
-        )
-      })()}
+            padding: '8px 18px', color: '#E8DCC8', fontFamily: 'Georgia, serif', fontSize: 13,
+          }}
+        >
+          ⚔ Battle at {gameState.territories[gameState.combat.tgtId]?.name ?? '…'} — round{' '}
+          {gameState.combat.round} · click to watch
+        </button>
+      )}
       {/* A battle happening on another machine, replayed for this audience. */}
       {spectatorCombat && !liveRound && !gameState.combat && <SpectatorCombatOverlay report={spectatorCombat} />}
       {/* A round LIVE right now on the actor's machine — dice shown as they

@@ -963,12 +963,30 @@ function gameReducer(state, action, rng) {
         combat: { ...c, defDice: dice, defDiceBy: action.by === "attacker-idle" ? "attacker-idle" : "defender" }
       });
     }
+    case "POST_COMBAT_MISSILES": {
+      const c = state.combat;
+      if (!c || c.key !== action.key || c.round !== action.round) return only(state);
+      if (!c.atkDice || !c.defDice || c.missileFlips) return only(state);
+      if (!Array.isArray(action.flips) || action.flips.length === 0) return only(state);
+      const seen = /* @__PURE__ */ new Set();
+      const flips = action.flips.slice(0, 5).filter((f) => {
+        if (!f || f.side !== "atk" && f.side !== "def") return false;
+        const len = f.side === "atk" ? c.atkDice.length : c.defDice.length;
+        if (!Number.isInteger(f.dieIndex) || f.dieIndex < 0 || f.dieIndex >= len) return false;
+        const id = `${f.side}${f.dieIndex}`;
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      }).map((f) => ({ side: f.side, dieIndex: f.dieIndex }));
+      if (flips.length === 0) return only(state);
+      return only({ ...state, combat: { ...c, missileFlips: flips } });
+    }
     case "COMBAT_NEXT_ROUND": {
       const c = state.combat;
       if (!c || c.key !== action.key || c.round !== action.round) return only(state);
       return only({
         ...state,
-        combat: { ...c, round: c.round + 1, atkDice: null, defDice: null, defDiceBy: void 0 }
+        combat: { ...c, round: c.round + 1, atkDice: null, defDice: null, defDiceBy: void 0, missileFlips: void 0 }
       });
     }
     case "CLEAR_COMBAT":

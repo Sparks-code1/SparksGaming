@@ -240,6 +240,9 @@ export type Action =
   | { type: 'COMBAT_PROPOSE_AUTO'; key: string }
   | { type: 'COMBAT_DEFENSE_CHOICE'; key: string; accept: boolean }
   | { type: 'POST_COMBAT_DICE'; key: string; round: number; side: 'atk' | 'def'; dice: number[]; by?: 'defender' | 'attacker-idle' }
+  /** Battle-side missile conversions this round — dice forced to unmodifiable
+   *  6s during the missile phase, posted so every screen replays them. */
+  | { type: 'POST_COMBAT_MISSILES'; key: string; round: number; flips: Array<{ side: 'atk' | 'def'; dieIndex: number }> }
   | { type: 'COMBAT_NEXT_ROUND'; key: string; round: number }
   | { type: 'CLEAR_COMBAT' }
   /**
@@ -992,12 +995,33 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
       })
     }
 
+    case 'POST_COMBAT_MISSILES': {
+      const c = state.combat
+      if (!c || c.key !== action.key || c.round !== action.round) return only(state)
+      // Missiles convert dice that exist: both rolls must be on the table,
+      // and each flip must point at a real die on its side. Posted once.
+      if (!c.atkDice || !c.defDice || c.missileFlips) return only(state)
+      if (!Array.isArray(action.flips) || action.flips.length === 0) return only(state)
+      const seen = new Set<string>()
+      const flips = action.flips.slice(0, 5).filter(f => {
+        if (!f || (f.side !== 'atk' && f.side !== 'def')) return false
+        const len = f.side === 'atk' ? c.atkDice!.length : c.defDice!.length
+        if (!Number.isInteger(f.dieIndex) || f.dieIndex < 0 || f.dieIndex >= len) return false
+        const id = `${f.side}${f.dieIndex}`
+        if (seen.has(id)) return false
+        seen.add(id)
+        return true
+      }).map(f => ({ side: f.side, dieIndex: f.dieIndex }))
+      if (flips.length === 0) return only(state)
+      return only({ ...state, combat: { ...c, missileFlips: flips } })
+    }
+
     case 'COMBAT_NEXT_ROUND': {
       const c = state.combat
       if (!c || c.key !== action.key || c.round !== action.round) return only(state)
       return only({
         ...state,
-        combat: { ...c, round: c.round + 1, atkDice: null, defDice: null, defDiceBy: undefined },
+        combat: { ...c, round: c.round + 1, atkDice: null, defDice: null, defDiceBy: undefined, missileFlips: undefined },
       })
     }
 

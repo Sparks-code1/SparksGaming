@@ -94,6 +94,27 @@ console.log('\n— dice post once per side per round; the attacker never waits �
   check('a duplicate advance is refused', staleAdvance.state.combat?.round === 2)
 }
 
+console.log('\n— missile conversions ride the session —')
+{
+  const { state: s1 } = gameReducer(base(), offer(), rng)
+  const { state: s2 } = gameReducer(s1, { type: 'POST_COMBAT_DICE', key: 'k1', round: 1, side: 'atk', dice: [6, 4, 2] } as Action, rng)
+  const early = gameReducer(s2, { type: 'POST_COMBAT_MISSILES', key: 'k1', round: 1, flips: [{ side: 'atk', dieIndex: 1 }] } as Action, rng)
+  check('missiles cannot land before both rolls exist', early.state.combat?.missileFlips === undefined)
+
+  const { state: s3 } = gameReducer(s2, { type: 'POST_COMBAT_DICE', key: 'k1', round: 1, side: 'def', dice: [5, 3] } as Action, rng)
+  const { state: s4 } = gameReducer(s3, {
+    type: 'POST_COMBAT_MISSILES', key: 'k1', round: 1,
+    flips: [{ side: 'atk', dieIndex: 1 }, { side: 'def', dieIndex: 0 }, { side: 'def', dieIndex: 0 }, { side: 'atk', dieIndex: 9 }],
+  } as Action, rng)
+  check('valid flips land, deduped, out-of-range dropped',
+    JSON.stringify(s4.combat?.missileFlips) === '[{"side":"atk","dieIndex":1},{"side":"def","dieIndex":0}]',
+    JSON.stringify(s4.combat?.missileFlips))
+  const again = gameReducer(s4, { type: 'POST_COMBAT_MISSILES', key: 'k1', round: 1, flips: [{ side: 'atk', dieIndex: 0 }] } as Action, rng)
+  check('the missile phase posts once', JSON.stringify(again.state.combat?.missileFlips) === JSON.stringify(s4.combat?.missileFlips))
+  const { state: s5 } = gameReducer(s4, { type: 'COMBAT_NEXT_ROUND', key: 'k1', round: 1 } as Action, rng)
+  check('the next round clears the flips too', s5.combat?.missileFlips === undefined)
+}
+
 console.log('\n— the session dies with the battle —')
 {
   const { state: s1 } = gameReducer(base(), offer(), rng)

@@ -199,6 +199,10 @@ export interface ActiveCombat {
   /** 'attacker-idle' marks a defense roll the attacker's machine made after
    *  the defender sat idle too long — visible in the log, honest at the table. */
   defDiceBy?: 'defender' | 'attacker-idle'
+  /** Battle-side missile conversions this round (a die forced to an
+   *  unmodifiable 6 during the missile phase), posted by the attacker's
+   *  machine so every screen replays the same final dice. */
+  missileFlips?: Array<{ side: 'atk' | 'def'; dieIndex: number }>
 }
 
 /** The shared card piles an online match's server state owns. */

@@ -154,6 +154,7 @@ interface Props {
     getCombat: () => ActiveCombat | null
     proposeAuto: () => void
     postDice: (round: number, side: 'atk' | 'def', dice: number[], by?: 'attacker-idle') => void
+    postMissiles: (round: number, flips: Array<{ side: 'atk' | 'def'; dieIndex: number }>) => void
     nextRound: (round: number) => void
     defenderName: string
   }
@@ -740,9 +741,10 @@ export default function AttackModal({
     const interval = setInterval(() => {
       setAnimAtk(rollN(safeAtkDice))
       setAnimDef(rollN(maxDefDice))
-    }, 75)
+    }, 90)
 
-    // Rolling phase lasts ~1.5 tumble cycles of the 3D cube (1.15s each)
+    // Rolling phase lasts ~2 tumble cycles of the 3D cube — matched with the
+    // defender's screen so the whole table feels one tempo.
     const timeout = setTimeout(() => {
       clearInterval(interval)
       if (steps.length > 0) {
@@ -758,7 +760,7 @@ export default function AttackModal({
         setAnimDef(curDef)
         proceedToResolution(curAtk, curDef)
       }
-    }, 1750)
+    }, 2100)
 
     return () => { clearInterval(interval); clearTimeout(timeout) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -881,6 +883,17 @@ export default function AttackModal({
   // The battle players' own missiles land first; the dice they leave behind
   // are what the spectator window shows.
   function resolveMissilePhase() {
+    // Interactive battles: post which dice were missile-converted, so the
+    // defender's and spectators' replays show the same unmodifiable 6s.
+    if (interactiveDefense && (atkConverted.size > 0 || defConverted.size > 0)) {
+      const c = interactiveDefense.getCombat()
+      if (c) {
+        interactiveDefense.postMissiles(c.round, [
+          ...[...atkConverted].map(dieIndex => ({ side: 'atk' as const, dieIndex })),
+          ...[...defConverted].map(dieIndex => ({ side: 'def' as const, dieIndex })),
+        ])
+      }
+    }
     windowThenFinish(pendingAtkDice, pendingDefDice, false)
   }
 
