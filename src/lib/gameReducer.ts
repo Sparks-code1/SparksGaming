@@ -236,7 +236,10 @@ export type Action =
    * waiting); COMBAT_NEXT_ROUND clears the slots for the next roll.
    * RESOLVE_COMBAT / RETREAT / END_TURN all close the session.
    */
-  | { type: 'COMBAT_OFFER'; key: string; srcId: string; tgtId: string; attackerId: string; defenderId: string; defDiceMax: number }
+  | { type: 'COMBAT_OFFER'; key: string; srcId: string; tgtId: string; attackerId: string; defenderId: string; defDiceMax: number; emp?: boolean }
+  /** EMP activated mid-battle: every die modifier is dead for this territory.
+   *  Remote replays drop their modifier stacks the moment this lands. */
+  | { type: 'COMBAT_SET_EMP'; key: string }
   | { type: 'COMBAT_PROPOSE_AUTO'; key: string }
   | { type: 'COMBAT_DEFENSE_CHOICE'; key: string; accept: boolean }
   | { type: 'POST_COMBAT_DICE'; key: string; round: number; side: 'atk' | 'def'; dice: number[]; by?: 'defender' | 'attacker-idle' }
@@ -961,6 +964,7 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
           ? Math.max(1, Math.min(3, Math.trunc(action.defDiceMax))) : 2,
         autoProposed: false, defenderAuto: null,
         round: 1, atkDice: null, defDice: null,
+        emp: !!action.emp,
       }
       return only({ ...state, combat })
     }
@@ -969,6 +973,12 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
       const c = state.combat
       if (!c || c.key !== action.key) return only(state)
       return only({ ...state, combat: { ...c, autoProposed: true } })
+    }
+
+    case 'COMBAT_SET_EMP': {
+      const c = state.combat
+      if (!c || c.key !== action.key || c.emp) return only(state)
+      return only({ ...state, combat: { ...c, emp: true } })
     }
 
     case 'COMBAT_DEFENSE_CHOICE': {

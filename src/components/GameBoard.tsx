@@ -738,6 +738,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   const usedMissilePowersRef = useRef<Set<string>>(new Set())
   // EMP: territories whose combat dice can't be modified for the rest of the turn
   const [empTerritoryIds, setEmpTerritoryIds] = useState<Set<string>>(new Set())
+  // Ref mirror for the once-created combat-session api (the offer must carry
+  // whether this territory was EMP'd earlier in the turn).
+  const empTerritoryIdsRef = useRef(empTerritoryIds)
+  empTerritoryIdsRef.current = empTerritoryIds
   // Stealthy: recruits may be placed into one unmarked, unoccupied territory
   const [stealthyMode, setStealthyMode] = useState(false)
   const stealthyModeRef = useRef(false)
@@ -890,7 +894,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       const defenderId = st.territories[tgtId]?.occupyingPlayerId ?? ''
       const key = `${srcId}>${tgtId}@${st.turnNumber}.${Date.now() % 1000000}`
       combatKeyRef.current = key
-      dispatch({ type: 'COMBAT_OFFER', key, srcId, tgtId, attackerId, defenderId, defDiceMax })
+      dispatch({
+        type: 'COMBAT_OFFER', key, srcId, tgtId, attackerId, defenderId, defDiceMax,
+        // The territory may have been EMP'd earlier this turn — remote
+        // replays must drop their modifier stacks from round one.
+        emp: empTerritoryIdsRef.current.has(tgtId),
+      })
       return key
     },
     getCombat: () => {
@@ -7551,6 +7560,11 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
               if (!playerId) return
               if (!activateMissilePower(playerId, 'mp-emp', 'EMP')) return
               setEmpTerritoryIds(prev => new Set(prev).add(attackTgtTerritory.id))
+              // An open interactive battle broadcasts the EMP so the
+              // defender's and spectators' replays zero their modifiers too.
+              if (combatKeyRef.current) {
+                dispatch({ type: 'COMBAT_SET_EMP', key: combatKeyRef.current })
+              }
             }}
             onAttackerUsedMissile={() => {
               setLegacyState(prev => {

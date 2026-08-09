@@ -124,6 +124,7 @@ const SERVER_ACTIONS = new Set([
   // defender-side actions carry their own authorization branch below.
   'COMBAT_OFFER',
   'COMBAT_PROPOSE_AUTO',
+  'COMBAT_SET_EMP',
   'COMBAT_DEFENSE_CHOICE',
   'POST_COMBAT_DICE',
   'POST_COMBAT_MISSILES',

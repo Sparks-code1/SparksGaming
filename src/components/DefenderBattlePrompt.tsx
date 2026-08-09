@@ -127,12 +127,18 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
   useEffect(() => {
     if (!combat.atkDice || !combat.defDice || atkSpin || defSpin) return
     const flips = combat.missileFlips ?? []
-    const sig = JSON.stringify([combat.atkDice, combat.defDice, flips])
+    const sig = JSON.stringify([combat.atkDice, combat.defDice, flips, !!combat.emp])
     if (settleSigRef.current === sig) return
     const t = setTimeout(() => {
       settleSigRef.current = sig
-      let atk = combat.atkDice!.map(d => clampDie(d + mods.atkBonusAllDice)).sort((a, b) => b - a)
-      let def = applyDefBonus([...combat.defDice!].sort((a, b) => b - a), mods.defHighest, mods.defLowest)
+      // EMP kills every die-value modifier — the raw dice ARE the final dice.
+      const emp = !!combat.emp
+      let atk = emp
+        ? [...combat.atkDice!].sort((a, b) => b - a)
+        : combat.atkDice!.map(d => clampDie(d + mods.atkBonusAllDice)).sort((a, b) => b - a)
+      let def = emp
+        ? [...combat.defDice!].sort((a, b) => b - a)
+        : applyDefBonus([...combat.defDice!].sort((a, b) => b - a), mods.defHighest, mods.defLowest)
       // Missiles land AFTER modifiers — an unmodifiable 6, same order as the
       // attacker's pipeline.
       for (const f of flips) {
@@ -238,9 +244,11 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
           </div>
         </div>
 
-        {settled && (mods.parts.length > 0 || settled.missiles) && (
+        {settled && (combat.emp || mods.parts.length > 0 || settled.missiles) && (
           <div style={{ fontSize: 10, color: '#b09870', textAlign: 'center', marginBottom: 10 }}>
-            {[...mods.parts.map(p => p.label), ...(settled.missiles ? ['🚀 Missile — die forced to an unmodifiable 6'] : [])].join(' · ')}
+            {combat.emp
+              ? '📡 EMP — every die modifier is disabled in this territory'
+              : [...mods.parts.map(p => p.label), ...(settled.missiles ? ['🚀 Missile — die forced to an unmodifiable 6'] : [])].join(' · ')}
           </div>
         )}
 

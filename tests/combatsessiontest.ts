@@ -94,6 +94,26 @@ console.log('\n— dice post once per side per round; the attacker never waits �
   check('a duplicate advance is refused', staleAdvance.state.combat?.round === 2)
 }
 
+console.log('\n— EMP rides the session —')
+{
+  const { state: fresh } = gameReducer(base(), offer(), rng)
+  check('a normal offer carries no EMP', fresh.combat?.emp === false)
+  const { state: preEmp } = gameReducer(base(), offer({ emp: true }), rng)
+  check('a territory EMP\'d earlier in the turn arrives EMP\'d', preEmp.combat?.emp === true)
+
+  const { state: mid } = gameReducer(fresh, { type: 'COMBAT_SET_EMP', key: 'k1' } as Action, rng)
+  check('a mid-battle EMP flips the session flag', mid.combat?.emp === true)
+  const again = gameReducer(mid, { type: 'COMBAT_SET_EMP', key: 'k1' } as Action, rng)
+  check('EMP is one-way — a second activation is a no-op', again.state === mid)
+  const stale = gameReducer(fresh, { type: 'COMBAT_SET_EMP', key: 'OLD' } as Action, rng)
+  check('a stale key is refused', stale.state.combat?.emp === false)
+  // EMP survives the round boundary — it belongs to the territory, not the roll.
+  const { state: d1 } = gameReducer(mid, { type: 'POST_COMBAT_DICE', key: 'k1', round: 1, side: 'atk', dice: [6] } as Action, rng)
+  const { state: d2 } = gameReducer(d1, { type: 'POST_COMBAT_DICE', key: 'k1', round: 1, side: 'def', dice: [3] } as Action, rng)
+  const { state: next } = gameReducer(d2, { type: 'COMBAT_NEXT_ROUND', key: 'k1', round: 1 } as Action, rng)
+  check('EMP persists into the next round', next.combat?.emp === true)
+}
+
 console.log('\n— missile conversions ride the session —')
 {
   const { state: s1 } = gameReducer(base(), offer(), rng)

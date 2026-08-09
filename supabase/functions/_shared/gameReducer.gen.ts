@@ -933,7 +933,8 @@ function gameReducer(state, action, rng) {
         defenderAuto: null,
         round: 1,
         atkDice: null,
-        defDice: null
+        defDice: null,
+        emp: !!action.emp
       };
       return only({ ...state, combat });
     }
@@ -941,6 +942,11 @@ function gameReducer(state, action, rng) {
       const c = state.combat;
       if (!c || c.key !== action.key) return only(state);
       return only({ ...state, combat: { ...c, autoProposed: true } });
+    }
+    case "COMBAT_SET_EMP": {
+      const c = state.combat;
+      if (!c || c.key !== action.key || c.emp) return only(state);
+      return only({ ...state, combat: { ...c, emp: true } });
     }
     case "COMBAT_DEFENSE_CHOICE": {
       const c = state.combat;

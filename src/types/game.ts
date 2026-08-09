@@ -203,6 +203,11 @@ export interface ActiveCombat {
    *  unmodifiable 6 during the missile phase), posted by the attacker's
    *  machine so every screen replays the same final dice. */
   missileFlips?: Array<{ side: 'atk' | 'def'; dieIndex: number }>
+  /** EMP is live on this territory: every die-value modifier is zeroed and
+   *  battle missiles are dead. Carried on the offer (the territory may have
+   *  been EMP'd earlier this turn) and settable mid-battle, so remote replays
+   *  drop their modifier stacks too. */
+  emp?: boolean
 }
 
 /** The shared card piles an online match's server state owns. */
