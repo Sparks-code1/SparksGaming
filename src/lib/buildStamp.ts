@@ -6,4 +6,4 @@
  * current code — the stamp is shown on the campaign screen and logged at
  * boot, so "are both windows on the same build" is answered by looking.
  */
-export const BUILD_STAMP = 'S11 · 2026-08-08'
+export const BUILD_STAMP = 'S12 · 2026-08-08'

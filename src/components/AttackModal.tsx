@@ -193,7 +193,9 @@ const SHOW_FACE: Record<number, string> = {
   6: 'rotateX(0deg) rotateY(180deg)',
 }
 
-function DieFace({
+// Exported: the defender's battle screen renders the same dice, so both
+// players watch the same fight in the same visual language.
+export function DieFace({
   value,
   borderColor,
   size = 54,

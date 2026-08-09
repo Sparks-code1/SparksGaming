@@ -6083,15 +6083,58 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         onRetry={() => { void matchSync?.resync() }}
         expectedOnline={playOnline || !!legacyState.activeMatchId}
       />
-      {/* YOU are being attacked: consent to auto-resolve or roll your defense. */}
+      {/* YOU are being attacked: the same battle screen the attacker has —
+          their dice spin in as they roll, yours when you do. */}
       {gameState.combat && localSeatId === gameState.combat.defenderId && (() => {
         const c = gameState.combat
+        const srcT = gameState.territories[c.srcId]
+        const tgtT = gameState.territories[c.tgtId]
+        const attacker = gameState.players.find(p => p.id === c.attackerId)
+        // The defender-relevant slice of the attacker modal's modifier block
+        // (see the AttackModal render below) — same synced inputs, same sums,
+        // so both screens light the same pair winners. EMP and battle-side
+        // missile conversions are attacker-machine session state and are not
+        // replayed here.
+        const defAbility = playerAbility(c.defenderId)
+        const dmArmored = defAbility === 'dm-fortified-hq' && !!tgtT?.activeHqPlayerId && (tgtT?.troops ?? 0) >= 8
+        const atkAbility = playerAbility(c.attackerId)
+        const bearTrap = atkAbility === 'bear-subtract-die' &&
+          (gameState.turn.bearTrapTerritoryId === null || gameState.turn.bearTrapTerritoryId === c.tgtId)
+        const defFactionId = gameState.players.find(p => p.id === c.defenderId)?.factionId ?? ''
+        const defResilient = (legacyState.comebackPowers ?? {})[defFactionId] === 'resilient'
+        const tgtScars = tgtT?.scars ?? []
+        const hasFortifiedScar = tgtScars.some(s => s.type === 'fortified')
+        const hasFortificationScar = tgtScars.some(s => s.type === 'fortification')
+        const hasWastelandScar = tgtScars.some(s => s.type === 'wasteland') && !defResilient
+        const hasFortSticker = legacyState.stickers.some(s =>
+          s.targetId === c.tgtId && s.description.startsWith('fortification:')
+          && parseInt(s.description.split(':')[1] ?? '0') > 0)
+        const ammoShortage = activeEffects.has('ammunition-shortage') && !defResilient
+        const nuclearFallout = tgtScars.some(s => s.type === 'nuclear-fallout') || activeEffects.has('nuclear-fallout-round')
+        const parts: Array<{ label: string }> = []
+        if (dmArmored) parts.push({ label: '🛡 Armored Command — defender +1 hi & lo' })
+        if (hasFortifiedScar) parts.push({ label: '🏰 Bunker — defender highest +1' })
+        if (hasFortificationScar || hasFortSticker) parts.push({ label: '◎ Fortification — defender +1 hi & lo' })
+        if (hasWastelandScar) parts.push({ label: '🔫 Ammo Shortage — defender highest −1' })
+        if (ammoShortage) parts.push({ label: '🔫 Ammo Shortage (event) — defender highest −1' })
+        if (bearTrap) parts.push({ label: '🐻 Bear Trap — defender lowest −1' })
+        const atkComeback = (legacyState.comebackPowers ?? {})[attacker?.factionId ?? '']
         return (
           <DefenderBattlePrompt
             combat={c}
-            attackerName={gameState.players.find(p => p.id === c.attackerId)?.name ?? 'The attacker'}
-            srcName={gameState.territories[c.srcId]?.name ?? c.srcId}
-            tgtName={gameState.territories[c.tgtId]?.name ?? c.tgtId}
+            attackerName={attacker?.name ?? 'The attacker'}
+            srcName={srcT?.name ?? c.srcId}
+            tgtName={tgtT?.name ?? c.tgtId}
+            srcTroops={srcT?.troops ?? 0}
+            tgtTroops={tgtT?.troops ?? 0}
+            mods={{
+              defHighest: (dmArmored ? 1 : 0) + (hasFortifiedScar ? 1 : 0) + (hasFortificationScar ? 1 : 0) + (hasFortSticker ? 1 : 0) + (hasWastelandScar ? -1 : 0) + (ammoShortage ? -1 : 0),
+              defLowest: (dmArmored ? 1 : 0) + (hasFortificationScar ? 1 : 0) + (hasFortSticker ? 1 : 0) + (bearTrap ? -1 : 0),
+              parts,
+              atkBonusAllDice: atkComeback === 'aggressive' && !!tgtT?.activeHqPlayerId ? 1 : 0,
+              attackerSixesWin: attacker?.factionId === 'mutants' && (legacyState.mutantEvolvePowers ?? []).includes('me-unnatural-strength'),
+              nuclearFallout,
+            }}
             onConsent={accept => dispatch({ type: 'COMBAT_DEFENSE_CHOICE', key: c.key, accept })}
             onRollDefense={dice => dispatch({ type: 'POST_COMBAT_DICE', key: c.key, round: c.round, side: 'def', dice })}
           />
