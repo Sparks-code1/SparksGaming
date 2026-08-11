@@ -532,9 +532,12 @@ export default function AttackModal({
     setPhase('results')
   }
 
-  /** Route a settled roll through the spectator window when one applies. */
+  /** Route a settled roll through the spectator window when one applies.
+   *  PUBLIC AI rounds hold the window open too — the audience may missile the
+   *  computer's dice; it closes itself on the timer with nobody to click
+   *  Skip. Only fast-forwarded/one-shot battles bypass it. */
   function windowThenFinish(fa: number[], fd: number[], markResolved: boolean) {
-    if (!spectatorWindow || autoPlay) { finishRound(fa, fd, [], markResolved); return }
+    if (!spectatorWindow || (autoPlay && !publicAiRounds)) { finishRound(fa, fd, [], markResolved); return }
     if (markResolved) resolvedRef.current = true
     windowKeyRef.current = spectatorWindow.open({ atk: fa, def: fd })
     windowDiceRef.current = { fa: [...fa], fd: [...fd] }
@@ -583,6 +586,9 @@ export default function AttackModal({
   const [defenseWaitSeconds, setDefenseWaitSeconds] = useState(0)
   const [manualForced, setManualForced] = useState(false)
   const offeredRef = useRef(false)
+  /** ONLINE at normal speed the AI fights IN PUBLIC: real session rounds on
+   *  every screen. Fast-forward keeps the old one-shot auto-resolve. */
+  const publicAiRounds = autoPlay && !!interactiveDefense && !autoPlayFast
 
   // Open the shared session the moment the battle modal opens, so the
   // defender's machine can already see who is attacking what. Fast-forwarded
@@ -673,7 +679,11 @@ export default function AttackModal({
 
   // ── Proceed after all modifiers applied: missile phase or resolution ─────
   function proceedToResolution(fa: number[], fd: number[]) {
-    const hasMissiles = attackerMissiles > 0 || defenderMissiles > 0
+    // Public AI rounds skip the interactive missile phase — nobody is at this
+    // modal to click it, and stalling here froze the computer's turn the
+    // moment either side held a missile. (A human defender's missile agency
+    // against AI attacks is a known gap, noted in the tracker.)
+    const hasMissiles = !publicAiRounds && (attackerMissiles > 0 || defenderMissiles > 0)
     if (hasMissiles) {
       // Enter missile phase — players may convert dice to 6s before resolution
       setPendingAtkDice([...fa])
@@ -879,13 +889,12 @@ export default function AttackModal({
   }
 
   // ── AI autoplay ────────────────────────────────────────────────────────────
-  // ONLINE at normal speed the AI fights IN PUBLIC: real rounds through the
-  // shared session, so every human watches the same spinning dice. A human
-  // defender rolls their own defense (auto idle fallback below); an AI
-  // defender's dice post instantly. Fast-forward keeps the old one-shot
-  // auto-resolve — the host's pacing lever. Hotseat AI is unchanged (no
-  // session exists there).
-  const publicAiRounds = autoPlay && !!interactiveDefense && !autoPlayFast
+  // ONLINE at normal speed the AI fights IN PUBLIC (publicAiRounds, declared
+  // with the interactive-defense state above): real rounds through the shared
+  // session, so every human watches the same spinning dice. A human defender
+  // rolls their own defense (auto idle fallback below); an AI defender's dice
+  // post instantly. Fast-forward keeps the old one-shot auto-resolve — the
+  // host's pacing lever. Hotseat AI is unchanged (no session exists there).
   useEffect(() => {
     if (!autoPlay) return
     if (publicAiRounds) {
