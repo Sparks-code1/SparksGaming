@@ -86,15 +86,17 @@ console.log('\n— first click wins; different dice both land —')
 console.log('\n— the refusal gate (what the edge function runs BEFORE charging) —')
 {
   const { state: w } = gameReducer(base(), open(), rng)
-  const ok = { legacyMissiles: 2, isBattleSide: false }
+  const ok = { legacyMissiles: 2, isAttacker: false }
   check('a legal spend passes', spectatorMissileRefusal(w, missile() as never, 'p3', ok) === null)
   check('no window → window-closed', spectatorMissileRefusal(base(), missile() as never, 'p3', ok) === 'window-closed')
   check('a stale round key → window-closed',
     spectatorMissileRefusal(w, missile({ roundKey: 'old#1' }) as never, 'p3', ok) === 'window-closed')
   check('an out-of-range die → bad-die',
     spectatorMissileRefusal(w, missile({ dieIndex: 5 }) as never, 'p3', ok) === 'bad-die')
-  check('a battle side is not a spectator',
-    spectatorMissileRefusal(w, missile() as never, 'p1', { ...ok, isBattleSide: true }) === 'not-a-spectator')
+  check('the ATTACKER is refused — their conversions have their own phase',
+    spectatorMissileRefusal(w, missile() as never, 'p1', { ...ok, isAttacker: true }) === 'not-a-spectator')
+  check('the DEFENDER fires like any spectator — missiles against the AI',
+    spectatorMissileRefusal(w, missile() as never, 'p2', ok) === null)
   check('no missiles left → no-missiles',
     spectatorMissileRefusal(w, missile() as never, 'p3', { ...ok, legacyMissiles: 0 }) === 'no-missiles')
 

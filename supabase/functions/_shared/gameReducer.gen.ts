@@ -1173,7 +1173,7 @@ function clampCombatResolution(state, a) {
   };
 }
 function spectatorMissileRefusal(state, action, spenderId, opts) {
-  if (opts.isBattleSide) return "not-a-spectator";
+  if (opts.isAttacker) return "not-a-spectator";
   const w = state.combatWindow;
   if (!w || w.roundKey !== action.roundKey) return "window-closed";
   const dice = action.side === "atk" ? w.atkDice : w.defDice;

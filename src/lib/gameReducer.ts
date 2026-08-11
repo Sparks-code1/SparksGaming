@@ -1347,11 +1347,15 @@ export function spectatorMissileRefusal(
   opts: {
     /** The spender's missile count from the CAMPAIGN blob (pre-ledger). */
     legacyMissiles: number
-    /** True when the spender owns either side of the battle. */
-    isBattleSide: boolean
+    /** True when the spender is the ATTACKER — the one participant refused
+     *  here, because their conversions have their own missile phase. The
+     *  DEFENDER fires through this window like any spectator: it is how a
+     *  human spends missiles against an AI attacker (whose machine skips the
+     *  interactive phase entirely). */
+    isAttacker: boolean
   },
 ): 'window-closed' | 'bad-die' | 'die-taken' | 'no-missiles' | 'not-a-spectator' | null {
-  if (opts.isBattleSide) return 'not-a-spectator'
+  if (opts.isAttacker) return 'not-a-spectator'
   const w = state.combatWindow
   if (!w || w.roundKey !== action.roundKey) return 'window-closed'
   const dice = action.side === 'atk' ? w.atkDice : w.defDice

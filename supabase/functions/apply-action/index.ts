@@ -261,10 +261,10 @@ Deno.serve(async (req: Request) => {
     // "first click wins, the loser is refunded" means in practice.
     if (mySlot.is_ai) return json({ error: 'AI seats do not spend spectator missiles', code: 'not-a-spectator' }, 403)
     const w = state?.combatWindow
-    const battleSideIds = new Set([
-      w ? state?.territories?.[w.srcId]?.occupyingPlayerId : null,
-      w ? state?.territories?.[w.tgtId]?.occupyingPlayerId : null,
-    ].filter(Boolean))
+    // Only the ATTACKER is refused here — their conversions have their own
+    // missile phase. The DEFENDER fires through this window like any
+    // spectator; it is how a human spends missiles against an AI attacker.
+    const attackerId = w ? state?.territories?.[w.srcId]?.occupyingPlayerId : null
     const { data: campaignRow } = await admin
       .from('campaigns').select('legacy_state').eq('id', match.campaign_id).single()
     const legacyMissiles = Number(campaignRow?.legacy_state?.missiles?.[mySlot.player_id] ?? 0)
@@ -272,7 +272,7 @@ Deno.serve(async (req: Request) => {
       state,
       action as { roundKey: string; side: 'atk' | 'def'; dieIndex: number },
       mySlot.player_id,
-      { legacyMissiles, isBattleSide: battleSideIds.has(mySlot.player_id) },
+      { legacyMissiles, isAttacker: !!attackerId && mySlot.player_id === attackerId },
     )
     if (refusal) {
       const words: Record<string, string> = {

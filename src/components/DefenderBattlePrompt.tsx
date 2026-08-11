@@ -15,7 +15,7 @@
  * says why the die changed.
  */
 import { useEffect, useRef, useState } from 'react'
-import type { ActiveCombat } from '@/types/game'
+import type { ActiveCombat, CombatWindowState } from '@/types/game'
 import { DieFace } from './AttackModal'
 import { playDice } from '@/lib/sounds'
 
@@ -49,7 +49,7 @@ function applyDefBonus(dice: number[], hi: number, lo: number): number[] {
   return d
 }
 
-export default function DefenderBattlePrompt({ combat, role, attackerName, defenderName, srcName, tgtName, srcTroops, tgtTroops, mods, onConsent, onRollDefense, onDismiss }: {
+export default function DefenderBattlePrompt({ combat, role, attackerName, defenderName, srcName, tgtName, srcTroops, tgtTroops, mods, combatWindow, missilesLeft, onFireMissile, onConsent, onRollDefense, onDismiss }: {
   combat: ActiveCombat
   role: 'defender' | 'spectator'
   attackerName: string
@@ -59,10 +59,17 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
   srcTroops: number
   tgtTroops: number
   mods: DefenderBattleMods
+  /** The open missile window for THIS battle, when one is holding. The
+   *  defender fires through it exactly like a spectator — that is how a
+   *  human spends missiles against an AI attacker. */
+  combatWindow?: CombatWindowState | null
+  missilesLeft?: number
+  onFireMissile?: (side: 'atk' | 'def', dieIndex: number) => Promise<boolean>
   onConsent: (accept: boolean) => void
   onRollDefense: (dice: number[]) => void
   onDismiss?: () => void
 }) {
+  const [missileInFlight, setMissileInFlight] = useState(false)
   const [diceCount, setDiceCount] = useState(combat.defDiceMax)
   const [atkSpin, setAtkSpin] = useState(false)
   const [defSpin, setDefSpin] = useState(false)
@@ -314,6 +321,46 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
         {combat.defenderAuto === true && (
           <div style={{ textAlign: 'center', fontSize: 11, color: '#b09870' }}>
             Auto-resolve agreed — the outcome arrives in a moment.
+          </div>
+        )}
+
+        {/* ── The missile window, from the defender's chair ──────────────────
+            Open for a few seconds after the modifiers settle. Your missiles,
+            the same server arbitration spectators get: first claim on a die
+            wins, a lost race is never charged. */}
+        {isDefender && combatWindow && (missilesLeft ?? 0) > 0 && onFireMissile && (
+          <div style={{
+            marginTop: 12, paddingTop: 10, borderTop: '1px solid rgba(200,148,10,0.25)',
+            textAlign: 'center',
+          }}>
+            <div style={{ fontSize: 11, color: '#F1C40F', marginBottom: 6 }}>
+              🚀 Missile window — turn one of your dice into an unmodifiable 6 ({missilesLeft} left)
+            </div>
+            <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
+              {combatWindow.defDice.map((v, i) => {
+                const taken = combatWindow.flips.some(f => f.side === 'def' && f.dieIndex === i)
+                return (
+                  <button
+                    key={i}
+                    disabled={taken || missileInFlight}
+                    onClick={() => {
+                      setMissileInFlight(true)
+                      void onFireMissile('def', i).finally(() => setMissileInFlight(false))
+                    }}
+                    style={{
+                      fontSize: 26, lineHeight: 1, padding: '2px 6px', borderRadius: 6,
+                      background: taken ? 'rgba(46,204,113,0.18)' : 'rgba(0,0,0,0.3)',
+                      border: taken ? '1px solid #2ecc71' : '1px dashed #F1C40F',
+                      color: taken ? '#2ecc71' : '#7fb3d3',
+                      cursor: taken || missileInFlight ? 'default' : 'pointer',
+                    }}
+                    title={taken ? 'Already a missile 6' : 'Fire the missile at this die'}
+                  >
+                    {['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'][Math.max(1, Math.min(6, v))]}
+                  </button>
+                )
+              })}
+            </div>
           </div>
         )}
       </div>

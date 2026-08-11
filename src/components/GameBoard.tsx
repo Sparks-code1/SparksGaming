@@ -6153,6 +6153,24 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
               attackerSixesWin: attacker?.factionId === 'mutants' && (legacyState.mutantEvolvePowers ?? []).includes('me-unnatural-strength'),
               nuclearFallout,
             }}
+            // The open missile window for THIS battle — the defender fires
+            // through it like any spectator, which is how a human spends
+            // missiles against an AI attacker.
+            combatWindow={gameState.combatWindow
+              && gameState.combatWindow.srcId === c.srcId
+              && gameState.combatWindow.tgtId === c.tgtId
+              ? gameState.combatWindow : null}
+            missilesLeft={localSeatId
+              ? Math.max(0, ((legacyState.missiles ?? {})[localSeatId] ?? 0) - ((gameState.missileSpends ?? {})[localSeatId] ?? 0))
+              : 0}
+            onFireMissile={async (side, dieIndex) => {
+              const match = onlineMatchRef.current
+              const w = gameStateRef.current.combatWindow
+              if (!match || !w) return false
+              const res = await sendSpectatorMissile(match.matchId, w.roundKey, side, dieIndex)
+              if (!res.ok) showWeaknessNotice(`🚀 ${res.message}`)
+              return res.ok
+            }}
             onConsent={accept => dispatch({ type: 'COMBAT_DEFENSE_CHOICE', key: c.key, accept })}
             onRollDefense={dice => dispatch({ type: 'POST_COMBAT_DICE', key: c.key, round: c.round, side: 'def', dice })}
             onDismiss={role === 'spectator' ? () => setBattleViewHidden(c.key) : undefined}
