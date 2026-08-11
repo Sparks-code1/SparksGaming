@@ -295,16 +295,20 @@ Deno.serve(async (req: Request) => {
     const combat = state?.combat
     if (!combat) return json({ error: 'no battle in progress', code: 'action-not-allowed' }, 409)
     const by = (action as { by?: string }).by
-    // Two legitimate ways the ATTACKER's machine throws the defense: the
-    // defender idled out, or the defender is an AI seat (checked against the
-    // roster — a human defender's dice can never be rolled out from under
-    // them by relabelling).
+    // "The attacker's machine" is the seat holding the attack — or the HOST
+    // when the attacker is an AI seat, since the host's machine fights the
+    // computer's battles. Two legitimate ways that machine throws the
+    // DEFENSE: the defender idled out, or the defender is an AI seat (both
+    // checked against the roster — a human defender's dice can never be
+    // rolled out from under them by relabelling).
+    const attackerMachine = mySlot.player_id === combat.attackerId
+      || (!!seats.find((s) => s.player_id === combat.attackerId)?.is_ai && match.created_by === user.id)
     const idleRoll = action.type === 'POST_COMBAT_DICE'
       && by === 'attacker-idle'
-      && mySlot.player_id === combat.attackerId
+      && attackerMachine
     const aiDefense = action.type === 'POST_COMBAT_DICE'
       && by === 'ai'
-      && mySlot.player_id === combat.attackerId
+      && attackerMachine
       && !!seats.find((s) => s.player_id === combat.defenderId)?.is_ai
     if (!idleRoll && !aiDefense && mySlot.player_id !== combat.defenderId) {
       return json({ error: 'only the defender answers for the defense', code: 'wrong-player' }, 403)

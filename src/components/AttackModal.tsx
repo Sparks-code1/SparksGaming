@@ -585,13 +585,14 @@ export default function AttackModal({
   const offeredRef = useRef(false)
 
   // Open the shared session the moment the battle modal opens, so the
-  // defender's machine can already see who is attacking what.
+  // defender's machine can already see who is attacking what. Fast-forwarded
+  // AI battles skip it — they one-shot auto-resolve and the replay covers them.
   useEffect(() => {
-    if (!interactiveDefense || autoPlay || offeredRef.current) return
+    if (!interactiveDefense || (autoPlay && autoPlayFast) || offeredRef.current) return
     offeredRef.current = true
     interactiveDefense.offer(maxDefDice)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [interactiveDefense, autoPlay])
+  }, [interactiveDefense, autoPlay, autoPlayFast])
 
   // Awaiting the defender's answer to "auto-resolve?".
   useEffect(() => {
@@ -612,12 +613,15 @@ export default function AttackModal({
 
   // Waiting for the defender's dice. The attacker has already rolled and
   // posted; the round continues the instant the defense lands. After a long
-  // idle the attacker may roll for them — marked as such in the session.
+  // idle the attacker may roll for them — marked as such in the session. On
+  // an AI's turn nobody is watching this modal to click the fallback, so it
+  // fires by itself: an away defender never stalls the computer's turn.
   useEffect(() => {
     if (phase !== 'waiting-defense' || !interactiveDefense) return
     const started = Date.now()
     const t = setInterval(() => {
-      setDefenseWaitSeconds(Math.floor((Date.now() - started) / 1000))
+      const elapsed = Math.floor((Date.now() - started) / 1000)
+      setDefenseWaitSeconds(elapsed)
       const c = interactiveDefense.getCombat()
       if (c?.defDice) {
         clearInterval(t)
@@ -625,6 +629,10 @@ export default function AttackModal({
         setAnimAtk(providedRollRef.current.atk ?? [])
         setAnimDef(c.defDice)
         setPhase('rolling')
+        return
+      }
+      if (autoPlay && elapsed >= 20 && c && !c.defDice) {
+        interactiveDefense.postDice(c.round, 'def', rollN(maxDefDice), 'attacker-idle')
       }
     }, 300)
     return () => clearInterval(t)
@@ -870,9 +878,32 @@ export default function AttackModal({
     onClose()
   }
 
-  // ── AI autoplay: start auto-resolve on open, confirm when it finishes ─────
+  // ── AI autoplay ────────────────────────────────────────────────────────────
+  // ONLINE at normal speed the AI fights IN PUBLIC: real rounds through the
+  // shared session, so every human watches the same spinning dice. A human
+  // defender rolls their own defense (auto idle fallback below); an AI
+  // defender's dice post instantly. Fast-forward keeps the old one-shot
+  // auto-resolve — the host's pacing lever. Hotseat AI is unchanged (no
+  // session exists there).
+  const publicAiRounds = autoPlay && !!interactiveDefense && !autoPlayFast
   useEffect(() => {
     if (!autoPlay) return
+    if (publicAiRounds) {
+      if (phase === 'setup') {
+        const t = setTimeout(() => handleRoll(), 900)
+        return () => clearTimeout(t)
+      }
+      if (phase === 'results') {
+        // The same fight-to-the-finish resolveCombat runs internally: press on
+        // while a capture is still possible, otherwise close with the result.
+        const t = setTimeout(() => {
+          if (canContinue) handleAttackAgain()
+          else handleClose(captured)
+        }, 1400)
+        return () => clearTimeout(t)
+      }
+      return
+    }
     if (phase === 'setup') {
       const t = setTimeout(() => handleAutoResolve(), autoPlayFast ? 250 : 1100)
       return () => clearTimeout(t)
@@ -882,7 +913,7 @@ export default function AttackModal({
       return () => clearTimeout(t)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoPlay, autoPlayFast, phase])
+  }, [autoPlay, autoPlayFast, phase, publicAiRounds])
 
   // ── Resolve missile phase → spectator window → results ───────────────────
   // The battle players' own missiles land first; the dice they leave behind
@@ -929,7 +960,8 @@ export default function AttackModal({
     // the shared session immediately — and the round resolves whenever the
     // defense lands. Nobody's roll waits on anybody's click. An AI defender's
     // dice are thrown right here, posted so spectators watch the same battle.
-    if (interactiveDefense && !autoPlay) {
+    // Public AI rounds route through here too — the session is the show.
+    if (interactiveDefense) {
       const c = interactiveDefense.getCombat()
       const myAtk = rollN(safeAtkDice, attackerRerollOnes)
       providedRollRef.current.atk = myAtk

@@ -7607,12 +7607,13 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             // Online only: hold each round open briefly for spectator missiles.
             // AutoPlay battles skip the window inside the modal.
             spectatorWindow={onlineMatch ? spectatorWindowApiRef.current : undefined}
-            // Every online battle a human starts runs through the shared
-            // session — that is what puts the animated battle on every other
-            // screen. A human defender rolls their own dice and answers the
-            // auto-resolve offer; an AI defender's dice are thrown here, and
-            // the OTHER humans still watch the same fight as spectators.
-            interactiveDefense={onlineMatch && !currentPlayer.isAI && defenderPlayer
+            // EVERY online battle runs through the shared session — human or
+            // AI attacker — because the session is what puts the animated
+            // battle on every other screen. A human defender rolls their own
+            // dice (even against the computer) and answers auto-resolve
+            // offers; an AI defender's dice are thrown here. The modal keeps
+            // fast-forwarded AI battles on the old one-shot path.
+            interactiveDefense={onlineMatch && defenderPlayer
               ? { ...interactiveDefenseApiRef.current, defenderName: defenderPlayer.name, defenderIsHuman: !defenderPlayer.isAI }
               : undefined}
           />
