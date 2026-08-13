@@ -1,0 +1,130 @@
+// The end-of-game ceremony is the one moment two machines are guaranteed to
+// write the campaign within seconds of each other: the winner records their
+// signature, major city and fortification; each runner-up then records a
+// minor city and a card upgrade; the winner's machine finally carries the
+// campaign into the next game.
+//
+// The first live run lost almost all of it — one city survived, no signature,
+// no fortification, no major city, and the campaign still said "Game 1". The
+// refusal protocol was doing its job (a stale write was refused) but the
+// ceremony's writes carried no way to rebuild themselves, so the loser simply
+// adopted the winner's copy and its own rewards evaporated.
+//
+// These asserts pin the rebuild, against the real merge used by both reward
+// screens.
+import { mergeLegacyEdits, reapplyLegacyEdits } from '@/lib/gameLogic'
+import type { LegacyState } from '@/types/legacy'
+
+let pass = true
+const check = (label: string, actual: unknown, expected: unknown) => {
+  const ok = JSON.stringify(actual) === JSON.stringify(expected)
+  if (!ok) pass = false
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}\n        got=${JSON.stringify(actual)} want=${JSON.stringify(expected)}`)
+}
+
+const sticker = (name: string, kind: string) => ({
+  id: name, name, description: kind, placement: 'territory' as const,
+  targetId: name, appliedInGame: 1,
+})
+
+const base = (): LegacyState => ({
+  campaignId: 'c1', worldName: 'W', currentGameNumber: 1,
+  historyLog: [], stickers: [], scars: [], dealtScars: [],
+  removedCardIds: [], continentBonusModifiers: [], purchasedStars: {},
+  victoryLog: [],
+} as never)
+
+/** The campaigns row: CAS, plus the re-apply protocol on a refusal. */
+function fakeRow(initial: LegacyState) {
+  let version = 1
+  let value = initial
+  return {
+    get version() { return version },
+    get value() { return value },
+    save(expected: number, next: LegacyState, reapply?: (fresh: LegacyState) => LegacyState) {
+      if (expected === version) { version += 1; value = next; return { ok: true, version, adopt: next } }
+      if (reapply) { const merged = reapply(value); version += 1; value = merged; return { ok: true, version, adopt: merged } }
+      return { ok: false, version, adopt: value }
+    },
+  }
+}
+
+const cityNames = (s: LegacyState) => s.stickers.map(x => x.name).sort()
+const signed = (s: LegacyState) => (s.victoryLog ?? []).map(v => v.winnerName)
+
+// ─── 1. The loss, as it happened ─────────────────────────────────────────────
+console.log('--- without a rebuild, the winner\'s whole slice is lost ---')
+{
+  const row = fakeRow(base())
+  const winnerBaseline = row.value
+  const testBaseline = row.value
+
+  // Ryan's win screen: signature, major city, fortification.
+  const winnerEdited: LegacyState = {
+    ...winnerBaseline,
+    stickers: [sticker('Ryanopolis', 'city:major'), sticker('Ryanopolis-fort', 'fortification:10')],
+    victoryLog: [{ gameNumber: 1, winnerName: 'Ryan', winnerPlayerId: 'p1', factionId: 'khan', winCondition: 'mission' }] as never,
+  }
+  // test's machine wrote first (its own bookkeeping), so Ryan's save is stale.
+  row.save(row.version, { ...row.value, worldName: 'W2' })
+
+  const refused = row.save(1, mergeLegacyEdits(winnerBaseline, winnerBaseline, winnerEdited))
+  check('the stale write is refused', refused.ok, false)
+  check('and the signature never landed', signed(row.value), [])
+
+  // The runner-up then writes its city from the copy it holds.
+  const testEdited: LegacyState = { ...testBaseline, stickers: [sticker('Testburg', 'city:minor')] }
+  row.save(refused.version, mergeLegacyEdits(refused.adopt, testBaseline, testEdited))
+  check('exactly one city survives — the reported bug', cityNames(row.value), ['Testburg'])
+}
+
+// ─── 2. With the rebuild ─────────────────────────────────────────────────────
+console.log('\n--- re-applying the diff keeps every reward ---')
+{
+  const row = fakeRow(base())
+  const winnerBaseline = row.value
+  const winnerEdited: LegacyState = {
+    ...winnerBaseline,
+    stickers: [sticker('Ryanopolis', 'city:major'), sticker('Ryanopolis-fort', 'fortification:10')],
+    victoryLog: [{ gameNumber: 1, winnerName: 'Ryan', winnerPlayerId: 'p1', factionId: 'khan', winCondition: 'mission' }] as never,
+  }
+  const applyWinner = (b: LegacyState) => reapplyLegacyEdits(b, winnerBaseline, winnerEdited)
+
+  row.save(row.version, { ...row.value, worldName: 'W2' })          // someone else, first
+  const res = row.save(1, applyWinner(winnerBaseline), applyWinner)
+  check('the rebuilt write is accepted', res.ok, true)
+  check('the signature is on the board', signed(row.value), ['Ryan'])
+  check('the major city and fortification are there',
+    cityNames(row.value), ['Ryanopolis', 'Ryanopolis-fort'])
+  check("the other machine's edit was not trampled", row.value.worldName, 'W2')
+
+  // Now the runner-up, from a copy read BEFORE the winner's write landed.
+  const staleBaseline = base()
+  const testEdited: LegacyState = { ...staleBaseline, stickers: [sticker('Testburg', 'city:minor')] }
+  const applyRunnerUp = (b: LegacyState) => reapplyLegacyEdits(b, staleBaseline, testEdited)
+  row.save(1, applyRunnerUp(staleBaseline), applyRunnerUp)
+  check('the minor city lands too', cityNames(row.value).includes('Testburg'), true)
+  check("and it did NOT erase the winner's rewards",
+    cityNames(row.value), ['Ryanopolis', 'Ryanopolis-fort', 'Testburg'])
+  check('the signature is still there', signed(row.value), ['Ryan'])
+}
+
+// ─── 3. Finalize is idempotent ───────────────────────────────────────────────
+console.log('\n--- carrying the campaign forward cannot happen twice ---')
+{
+  // Mirrors applyFinalize's guard: a base already past this game is untouched,
+  // so a re-applied finalize can never double-bump or double-charge missiles.
+  const gameNumber = 1
+  const applyFinalize = (b: LegacyState): LegacyState => {
+    if (b.currentGameNumber !== gameNumber) return b
+    return { ...b, currentGameNumber: b.currentGameNumber + 1, purchasedStars: {}, gameInProgress: false }
+  }
+  const once = applyFinalize(base())
+  check('the campaign advances a game', once.currentGameNumber, 2)
+  const twice = applyFinalize(once)
+  check('applying it again changes nothing', twice.currentGameNumber, 2)
+  check('and it is the same object', twice === once, true)
+}
+
+console.log(pass ? '\nceremonyracetest: all passed' : '\nceremonyracetest: FAILURES PRESENT')
+if (!pass) process.exit(1)

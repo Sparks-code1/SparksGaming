@@ -23,7 +23,7 @@ import WinScreen from './WinScreen'
 import LegacyPanel from './LegacyPanel'
 import CampaignCompleteScreen from './CampaignCompleteScreen'
 import { campaignOutcome, applyCampaignCompletion, championLabel, type CampaignOutcome } from '@/lib/campaign'
-import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALIEN_ISLAND_TERRITORY_ID, calcDraftTroops, applyHqReserveTroops, expandClickAction, legalJoinWarTerritoryIds, cardCoinValue, leadFactionId, resolveResourceDepletion, type ResourceDepletion, troopsAfterEntry, minTroopsToEnter, LEAD_FACTION_WORLD_CAPITAL_TROOPS, worldCapitalReplacedCities, citiesLostOn, mergeLegacyEdits, countCitiesOn, resolveRiot, resolveResistance, type RiotCityResult, FORTIFICATION_SUPPLY, fortificationsPlaced, canPlaceFortification, FORTIFY_EVENT_TROOPS, FORTIFY_EVENT_CITIES , canSpendForStar, starPurchaseSelection } from '@/lib/gameLogic'
+import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALIEN_ISLAND_TERRITORY_ID, calcDraftTroops, applyHqReserveTroops, expandClickAction, legalJoinWarTerritoryIds, cardCoinValue, leadFactionId, resolveResourceDepletion, type ResourceDepletion, troopsAfterEntry, minTroopsToEnter, LEAD_FACTION_WORLD_CAPITAL_TROOPS, worldCapitalReplacedCities, citiesLostOn, reapplyLegacyEdits, countCitiesOn, resolveRiot, resolveResistance, type RiotCityResult, FORTIFICATION_SUPPLY, fortificationsPlaced, canPlaceFortification, FORTIFY_EVENT_TROOPS, FORTIFY_EVENT_CITIES , canSpendForStar, starPurchaseSelection } from '@/lib/gameLogic'
 import {
   defaultLegacyState, saveLegacyState, loadLegacyState, awardRedStars,
   applyLegacyToTerritories, pickUnlocks, SCAR_META, saveGameSession,
@@ -6072,7 +6072,14 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // reward modal can sit ON TOP of it — the Island Empire sea line does — so
     // writing that copy back wholesale reverted whatever was placed meanwhile.
     // Apply only what the win screen actually changed.
-    let working = mergeLegacyEdits(legacyStateRef.current, baseline, editedLegacy)
+    // The diff this screen produced, as a transformation that can be applied
+    // to ANY base — the optimistic copy now, and the server's copy if another
+    // machine's write beats ours. Without the second, losing that race threw
+    // the whole ceremony away: the signature, the major city and the
+    // fortification all vanished between games while the runner-up's minor
+    // city (written later, from a fresh copy) survived alone.
+    const applyRewards = (b: LegacyState) => reapplyLegacyEdits(b, baseline, editedLegacy)
+    let working = applyRewards(legacyStateRef.current)
     legacyStateRef.current = working
     setLegacyState(working)
     setShowWinScreen(false)
@@ -6084,7 +6091,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // rewards are in. The milestone MODALS below are hotseat furniture — the
     // online flags are set silently at finalize and announced with a notice.
     if (ceremonyMatchRef.current && gameStateRef.current.endGame) {
-      saveLegacyState(working).catch(() => {})
+      saveLegacyState(working, { reapply: applyRewards }).catch(() => {})
       dispatch({ type: 'ENDGAME_REWARDS_DONE', playerId: gameStateRef.current.endGame.winnerId })
       return
     }
@@ -6190,11 +6197,15 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   }, [gameState.endGame, localSeatId, showWinScreen])
 
   function handleRunnerUpRewardsComplete(editedLegacy: LegacyState, baseline: LegacyState) {
-    const working = mergeLegacyEdits(legacyStateRef.current, baseline, editedLegacy)
+    // Re-appliable for the same reason as the winner's slice: two machines
+    // record rewards seconds apart, and the loser of that race must rebuild
+    // its city on the winner's copy rather than surrender it.
+    const applyRewards = (b: LegacyState) => reapplyLegacyEdits(b, baseline, editedLegacy)
+    const working = applyRewards(legacyStateRef.current)
     legacyStateRef.current = working
     setLegacyState(working)
     setRunnerUpWizardOpen(false)
-    saveLegacyState(working).catch(() => {})
+    saveLegacyState(working, { reapply: applyRewards }).catch(() => {})
     if (localSeatRef.current) dispatch({ type: 'ENDGAME_REWARDS_DONE', playerId: localSeatRef.current })
   }
 
@@ -6208,58 +6219,75 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   const endgameFinalizedRef = useRef(false)
   async function finalizeOnlineEndgame(eg: EndGameState) {
     const gameNumber = gameStateRef.current.gameNumber
-    let working = (await loadLegacyState(legacyStateRef.current.campaignId).catch(() => null))
-      ?? legacyStateRef.current
-
-    if (!working.doubleWinnerMilestoneTriggered) {
-      const [doubleSignerId] = doubleSigners(working)
-      if (doubleSignerId) {
-        working = { ...working, doubleWinnerMilestoneTriggered: true }
-        showWeaknessNotice(`🏅 ${rosterName(working, doubleSignerId)} has signed the board twice — missions unlock next game`)
-      }
-    }
-    const minorCityCount = working.stickers.filter(s => s.description === 'city:minor').length
-    if (!working.ninthCityUnlocked && minorCityCount >= 9) {
-      working = {
-        ...working, ninthCityUnlocked: true, draftOrderUnlocked: true,
-        scarDeck: [...(working.scarDeck ?? []), ...BIOHAZARD_CARD_IDS],
-      }
-      showWeaknessNotice('🏙 The 9th minor city stands — the improved draft unlocks next game')
-    }
-
-    // WinScreen.finalize's half: unplaced scar cards return to the pool and
-    // the campaign advances a game.
-    const unusedCardIds = (working.dealtScars ?? [])
-      .filter(d => d.gameNumber === gameNumber && !d.placed).map(d => d.cardId)
-    // finalizeAndReturnToLobby's half: fold the match missile ledger, close
-    // the game record. The match ROW stays open — the continue gate still
-    // rides it — and closes when the gate resolves.
     const spends = gameStateRef.current.missileSpends ?? {}
-    const missiles = Object.keys(spends).length > 0
-      ? Object.fromEntries(Object.entries(working.missiles ?? {}).map(
-          ([pid, n]) => [pid, Math.max(0, (n ?? 0) - (spends[pid] ?? 0))]))
-      : working.missiles
-    working = {
-      ...working,
-      purchasedStars: {},
-      currentGameNumber: working.currentGameNumber + 1,
-      scarDeck: [...new Set([...(working.scarDeck ?? []), ...unusedCardIds])],
-      dealtScars: (working.dealtScars ?? []).filter(d => !(d.gameNumber === gameNumber && !d.placed)),
-      // activeMatchId SURVIVES this write, and that is load-bearing: clearing
-      // it here made the adopt-by-activeMatchId effect drop `onlineMatch`,
-      // which unmounted the whole end-of-game overlay on the winner's machine
-      // — the winner recorded their rewards and was then never offered
-      // Continue or Save & Quit, while everyone else was. The ceremony still
-      // rides this match; the exit clears the pointer once the gate resolves.
-      gameInProgress: false, activeGameState: null, missiles,
+    const notices: string[] = []
+
+    /**
+     * Close the game out on top of ANY base — the fresh copy read below, or
+     * the server's copy if another machine's write beats ours.
+     *
+     * Idempotent by the game number: once the campaign has moved past this
+     * game the whole thing is a no-op, so a re-apply can never bump twice or
+     * fold the missile ledger in twice.
+     */
+    const applyFinalize = (b: LegacyState): LegacyState => {
+      if (b.currentGameNumber !== gameNumber) return b
+      let next = b
+      if (!next.doubleWinnerMilestoneTriggered) {
+        const [doubleSignerId] = doubleSigners(next)
+        if (doubleSignerId) {
+          next = { ...next, doubleWinnerMilestoneTriggered: true }
+          notices.push(`🏅 ${rosterName(next, doubleSignerId)} has signed the board twice — missions unlock next game`)
+        }
+      }
+      const minorCityCount = next.stickers.filter(s => s.description === 'city:minor').length
+      if (!next.ninthCityUnlocked && minorCityCount >= 9) {
+        next = {
+          ...next, ninthCityUnlocked: true, draftOrderUnlocked: true,
+          scarDeck: [...(next.scarDeck ?? []), ...BIOHAZARD_CARD_IDS],
+        }
+        notices.push('🏙 The 9th minor city stands — the improved draft unlocks next game')
+      }
+      // WinScreen.finalize's half: unplaced scar cards return to the pool and
+      // the campaign advances a game.
+      const unusedCardIds = (next.dealtScars ?? [])
+        .filter(d => d.gameNumber === gameNumber && !d.placed).map(d => d.cardId)
+      // finalizeAndReturnToLobby's half: fold the match missile ledger, close
+      // the game record. The match ROW stays open — the continue gate still
+      // rides it — and closes when the gate resolves.
+      const missiles = Object.keys(spends).length > 0
+        ? Object.fromEntries(Object.entries(next.missiles ?? {}).map(
+            ([pid, n]) => [pid, Math.max(0, (n ?? 0) - (spends[pid] ?? 0))]))
+        : next.missiles
+      return {
+        ...next,
+        purchasedStars: {},
+        currentGameNumber: next.currentGameNumber + 1,
+        scarDeck: [...new Set([...(next.scarDeck ?? []), ...unusedCardIds])],
+        dealtScars: (next.dealtScars ?? []).filter(d => !(d.gameNumber === gameNumber && !d.placed)),
+        // activeMatchId SURVIVES this write, and that is load-bearing: clearing
+        // it here made the adopt-by-activeMatchId effect drop `onlineMatch`,
+        // which unmounted the whole end-of-game overlay on the winner's machine
+        // — the winner recorded their rewards and was then never offered
+        // Continue or Save & Quit, while everyone else was. The ceremony still
+        // rides this match; the exit clears the pointer once the gate resolves.
+        gameInProgress: false, activeGameState: null, missiles,
+      }
     }
+
+    // Read fresh first: the runner-ups wrote their cities from their own
+    // machines, and this write carries the whole campaign forward.
+    const base = (await loadLegacyState(legacyStateRef.current.campaignId).catch(() => null))
+      ?? legacyStateRef.current
+    const working = applyFinalize(base)
+    for (const n of notices) showWeaknessNotice(n)
     gameFinishedRef.current = true
     legacyStateRef.current = working
     setLegacyState(working)
     const winName = (working.victoryLog ?? []).find(v => v.gameNumber === gameNumber)?.winnerName ?? null
     const winFaction = gameStateRef.current.players.find(p => p.id === eg.winnerId)?.factionId ?? null
     await Promise.all([
-      saveLegacyState(working),
+      saveLegacyState(working, { reapply: applyFinalize }),
       saveGameSession(working.campaignId, gameNumber, winName, winFaction, legacyEvents),
     ]).catch(() => {})
 

@@ -1,4 +1,4 @@
-import type { Territory } from '@/types/territory'
+﻿import type { Territory } from '@/types/territory'
 import { CONTINENT_BONUSES, TERRITORY_DEFINITIONS } from '@/data/territoryData'
 
 // Total territory count per continent (derived from definitions)
@@ -17,7 +17,7 @@ interface MergeableLegacy {
  *
  * A long-lived screen (the win screen) snapshots campaign state when it opens
  * and hands back its own edited copy when it closes. Writing that copy back
- * wholesale silently reverts anything else that happened meanwhile — a sea line
+ * wholesale silently reverts anything else that happened meanwhile â€” a sea line
  * placed from a modal ON TOP of the win screen was recorded and then wiped when
  * the win screen wrote its older copy back, taking its history entry with it.
  *
@@ -55,7 +55,73 @@ export function mergeLegacyEdits<T extends MergeableLegacy>(
   return out
 }
 
-// ─── Riot ────────────────────────────────────────────────────────────────────
+/** Identity for merging list entries: the id when there is one, else the value. */
+function entryKey(v: unknown): string {
+  if (v && typeof v === 'object') {
+    const id = (v as { id?: unknown }).id
+    if (typeof id === 'string') return `id:${id}`
+  }
+  try { return `j:${JSON.stringify(v)}` } catch { return `s:${String(v)}` }
+}
+
+/**
+ * Fold a screen's edits onto a copy it was NOT built from.
+ *
+ * `mergeLegacyEdits` replaces each changed field wholesale, which is right
+ * when folding onto the copy the screen started from. It is wrong when
+ * REBUILDING a refused write on top of whoever beat us: the campaign's lists
+ * (stickers, scars, victoryLog) grow on both machines at once, and taking one
+ * machine's whole array discards the other's additions. That is how a
+ * finished game kept a single minor city and lost the winner's signature,
+ * major city and fortification â€” each write was individually correct and each
+ * one replaced the last.
+ *
+ * Lists are therefore merged by ENTRY: what this screen added is added, what
+ * it removed is removed, and everything else on the newer copy is left alone.
+ * Scalars and objects still take the edited value, and `historyLog` keeps
+ * both sides as before.
+ */
+export function reapplyLegacyEdits<T extends MergeableLegacy>(
+  fresh: T,
+  baseline: T,
+  edited: T,
+): T {
+  const out: T = { ...fresh }
+  for (const key of Object.keys(edited) as Array<keyof T>) {
+    if (key === 'historyLog') continue
+    const e = edited[key]
+    const b = baseline[key]
+    if (Object.is(e, b)) continue
+    if (Array.isArray(e) && Array.isArray(b)) {
+      const baseKeys = new Set(b.map(entryKey))
+      const editKeys = new Set(e.map(entryKey))
+      const added = e.filter(x => !baseKeys.has(entryKey(x)))
+      const removed = new Set(b.filter(x => !editKeys.has(entryKey(x))).map(entryKey))
+      const current = Array.isArray(out[key]) ? (out[key] as unknown[]) : []
+      const kept = current.filter(x => !removed.has(entryKey(x)))
+      const keptKeys = new Set(kept.map(entryKey))
+      out[key] = [...kept, ...added.filter(x => !keptKeys.has(entryKey(x)))] as T[keyof T]
+      continue
+    }
+    out[key] = e
+  }
+  for (const key of Object.keys(baseline) as Array<keyof T>) {
+    if (key !== 'historyLog' && !(key in (edited as object))) delete out[key]
+  }
+
+  const baseLog = baseline.historyLog ?? []
+  const seen = new Set(baseLog.map(e => `${e.timestamp}|${e.entry}`))
+  const addedByEdit = (edited.historyLog ?? []).filter(e => !seen.has(`${e.timestamp}|${e.entry}`))
+  const freshLog = fresh.historyLog ?? []
+  const freshKeys = new Set(freshLog.map(e => `${e.timestamp}|${e.entry}`))
+  ;(out as MergeableLegacy).historyLog = [
+    ...freshLog,
+    ...addedByEdit.filter(e => !freshKeys.has(`${e.timestamp}|${e.entry}`)),
+  ]
+  return out
+}
+
+// â”€â”€â”€ Riot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** The modified roll a major city must reach to come through a Riot unharmed. */
 export const RIOT_SAFE_ROLL = 6
@@ -66,7 +132,7 @@ export interface RiotCityResult {
   territoryName: string
   /** Who held it when the die was rolled. */
   playerId: string
-  /** The die as rolled — this is the number of troops lost, NOT the modified one. */
+  /** The die as rolled â€” this is the number of troops lost, NOT the modified one. */
   roll: number
   troops: number
   hqCount: number
@@ -85,7 +151,7 @@ export interface RiotCityResult {
  *
  * The World Capital is deliberately not one of them. It replaced the major city
  * on its territory rather than sitting alongside it, so it has no `city:major`
- * of its own — and it is exempt by rule, not by accident.
+ * of its own â€” and it is exempt by rule, not by accident.
  */
 export function riotCityTerritoryIds(territories: Record<string, Territory>): string[] {
   return Object.values(territories)
@@ -97,13 +163,13 @@ export function riotCityTerritoryIds(territories: Record<string, Territory>): st
 /**
  * Resolve a Riot across the whole board.
  *
- * One die PER MAJOR CITY, not per player — a player holding three of them rolls
+ * One die PER MAJOR CITY, not per player â€” a player holding three of them rolls
  * three times and can lose one while the others hold. Each roll is modified by
  * that city's own garrison: +1 per troop and +1 per HQ standing on it, so a
  * well-defended city is genuinely safer.
  *
  * Under `RIOT_SAFE_ROLL` the city suffers, and it loses troops equal to the
- * NATURAL die — the modifier decides whether you are hit, never how hard. A big
+ * NATURAL die â€” the modifier decides whether you are hit, never how hard. A big
  * garrison protects you; it does not soften the blow if it fails.
  *
  * Pure: the die comes from the caller, so the server can own it.
@@ -132,7 +198,7 @@ export function resolveRiot(
   })
 }
 
-// ─── Resistance ──────────────────────────────────────────────────────────────
+// â”€â”€â”€ Resistance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** What a Resistance did to one minor city. */
 export interface ResistanceCityResult {
@@ -146,7 +212,7 @@ export interface ResistanceCityResult {
 /**
  * Every minor city holding 1 or 2 troops loses one.
  *
- * No dice and no choices — the thinly-held minor cities simply slip. A city
+ * No dice and no choices â€” the thinly-held minor cities simply slip. A city
  * down to its last troop loses that too and the territory goes uncontrolled,
  * which is the only thing on this card that can hand a territory back to nobody.
  *
@@ -169,7 +235,7 @@ export function resolveResistance(
     .sort((a, b) => a.territoryId.localeCompare(b.territoryId))
 }
 
-// ─── Fortify event ───────────────────────────────────────────────────────────
+// â”€â”€â”€ Fortify event â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** Troops the Fortify event puts into EACH chosen city. */
 export const FORTIFY_EVENT_TROOPS = 2
@@ -179,7 +245,7 @@ export const FORTIFY_EVENT_CITIES = 2
 /**
  * Whether a fortification can still be placed this campaign.
  *
- * The supply is the same five the winner's reward draws from — the Fortify
+ * The supply is the same five the winner's reward draws from â€” the Fortify
  * event does not get its own pool. Once they are gone the fortification option
  * is off the table for good, which is what makes taking one a real decision.
  */
@@ -193,7 +259,7 @@ export function canPlaceFortification(
  * How many scars a campaign may ever cancel.
  *
  * Cancelling is a winner's reward, and it is the only thing that removes a scar
- * from the board — everything else the campaign does is additive. Uncapped, a
+ * from the board â€” everything else the campaign does is additive. Uncapped, a
  * long campaign erases its own history as fast as it writes it. Four total,
  * across every game and every winner; once they are spent the step is gone.
  */
@@ -206,7 +272,7 @@ export function scarsCancelled(
   return (legacy?.cancelledScars ?? []).length
 }
 
-/** Cancellations still available — never negative, even on odd saved data. */
+/** Cancellations still available â€” never negative, even on odd saved data. */
 export function scarCancelsLeft(
   legacy: { cancelledScars?: unknown[] } | null | undefined,
 ): number {
@@ -224,7 +290,7 @@ export function canCancelScar(
  * Cities that actually stand on a territory.
  *
  * `territory.cities` also holds HQ stickers and razed cities, so a bare
- * `t.cities.length` counts things that are not cities — that is how the City
+ * `t.cities.length` counts things that are not cities â€” that is how the City
  * Blitz mission came to count captured enemy HQs.
  */
 export function livingCities(territory: Territory | undefined | null): Territory['cities'] {
@@ -235,7 +301,7 @@ export function livingCities(territory: Territory | undefined | null): Territory
  * How many cities a territory counts as, for missions that count cities.
  *
  * The World Capital IS the city on its territory: exactly one, and its own
- * stickers are never counted on top — the same no-double-dip rule population
+ * stickers are never counted on top â€” the same no-double-dip rule population
  * and entry cost already use.
  */
 export function countCitiesOn(
@@ -260,9 +326,9 @@ export function calcReinforcements(
   const owned = Object.values(territories).filter(t => t.occupyingPlayerId === playerId)
 
   // Cities count as extra population: minor = +1, major = +2, world capital = 5.
-  // The World Capital IS the city on its territory — it counts as exactly 5 and
+  // The World Capital IS the city on its territory â€” it counts as exactly 5 and
   // its own city stickers are not also counted (no double dip).
-  // Primitive weakness power: city population does not count — territories only
+  // Primitive weakness power: city population does not count â€” territories only
   let cityTerritoryBonus = 0
   if (!skipCityPopulation) {
     for (const t of owned) {
@@ -306,7 +372,7 @@ export function continentsHeldInFull(
 /**
  * What one continent is worth TO THIS PLAYER: the printed bonus, plus the
  * campaign's winner-reward and unlock modifiers, plus 1 more if they are the
- * player who named it. Never below zero — but the naming bonus is added after
+ * player who named it. Never below zero â€” but the naming bonus is added after
  * the clamp, so a continent modified into the ground still pays its namer 1.
  */
 export function continentBonusFor(
@@ -323,7 +389,7 @@ export function continentBonusFor(
 }
 
 /**
- * Total continent bonus this player collects — the number actually added to
+ * Total continent bonus this player collects â€” the number actually added to
  * their reinforcements, and therefore the number the "total continent bonus of
  * 7 or more" mission has to be judged against.
  *
@@ -341,7 +407,7 @@ export function totalContinentBonus(
     .reduce((sum, cId) => sum + continentBonusFor(cId, playerId, ctx), 0)
 }
 
-// ─── Custom sea lines (Island Empire mission reward) ─────────────────────────
+// â”€â”€â”€ Custom sea lines (Island Empire mission reward) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** Injects campaign-placed sea lines as two-way adjacencies. Idempotent. */
 export function applyCustomSeaLines(
@@ -363,7 +429,7 @@ export function applyCustomSeaLines(
   return result
 }
 
-// ─── Alien Island territory ───────────────────────────────────────────────────
+// â”€â”€â”€ Alien Island territory â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const ALIEN_ISLAND_TERRITORY_ID = 'alien-island'
 
@@ -423,7 +489,7 @@ export function connectedOwnedIds(
     const id = queue.pop()!
     if (visited.has(id)) continue
     visited.add(id)
-    // Blocked territories are terminal — reachable but not traversable
+    // Blocked territories are terminal â€” reachable but not traversable
     if (noTraverseIds?.has(id) && id !== startId) continue
     const t = territories[id]
     if (!t) continue
@@ -437,7 +503,7 @@ export function connectedOwnedIds(
   return visited
 }
 
-// ─── Draft troops ─────────────────────────────────────────────────────────────
+// â”€â”€â”€ Draft troops â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** The slice of LegacyState the draft calculation reads. */
 export interface DraftLegacyInfo {
@@ -453,7 +519,7 @@ export interface DraftLegacyInfo {
  * Troops a player receives at the start of their reinforce phase, including
  * every faction/legacy bonus.
  *
- * The SINGLE source of truth — used by both the mount-time initializer and the
+ * The SINGLE source of truth â€” used by both the mount-time initializer and the
  * end-of-turn recompute in GameBoard. Those two sites used to compute this
  * separately and drifted apart, silently costing players bonuses (first the
  * continent/population bonus, then the Mercenary comeback power, which the
@@ -468,7 +534,7 @@ export function calcDraftTroops(args: {
   legacy: DraftLegacyInfo | null
   /** The player's chosen faction ability id, e.g. 'khan-hq-troops'. */
   ability: string | null
-  /** Bonus from an active global event (0 today — events no longer auto-draw). */
+  /** Bonus from an active global event (0 today â€” events no longer auto-draw). */
   eventBonus?: number
 }): number {
   const { playerId, factionId, territories, legacy, ability, eventBonus = 0 } = args
@@ -476,7 +542,7 @@ export function calcDraftTroops(args: {
   const roundUp = ability === 'balk-round-up'
   const primitive = (legacy?.alienWeaknessPowers ?? {})[factionId] === 'wp-primitive'
 
-  // NOTE: Khan Industries — Strategic Reserve is NOT a draft-pool bonus. Its
+  // NOTE: Khan Industries â€” Strategic Reserve is NOT a draft-pool bonus. Its
   // troops are placed directly onto the HQ territories at the start of the
   // turn; see `hqReserveTroops` below.
 
@@ -503,7 +569,7 @@ export function calcDraftTroops(args: {
     + alienBonus
 }
 
-/** HQ territories a player currently controls — their own plus any captured. */
+/** HQ territories a player currently controls â€” their own plus any captured. */
 export function controlledHqTerritoryIds(
   playerId: string,
   territories: Record<string, Territory>,
@@ -514,18 +580,18 @@ export function controlledHqTerritoryIds(
 }
 
 /**
- * Khan Industries — Strategic Reserve: at the start of the player's turn, one
+ * Khan Industries â€” Strategic Reserve: at the start of the player's turn, one
  * troop is placed directly ONTO each HQ territory they control (their own HQ
  * plus any they have captured). These are auto-placed, NOT added to the draft
  * pool, so they are not part of `calcDraftTroops`.
  *
  * Returns new territories plus the ids that gained a troop (for the notice).
- * A no-op — returning the SAME object — when the ability is not in play or the
+ * A no-op â€” returning the SAME object â€” when the ability is not in play or the
  * player controls no HQ.
  *
  * NOTE ON IDEMPOTENCY: unlike a draft-pool bonus, this mutates persisted
  * territory troop counts, so it must run exactly once per turn. Call it only
- * where a turn actually begins (fresh-game setup and the END_TURN hand-off) —
+ * where a turn actually begins (fresh-game setup and the END_TURN hand-off) â€”
  * never anywhere that re-runs on reload, or troops would compound every time
  * the page loads.
  */
@@ -543,7 +609,7 @@ export function applyHqReserveTroops(
   return { territories: next, grantedTerritoryIds: ids }
 }
 
-// ─── Expand comeback power ────────────────────────────────────────────────────
+// â”€â”€â”€ Expand comeback power â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** What a map click should do while the Expand comeback power is available. */
 export type ExpandClick = 'select' | 'place' | 'ignore'
@@ -555,14 +621,14 @@ export type ExpandClick = 'select' | 'place' | 'ignore'
  * Extracted as a pure function because the ordering here is genuinely subtle.
  * The original inline version re-ran its "select" test on every click, so
  * clicking the territory you had just picked toggled the selection back off
- * and the "place" branch was unreachable — the power could never place a troop.
+ * and the "place" branch was unreachable â€” the power could never place a troop.
  * `isCurrentTarget` is what separates the two cases.
  */
 export function expandClickAction(args: {
   /** Player holds the Expand comeback power. */
   hasPower: boolean
   troopsLeft: number
-  /** A troop has already landed on the target this turn — the choice is locked. */
+  /** A troop has already landed on the target this turn â€” the choice is locked. */
   alreadyPlaced: boolean
   isOwn: boolean
   isUnoccupied: boolean
@@ -573,20 +639,20 @@ export function expandClickAction(args: {
 }): ExpandClick {
   const { hasPower, troopsLeft, alreadyPlaced, isOwn, isUnoccupied, isUnmarked, isCurrentTarget } = args
   if (troopsLeft <= 0) return 'ignore'
-  // Clicking the designated target always places — checked BEFORE selection so
+  // Clicking the designated target always places â€” checked BEFORE selection so
   // the second click on it cannot be swallowed by the select branch.
   if (isCurrentTarget) return 'place'
   if (hasPower && !alreadyPlaced && !isOwn && isUnoccupied && isUnmarked) return 'select'
   return 'ignore'
 }
 
-// ─── Join the War ─────────────────────────────────────────────────────────────
+// â”€â”€â”€ Join the War â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Territories an eliminated player may re-enter the game on: unowned, no
  * standing city, not an HQ or adjacent to one, and not the Fallout Zone.
  *
- * The single source of truth for this rule — the choice modal, the AI picker
+ * The single source of truth for this rule â€” the choice modal, the AI picker
  * and the turn-advance skip all read it. If they disagreed, a player could be
  * offered a re-entry the board won't accept (or skipped when a spot existed).
  *
@@ -611,12 +677,12 @@ export function legalJoinWarTerritoryIds(
     .map(t => t.id)
 }
 
-// ─── Card coin values ─────────────────────────────────────────────────────────
+// â”€â”€â”€ Card coin values â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * A card's coin/resource value.
  *
- * Territory cards ARE the resource cards in this game — the coin value lives on
+ * Territory cards ARE the resource cards in this game â€” the coin value lives on
  * the card. Values start at 1 (twelve cards start at 2) and are raised
  * permanently by the runner-up upgrade at the end of a game, so reading the
  * live `cardResources` map is what makes an upgraded card count at its new
@@ -627,7 +693,7 @@ export function legalJoinWarTerritoryIds(
 export interface TerritoryLead {
   /** The sole leader, or null when two or more are tied at the top. */
   leaderId: string | null
-  /** The top territory count — 0 when nobody occupies anything. */
+  /** The top territory count â€” 0 when nobody occupies anything. */
   count: number
   /** Every player on the top count; one entry when there is a clear leader. */
   leaderIds: string[]
@@ -638,7 +704,7 @@ export interface TerritoryLead {
  *
  * Used when the resource deck runs out, which awards a red star to the leader.
  * A tie has to be reported rather than silently resolved: picking the first
- * player found would hand the star — and possibly the game — to whoever owned
+ * player found would hand the star â€” and possibly the game â€” to whoever owned
  * the territory that happened to come first in the map data.
  */
 export function territoryLead(
@@ -660,7 +726,7 @@ export function territoryLead(
 /**
  * Outcome of a coin draw that may have emptied the resource pile.
  *
- * `depleted` says the pile emptied for the first time this game — the caller
+ * `depleted` says the pile emptied for the first time this game â€” the caller
  * records that so a later emptying resolves to nothing. It is separate from the
  * star itself, which a tie leaves unclaimed.
  */
@@ -674,8 +740,8 @@ export type ResourceDepletion = { depleted: boolean } & (
  * Resolve the Red Star owed when the resource pile empties.
  *
  * Coins turned in go back into the pile, so it can empty more than once in a
- * game. The star is claimed on the FIRST emptying only — `alreadyResolved`
- * carries that across draws — otherwise a player could refill the pile by
+ * game. The star is claimed on the FIRST emptying only â€” `alreadyResolved`
+ * carries that across draws â€” otherwise a player could refill the pile by
  * trading in and farm a star every time it ran dry.
  *
  * A tie still counts as resolved: nobody takes the star, and it does not stay
@@ -696,7 +762,7 @@ export function resolveResourceDepletion(
   return { depleted: true, kind: 'none' }
 }
 
-// ─── Entry cost (cities, fortifications, Fallout Zone) ───────────────────────
+// â”€â”€â”€ Entry cost (cities, fortifications, Fallout Zone) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** What entering a territory costs the arriving stack. */
 export interface EntryCost {
@@ -709,8 +775,8 @@ export interface EntryCost {
  * Fewest troops that may legally move in.
  *
  * You have to pay the cost AND still leave someone standing, so a major city
- * (−2) cannot be taken with fewer than 3 troops. Clamping the survivors up to 1
- * instead — which every call site used to do — quietly refunded the cost: 2
+ * (âˆ’2) cannot be taken with fewer than 3 troops. Clamping the survivors up to 1
+ * instead â€” which every call site used to do â€” quietly refunded the cost: 2
  * troops into a major city lost 1, and 1 troop lost nothing at all.
  */
 export function minTroopsToEnter(cost: EntryCost | null | undefined): number {
@@ -725,7 +791,7 @@ export function canAffordEntry(srcTroops: number, cost: EntryCost | null | undef
 /**
  * Troops that survive entering, given how many moved in.
  *
- * Returns 0 when the cost cannot be paid — that is an illegal move the caller
+ * Returns 0 when the cost cannot be paid â€” that is an illegal move the caller
  * must refuse, NOT something to round up to 1.
  */
 export function troopsAfterEntry(moving: number, cost: EntryCost | null | undefined): number {
@@ -742,12 +808,12 @@ export function cardCoinValue(
   return cardResources?.[cardId] ?? 1
 }
 
-// ─── Lead faction (World Capital unlock) ──────────────────────────────────────
+// â”€â”€â”€ Lead faction (World Capital unlock) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * The faction with the most campaign wins, or null when 2+ factions tie.
  *
- * Tracked by FACTION, not by player — players change factions between games,
+ * Tracked by FACTION, not by player â€” players change factions between games,
  * the faction card is what carries the record. A tie means there is no lead
  * faction at all, so none of the lead-faction rules apply that game.
  */
@@ -776,13 +842,13 @@ export function factionWinCounts(
 
 /**
  * Starting troops the lead faction places on the World Capital, on top of their
- * normal starting troops. Not redistributable — they sit on the Capital.
+ * normal starting troops. Not redistributable â€” they sit on the Capital.
  */
 export const LEAD_FACTION_WORLD_CAPITAL_TROOPS = 3
 
 /**
  * Fortification stickers in the campaign box. A fixed supply, like the city
- * stickers — once all five have been placed there are no more for the rest of
+ * stickers â€” once all five have been placed there are no more for the rest of
  * the campaign, and one worn out by combat does NOT come back.
  */
 export const FORTIFICATION_SUPPLY = 5
@@ -811,7 +877,7 @@ interface StickerLike {
 }
 
 export interface WorldCapitalReplacement {
-  /** Entries to append to `destroyedCities` — the covered stickers. */
+  /** Entries to append to `destroyedCities` â€” the covered stickers. */
   replaced: Array<{ cityId: string; destroyedInGame: number; destroyedByPlayerId: string }>
   /** Names of the covered cities, for the announcement and history log. */
   replacedNames: string[]
@@ -823,7 +889,7 @@ export interface WorldCapitalReplacement {
  * The Capital sticker physically goes on top of whatever city is already there,
  * so that city stops existing: it is recorded in `destroyedCities`, which is what
  * every city reader (`territory.cities[].isDestroyed`) already consults. The
- * sticker itself STAYS in `stickers` — it has been spent, so it must keep
+ * sticker itself STAYS in `stickers` â€” it has been spent, so it must keep
  * counting against the 5-major / 9-minor limits.
  *
  * An HQ is not a city and is never covered. Cities already destroyed are skipped
@@ -840,12 +906,12 @@ export function worldCapitalReplacedCities(
 }
 
 /**
- * Cities on `territoryId` that stop existing — as `destroyedCities` entries.
+ * Cities on `territoryId` that stop existing â€” as `destroyedCities` entries.
  *
  * City stickers are a fixed supply (5 major, 9 minor for the whole campaign), so
  * a city that is covered, ruined or razed must stay in `stickers` and only be
  * recorded here. Deleting the sticker hands its slot back and lets an extra city
- * be founded later in the campaign — which is what a ruined minor city used to do.
+ * be founded later in the campaign â€” which is what a ruined minor city used to do.
  *
  * Cities already destroyed are skipped, so a re-run cannot double-record them.
  */
@@ -855,7 +921,7 @@ export function citiesLostOn(
   territoryId: string,
   destroyedByPlayerId: string,
   gameNumber: number,
-  /** Restrict to minor cities — the Ruin only ever takes one of those. */
+  /** Restrict to minor cities â€” the Ruin only ever takes one of those. */
   opts?: { minorOnly?: boolean },
 ): WorldCapitalReplacement {
   const alreadyGone = new Set((destroyedCities ?? []).map(d => d.cityId))
@@ -875,7 +941,7 @@ export function citiesLostOn(
   }
 }
 
-// ─── Buying a red star ────────────────────────────────────────────────────────
+// â”€â”€â”€ Buying a red star â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** Cards a red star costs. */
 export const STAR_PURCHASE_COST = 4
@@ -884,8 +950,8 @@ export const STAR_PURCHASE_COST = 4
  * May these exact cards be spent on a star right now?
  *
  * The rule that earns its keep: all four ids must be DISTINCT and every one
- * must still be in the hand. A duplicate firing of a buy — a double-click, a
- * replayed handler — re-submits ids that were just spent, and this is the
+ * must still be in the hand. A duplicate firing of a buy â€” a double-click, a
+ * replayed handler â€” re-submits ids that were just spent, and this is the
  * check that makes the second submission bounce instead of minting a star the
  * player never paid for. That exact phantom star once ended a game a turn
  * early.
@@ -898,8 +964,8 @@ export function canSpendForStar(hand: string[], cardIds: string[]): boolean {
 }
 
 /**
- * The four cards the quick-buy button offers to spend: coins first — they are
- * the cheapest to part with — then territory cards. Null when the hand cannot
+ * The four cards the quick-buy button offers to spend: coins first â€” they are
+ * the cheapest to part with â€” then territory cards. Null when the hand cannot
  * afford a star, which is also what hides the button.
  */
 export function starPurchaseSelection(
