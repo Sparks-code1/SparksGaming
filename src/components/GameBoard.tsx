@@ -6339,18 +6339,62 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       return [
         'troops <territory> <n|+n|-n> [player] — set or shift troops; name a player to claim empty land',
         `scar <territory> <type> — place a scar (${SCAR_META.map(m => m.type).join(', ')})`,
+        'stars <player> <n|+n|-n> — set or shift this game\'s red stars',
         'info <territory> — owner, troops, scars',
-        'players — everyone at the table',
+        'players — everyone at the table, with stars',
         'Repairs run through the normal server actions and are written to the campaign history.',
       ]
     }
 
     if (cmd === 'players') {
+      const purchased = legacyStateRef.current.purchasedStars ?? {}
       return st.players.map(p => {
         const held = Object.values(st.territories).filter(t => t.occupyingPlayerId === p.id)
         const troops = held.reduce((s, t) => s + t.troops, 0)
-        return `${p.id} ${p.name}${p.isAI ? ' (AI)' : ''}${p.isEliminated ? ' — eliminated' : ''} — ${held.length} territories, ${troops} troops`
+        const hqStars = held.filter(t => !!t.activeHqPlayerId).length
+        const stars = purchased[p.id] ?? 0
+        return `${p.id} ${p.name}${p.isAI ? ' (AI)' : ''}${p.isEliminated ? ' — eliminated' : ''}`
+          + ` — ${held.length} territories, ${troops} troops, ★ ${stars} earned + ${hqStars} HQ`
       })
+    }
+
+    if (cmd === 'stars') {
+      const numTok = tokens[tokens.length - 1]
+      if (tokens.length < 3 || !/^[+-]?\d+$/.test(numTok)) {
+        return ['✗ usage: stars <player> <n|+n|-n>']
+      }
+      const q = tokens.slice(1, -1).join(' ').toLowerCase()
+      const p = st.players.find(pl =>
+        pl.id.toLowerCase() === q || pl.name.toLowerCase().startsWith(q))
+      if (!p) return ['✗ no player matches — try `players`']
+      const current = (legacyStateRef.current.purchasedStars ?? {})[p.id] ?? 0
+      const target = Math.max(0, Math.min(10,
+        /^[+-]/.test(numTok) ? current + parseInt(numTok, 10) : parseInt(numTok, 10)))
+      if (target === current) return [`✓ ${p.name} already has ${current} earned star${current !== 1 ? 's' : ''}`]
+      // Pure, and passed as `reapply`: a repair must not lose its own race to
+      // another machine's save — that race is what lost the stars to begin with.
+      const applyStars = (b: LegacyState): LegacyState => ({
+        ...b,
+        purchasedStars: { ...(b.purchasedStars ?? {}), [p.id]: target },
+        historyLog: [...b.historyLog, {
+          gameNumber: st.gameNumber,
+          entry: `🔧 Admin repair — ${p.name}: ${current} → ${target} red star${target !== 1 ? 's' : ''}`,
+          timestamp: new Date().toISOString(),
+        }],
+      })
+      setLegacyState(prev => {
+        const next = applyStars(prev)
+        legacyStateRef.current = next
+        saveLegacyState(next, { reapply: applyStars }).catch(() => {})
+        return next
+      })
+      const hqStars = Object.values(st.territories)
+        .filter(t => t.occupyingPlayerId === p.id && !!t.activeHqPlayerId).length
+      const out = [`✓ ${p.name}: ${current} → ${target} earned star${target !== 1 ? 's' : ''} (+ ${hqStars} on HQs)`]
+      if (hqStars + target >= 4) {
+        out.push('⚠ that reaches 4 stars — the victory screen is about to open')
+      }
+      return out
     }
 
     if (cmd === 'info') {

@@ -83,7 +83,7 @@ export default function AdminConsole({ onCommand, onClose }: Props) {
           if (e.key === 'Escape') onClose()
           e.stopPropagation()
         }}
-        placeholder="troops southeast asia 8 ryan"
+        placeholder="troops southeast asia 8 ryan   ·   stars ryan 2"
         style={{
           width: '100%', boxSizing: 'border-box', padding: '7px 10px',
           borderRadius: 6, border: '1px solid rgba(200,148,10,0.40)',
