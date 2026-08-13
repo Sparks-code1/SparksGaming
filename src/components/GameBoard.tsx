@@ -2733,11 +2733,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       run(() => { if (first) handleLeadMissionPick(first); else setLeadMissionPick(null) })
       return
     }
-    if (joinTheWarPlayerId && !isHuman(joinTheWarPlayerId)) {
-      const tid = aiPickLegalJoinTerritory(joinTheWarPlayerId)
-      run(() => { if (tid) handleJoinWar(tid); else handleForfeitWar() })
-      return
-    }
+    // (No Join the War branch here: the offer flips currentPlayerIndex to the
+    // still-ELIMINATED player, which the isEliminated gate above refuses, so
+    // this loop can never see it. The AI-interrupt effect below answers it.)
     // AI never plays scar cards — skip any pending scar placement
     if (scarTarget || activeCardId) { run(() => { setScarTarget(null); setTriggeredCard(null); setActiveCardId(null); activeCardIdRef.current = null }); return }
     // Closing the card is what RESOLVES most events, so the AI has to go
@@ -2988,30 +2986,38 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   }, [aiTurnActive, aiProgressKey])
 
   /**
-   * Drives the board-picked event rewards when the player they belong to is an
-   * AI but the turn belongs to someone else.
+   * Answers every interrupt choice OWNED BY AN AI while the turn is not a live
+   * AI's — board-picked event rewards, faction follow-ups, the lead-faction
+   * mission pick, and the Join the War offer.
    *
-   * Resistance, Join the Cause, Control the People and Riot are handed to a
-   * player the BOARD picks — fewest territories, largest population, lowest
-   * roll — not to whoever is taking the turn. The main AI loop only runs while
-   * an AI is the current player, so an AI owed one of these on a human's turn
-   * had nobody to resolve it: the hint bar sat there naming a player whose
-   * territories the human cannot click.
+   * Resistance, Join the Cause, Control the People, Fortify and Riot are
+   * handed to a player the BOARD picks — fewest territories, largest
+   * population, lowest roll — not to whoever is taking the turn. Die Humans,
+   * Beam Down and The Mutants Evolve belong to a FACTION any player's card
+   * flip can summon. The main AI loop only runs while a live AI is the current
+   * player, so an AI owed one of these on a human's turn had nobody to answer
+   * it — and the Join the War offer opens while the AI is still flagged
+   * ELIMINATED, a state the main loop refuses to run for, so a human always
+   * ended up answering the computer's re-entry. Those modals are render-gated
+   * to human owners now; this effect is the only thing that answers for the AI.
    *
-   * END_TURN used to sweep them away, which hid this. Now that they survive the
-   * turn — they must, or the human winner loses the reward — an unresolved
-   * AI-owned one would sit forever, so this closes that door.
+   * No online authority gate: these states are LOCAL to the machine that
+   * spawned them (the event flip, the turn handoff), so the host may never see
+   * them — the holding machine resolves them, exactly as the human click each
+   * replaces would have, and that is one machine by construction. The lead
+   * mission pick, which every machine opens at game start, is deterministic
+   * (first option) so all copies agree.
    *
-   * Runs only while the main loop is standing down, and shares `aiBusyRef` with
-   * it, so exactly one of the two ever acts.
+   * No dependency array, same as the main loop: a missed wake-up here is a
+   * soft-lock (nothing else can clear these states now), so it re-checks on
+   * every render and lets `aiBusyRef` — shared with the main loop, so exactly
+   * one of the two ever acts — absorb the cost.
    */
   useEffect(() => {
     const cp = gameState.players[gameState.currentPlayerIndex]
     if (cp?.isAI && !cp.isEliminated) return          // the main loop has it
     if (gameState.phase === 'game-over' || showWinScreen) return
     if (aiBusyRef.current) return
-    // Same authority rule as the main loop: online, AI choices are the host's.
-    if (onlineMatchRef.current && !aiAuthorityRef.current) return
 
     const isAiOwned = (pid: string | null | undefined) => {
       if (!pid) return false
@@ -3023,6 +3029,22 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       window.setTimeout(() => { aiBusyRef.current = false; fn() }, aiMs(900, 180))
     }
 
+    // Join the War — checked by isAI alone, NOT isAiOwned: the offered player
+    // is by definition still eliminated. Join when a legal territory exists
+    // (the offer only opens when one does), otherwise forfeit and hand the
+    // turn on.
+    const joinWarSeat = joinTheWarPlayerId
+      ? gameState.players.find(p => p.id === joinTheWarPlayerId) : null
+    if (joinWarSeat?.isAI) {
+      const tid = aiPickLegalJoinTerritory(joinWarSeat.id)
+      step(() => { if (tid) handleJoinWar(tid); else handleForfeitWar() })
+      return
+    }
+    if (leadMissionPick && isAiOwned(leadMissionPick.playerId)) {
+      const first = leadMissionPick.options[0]
+      step(() => { if (first) handleLeadMissionPick(first); else setLeadMissionPick(null) })
+      return
+    }
     if (showJoinTheCause) {
       const leaderId = largestPopulationPlayerId()
       if (isAiOwned(leaderId)) { step(() => resolveAiJoinCauseChoice(leaderId!)); return }
@@ -3036,9 +3058,32 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (fortifyEvent && isAiOwned(fortifyEvent.playerId)) {
       step(() => stepAiFortifyEvent(fortifyEvent)); return
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showJoinTheCause, joinCausePlacement, controlPeopleChoice, fortifyEvent,
-      showWinScreen, gameState.currentPlayerIndex, gameState.phase, gameState.players])
+    if (dieHumansPendingCardId) {
+      const alienId = gameState.players.find(p => p.factionId === 'aliens' && !p.isEliminated)?.id
+      if (isAiOwned(alienId)) {
+        const target = aiPickRuinTarget(alienId!)
+        step(() => { if (target) handleDieHumansRuin(target); else handleDieHumansDecline() })
+        return
+      }
+    }
+    if (beamDownActive) {
+      const alienId = gameState.players.find(p => p.factionId === 'aliens' && !p.isEliminated)?.id
+      if (isAiOwned(alienId)) {
+        const target = aiPickBeamDownTarget()
+        step(() => { if (target) handleBeamDown(target); else setBeamDownActive(false) })
+        return
+      }
+    }
+    if (mutantsEvolvePendingCardId) {
+      const mutantId = gameState.players.find(p => p.factionId === 'mutants' && !p.isEliminated)?.id
+      if (isAiOwned(mutantId)) {
+        // The pairing reveals a HIDDEN permanent power — there is nothing to
+        // choose on merit, so the AI declines and the card returns to the deck.
+        step(() => { returnEventCardToDiscard(mutantsEvolvePendingCardId); setMutantsEvolvePendingCardId(null) })
+        return
+      }
+    }
+  })
 
   // ── Missile replenishment: every game starts with one missile per career win ──
   useEffect(() => {
@@ -3777,10 +3822,13 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     setPendingCardDraws(prev => prev.slice(1))
 
     // Mutant Mindshackle: after collecting a resource card, offer to trade it
-    // for a random card from a player whose territory was conquered this turn
+    // for a random card from a player whose territory was conquered this turn.
+    // Never offered to an AI mutant (powers revealed by an earlier human
+    // mutant persist in legacy) — skip is the only answer it could give, and
+    // an open offer would sit as a modal on the humans' screens.
     if (isCoin) {
       const drawPlayer = gameStateRef.current.players.find(p => p.id === playerId)
-      if (drawPlayer?.factionId === 'mutants' && mutantHasEvolvePower('me-mindshackle')) {
+      if (drawPlayer?.factionId === 'mutants' && !drawPlayer.isAI && mutantHasEvolvePower('me-mindshackle')) {
         const victims = [...conqueredFromPlayerIdsRef.current]
           .filter(vid => vid !== playerId && (newCardState.playerHands[vid] ?? []).length > 0)
         if (victims.length > 0) {
@@ -3924,8 +3972,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     setTroopsToPlace(prev => prev + bonus + collaboratorBonus)
     setShowCardHand(false)
 
-    // Mutant Mass Hypnosis: pick one traded territory — unattackable until their next turn
-    if (currentPlayer?.factionId === 'mutants' && mutantHasEvolvePower('me-mass-hypnosis')) {
+    // Mutant Mass Hypnosis: pick one traded territory — unattackable until
+    // their next turn. Not offered to an AI mutant — the modal would land on
+    // the humans' screens, and the AI has no basis to weigh the pick.
+    if (currentPlayer?.factionId === 'mutants' && !currentPlayer.isAI && mutantHasEvolvePower('me-mass-hypnosis')) {
       const tradedTerritoryIds = cardIds
         .map(id => getTerritoryCard(id)?.territoryId)
         .filter((tid): tid is string => !!tid && !!gameState.territories[tid])
@@ -8051,6 +8101,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       {/* Hint bars for the two Fortify event placement modes */}
       {fortifyEvent && fortifyEvent.phase !== 'choice' && (() => {
         const fp = gameState.players.find(p => p.id === fortifyEvent.playerId)
+        // An AI's fortify placements are made by the AI-interrupt effect
+        if (fp?.isAI) return null
         return (
           <HintBar color="#3498DB">
             ⛨ <strong>Fortify</strong> — {fp?.name ?? 'Player'}: {fortifyEvent.phase === 'fortification'
@@ -8064,6 +8116,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       {/* Fortify event — the largest-population player chooses a reward */}
       {fortifyEvent?.phase === 'choice' && (() => {
         const fp = gameState.players.find(p => p.id === fortifyEvent.playerId)
+        // The AI-interrupt effect chooses for a computer player
+        if (fp?.isAI) return null
         const cityCount = ownedCityIds(fortifyEvent.playerId).length
         const fortsLeft = FORTIFICATION_SUPPLY - fortificationsPlaced(legacyState.stickers)
         const canFortify = fortsLeft > 0
@@ -8134,6 +8188,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       {/* Control the People — largest-population player chooses a reward */}
       {controlPeopleChoice && (() => {
         const cp = gameState.players.find(p => p.id === controlPeopleChoice)
+        // The AI-interrupt effect chooses for a computer leader
+        if (cp?.isAI) return null
         const cityCount = ownedCityIds(controlPeopleChoice).length
         const ownsCity = cityCount > 0
         return (
@@ -8426,6 +8482,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       {joinTheWarPlayerId && (() => {
         const p = gameState.players.find(pl => pl.id === joinTheWarPlayerId)
         if (!p) return null
+        // The AI-interrupt effect answers for the computer — never offered to a human
+        if (p.isAI) return null
         return (
           <JoinTheWarModal
             player={p}
@@ -8442,6 +8500,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       {leadMissionPick && (() => {
         const p = gameState.players.find(pl => pl.id === leadMissionPick.playerId)
         if (!p) return null
+        // The AI-interrupt effect answers for the computer — never offered to a human
+        if (p.isAI) return null
         return (
           <div style={{
             position: 'fixed', inset: 0, zIndex: 1400,
@@ -8638,6 +8698,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       {/* Die Humans — Alien player picks a minor city to ruin */}
       {dieHumansPendingCardId && (() => {
         const alienPlayer = gameState.players.find(p => p.factionId === 'aliens')
+        // An AI alien's ruin is picked by the AI-interrupt effect, not a human
+        if (alienPlayer?.isAI) return null
         return (
           <DieHumansModal
             legacyState={legacyState}
@@ -8652,6 +8714,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       {/* Beam Down — Aliens drop 5 troops into an unoccupied city */}
       {beamDownActive && (() => {
         const alienPlayer = gameState.players.find(p => p.factionId === 'aliens')
+        // An AI alien's landing site is picked by the AI-interrupt effect
+        if (alienPlayer?.isAI) return null
         return (
           <BeamDownModal
             legacyState={legacyState}
@@ -8702,6 +8766,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       {/* The Mutants Evolve — scratch-n-sniff power reveal */}
       {mutantsEvolvePendingCardId && (() => {
         const mutantPlayer = gameState.players.find(p => p.factionId === 'mutants')
+        // An AI mutant declines the reveal via the AI-interrupt effect
+        if (mutantPlayer?.isAI) return null
         return (
           <MutantsEvolveModal
             mutantPlayerName={mutantPlayer?.name ?? 'The Mutants'}
@@ -8750,6 +8816,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         const availableMissionIds = cardState.missionDeck
         const leaderId = largestPopulationPlayerId()
         if (!leaderId) return null
+        // A computer leader's reward is chosen by the AI-interrupt effect
+        if (gameState.players.find(p => p.id === leaderId)?.isAI) return null
         return (
           <JoinTheCauseModal
             players={gameState.players}
