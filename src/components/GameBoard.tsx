@@ -2218,6 +2218,18 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       if (((legacyState.missilePowers ?? {})[player.factionId] ?? []).length >= 1) continue
       const claimed = legacyState.claimedMissilePowers ?? []
       if (claimed.length >= MISSILE_POWERS.length) continue  // all powers taken
+      // The computer never gets a picker — claim the first unclaimed power
+      // right here. This watcher only fires on the machine whose own legacy
+      // write awarded the star (legacy has no live sync), so exactly one
+      // machine claims and nobody is handed the AI's choice.
+      if (player.isAI) {
+        const pick = MISSILE_POWERS.find(m => !claimed.includes(m.id))
+        if (pick) {
+          claimMissilePower(pid, pick.id)
+          showWeaknessNotice(`🚀 ${player.name} claims the "${pick.name}" missile power`)
+        }
+        break
+      }
       setMissilePowerPendingPlayerId(pid)
       break
     }
@@ -2711,23 +2723,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     }
 
     // ── Auto-resolve the AI's own interrupt modals ──
+    // (Comeback and missile power picks are NOT here: an AI's are claimed
+    // automatically at their trigger sites, so those states only ever hold a
+    // human's pending choice — which is a humanBlockingChoice above.)
     if (firstElimInfo) { run(() => setFirstElimInfo(null)); return }
-    if (comebackEliminatedPlayer?.isAI) {
-      const claimed = legacyState.claimedComebackPowers ?? []
-      const pick = COMEBACK_POWERS.find(c => !claimed.includes(c.id)) ?? COMEBACK_POWERS[0]
-      const fId = comebackEliminatedPlayer.factionId
-      run(() => {
-        setLegacyState(prev => {
-          const next = { ...prev, firstEliminationTriggered: true,
-            comebackPowers: { ...(prev.comebackPowers ?? {}), [fId]: pick.id },
-            claimedComebackPowers: [...(prev.claimedComebackPowers ?? []), pick.id] }
-          saveLegacyState(next).catch(() => {})
-          return next
-        })
-        setComebackEliminatedPlayer(null)
-      })
-      return
-    }
     // Lead faction mission pick belonging to an AI — take the first option.
     if (leadMissionPick && !isHuman(leadMissionPick.playerId)) {
       const first = leadMissionPick.options[0]
@@ -2737,12 +2736,6 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (joinTheWarPlayerId && !isHuman(joinTheWarPlayerId)) {
       const tid = aiPickLegalJoinTerritory(joinTheWarPlayerId)
       run(() => { if (tid) handleJoinWar(tid); else handleForfeitWar() })
-      return
-    }
-    if (missilePowerPendingPlayerId && !isHuman(missilePowerPendingPlayerId)) {
-      const claimed = legacyState.claimedMissilePowers ?? []
-      const pick = MISSILE_POWERS.find(m => !claimed.includes(m.id))
-      run(() => { if (pick) handleMissilePowerSelect(pick.id); else setMissilePowerPendingPlayerId(null) })
       return
     }
     // AI never plays scar cards — skip any pending scar placement
@@ -4578,9 +4571,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   }
 
   // ── Missile power selection (earned on in-game red stars) ─────────────────
-  function handleMissilePowerSelect(powerId: string) {
-    const pid = missilePowerPendingPlayerId
-    if (!pid) return
+  /** The legacy write shared by the human modal and the AI auto-claim. */
+  function claimMissilePower(pid: string, powerId: string) {
     const player = gameStateRef.current.players.find(p => p.id === pid)
     const factionId = player?.factionId ?? ''
     setLegacyState(prev => {
@@ -4600,6 +4592,11 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       saveLegacyState(next).catch(() => {})
       return next
     })
+  }
+
+  function handleMissilePowerSelect(powerId: string) {
+    if (!missilePowerPendingPlayerId) return
+    claimMissilePower(missilePowerPendingPlayerId, powerId)
     setMissilePowerPendingPlayerId(null)
   }
 
@@ -4995,6 +4992,35 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   // queuing the capture card draw here put the draw modal on every machine in
   // the match, and each one that clicked mutated its own copy of the deck.
   // It also must not write the shared history line the actor already writes.
+  /**
+   * Claim a comeback power for an eliminated AI — the pool's first unclaimed
+   * power, written straight into legacy. The pick is computed INSIDE the
+   * updater so two same-stroke eliminations chain correctly (the second sees
+   * the first's claim). Acting machine only: this is a legacy write.
+   */
+  function autoClaimComebackPower(ep: Player) {
+    setLegacyState(prev => {
+      if ((prev.comebackPowers ?? {})[ep.factionId]) return prev
+      const claimed = prev.claimedComebackPowers ?? []
+      const pick = COMEBACK_POWERS.find(c => !claimed.includes(c.id))
+      if (!pick) return prev
+      const next: LegacyState = {
+        ...prev,
+        firstEliminationTriggered: true,
+        comebackPowers: { ...(prev.comebackPowers ?? {}), [ep.factionId]: pick.id },
+        claimedComebackPowers: [...claimed, pick.id],
+        historyLog: [...prev.historyLog, {
+          gameNumber: gameStateRef.current.gameNumber,
+          entry: `🔵 ${ep.name} claimed the "${pick.name}" comeback power`,
+          timestamp: new Date().toISOString(),
+        }],
+      }
+      legacyStateRef.current = next
+      saveLegacyState(next).catch(() => {})
+      return next
+    })
+  }
+
   function applyCombatEffect(e: Effect, remote = false) {
     switch (e.kind) {
       case 'hq-captured': {
@@ -5116,30 +5142,43 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
           c => c.playerId === currentPId && getScarCard(c.cardId)?.trigger === 'eliminate',
         )
         if (elimCard) setActiveCardId(elimCard.cardId)
-        // Comeback power modal — for the first eliminated faction without a power
+        // Comeback power — an eliminated HUMAN gets the modal; an eliminated
+        // AI's power is claimed automatically, so no player is ever handed the
+        // computer's choice (online, that modal used to open on every machine
+        // in the match). The auto-claim is a legacy write, so only the acting
+        // machine performs it — remote machines just show the banner.
+        const claimedSoFar = new Set(legacyStateRef.current?.claimedComebackPowers ?? [])
         for (const ep of eliminated) {
           const alreadyHasPower = !!(legacyStateRef.current?.comebackPowers ?? {})[ep.factionId]
-          if (!alreadyHasPower) {
-            const isFirst = !legacyStateRef.current?.firstEliminationTriggered
-            setComebackEliminatedPlayer(ep)
-            setIsFirstElimination(isFirst)
-            if (isFirst) {
-              const conqueror = state.players.find(pl => pl.id === currentPId)
-              setFirstElimInfo({
-                eliminatedName: ep.name,
-                factionId: ep.factionId,
-                conquerorName: conqueror?.name ?? 'the enemy',
-              })
-              setLegacyState(prev => {
-                if (prev.firstEliminationTriggered) return prev
-                const merged = [...(prev.scarDeck ?? []), ...MERCENARY_CARD_IDS]
-                const next = { ...prev, firstEliminationTriggered: true, scarDeck: [...new Set(merged)] }
-                saveLegacyState(next).catch(() => {})
-                return next
-              })
-            }
-            break
+          if (alreadyHasPower) continue
+          const isFirst = !legacyStateRef.current?.firstEliminationTriggered
+          if (isFirst) {
+            const conqueror = state.players.find(pl => pl.id === currentPId)
+            setFirstElimInfo({
+              eliminatedName: ep.name,
+              factionId: ep.factionId,
+              conquerorName: conqueror?.name ?? 'the enemy',
+            })
+            setLegacyState(prev => {
+              if (prev.firstEliminationTriggered) return prev
+              const merged = [...(prev.scarDeck ?? []), ...MERCENARY_CARD_IDS]
+              const next = { ...prev, firstEliminationTriggered: true, scarDeck: [...new Set(merged)] }
+              saveLegacyState(next).catch(() => {})
+              return next
+            })
           }
+          if (ep.isAI) {
+            const pick = COMEBACK_POWERS.find(c => !claimedSoFar.has(c.id))
+            if (pick) {
+              claimedSoFar.add(pick.id)
+              if (!remote) autoClaimComebackPower(ep)
+              showWeaknessNotice(`🔵 ${ep.name} claims the "${pick.name}" comeback power`)
+            }
+            continue   // a second faction eliminated by the same stroke still gets its power
+          }
+          setComebackEliminatedPlayer(ep)
+          setIsFirstElimination(isFirst)
+          break
         }
         break
       }

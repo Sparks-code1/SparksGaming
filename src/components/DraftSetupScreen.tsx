@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { MOCK_PLAYERS, FACTION_COLORS } from '@/data/mockGameState'
-import { needsWeaknessPower } from '@/data/weaknessPowers'
+import { needsWeaknessPower, WEAKNESS_POWERS } from '@/data/weaknessPowers'
 import { factionPowers } from '@/lib/factionPowers'
 import { leadFactionId, factionWinCounts, LEAD_FACTION_WORLD_CAPITAL_TROOPS } from '@/lib/gameLogic'
 import type { FactionId } from '@/types/faction'
@@ -15,6 +15,8 @@ interface Props {
   existingAbilities: Record<string, string>
   /** Full legacy state — used to gate weakness power selection. Null on game 1. */
   legacy?: LegacyState | null
+  /** Players driven by the computer — their weakness powers are auto-claimed. */
+  aiPlayerIds?: Set<string>
   onDraftComplete: (
     setups: PlayerSetup[],
     order: string[],
@@ -71,7 +73,7 @@ function hexToRgb(hex: number): string {
 }
 
 
-export default function DraftSetupScreen({ playerOrder, existingAbilities, legacy = null, onDraftComplete }: Props) {
+export default function DraftSetupScreen({ playerOrder, existingAbilities, legacy = null, aiPlayerIds, onDraftComplete }: Props) {
   const players = playerOrder.map(id => MOCK_PLAYERS.find(p => p.id === id)!).filter(Boolean)
   const n = players.length
   const factions = availableFactions(legacy)
@@ -126,8 +128,15 @@ export default function DraftSetupScreen({ playerOrder, existingAbilities, legac
       next[currentPicker.id] = { ...me, faction: value as string }
       setPicks(next)
       if (needsWeaknessPower(value as string, legacy)) {
-        setWeaknessPendingId(currentPicker.id)  // pause the draft for the weakness pick
-        return
+        if (aiPlayerIds?.has(currentPicker.id)) {
+          // The computer accepts the first unclaimed weakness — the draft never pauses.
+          const taken = new Set([...Object.values(weaknessPicks), ...Object.values(legacy?.alienWeaknessPowers ?? {})])
+          const pick = WEAKNESS_POWERS.find(p => !taken.has(p.id))
+          if (pick) setWeaknessPicks(prev => ({ ...prev, [value as string]: pick.id }))
+        } else {
+          setWeaknessPendingId(currentPicker.id)  // pause the draft for the weakness pick
+          return
+        }
       }
     } else if (listId === 'troops') {
       if (me.troopSlot !== undefined) return

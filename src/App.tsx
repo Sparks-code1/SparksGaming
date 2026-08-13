@@ -466,6 +466,7 @@ export default function App() {
         playerOrder={playerOrder}
         existingAbilities={legacy?.chosenFactionAbilities ?? {}}
         legacy={legacy}
+        aiPlayerIds={new Set(Object.keys(slotConfig).filter(id => slotConfig[id].isAI))}
         onDraftComplete={handleSetupComplete}
       />
     )
@@ -476,6 +477,7 @@ export default function App() {
         existingAbilities={legacy?.chosenFactionAbilities ?? {}}
         removedAbilityIds={legacy?.removedAbilityIds ?? []}
         legacy={legacy ?? null}
+        aiPlayerIds={new Set(Object.keys(slotConfig).filter(id => slotConfig[id].isAI))}
         onSetupComplete={handleSetupComplete}
       />
     )

@@ -3,7 +3,7 @@ import type { LegacyState } from '@/types/legacy'
 import type { AuthUser } from '@/lib/auth'
 import type { FactionId } from '@/types/faction'
 import { getAbilitiesForFaction } from '@/data/factionAbilities'
-import { needsWeaknessPower } from '@/data/weaknessPowers'
+import { needsWeaknessPower, WEAKNESS_POWERS } from '@/data/weaknessPowers'
 import { TERRITORY_DEFINITIONS } from '@/data/territoryData'
 import {
   type Lobby, subscribeLobby, publishSetup, submitChoice, leaveLobby,
@@ -155,6 +155,22 @@ export default function OnlineSetupScreen({ lobby: initial, legacy, user, onComp
   const actor = expectedActor(doc)
   const iAct = !!actor && controlled.has(actor)
   const waiting = awaitedRolls(doc, ctxRef.current)
+
+  // An AI seat never sees a screen — when the weakness phase lands on one, the
+  // host's machine accepts the first unclaimed power for it instead of handing
+  // the host (or anyone) the computer's choice. Other picks (faction, ability,
+  // HQ) stay host decisions; a weakness is pure downside, nothing to weigh.
+  const aiSeat = !!actor && !!seats.find(s => s.playerId === actor)?.isAI
+  useEffect(() => {
+    if (!isHost || doc.phase !== 'weakness' || !actor || !aiSeat) return
+    const taken = new Set([
+      ...Object.values(doc.weaknesses),
+      ...Object.values(legacy.alienWeaknessPowers ?? {}),
+    ])
+    const pick = WEAKNESS_POWERS.find(p => !taken.has(p.id))
+    if (pick) hostAdvance(applyPick(docRef.current, ctxRef.current, actor, pick.id))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc, actor, aiSeat])
 
   // ── Territory phase gets the full-width map layout ──────────────────────
   if (doc.phase === 'territory' && actor) {
@@ -325,7 +341,7 @@ export default function OnlineSetupScreen({ lobby: initial, legacy, user, onComp
           />
         ) : <WaitingOn name={seatName(actor)} what="to pick their faction" />)}
 
-        {doc.phase === 'weakness' && actor && (iAct ? (
+        {doc.phase === 'weakness' && actor && (iAct && !aiSeat ? (
           <WeaknessPowerPicker
             playerName={seatName(actor)}
             factionName={FACTION_NAMES[doc.factions[actor] ?? ''] ?? ''}

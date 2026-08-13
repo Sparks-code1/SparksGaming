@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { MOCK_PLAYERS, FACTION_COLORS } from '@/data/mockGameState'
 import { TERRITORY_DEFINITIONS } from '@/data/territoryData'
 import { getAbilitiesForFaction } from '@/data/factionAbilities'
-import { needsWeaknessPower } from '@/data/weaknessPowers'
+import { needsWeaknessPower, WEAKNESS_POWERS } from '@/data/weaknessPowers'
 import type { FactionId } from '@/types/faction'
 import type { LegacyState } from '@/types/legacy'
 import type { AIDifficulty } from '@/types/ai'
@@ -35,6 +35,8 @@ interface Props {
   removedAbilityIds?: string[]
   /** Full legacy state for map overlays (cities, scars). Null on game 1. */
   legacy?: LegacyState | null
+  /** Players driven by the computer — their weakness powers are auto-claimed. */
+  aiPlayerIds?: Set<string>
   onSetupComplete: (
     setups: PlayerSetup[],
     order: string[],
@@ -45,7 +47,7 @@ interface Props {
 
 type Phase = 'faction' | 'weakness' | 'ability' | 'territory'
 
-export default function GameSetupScreen({ playerOrder, existingAbilities, removedAbilityIds = [], legacy = null, onSetupComplete }: Props) {
+export default function GameSetupScreen({ playerOrder, existingAbilities, removedAbilityIds = [], legacy = null, aiPlayerIds, onSetupComplete }: Props) {
   const players = playerOrder.map(id => MOCK_PLAYERS.find(p => p.id === id)!)
   const [phase, setPhase] = useState<Phase>('faction')
   const [factionPicks, setFactionPicks]   = useState<Record<string, string>>({})  // playerId → factionId
@@ -80,8 +82,16 @@ export default function GameSetupScreen({ playerOrder, existingAbilities, remove
     const next = { ...factionPicks, [currentPlayer.id]: factionId }
     setFactionPicks(next)
     if (needsWeaknessPower(factionId, legacy)) {
-      // Same player immediately picks their weakness power before the draft advances
-      setPhase('weakness')
+      if (aiPlayerIds?.has(currentPlayer.id)) {
+        // The computer accepts the first unclaimed weakness — no picker opens.
+        const taken = new Set([...Object.values(weaknessPicks), ...Object.values(legacy?.alienWeaknessPowers ?? {})])
+        const pick = WEAKNESS_POWERS.find(p => !taken.has(p.id))
+        if (pick) setWeaknessPicks(prev => ({ ...prev, [factionId]: pick.id }))
+        advanceAfterFactionStage(next)
+      } else {
+        // Same player immediately picks their weakness power before the draft advances
+        setPhase('weakness')
+      }
     } else {
       advanceAfterFactionStage(next)
     }
