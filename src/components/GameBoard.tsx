@@ -283,6 +283,18 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
    */
   const onlineMatchRef = useRef<{ matchId: string; version: number } | null>(null)
   const [onlineMatch, setOnlineMatch] = useState<{ matchId: string; version: number } | null>(null)
+  /**
+   * The match this game was played on — sticky, never cleared.
+   *
+   * The end-of-game ceremony outlives the live connection: finalizing the
+   * campaign, or another machine closing the row, can drop `onlineMatch`
+   * mid-ceremony, and gating the overlay on that made the winner's Continue /
+   * Save & Quit prompt vanish the moment their own machine finalized. The
+   * ceremony asks THIS instead. Stays null in hotseat, which is what keeps
+   * the overlay out of a one-keyboard game.
+   */
+  const ceremonyMatchRef = useRef<string | null>(null)
+  if (onlineMatch?.matchId) ceremonyMatchRef.current = onlineMatch.matchId
 
   /**
    * May THIS machine drive AI turns?
@@ -6071,7 +6083,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // session save) runs once in finalizeOnlineEndgame after every machine's
     // rewards are in. The milestone MODALS below are hotseat furniture — the
     // online flags are set silently at finalize and announced with a notice.
-    if (onlineMatchRef.current && gameStateRef.current.endGame) {
+    if (ceremonyMatchRef.current && gameStateRef.current.endGame) {
       saveLegacyState(working).catch(() => {})
       dispatch({ type: 'ENDGAME_REWARDS_DONE', playerId: gameStateRef.current.endGame.winnerId })
       return
@@ -6124,7 +6136,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   const [runnerUpWizardOpen, setRunnerUpWizardOpen] = useState(false)
   const runnerUpWizardBusyRef = useRef(false)
   useEffect(() => {
-    if (!onlineMatchRef.current) return
+    if (!ceremonyMatchRef.current) return
     const cast = endGameCast(gameState)
     if (!cast || !localSeatId) return
     const idx = cast.rewardOrder.indexOf(localSeatId)
@@ -6152,7 +6164,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   // at "choosing their rewards…".
   const winnerWizardBusyRef = useRef(false)
   useEffect(() => {
-    if (!onlineMatchRef.current) return
+    if (!ceremonyMatchRef.current) return
     const cast = endGameCast(gameState)
     if (!cast) return
     const winnerMachine = localSeatId === cast.eg.winnerId || (cast.winnerIsAi && aiAuthorityRef.current)
@@ -6233,7 +6245,13 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       currentGameNumber: working.currentGameNumber + 1,
       scarDeck: [...new Set([...(working.scarDeck ?? []), ...unusedCardIds])],
       dealtScars: (working.dealtScars ?? []).filter(d => !(d.gameNumber === gameNumber && !d.placed)),
-      gameInProgress: false, activeGameState: null, activeMatchId: null, missiles,
+      // activeMatchId SURVIVES this write, and that is load-bearing: clearing
+      // it here made the adopt-by-activeMatchId effect drop `onlineMatch`,
+      // which unmounted the whole end-of-game overlay on the winner's machine
+      // — the winner recorded their rewards and was then never offered
+      // Continue or Save & Quit, while everyone else was. The ceremony still
+      // rides this match; the exit clears the pointer once the gate resolves.
+      gameInProgress: false, activeGameState: null, missiles,
     }
     gameFinishedRef.current = true
     legacyStateRef.current = working
@@ -6260,7 +6278,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   }
 
   useEffect(() => {
-    if (!onlineMatchRef.current) return
+    if (!ceremonyMatchRef.current) return
     const cast = endGameCast(gameState)
     if (!cast) return
     const winnerMachine = localSeatId === cast.eg.winnerId || (cast.winnerIsAi && aiAuthorityRef.current)
@@ -6277,7 +6295,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   // every machine heads back to the campaign screen together.
   const endgameExitRef = useRef(false)
   useEffect(() => {
-    if (!onlineMatchRef.current) return
+    if (!ceremonyMatchRef.current) return
     const cast = endGameCast(gameState)
     if (!cast) return
     if (!cast.rewardOrder.every(id => cast.eg.rewardsDone[id])) return
@@ -6290,7 +6308,19 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     gameFinishedRef.current = true
     // The row closes so nobody's campaign screen offers a dead game. Any
     // machine may say so — the update is idempotent.
-    void endOnlineMatch(onlineMatchRef.current.matchId, 'complete').catch(() => {})
+    void endOnlineMatch(ceremonyMatchRef.current, 'complete').catch(() => {})
+    // NOW the campaign's pointer to this match goes — not at finalize, where
+    // clearing it tore the ceremony's own connection down. Re-appliable, so a
+    // machine that loses this write to another's does not resurrect the
+    // pointer (or lose the winner's finalized campaign to a stale copy).
+    const closeOut = (b: LegacyState): LegacyState =>
+      ({ ...b, activeMatchId: null, gameInProgress: false, activeGameState: null })
+    setLegacyState(prev => {
+      const next = closeOut(prev)
+      legacyStateRef.current = next
+      saveLegacyState(next, { reapply: closeOut }).catch(() => {})
+      return next
+    })
     const goNext = !anyQuit
     window.setTimeout(() => {
       onReturnToLobby(goNext ? (aiAuthorityRef.current ? 'host-next' : 'join-next') : undefined)
@@ -9203,7 +9233,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       {/* End-of-game ceremony overlay (online): winner announcement, reward
           progress, and the continue gate — on every machine that is not
           currently inside its own reward wizard. */}
-      {onlineMatch && !campaignOutcomeState && (() => {
+      {ceremonyMatchRef.current && !campaignOutcomeState && (() => {
         const cast = endGameCast(gameState)
         if (!cast) return null
         const winnerMachine = localSeatId === cast.eg.winnerId || (cast.winnerIsAi && aiAuthority)
@@ -9225,7 +9255,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
 
       {/* A runner-up's own slice of the ceremony: minor city + card upgrade,
           on THEIR machine, after everyone ahead of them has recorded. */}
-      {runnerUpWizardOpen && onlineMatch && localSeatId && (() => {
+      {runnerUpWizardOpen && ceremonyMatchRef.current && localSeatId && (() => {
         const cast = endGameCast(gameState)
         const winPlayer = cast ? gameState.players.find(p => p.id === cast.eg.winnerId) : null
         if (!cast || !winPlayer) return null
@@ -9255,7 +9285,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         // (plus any AI runner-ups it answers for) and only when it IS the
         // winner's machine — the detecting machine and the winner's are almost
         // always the same, but only one may run the wizard.
-        const cast = onlineMatch ? endGameCast(gameState) : null
+        const cast = ceremonyMatchRef.current ? endGameCast(gameState) : null
         if (cast) {
           const winnerMachine = localSeatId === cast.eg.winnerId || (cast.winnerIsAi && aiAuthority)
           if (!winnerMachine || cast.eg.rewardsDone[cast.eg.winnerId]) return null
