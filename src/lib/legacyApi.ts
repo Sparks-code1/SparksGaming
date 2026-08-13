@@ -299,6 +299,33 @@ export function onLegacyConnection(fn: ConnectionListener): () => void {
   return () => { connectionListeners.delete(fn) }
 }
 
+/**
+ * A refused (stale) write hands the SERVER's copy back here.
+ *
+ * The CAS guard stops the first clobber, but stopping there armed a later
+ * one: the refused client adopted the new version NUMBER while keeping its
+ * stale CONTENT, so its next save — now version-current — wrote that stale
+ * content over the winner's. That is how a red star earned on one machine
+ * vanished at the next turn boundary, when the other machine's autosave
+ * landed. A refused write must therefore end with the loser holding the
+ * server's copy, not just the server's version.
+ */
+type OverwrittenListener = (fresh: LegacyState) => void
+const overwrittenListeners = new Set<OverwrittenListener>()
+
+export function onLegacyOverwritten(fn: OverwrittenListener): () => void {
+  overwrittenListeners.add(fn)
+  return () => { overwrittenListeners.delete(fn) }
+}
+
+function publishFreshLegacy(fresh: LegacyState) {
+  queueMicrotask(() => {
+    for (const fn of overwrittenListeners) {
+      try { fn(fresh) } catch { /* a listener must never break the save path */ }
+    }
+  })
+}
+
 export function getLegacyConnection(): ConnectionStatus {
   return connection
 }
@@ -396,16 +423,34 @@ export function campaignIsShared(state: Pick<LegacyState, 'activeMatchId' | 'ros
 /** One save at a time per campaign — see [SerialQueue] for why. */
 const saveQueue = new SerialQueue()
 
-export function saveLegacyState(state: LegacyState): Promise<void> {
+export interface SaveOptions {
+  /**
+   * Rebuild this change on top of whatever the server actually holds, when
+   * our write is refused for being stale.
+   *
+   * Without it, losing the race means losing the change: the write is
+   * discarded and the client adopts the winner's copy. That is right for a
+   * board mirror (the winner's is newer) and WRONG for an award — a red star
+   * earned here is not in their copy and never will be. Pass the same pure
+   * transformation the optimistic update used and it is re-applied to the
+   * winner's copy and retried, so a race costs a round trip, not a star.
+   */
+  reapply?: (fresh: LegacyState) => LegacyState
+}
+
+export function saveLegacyState(state: LegacyState, opts?: SaveOptions): Promise<void> {
   // The row is keyed by the state's OWN campaign id, so every caller writes to
   // the campaign it is holding — no ambient "current campaign" to get wrong.
   if (!state.campaignId) {
     return Promise.reject(new Error('Campaign save failed: state has no campaignId'))
   }
-  return saveQueue.run(state.campaignId, () => performSave(state))
+  return saveQueue.run(state.campaignId, () => performSave(state, opts))
 }
 
-async function performSave(state: LegacyState): Promise<void> {
+/** Retries of a re-applied write before giving up (each is one round trip). */
+const MAX_REAPPLY_ATTEMPTS = 3
+
+async function performSave(state: LegacyState, opts?: SaveOptions, attempt = 0): Promise<void> {
   // supabase-js RESOLVES on failure with an `error` field rather than throwing.
   // Ignoring it — as this did — makes a rejected write indistinguishable from a
   // successful one, so play continues on state that was never persisted.
@@ -451,14 +496,28 @@ async function performSave(state: LegacyState): Promise<void> {
         // this state was computed from what we read, and re-sending it is
         // exactly the overwrite the guard exists to prevent.
         const { data: now } = await supabase
-          .from('campaigns').select('legacy_version').eq('id', state.campaignId).maybeSingle()
+          .from('campaigns').select('legacy_version, legacy_state')
+          .eq('id', state.campaignId).maybeSingle()
         const actual = (now?.legacy_version as number | undefined) ?? null
+        // Hand the winner's copy back to the app. Adopting only the version
+        // (as this used to) left the loser version-current but content-stale,
+        // so its NEXT save overwrote the very change that beat it.
+        const fresh = now?.legacy_state as LegacyState | undefined
         // Adopt the server's version even though this write is being refused.
         // Without it the cached version stays behind forever and every later
         // save misses too — one conflict silently ends persistence for the
         // session, which is far worse than the overwrite being guarded against.
         // The NEXT save carries newer state and is a legitimate write.
         noteLegacyVersion(state.campaignId, actual)
+
+        // An award re-applies itself onto the winner's copy and goes again,
+        // rather than being dropped on the floor.
+        if (fresh && opts?.reapply && attempt < MAX_REAPPLY_ATTEMPTS) {
+          const merged = opts.reapply(fresh)
+          publishFreshLegacy(merged)     // the app adopts the MERGED copy
+          return performSave(merged, opts, attempt + 1)
+        }
+        if (fresh) publishFreshLegacy(fresh)
         setConnection({
           state: 'error',
           message: 'Another player changed this campaign — your change was not saved',

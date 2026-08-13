@@ -27,6 +27,7 @@ import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALI
 import {
   defaultLegacyState, saveLegacyState, loadLegacyState, awardRedStars,
   applyLegacyToTerritories, pickUnlocks, SCAR_META, saveGameSession,
+  onLegacyOverwritten,
   type LegacyEvent, type UnlockOption,
 } from '@/lib/legacyApi'
 import { getScarCard, type ScarCard, MERCENARY_CARD_IDS, BIOHAZARD_CARD_IDS } from '@/data/scarCards'
@@ -1434,6 +1435,21 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // finalise write would resurrect the finished game — the app would then
     // resume it on next load instead of opening the lobby.
     if (gameFinishedRef.current) return
+    // ONLINE: only the machine taking the turn writes this. The blob is a
+    // resume mirror — the match row is the authoritative board — so a
+    // spectator machine's copy carries no information the server lacks, and
+    // writing it is pure clobber risk: legacy has no live sync, so a
+    // spectator's copy is stale by exactly the awards it hasn't seen. That is
+    // how a red star earned on one machine died at the next turn boundary,
+    // when the other machine's autosave landed on top of it. The acting
+    // machine rotates with the turn, so the record still gets written every
+    // boundary — by the one machine that has just seen everything happen.
+    if (onlineMatchRef.current) {
+      const cur = gameState.players[gameState.currentPlayerIndex]
+      const mine = !cur || (cur.isAI ? aiAuthorityRef.current
+        : localSeatRef.current === null || localSeatRef.current === cur.id)
+      if (!mine) return
+    }
     const { legacySnapshot: _snap, ...saved } = gameState
     // Use updater so we never overwrite purchasedStars or other fields written concurrently
     setLegacyState(prev => {
@@ -1444,6 +1460,20 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [_saveKey])
+
+  // A legacy write of ours was REFUSED because another machine wrote first —
+  // adopt their copy. Our rejected content is already lost (that is what the
+  // refusal means); the danger is keeping it, because the next save would be
+  // version-current and would overwrite the change that beat us. Awards that
+  // land while we hold a stale copy — red stars above all — die exactly that
+  // way. Merging is not needed: the machine that made a change is the one
+  // whose write won, and everyone else's copy is strictly older.
+  useEffect(() => onLegacyOverwritten(fresh => {
+    if (fresh.campaignId !== legacyStateRef.current.campaignId) return
+    console.info('[LegacySave] adopting the server copy after a refused write')
+    legacyStateRef.current = fresh
+    setLegacyState(fresh)
+  }), [])
 
   /** A player's homeland continent, or null. Null until the double-winner
    *  milestone unlocks homelands, and null for a faction with a tied tally. */
@@ -2202,11 +2232,16 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       tid => gameState.territories[tid]?.occupyingPlayerId === alienPlayer.id,
     )
     if (!controlsAll) return
+    const applyAlienStars = (base: LegacyState): LegacyState =>
+      base.alienStarPowerClaimed
+        ? base
+        : awardRedStars({ ...base, alienStarPowerClaimed: true },
+            alienPlayer.id, 2, alienPlayer.name, gameState.gameNumber)
     setLegacyState(prev => {
       if (prev.alienStarPowerClaimed) return prev
-      let next: LegacyState = { ...prev, alienStarPowerClaimed: true }
-      next = awardRedStars(next, alienPlayer.id, 2, alienPlayer.name, gameState.gameNumber)
-      saveLegacyState(next).catch(() => {})
+      const next = applyAlienStars(prev)
+      legacyStateRef.current = next
+      saveLegacyState(next, { reapply: applyAlienStars }).catch(() => {})
       return next
     })
     setAlienStarBanner(`👽 TOTAL DOMINATION — ${alienPlayer.name} controls every city on the board and earns 2 red stars!`)
@@ -3230,11 +3265,16 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (targets.length === 0) return
     const controlsAll = targets.every(tid => gameState.territories[tid]?.occupyingPlayerId === mutantPlayer.id)
     if (!controlsAll) return
+    const applyMutantStar = (base: LegacyState): LegacyState =>
+      base.mutantStarPowerClaimed
+        ? base
+        : awardRedStars({ ...base, mutantStarPowerClaimed: true },
+            mutantPlayer.id, 1, mutantPlayer.name, gameState.gameNumber)
     setLegacyState(prev => {
       if (prev.mutantStarPowerClaimed) return prev
-      let next: LegacyState = { ...prev, mutantStarPowerClaimed: true }
-      next = awardRedStars(next, mutantPlayer.id, 1, mutantPlayer.name, gameState.gameNumber)
-      saveLegacyState(next).catch(() => {})
+      const next = applyMutantStar(prev)
+      legacyStateRef.current = next
+      saveLegacyState(next, { reapply: applyMutantStar }).catch(() => {})
       return next
     })
     setAlienStarBanner(`🧟 WASTELAND KINGS — ${mutantPlayer.name} controls every bio-hazard territory and the Fallout Zone, earning 1 red star!`)
@@ -3734,14 +3774,21 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       ? ((legacyStateRef.current.purchasedStars ?? {})[winnerId] ?? 0) + 1
       : 0
 
-    setLegacyState(prev => {
-      let next = { ...prev, activeGameCards: newCardState }
-      if (winnerId) {
-        const purchased = { ...(next.purchasedStars ?? {}), [winnerId]: ((next.purchasedStars ?? {})[winnerId] ?? 0) + 1 }
-        next = { ...next, purchasedStars: purchased }
+    // Pure, so the depletion star can be re-applied to another machine's copy
+    // if ours loses the write race — the star for holding the most territories
+    // when the pile ran dry must not depend on who saved first.
+    const applyAward = (base: LegacyState): LegacyState => {
+      const next = { ...base, activeGameCards: newCardState }
+      if (!winnerId) return next
+      return {
+        ...next,
+        purchasedStars: { ...(next.purchasedStars ?? {}), [winnerId]: ((next.purchasedStars ?? {})[winnerId] ?? 0) + 1 },
       }
+    }
+    setLegacyState(prev => {
+      const next = applyAward(prev)
       legacyStateRef.current = next
-      saveLegacyState(next)
+      saveLegacyState(next, winnerId ? { reapply: applyAward } : undefined)
         .then(() => {
           if (winnerId) console.log('[CoinDeck] Red star + card state saved to Supabase ✓')
         })
@@ -4112,31 +4159,35 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // Award the purchased star; compute the new total from known values so a
     // stale ref can never miss the just-awarded star
     const purchasedAfter = ((legacyStateRef.current.purchasedStars ?? {})[player.id] ?? 0) + 1
+    // One pure transformation, used for the optimistic write AND for the
+    // rebuild if another machine's write beats ours — a bought star must
+    // survive losing that race, not evaporate at the next turn boundary.
+    const applyPurchase = (base: LegacyState): LegacyState => ({
+      ...base,
+      purchasedStars: { ...(base.purchasedStars ?? {}), [player.id]: ((base.purchasedStars ?? {})[player.id] ?? 0) + 1 },
+      activeGameCards: base.activeGameCards
+        ? {
+            ...base.activeGameCards,
+            playerHands: {
+              ...(base.activeGameCards.playerHands ?? {}),
+              [player.id]: ((base.activeGameCards.playerHands ?? {})[player.id] ?? []).filter((id: string) => !spentSet.has(id)),
+            },
+            resourceDeck: [
+              ...(base.activeGameCards.resourceDeck ?? base.activeGameCards.coinDeck ?? []),
+              ...spentCoinIds,
+            ],
+          }
+        : base.activeGameCards,
+      historyLog: [...base.historyLog, {
+        gameNumber: gameStateRef.current.gameNumber,
+        entry: `★ ${player.name} spent 4 cards to buy a red star`,
+        timestamp: new Date().toISOString(),
+      }],
+    })
     setLegacyState(prev => {
-      const purchasedStars = { ...(prev.purchasedStars ?? {}), [player.id]: ((prev.purchasedStars ?? {})[player.id] ?? 0) + 1 }
-      const next: LegacyState = {
-        ...prev,
-        purchasedStars,
-        activeGameCards: prev.activeGameCards
-          ? {
-              ...prev.activeGameCards,
-              playerHands: {
-                ...(prev.activeGameCards.playerHands ?? {}),
-                [player.id]: ((prev.activeGameCards.playerHands ?? {})[player.id] ?? []).filter((id: string) => !spentSet.has(id)),
-              },
-              resourceDeck: [
-                ...(prev.activeGameCards.resourceDeck ?? prev.activeGameCards.coinDeck ?? []),
-                ...spentCoinIds,
-              ],
-            }
-          : prev.activeGameCards,
-        historyLog: [...prev.historyLog, {
-          gameNumber: gameStateRef.current.gameNumber,
-          entry: `★ ${player.name} spent 4 cards to buy a red star`,
-          timestamp: new Date().toISOString(),
-        }],
-      }
-      saveLegacyState(next).catch(() => {})
+      const next = applyPurchase(prev)
+      legacyStateRef.current = next
+      saveLegacyState(next, { reapply: applyPurchase }).catch(() => {})
       return next
     })
     setShowCardHand(false)
@@ -4655,9 +4706,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       return Object.entries(counts).some(([cid, n]) => n >= (continentSizes[cid] ?? Infinity))
     })
     if (humanHasBonus) return
+    const applyChaosStar = (base: LegacyState): LegacyState =>
+      awardRedStars(base, mutantPlayer.id, 1, mutantPlayer.name, state.gameNumber)
     setLegacyState(prev => {
-      const next = awardRedStars(prev, mutantPlayer.id, 1, mutantPlayer.name, state.gameNumber)
-      saveLegacyState(next).catch(() => {})
+      const next = applyChaosStar(prev)
+      legacyStateRef.current = next
+      saveLegacyState(next, { reapply: applyChaosStar }).catch(() => {})
       return next
     })
     setAlienStarBanner(`🃏 AGENT OF CHAOS — no human faction holds a continent bonus; the Mutants gain 1 red star!`)
@@ -4886,22 +4940,22 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
 
     const missionDef = CARD_LOOKUP.get(missionId) as import('@/types/card').MissionCard | undefined
     const purchasedAfter = ((ls?.purchasedStars ?? {})[playerId] ?? 0) + 1
+    const applyStarPower = (base: LegacyState): LegacyState => awardRedStars({
+      ...base,
+      starPowerClaimedGames: {
+        ...(base.starPowerClaimedGames ?? {}),
+        [player.factionId]: gameStateRef.current.gameNumber,
+      },
+      historyLog: [...base.historyLog, {
+        gameNumber: gameStateRef.current.gameNumber,
+        entry: `⭐ ${player.name} used the ${missionDef?.name ?? missionId} star power (+1 ★)`,
+        timestamp: new Date().toISOString(),
+      }],
+    }, playerId, 1, player.name, gameStateRef.current.gameNumber)
     setLegacyState(prev => {
-      let next: LegacyState = {
-        ...prev,
-        starPowerClaimedGames: {
-          ...(prev.starPowerClaimedGames ?? {}),
-          [player.factionId]: gameStateRef.current.gameNumber,
-        },
-        historyLog: [...prev.historyLog, {
-          gameNumber: gameStateRef.current.gameNumber,
-          entry: `⭐ ${player.name} used the ${missionDef?.name ?? missionId} star power (+1 ★)`,
-          timestamp: new Date().toISOString(),
-        }],
-      }
-      next = awardRedStars(next, playerId, 1, player.name, gameStateRef.current.gameNumber)
+      const next = applyStarPower(prev)
       legacyStateRef.current = next
-      saveLegacyState(next).catch(() => {})
+      saveLegacyState(next, { reapply: applyStarPower }).catch(() => {})
       return next
     })
     showWeaknessNotice(`⭐ ${player.name} used their ${missionDef?.name ?? 'star power'} — +1 red star (once per game)`)
@@ -5022,11 +5076,11 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     setCardState(newCards)
 
     const purchasedAfter = ((ls.purchasedStars ?? {})[playerId] ?? 0) + stars
-    setLegacyState(prev => {
+    const applyMissionReward = (base: LegacyState): LegacyState => {
       let next: LegacyState = {
-        ...prev,
+        ...base,
         activeGameCards: newCards,
-        historyLog: [...prev.historyLog, {
+        historyLog: [...base.historyLog, {
           gameNumber: gameStateRef.current.gameNumber,
           entry: `🎯 ${player.name} completed the shared mission (+${stars} ★): ${missionDef?.description ?? missionId}`,
           timestamp: new Date().toISOString(),
@@ -5051,8 +5105,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         }]
       }
       // awardRedStars adds the stars to this game's totals (purchasedStars)
-      next = awardRedStars(next, playerId, stars, player.name, gameStateRef.current.gameNumber)
-      saveLegacyState(next).catch(() => {})
+      return awardRedStars(next, playerId, stars, player.name, gameStateRef.current.gameNumber)
+    }
+    setLegacyState(prev => {
+      const next = applyMissionReward(prev)
+      legacyStateRef.current = next
+      saveLegacyState(next, { reapply: applyMissionReward }).catch(() => {})
       return next
     })
     showWeaknessNotice(
