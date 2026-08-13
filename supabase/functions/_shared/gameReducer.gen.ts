@@ -631,6 +631,9 @@ function applyEndOfTurnScarEffects(territories, endingPlayerId, endingIsMutant, 
   }
   return { territories: result, vacatedNames };
 }
+function wrongActor(state, playerId) {
+  return !!playerId && state.players[state.currentPlayerIndex]?.id !== playerId;
+}
 function gameReducer(state, action, rng) {
   const only = (s) => ({ state: s, effects: [] });
   switch (action.type) {
@@ -671,10 +674,12 @@ function gameReducer(state, action, rng) {
     }
     case "END_REINFORCE_PHASE": {
       if (state.phase !== "reinforce") return only(state);
+      if (wrongActor(state, action.playerId)) return only(state);
       return only({ ...state, phase: "attack" });
     }
     case "END_ATTACK_PHASE": {
       if (state.phase !== "attack") return only(state);
+      if (wrongActor(state, action.playerId)) return only(state);
       return only({ ...state, phase: "fortify" });
     }
     case "DECLARE_ATTACK": {
@@ -1111,6 +1116,7 @@ function gameReducer(state, action, rng) {
       });
     }
     case "END_TURN": {
+      if (wrongActor(state, action.playerId)) return only(state);
       const withEnd = {
         ...state,
         territories: { ...state.territories, ...action.endTerritories }
@@ -1202,7 +1208,11 @@ function clampCombatResolution(state, a) {
     totalDefLoss: uncontested ? 0 : boundedDefLoss,
     captured,
     uncontested,
-    troopsToAdvance: captured ? int(a.troopsToAdvance, 1, Math.max(1, survivors - 1)) : 0,
+    // A capture moves at least one troop in — unless the source cannot spare
+    // one, and then it moves none. Forcing the minimum to 1 in THAT case
+    // emptied the source instead, leaving an owned 0-troop ghost behind; the
+    // reducer reads 0 as "the ground was cleared but not taken".
+    troopsToAdvance: captured ? survivors - 1 >= 1 ? int(a.troopsToAdvance, 1, survivors - 1) : 0 : 0,
     entryCostTotal: int(a.entryCostTotal, 0, 12),
     defenderCloningBonus: int(a.defenderCloningBonus, 0, 12),
     // Mission bookkeeping only, but untrusted input still gets a type: any
@@ -1234,8 +1244,10 @@ function applyCombatOutcome(state, action) {
   const defenderId = tgt0.occupyingPlayerId;
   const preHqPlayerId = tgt0.activeHqPlayerId;
   src.troops -= action.totalAtkLoss;
-  if (action.captured) {
-    const moving = Math.min(Math.max(1, action.troopsToAdvance), Math.max(1, src.troops - 1));
+  const spare = src.troops - 1;
+  const occupies = action.captured && spare >= 1;
+  if (occupies) {
+    const moving = Math.min(Math.max(1, action.troopsToAdvance), spare);
     tgt.occupyingPlayerId = src.occupyingPlayerId;
     const survivors = troopsAfterEntry(moving, {
       total: action.entryCostTotal,
@@ -1252,11 +1264,12 @@ function applyCombatOutcome(state, action) {
   } else {
     tgt.troops -= action.totalDefLoss;
     tgt.troops += action.defenderCloningBonus;
+    if (action.captured && tgt.troops < 1) tgt.troops = 1;
   }
   const territories = { ...state.territories, [action.srcId]: src, [action.tgtId]: tgt };
   let players = state.players;
   const effects = [];
-  if (action.captured) {
+  if (occupies) {
     if (preHqPlayerId && preHqPlayerId !== defenderId) {
       effects.push({ kind: "hq-captured", territoryId: action.tgtId, territoryName: tgt0.name, hqPlayerId: preHqPlayerId, byPlayerId: attackerId });
     }
@@ -1277,7 +1290,7 @@ function applyCombatOutcome(state, action) {
   const t0 = state.turn;
   let turn = t0;
   if (action.uncontested) {
-    if (action.captured) {
+    if (occupies) {
       turn = {
         ...t0,
         // Uncontested advances count toward Balkania's Imperial Expansion.
@@ -1295,7 +1308,7 @@ function applyCombatOutcome(state, action) {
       bearTrapTerritoryId: t0.bearTrapTerritoryId ?? action.tgtId,
       // Iron Shield: a defending double-6 seals the territory this turn.
       shieldedTerritoryIds: action.sealDefender && !t0.shieldedTerritoryIds.includes(action.tgtId) ? [...t0.shieldedTerritoryIds, action.tgtId] : t0.shieldedTerritoryIds,
-      ...action.captured ? {
+      ...occupies ? {
         captured: true,
         captureCount: t0.captureCount + 1,
         conqueredIds: [...t0.conqueredIds, action.tgtId],

@@ -2964,7 +2964,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         }, aiMs(600, 110))
       } else {
         aiAttacksThisTurnRef.current = 0
-        run(() => { setPlacementHistory([]); dispatch({ type: 'END_REINFORCE_PHASE' }) })
+        run(() => { setPlacementHistory([]); dispatch({ type: 'END_REINFORCE_PHASE', playerId: cp.id }) })
       }
       return
     }
@@ -5686,13 +5686,18 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   // ── Phase advancement ─────────────────────────────────────────────────────
   function handleNextPhase() {
     const phase = gameState.phase
+    // Every phase advance names the player this machine believes is taking the
+    // turn. If that belief is stale the server refuses it (and the reducer
+    // no-ops) rather than advancing whoever is actually up — the difference
+    // between a dropped action and a human's turn torn through untouched.
+    const actorId = gameStateRef.current.players[gameStateRef.current.currentPlayerIndex]?.id
     // Leaving a phase seals any fortification made during it. A normal fortify
     // happens in the fortify phase itself and is unaffected; only a Mobile
     // Forces move made earlier in the turn is closed off here.
     sealFortifyUndo()
     if (phase === 'reinforce') {
       setPlacementHistory([])
-      dispatch({ type: 'END_REINFORCE_PHASE' })
+      dispatch({ type: 'END_REINFORCE_PHASE', playerId: actorId })
     } else if (phase === 'attack') {
       // Clear attack state
       setAttackSrcId(null); attackSrcRef.current = null
@@ -5732,7 +5737,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       // appear in fortify. A player who has earned the mission never sees it.
       dropCardDrawForMission(attackEndP?.id)
 
-      dispatch({ type: 'END_ATTACK_PHASE' })
+      dispatch({ type: 'END_ATTACK_PHASE', playerId: actorId })
     } else if (phase === 'fortify') {
       // Re-entrancy guard. `phase` comes from this render's closure, so a call
       // queued on a timer before the turn ended still reads 'fortify' and would
@@ -5897,7 +5902,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       setTroopsToPlace(nextTroops)
       setPlacementHistory([])
 
-      dispatch({ type: 'END_TURN', endTerritories, hqReservePlayerIds })
+      dispatch({ type: 'END_TURN', endTerritories, hqReservePlayerIds, playerId: actorId })
     }
   }
 

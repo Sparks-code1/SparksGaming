@@ -103,10 +103,17 @@ export type Action =
   | { type: 'PLACE_REINFORCEMENT'; playerId: string; territoryId: string }
   /** Remove the last reinforcement troop placed on a territory (undo). */
   | { type: 'UNDO_PLACEMENT'; territoryId: string }
-  /** Finish placing reinforcements and advance to the attack phase. */
-  | { type: 'END_REINFORCE_PHASE' }
-  /** Finish attacking and advance to the fortify phase. */
-  | { type: 'END_ATTACK_PHASE' }
+  /**
+   * Finish placing reinforcements and advance to the attack phase.
+   *
+   * `playerId` is the player the SENDER believes is taking the turn. It is
+   * optional for hotseat, and load-bearing online: it turns a phase advance
+   * planned against a stale board into a no-op instead of tearing through
+   * whoever's turn it actually is. See `wrongActor`.
+   */
+  | { type: 'END_REINFORCE_PHASE'; playerId?: string }
+  /** Finish attacking and advance to the fortify phase. See `wrongActor`. */
+  | { type: 'END_ATTACK_PHASE'; playerId?: string }
   /** Attacker breaks off the current attack. No GameState effect today (the
    *  in-combat selection is UI-only); kept in the vocabulary for the eventual
    *  server, which will care that the attacker stopped. */
@@ -279,7 +286,7 @@ export type Action =
    * `endTerritories`, the server's recompute silently stripped it every
    * turn-end of every online match.
    */
-  | { type: 'END_TURN'; endTerritories: Record<string, Territory>; hqReservePlayerIds?: string[] }
+  | { type: 'END_TURN'; endTerritories: Record<string, Territory>; hqReservePlayerIds?: string[]; playerId?: string }
   /**
    * Apply a resolved combat outcome to the board: subtract attacker losses,
    * then either capture the target (transfer ownership, move troops in minus
@@ -607,6 +614,24 @@ export function applyEndOfTurnScarEffects(
  * @param rng injected randomness (unused by draft actions; reserved so the
  *            signature is stable as later phases are added)
  */
+/**
+ * True when an action names an actor who is NOT the current player.
+ *
+ * Phase advances used to be anonymous, so whichever turn was live when one
+ * arrived is the turn it advanced. That is fine until a machine's view of the
+ * board lags: its AI driver plans "end the computer's reinforce phase", the
+ * board moves on to a HUMAN, and the anonymous action lands on the human's
+ * turn instead — reinforce, attack and fortify all torn through in a couple of
+ * seconds with nothing placed. Naming the intended actor turns a stale plan
+ * into a no-op here and a refusal at the edge (which already rejects an action
+ * whose playerId is not the current player), instead of a skipped turn.
+ *
+ * Absent playerId stays permitted: hotseat and older clients send none.
+ */
+function wrongActor(state: GameState, playerId?: string): boolean {
+  return !!playerId && state.players[state.currentPlayerIndex]?.id !== playerId
+}
+
 export function gameReducer(state: GameState, action: Action, rng: Rng): ReducerResult {
   /** Wrap a next-state that produced no effects. */
   const only = (s: GameState): ReducerResult => ({ state: s, effects: [] })
@@ -656,11 +681,13 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
 
     case 'END_REINFORCE_PHASE': {
       if (state.phase !== 'reinforce') return only(state)
+      if (wrongActor(state, action.playerId)) return only(state)
       return only({ ...state, phase: 'attack' })
     }
 
     case 'END_ATTACK_PHASE': {
       if (state.phase !== 'attack') return only(state)
+      if (wrongActor(state, action.playerId)) return only(state)
       return only({ ...state, phase: 'fortify' })
     }
 
@@ -1196,6 +1223,10 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
       // `endTerritories` is computed by the CALLER. On the server that caller is
       // the client, so the server recomputes it instead of trusting the payload
       // â€” see `endTurnTerritories` below.
+      // A turn is ended by the player TAKING it. A stale END_TURN naming the
+      // previous player would otherwise end the next one's turn as well —
+      // which is exactly what a lagging machine's AI driver used to send.
+      if (wrongActor(state, action.playerId)) return only(state)
       const withEnd: GameState = {
         ...state,
         territories: { ...state.territories, ...action.endTerritories },
@@ -1387,7 +1418,13 @@ export function clampCombatResolution(
     totalDefLoss: uncontested ? 0 : boundedDefLoss,
     captured,
     uncontested,
-    troopsToAdvance: captured ? int(a.troopsToAdvance, 1, Math.max(1, survivors - 1)) : 0,
+    // A capture moves at least one troop in — unless the source cannot spare
+    // one, and then it moves none. Forcing the minimum to 1 in THAT case
+    // emptied the source instead, leaving an owned 0-troop ghost behind; the
+    // reducer reads 0 as "the ground was cleared but not taken".
+    troopsToAdvance: captured
+      ? (survivors - 1 >= 1 ? int(a.troopsToAdvance, 1, survivors - 1) : 0)
+      : 0,
     entryCostTotal: int(a.entryCostTotal, 0, 12),
     defenderCloningBonus: int(a.defenderCloningBonus, 0, 12),
     // Mission bookkeeping only, but untrusted input still gets a type: any
@@ -1469,14 +1506,22 @@ function applyCombatOutcome(
 
       src.troops -= action.totalAtkLoss
 
-      if (action.captured) {
-        // Never move more than the source can spare â€” one troop must stay.
+      // One troop always stays home, so this is what the source can send. At
+      // zero the attacker cannot occupy what it just cleared: `Math.max(1, …)`
+      // used to force a single troop out anyway, emptying the source while
+      // leaving its owner in place — the 0-troop territories found sitting on
+      // the live board (three of one player's holdings at once).
+      const spare = src.troops - 1
+      const occupies = action.captured && spare >= 1
+
+      if (occupies) {
+        // Never move more than the source can spare — one troop must stay.
         // This floor exists because a caller CAN get it wrong: the live "-7
         // troops in Ontario" board came from an AI advance planned against a
         // stale snapshot, applied unclamped. The server clamps its callers;
         // the reducer now refuses to go negative for ANY caller, hotseat
         // included.
-        const moving = Math.min(Math.max(1, action.troopsToAdvance), Math.max(1, src.troops - 1))
+        const moving = Math.min(Math.max(1, action.troopsToAdvance), spare)
         // Capturer takes the territory. Any enemy HQ token stays on it
         // (activeHqPlayerId is preserved via the {...tgt0} spread), so the
         // capturer now controls that HQ â€” matching current behaviour.
@@ -1506,13 +1551,18 @@ function applyCombatOutcome(
         tgt.troops -= action.totalDefLoss
         // Mutant Unstable Cloning: defender regains troops on natural doubles
         tgt.troops += action.defenderCloningBonus
+        // A capture the attacker cannot occupy (nothing to spare): the ground
+        // is held by a last defender rather than becoming an unowned crater or
+        // an owned ghost. Same rule as the clamp's "an uncaptured defender
+        // keeps a last troop", applied to the one case the clamp cannot see.
+        if (action.captured && tgt.troops < 1) tgt.troops = 1
       }
 
       const territories = { ...state.territories, [action.srcId]: src, [action.tgtId]: tgt }
       let players = state.players
       const effects: Effect[] = []
 
-      if (action.captured) {
+      if (occupies) {
         // HQ log first (matches previous ordering), then victory/card award.
         if (preHqPlayerId && preHqPlayerId !== defenderId) {
           effects.push({ kind: 'hq-captured', territoryId: action.tgtId, territoryName: tgt0.name, hqPlayerId: preHqPlayerId, byPlayerId: attackerId })
@@ -1553,7 +1603,9 @@ function applyCombatOutcome(
       const t0 = state.turn
       let turn = t0
       if (action.uncontested) {
-        if (action.captured) {
+        // `occupies`, not `captured`: an advance that could not spare a troop
+        // took nothing, so it counts toward nothing.
+        if (occupies) {
           turn = {
             ...t0,
             // Uncontested advances count toward Balkania's Imperial Expansion.
@@ -1576,7 +1628,7 @@ function applyCombatOutcome(
           shieldedTerritoryIds: action.sealDefender && !t0.shieldedTerritoryIds.includes(action.tgtId)
             ? [...t0.shieldedTerritoryIds, action.tgtId]
             : t0.shieldedTerritoryIds,
-          ...(action.captured ? {
+          ...(occupies ? {
             captured: true,
             captureCount: t0.captureCount + 1,
             conqueredIds: [...t0.conqueredIds, action.tgtId],
