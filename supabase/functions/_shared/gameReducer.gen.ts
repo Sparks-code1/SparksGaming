@@ -17,6 +17,7 @@ function initialTurnState() {
     bearTrapTerritoryId: null,
     attackedTerritoryIds: [],
     shieldedTerritoryIds: [],
+    placedThisTurn: {},
     expandedIntoCity: false,
     richCardsTradedIn: 0,
     resourcesTradedIn: 0,
@@ -636,6 +637,7 @@ function gameReducer(state, action, rng) {
     case "PLACE_REINFORCEMENT": {
       const t = state.territories[action.territoryId];
       if (!t) return only(state);
+      const placed = state.turn?.placedThisTurn ?? {};
       return only({
         ...state,
         territories: {
@@ -647,18 +649,24 @@ function gameReducer(state, action, rng) {
             occupyingPlayerId: t.occupyingPlayerId ?? action.playerId,
             troops: t.troops + 1
           }
-        }
+        },
+        // On the record: this is what bounds UNDO_PLACEMENT below.
+        turn: { ...state.turn, placedThisTurn: { ...placed, [action.territoryId]: (placed[action.territoryId] ?? 0) + 1 } }
       });
     }
     case "UNDO_PLACEMENT": {
       const t = state.territories[action.territoryId];
       if (!t) return only(state);
+      const placed = state.turn?.placedThisTurn ?? {};
+      const onRecord = placed[action.territoryId] ?? 0;
+      if (state.phase !== "reinforce" || onRecord <= 0 || t.troops <= 1) return only(state);
       return only({
         ...state,
         territories: {
           ...state.territories,
           [action.territoryId]: { ...t, troops: t.troops - 1 }
-        }
+        },
+        turn: { ...state.turn, placedThisTurn: { ...placed, [action.territoryId]: onRecord - 1 } }
       });
     }
     case "END_REINFORCE_PHASE": {

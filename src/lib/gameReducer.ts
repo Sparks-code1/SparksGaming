@@ -614,6 +614,7 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
     case 'PLACE_REINFORCEMENT': {
       const t = state.territories[action.territoryId]
       if (!t) return only(state)
+      const placed = state.turn?.placedThisTurn ?? {}
       return only({
         ...state,
         territories: {
@@ -626,18 +627,30 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
             troops: t.troops + 1,
           },
         },
+        // On the record: this is what bounds UNDO_PLACEMENT below.
+        turn: { ...state.turn, placedThisTurn: { ...placed, [action.territoryId]: (placed[action.territoryId] ?? 0) + 1 } },
       })
     }
 
     case 'UNDO_PLACEMENT': {
       const t = state.territories[action.territoryId]
       if (!t) return only(state)
+      // An undo must match a placement THIS turn, judged from the reducer's
+      // own record — not from whatever a client believes. A confused machine
+      // once fired ten undos at a territory that had received four troops,
+      // draining it to zero after the turn had already ended; the per-turn
+      // record (reset at END_TURN with the rest of TurnState) refuses both
+      // the over-undo and the after-the-turn undo outright.
+      const placed = state.turn?.placedThisTurn ?? {}
+      const onRecord = placed[action.territoryId] ?? 0
+      if (state.phase !== 'reinforce' || onRecord <= 0 || t.troops <= 1) return only(state)
       return only({
         ...state,
         territories: {
           ...state.territories,
           [action.territoryId]: { ...t, troops: t.troops - 1 },
         },
+        turn: { ...state.turn, placedThisTurn: { ...placed, [action.territoryId]: onRecord - 1 } },
       })
     }
 

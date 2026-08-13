@@ -41,6 +41,11 @@ export interface TurnState {
   attackedTerritoryIds: string[]
   /** Territories shielded from further attack this turn (DM Iron Shield double-6). */
   shieldedTerritoryIds: string[]
+  /** Reinforcements placed this turn, territoryId → count. The reducer's undo
+   *  bound: an UNDO_PLACEMENT is refused unless a placement is on record here,
+   *  so no client — however confused — can drain a territory by undoing more
+   *  than was placed. Reset with the rest of the turn at END_TURN. */
+  placedThisTurn: Record<string, number>
   /** An uncontested expansion into an unoccupied territory holding a standing
    *  city happened this turn. Such a move is NOT a conquest, so it normally
    *  earns no card — the Resourceful comeback power grants one for it. */
@@ -84,6 +89,7 @@ export function initialTurnState(): TurnState {
   return {
     captured: false, captureCount: 0, conqueredIds: [], conqueredViaSeaIds: [],
     bearTrapTerritoryId: null, attackedTerritoryIds: [], shieldedTerritoryIds: [],
+    placedThisTurn: {},
     expandedIntoCity: false,
     richCardsTradedIn: 0, resourcesTradedIn: 0, knockedOutRichPlayer: false,
     continentsAtTurnStart: 0, eligibleForRichCard: false, richCardTerritoryIds: [],
