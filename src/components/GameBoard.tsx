@@ -2769,9 +2769,20 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (humanBlockingChoice()) return
 
     const diff = cp.aiDifficulty ?? 'medium'
+    // A scheduled step must still belong to THIS AI when it FIRES. The turn
+    // can end (or the game can) while a step is in flight — fast-forward
+    // shrinks every delay, so the boundary crossing is common there — and a
+    // stale step dispatched on the next HUMAN's turn passes every server gate
+    // when this machine also holds that human's seat: it ended a player's
+    // reinforce phase under him and resolved the AI's planned attack against
+    // the territory he had just reinforced.
+    const stillMyTurn = () => {
+      const st = gameStateRef.current
+      return st.players[st.currentPlayerIndex]?.id === cp.id && st.phase !== 'game-over'
+    }
     const run = (fn: () => void, delay = aiMs(1400, 220)) => {
       aiBusyRef.current = true
-      window.setTimeout(() => { aiBusyRef.current = false; fn() }, delay)
+      window.setTimeout(() => { aiBusyRef.current = false; if (stillMyTurn()) fn() }, delay)
     }
 
     // ── Auto-resolve the AI's own interrupt modals ──
@@ -2946,6 +2957,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         aiBusyRef.current = true
         window.setTimeout(() => {
           aiBusyRef.current = false
+          // The stale-attack killer: this is the step that once resolved the
+          // AI's planned battle on the NEXT player's turn, against the very
+          // territory that player had just reinforced.
+          if (!stillMyTurn()) return
           if (uncontested) {
             // Uncontested move — resolve directly (no interactive panel for AI).
             // The AI has no slider to clamp, so the entry cost is checked here:
@@ -2993,6 +3008,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         aiBusyRef.current = true
         window.setTimeout(() => {
           aiBusyRef.current = false
+          // Without this, a stale hand-off ended the NEXT player's turn too.
+          if (!stillMyTurn()) return
           handleNextPhase()
         }, aiMs(600, 130))
       })
