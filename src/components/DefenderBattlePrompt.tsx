@@ -25,6 +25,16 @@ const WIN_GLOW  = '#2ecc71'
 
 /** Matched with the attacker modal's tumble (2.1s) — one battle, one tempo. */
 const SPIN_MS = 2100
+/**
+ * Dice that arrive OVER THE WIRE are already rolled — the 2.1s spin is
+ * anticipation theater that only makes sense on the machine that clicked.
+ * Remote screens replaying it fell a full spin behind the real battle per
+ * roll ("it keeps rolling for the spectators"), and a round could land while
+ * the previous one was still spinning. Arrivals get a short landing flourish
+ * instead; when both sides arrive together the two flourishes overlap, so a
+ * late joiner settles in one beat.
+ */
+const ARRIVAL_SPIN_MS = 650
 const SPIN_TICK_MS = 100
 
 const rollN = (n: number) => Array.from({ length: n }, () => Math.floor(Math.random() * 6) + 1).sort((a, b) => b - a)
@@ -95,8 +105,9 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
     setDiceCount(c => Math.min(c, combat.defDiceMax))
   }, [combat.round, combat.key, combat.defDiceMax])
 
-  // A side's dice arrive: spin, then settle on the real values. On the
-  // defender's own roll the spin starts in rollDefense instead (their click).
+  // A side's dice arrive: a short landing flourish, then the real values.
+  // These are wire arrivals — already rolled — so they get ARRIVAL_SPIN_MS,
+  // not the full theater; the defender's own click animates via rollDefense.
   useEffect(() => {
     if (!combat.atkDice || seenAtkRef.current) return
     seenAtkRef.current = true
@@ -107,7 +118,7 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
       clearInterval(spin)
       setAnimAtk(combat.atkDice!)
       setAtkSpin(false)
-    }, SPIN_MS)
+    }, ARRIVAL_SPIN_MS)
     return () => { clearInterval(spin); clearTimeout(stop) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [combat.atkDice])
@@ -123,7 +134,7 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
       clearInterval(spin)
       setAnimDef(combat.defDice!)
       setDefSpin(false)
-    }, SPIN_MS)
+    }, ARRIVAL_SPIN_MS)
     return () => { clearInterval(spin); clearTimeout(stop) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [combat.defDice])
