@@ -38,6 +38,10 @@ export default function App() {
   const [playOnline, setPlayOnline]             = useState(false)
   const [user, setUser]                         = useState<AuthUser | null>(null)
   const [slotConfig, setSlotConfig]             = useState<Record<string, SlotConfig>>({})
+  /** End-of-game "everyone continued" hand-off: what this machine should do
+   *  the moment the campaign screen mounts — re-host the next game, or watch
+   *  for the host's lobby and join it. */
+  const [autoNextGame, setAutoNextGame]         = useState<'host' | 'join' | null>(null)
   const [gameDeals, setGameDeals]               = useState<DealtScar[]>([])
   const [restoredGameState, setRestoredGameState] = useState<RestoredGameState | null>(null)
   /** The lobby being waited in, whether hosting it or having joined it. */
@@ -349,7 +353,7 @@ export default function App() {
     setScreen('playing')
   }
 
-  function handleReturnToLobby() {
+  function handleReturnToLobby(next?: 'host-next' | 'join-next') {
     setRestoredGameState(null)
     // Everything tying this client to A game must die with the game. A
     // joinedMatch that outlives its game was adopted by the NEXT game's board,
@@ -360,6 +364,10 @@ export default function App() {
     setSetupLobby(null)
     setLobby(null)
     setPlayOnline(false)
+    // "Continue to the next game" from the end-of-game gate: the campaign
+    // screen flows straight into the next lobby — the finished match's host
+    // re-hosts, everyone else auto-joins when the lobby appears.
+    setAutoNextGame(next === 'host-next' ? 'host' : next === 'join-next' ? 'join' : null)
     setScreen('between-games')
   }
 
@@ -397,6 +405,8 @@ export default function App() {
         onReadyForDiceRoll={handleReadyForDiceRoll}
         onResumeGame={handleResumeGame}
         onNewCampaign={() => { setLegacy(null); setScreen('between-games') }}
+        autoNextGame={autoNextGame}
+        onAutoNextConsumed={() => setAutoNextGame(null)}
         onEnterLobby={(joined, ls) => {
           setLegacy(ls)
           applyRosterNames(getRoster(ls))

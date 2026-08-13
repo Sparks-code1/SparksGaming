@@ -69,6 +69,20 @@ interface Props {
   legacyEvents: LegacyEvent[]
   unlockOptions?: unknown[]
   /**
+   * Which slice of the ceremony this machine runs.
+   *
+   * 'hotseat' (default) — the whole flow at one keyboard, exactly as always:
+   * winner steps, every runner-up, then finalize saves the campaign.
+   * 'online-winner' — the winner's steps (plus any AI runner-ups this machine
+   * answers for); NO finalize — the caller records the edits and the campaign
+   * is finalized once every machine's rewards are in.
+   * 'online-runnerup' — one runner-up's two steps only, no announce, no
+   * finalize. `runnerUpIds` names them.
+   */
+  variant?: 'hotseat' | 'online-winner' | 'online-runnerup'
+  /** Restrict the runner-up walk to these players (online split). */
+  runnerUpIds?: string[]
+  /**
    * `baseline` is the campaign state this screen opened with. The caller needs
    * it to tell which fields were actually edited here — this screen is long
    * lived, and anything written elsewhere in the meantime must not be reverted.
@@ -112,8 +126,10 @@ const skipBtn: React.CSSProperties = {
 export default function WinScreen({
   winner, winCondition, gameNumber, players, territories,
   legacyState, legacyEvents, onComplete,
+  variant = 'hotseat', runnerUpIds,
 }: Props) {
-  const [step, setStep]           = useState<WinStep>('announce')
+  const [step, setStep]           = useState<WinStep>(
+    variant === 'online-runnerup' ? 'runnerup-city' : 'announce')
   const [signedName, setSignedName] = useState(winner.name)
   const [saving, setSaving]       = useState(false)
   const [workingLegacy, setWorkingLegacy] = useState<LegacyState>(legacyState)
@@ -142,10 +158,13 @@ export default function WinScreen({
   // Step 7: Destroy a card
   const [destroyCardId, setDestroyCardId] = useState<string | null>(null)
 
-  // Runner-up tracking
+  // Runner-up tracking. Online the walk is restricted: the winner's machine
+  // covers only the AI runner-ups, and each human runner-up's machine covers
+  // exactly themselves — `runnerUpIds` carries the split.
   const runnerUps = players.filter(p =>
     p.id !== winner.id &&
     !p.isEliminated &&
+    (!runnerUpIds || runnerUpIds.includes(p.id)) &&
     Object.values(territories).some(t => t.occupyingPlayerId === p.id),
   )
   const [ruIdx, setRuIdx]           = useState(0)
@@ -352,7 +371,7 @@ export default function WinScreen({
       setRuIdx(0); setRuCityTerrId(null); setRuCityName(''); setRuCardId(null)
       setStep('runnerup-city')
     } else {
-      await finalize(updated)
+      await conclude(updated)
     }
   }
 
@@ -404,8 +423,20 @@ export default function WinScreen({
       setRuCityTerrId(null); setRuCityName(''); setRuCardId(null)
       setStep('runnerup-city')
     } else {
-      await finalize(updated)
+      await conclude(updated)
     }
+  }
+
+  /**
+   * The last step is done — what happens next depends on the variant.
+   * Hotseat finalizes the campaign right here, as it always has. The online
+   * slices hand their edits back instead: finalization (game-number bump,
+   * session save, scar returns) happens ONCE, after every machine's rewards
+   * are recorded — not after each slice.
+   */
+  async function conclude(legacy: LegacyState) {
+    if (variant === 'hotseat') { await finalize(legacy); return }
+    onComplete(legacy, baselineRef.current)
   }
 
   async function finalize(legacy: LegacyState) {

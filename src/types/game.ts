@@ -161,8 +161,27 @@ export interface GameState {
    */
   combat?: ActiveCombat | null
 
+  /**
+   * The shared end-of-game session, seeded by END_GAME in online matches.
+   * Each machine records its player's progress here so every screen renders
+   * the same ceremony: who has finished their legacy rewards, and who has
+   * chosen to continue to the next game or save and quit. Absent in hotseat,
+   * where the single machine runs the whole flow.
+   */
+  endGame?: EndGameState | null
+
   createdAt: string
   updatedAt: string
+}
+
+/** Shared end-of-game progress — one entry per participating machine. */
+export interface EndGameState {
+  winnerId: string
+  condition: 'mission' | 'elimination' | 'stars'
+  /** playerId → true once that player's reward steps are recorded in legacy */
+  rewardsDone: Record<string, boolean>
+  /** playerId → their post-reward table decision */
+  continues: Record<string, 'continue' | 'quit'>
 }
 
 /**

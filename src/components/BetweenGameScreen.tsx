@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { LegacyState } from '@/types/legacy'
 import {
   loadLegacyState, loadGameHistory, saveLegacyState, createCampaign, ensureJoinCode,
@@ -25,6 +25,14 @@ interface Props {
   onNewCampaign: () => void
   /** A seat has been taken in someone's lobby — show the waiting room. */
   onEnterLobby: (lobby: Lobby, legacy: LegacyState) => void
+  /**
+   * End-of-game hand-off, set when every player clicked Continue at the
+   * finished game's gate: 'host' re-opens a lobby for the next game the
+   * moment the campaign record settles; 'join' watches for that lobby and
+   * takes a seat in it automatically. Consumed once acted on.
+   */
+  autoNextGame?: 'host' | 'join' | null
+  onAutoNextConsumed?: () => void
 }
 
 type LoadState =
@@ -35,7 +43,7 @@ type LoadState =
   | 'none'      // naming a brand-new campaign
   | 'error'
 
-export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, onNewCampaign, onEnterLobby }: Props) {
+export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, onNewCampaign, onEnterLobby, autoNextGame = null, onAutoNextConsumed }: Props) {
   const [status, setStatus]     = useState<LoadState>('loading')
   /** Which screen the join panel was opened FROM, so Cancel goes back there. */
   const [joinReturnTo, setJoinReturnTo] = useState<LoadState>('picking')
@@ -84,6 +92,36 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
     const timer = setInterval(look, 4000)
     return () => { cancelled = true; clearInterval(timer) }
   }, [legacy?.campaignId, legacy?.currentGameNumber, user?.id])
+
+  // ── End-of-game hand-off ──────────────────────────────────────────────────
+  // Everyone clicked Continue at the finished game's gate. The winner's
+  // machine finalized the campaign (game number bumped, gameInProgress
+  // cleared) right as that gate opened — but this machine's mount-load can
+  // race that write, so an unsettled record is re-read every couple of
+  // seconds rather than acted on: hosting off the stale copy would open a
+  // lobby for the game that just ENDED, which nobody's search would find.
+  const autoFiredRef = useRef(false)
+  useEffect(() => {
+    if (!autoNextGame || autoFiredRef.current) return
+    if (status !== 'found' || !legacy || !user) return
+    if (legacy.gameInProgress || legacy.activeGameState) {
+      const t = window.setTimeout(() => { void openCampaign(legacy.campaignId) }, 2000)
+      return () => window.clearTimeout(t)
+    }
+    if (autoNextGame === 'host') {
+      if (hostingGame) return
+      autoFiredRef.current = true
+      onAutoNextConsumed?.()
+      void hostOnlineGame()
+      return
+    }
+    // 'join': wait for the host's lobby to appear in the existing poll.
+    if (!openLobby || joiningLobby) return
+    autoFiredRef.current = true
+    onAutoNextConsumed?.()
+    void joinOpenLobby()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoNextGame, status, legacy, user, openLobby, hostingGame, joiningLobby])
 
   /**
    * Take a seat in the open lobby and go and wait in it.

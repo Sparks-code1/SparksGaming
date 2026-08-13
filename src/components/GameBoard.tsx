@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
 import * as PIXI from 'pixi.js'
 import type { Territory, ScarType } from '@/types/territory'
-import type { GameState } from '@/types/game'
+import type { GameState, EndGameState } from '@/types/game'
 import { initialTurnState } from '@/types/game'
+import EndGameOverlay from './EndGameOverlay'
 import type { LegacyState } from '@/types/legacy'
 import type { Player } from '@/types/player'
 import { TERRITORY_DEFINITIONS, MAP_WIDTH, MAP_HEIGHT, buildTerritory } from '@/data/territoryData'
@@ -24,7 +25,7 @@ import { campaignOutcome, applyCampaignCompletion, championLabel, type CampaignO
 import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALIEN_ISLAND_TERRITORY_ID, calcDraftTroops, applyHqReserveTroops, expandClickAction, legalJoinWarTerritoryIds, cardCoinValue, leadFactionId, resolveResourceDepletion, type ResourceDepletion, troopsAfterEntry, minTroopsToEnter, LEAD_FACTION_WORLD_CAPITAL_TROOPS, worldCapitalReplacedCities, citiesLostOn, mergeLegacyEdits, countCitiesOn, resolveRiot, resolveResistance, type RiotCityResult, FORTIFICATION_SUPPLY, fortificationsPlaced, canPlaceFortification, FORTIFY_EVENT_TROOPS, FORTIFY_EVENT_CITIES , canSpendForStar, starPurchaseSelection } from '@/lib/gameLogic'
 import {
   defaultLegacyState, saveLegacyState, loadLegacyState, awardRedStars,
-  applyLegacyToTerritories, pickUnlocks, SCAR_META,
+  applyLegacyToTerritories, pickUnlocks, SCAR_META, saveGameSession,
   type LegacyEvent, type UnlockOption,
 } from '@/lib/legacyApi'
 import { getScarCard, type ScarCard, MERCENARY_CARD_IDS, BIOHAZARD_CARD_IDS } from '@/data/scarCards'
@@ -238,7 +239,10 @@ interface GameBoardProps {
   joinedMatch?: { matchId: string; version: number } | null
   /** When provided, restore this saved game instead of building a fresh one from playerSetups. */
   restoredGameState?: Omit<GameState, 'legacySnapshot'> | null
-  onReturnToLobby: () => void
+  /** Leave the finished game. The optional intent asks the campaign screen to
+   *  flow straight into the next game: the finished match's host re-hosts,
+   *  everyone else auto-joins the lobby it opens. */
+  onReturnToLobby: (next?: 'host-next' | 'join-next') => void
 }
 
 /** Faction ability ids that apply in combat (used to avoid re-reading legacy in every render) */
@@ -429,6 +433,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // ATTACKER's turn by definition; the edge validates the defending seat.
     'COMBAT_DEFENSE_CHOICE',
     'POST_COMBAT_DICE',
+    // End-of-game ceremony: the game is over, "whose turn" is meaningless —
+    // every seat reports its own progress; the edge stamps the caller.
+    'ENDGAME_REWARDS_DONE',
+    'ENDGAME_CONTINUE',
   ])
   const dispatch = (action: Action) => {
     // ── The turn gate ──────────────────────────────────────────────────────
@@ -5943,6 +5951,26 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     onReturnToLobby()
   }
 
+  /**
+   * The online ceremony's cast list, derived from the synced endGame session:
+   * the winner leads, each HUMAN runner-up follows on their own machine, and
+   * AI runner-ups ride inside the winner machine's wizard. The board is frozen
+   * at game-over, so every machine derives the identical list.
+   */
+  function endGameCast(state: GameState) {
+    const eg = state.endGame
+    if (!eg) return null
+    const holds = (pid: string) => Object.values(state.territories).some(t => t.occupyingPlayerId === pid)
+    const runnerUps = state.players.filter(p => p.id !== eg.winnerId && !p.isEliminated && holds(p.id))
+    return {
+      eg,
+      aiRunnerUpIds: runnerUps.filter(p => p.isAI).map(p => p.id),
+      rewardOrder: [eg.winnerId, ...runnerUps.filter(p => !p.isAI).map(p => p.id)],
+      humanIds: state.players.filter(p => !p.isAI).map(p => p.id),
+      winnerIsAi: !!state.players.find(p => p.id === eg.winnerId)?.isAI,
+    }
+  }
+
   function handleWinScreenComplete(editedLegacy: LegacyState, baseline: LegacyState) {
     // The win screen is long lived and edits a copy it took when it opened. A
     // reward modal can sit ON TOP of it — the Island Empire sea line does — so
@@ -5952,6 +5980,18 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     legacyStateRef.current = working
     setLegacyState(working)
     setShowWinScreen(false)
+
+    // ONLINE this was the WINNER's slice of the ceremony, not the whole thing.
+    // Persist the edits and report done; each human runner-up records their
+    // own slice next, and finalization (milestone flags, game-number bump,
+    // session save) runs once in finalizeOnlineEndgame after every machine's
+    // rewards are in. The milestone MODALS below are hotseat furniture — the
+    // online flags are set silently at finalize and announced with a notice.
+    if (onlineMatchRef.current && gameStateRef.current.endGame) {
+      saveLegacyState(working).catch(() => {})
+      dispatch({ type: 'ENDGAME_REWARDS_DONE', playerId: gameStateRef.current.endGame.winnerId })
+      return
+    }
 
     // Check double-winner milestone: any player has signed the board twice.
     // Counted by roster id — two different people signing the same name must
@@ -5990,6 +6030,189 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
 
     finalizeAndReturnToLobby(working)
   }
+
+  // ── Online end-of-game ceremony ───────────────────────────────────────────
+  // Rewards happen on the machine that OWNS them, strictly in reward order;
+  // everyone else watches the shared overlay. Finalization runs once, on the
+  // winner's machine; the continue gate holds the table until every human has
+  // spoken. All of it renders from the synced endGame session, so a machine
+  // that reconnects mid-ceremony lands in the right place.
+  const [runnerUpWizardOpen, setRunnerUpWizardOpen] = useState(false)
+  const runnerUpWizardBusyRef = useRef(false)
+  useEffect(() => {
+    if (!onlineMatchRef.current) return
+    const cast = endGameCast(gameState)
+    if (!cast || !localSeatId) return
+    const idx = cast.rewardOrder.indexOf(localSeatId)
+    if (idx <= 0) return                                   // the winner runs the full wizard
+    if (cast.eg.rewardsDone[localSeatId]) return
+    if (!cast.rewardOrder.slice(0, idx).every(id => cast.eg.rewardsDone[id])) return
+    if (runnerUpWizardOpen || runnerUpWizardBusyRef.current) return
+    runnerUpWizardBusyRef.current = true
+    // Fresh legacy first: the winner (and any runner-up ahead of you) just
+    // wrote their rewards from another machine — your slice builds on theirs,
+    // and the CAS save would refuse a write built on the stale copy anyway.
+    void loadLegacyState(legacyStateRef.current.campaignId).then(fresh => {
+      if (fresh) { legacyStateRef.current = fresh; setLegacyState(fresh) }
+    }).catch(() => {}).finally(() => {
+      runnerUpWizardBusyRef.current = false
+      setRunnerUpWizardOpen(true)
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState.endGame, localSeatId, runnerUpWizardOpen])
+
+  // The winner's machine opens its wizard from the SESSION, not only from
+  // local detection. The machine that dispatched END_GAME is almost always
+  // the winner's own — but when it isn't (or after a reconnect mid-ceremony),
+  // the winner's machine must still run its slice or the whole table stalls
+  // at "choosing their rewards…".
+  const winnerWizardBusyRef = useRef(false)
+  useEffect(() => {
+    if (!onlineMatchRef.current) return
+    const cast = endGameCast(gameState)
+    if (!cast) return
+    const winnerMachine = localSeatId === cast.eg.winnerId || (cast.winnerIsAi && aiAuthorityRef.current)
+    if (!winnerMachine || cast.eg.rewardsDone[cast.eg.winnerId]) return
+    if (showWinScreen || winnerWizardBusyRef.current) return
+    winnerWizardBusyRef.current = true
+    // A machine that detected the win itself has current legacy (it was the
+    // acting machine); one that learned over the wire reloads first, so the
+    // wizard's baseline includes everything the detecting machine wrote.
+    const prep: Promise<LegacyState | null> = winnerPlayerId
+      ? Promise.resolve(null)
+      : loadLegacyState(legacyStateRef.current.campaignId).catch(() => null)
+    void prep.then(fresh => {
+      if (fresh) { legacyStateRef.current = fresh; setLegacyState(fresh) }
+    }).finally(() => {
+      setWinnerPlayerId(cast.eg.winnerId)
+      setWinCondition(cast.eg.condition)
+      setUnlockOptions(pickUnlocks(gameStateRef.current.gameNumber))
+      setShowWinScreen(true)
+      winnerWizardBusyRef.current = false
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState.endGame, localSeatId, showWinScreen])
+
+  function handleRunnerUpRewardsComplete(editedLegacy: LegacyState, baseline: LegacyState) {
+    const working = mergeLegacyEdits(legacyStateRef.current, baseline, editedLegacy)
+    legacyStateRef.current = working
+    setLegacyState(working)
+    setRunnerUpWizardOpen(false)
+    saveLegacyState(working).catch(() => {})
+    if (localSeatRef.current) dispatch({ type: 'ENDGAME_REWARDS_DONE', playerId: localSeatRef.current })
+  }
+
+  /**
+   * Every machine's rewards are in — finalize the campaign ONCE, on the
+   * winner's machine. This is WinScreen.finalize plus the milestone half of
+   * the hotseat handleWinScreenComplete, minus the modals: online the
+   * milestone FLAGS are set silently (they gate future games) and the news
+   * rides a notice instead of a modal nobody else would see.
+   */
+  const endgameFinalizedRef = useRef(false)
+  async function finalizeOnlineEndgame(eg: EndGameState) {
+    const gameNumber = gameStateRef.current.gameNumber
+    let working = (await loadLegacyState(legacyStateRef.current.campaignId).catch(() => null))
+      ?? legacyStateRef.current
+
+    if (!working.doubleWinnerMilestoneTriggered) {
+      const [doubleSignerId] = doubleSigners(working)
+      if (doubleSignerId) {
+        working = { ...working, doubleWinnerMilestoneTriggered: true }
+        showWeaknessNotice(`🏅 ${rosterName(working, doubleSignerId)} has signed the board twice — missions unlock next game`)
+      }
+    }
+    const minorCityCount = working.stickers.filter(s => s.description === 'city:minor').length
+    if (!working.ninthCityUnlocked && minorCityCount >= 9) {
+      working = {
+        ...working, ninthCityUnlocked: true, draftOrderUnlocked: true,
+        scarDeck: [...(working.scarDeck ?? []), ...BIOHAZARD_CARD_IDS],
+      }
+      showWeaknessNotice('🏙 The 9th minor city stands — the improved draft unlocks next game')
+    }
+
+    // WinScreen.finalize's half: unplaced scar cards return to the pool and
+    // the campaign advances a game.
+    const unusedCardIds = (working.dealtScars ?? [])
+      .filter(d => d.gameNumber === gameNumber && !d.placed).map(d => d.cardId)
+    // finalizeAndReturnToLobby's half: fold the match missile ledger, close
+    // the game record. The match ROW stays open — the continue gate still
+    // rides it — and closes when the gate resolves.
+    const spends = gameStateRef.current.missileSpends ?? {}
+    const missiles = Object.keys(spends).length > 0
+      ? Object.fromEntries(Object.entries(working.missiles ?? {}).map(
+          ([pid, n]) => [pid, Math.max(0, (n ?? 0) - (spends[pid] ?? 0))]))
+      : working.missiles
+    working = {
+      ...working,
+      purchasedStars: {},
+      currentGameNumber: working.currentGameNumber + 1,
+      scarDeck: [...new Set([...(working.scarDeck ?? []), ...unusedCardIds])],
+      dealtScars: (working.dealtScars ?? []).filter(d => !(d.gameNumber === gameNumber && !d.placed)),
+      gameInProgress: false, activeGameState: null, activeMatchId: null, missiles,
+    }
+    gameFinishedRef.current = true
+    legacyStateRef.current = working
+    setLegacyState(working)
+    const winName = (working.victoryLog ?? []).find(v => v.gameNumber === gameNumber)?.winnerName ?? null
+    const winFaction = gameStateRef.current.players.find(p => p.id === eg.winnerId)?.factionId ?? null
+    await Promise.all([
+      saveLegacyState(working),
+      saveGameSession(working.campaignId, gameNumber, winName, winFaction, legacyEvents),
+    ]).catch(() => {})
+
+    // The campaign itself may now be decided. Crown the champion here; the
+    // quit vote below is how every OTHER machine learns there is no game to
+    // continue to — their gate resolves to "head home".
+    const outcome = campaignOutcome(working)
+    if (outcome.decided && !working.campaignComplete) {
+      const finished = applyCampaignCompletion(working, outcome)
+      legacyStateRef.current = finished
+      setLegacyState(finished)
+      setCampaignOutcome(outcome)
+      await saveLegacyState(finished).catch(() => {})
+      dispatch({ type: 'ENDGAME_CONTINUE', playerId: eg.winnerId, choice: 'quit' })
+    }
+  }
+
+  useEffect(() => {
+    if (!onlineMatchRef.current) return
+    const cast = endGameCast(gameState)
+    if (!cast) return
+    const winnerMachine = localSeatId === cast.eg.winnerId || (cast.winnerIsAi && aiAuthorityRef.current)
+    if (!winnerMachine) return
+    if (!cast.rewardOrder.every(id => cast.eg.rewardsDone[id])) return
+    if (endgameFinalizedRef.current) return
+    endgameFinalizedRef.current = true
+    void finalizeOnlineEndgame(cast.eg)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState.endGame, localSeatId])
+
+  // The gate: every human continues → on to the next game (the host re-hosts,
+  // the joiners follow); anyone quits → the campaign is already saved, so
+  // every machine heads back to the campaign screen together.
+  const endgameExitRef = useRef(false)
+  useEffect(() => {
+    if (!onlineMatchRef.current) return
+    const cast = endGameCast(gameState)
+    if (!cast) return
+    if (!cast.rewardOrder.every(id => cast.eg.rewardsDone[id])) return
+    const votes = cast.humanIds.map(id => cast.eg.continues[id])
+    const anyQuit = votes.some(v => v === 'quit')
+    const allIn = votes.every(v => !!v)
+    if (!anyQuit && !allIn) return
+    if (endgameExitRef.current) return
+    endgameExitRef.current = true
+    gameFinishedRef.current = true
+    // The row closes so nobody's campaign screen offers a dead game. Any
+    // machine may say so — the update is idempotent.
+    void endOnlineMatch(onlineMatchRef.current.matchId, 'complete').catch(() => {})
+    const goNext = !anyQuit
+    window.setTimeout(() => {
+      onReturnToLobby(goNext ? (aiAuthorityRef.current ? 'host-next' : 'join-next') : undefined)
+    }, goNext ? 900 : 2600)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState.endGame])
 
   const selectedTerritory = selectedId ? (gameState.territories[selectedId] ?? null) : null
   const attackSrcTerritory = attackSrcId ? (gameState.territories[attackSrcId] ?? null) : null
@@ -7877,7 +8100,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             Replay ceremony
           </button>
           <button
-            onClick={onReturnToLobby}
+            onClick={() => onReturnToLobby()}
             style={{
               padding: '4px 11px', borderRadius: 5, fontSize: 11, cursor: 'pointer',
               border: '1px solid rgba(200,148,10,0.45)', background: 'rgba(200,148,10,0.14)',
@@ -8690,12 +8913,66 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         </div>
       )}
 
+      {/* End-of-game ceremony overlay (online): winner announcement, reward
+          progress, and the continue gate — on every machine that is not
+          currently inside its own reward wizard. */}
+      {onlineMatch && !campaignOutcomeState && (() => {
+        const cast = endGameCast(gameState)
+        if (!cast) return null
+        const winnerMachine = localSeatId === cast.eg.winnerId || (cast.winnerIsAi && aiAuthority)
+        const winnerWizardOpen = winnerMachine && !cast.eg.rewardsDone[cast.eg.winnerId] && showWinScreen
+        if (winnerWizardOpen || runnerUpWizardOpen) return null
+        return (
+          <EndGameOverlay
+            endGame={cast.eg}
+            players={gameState.players}
+            gameNumber={gameState.gameNumber}
+            rewardOrder={cast.rewardOrder}
+            humanIds={cast.humanIds}
+            myId={localSeatId}
+            onContinue={() => { if (localSeatId) dispatch({ type: 'ENDGAME_CONTINUE', playerId: localSeatId, choice: 'continue' }) }}
+            onQuit={() => { if (localSeatId) dispatch({ type: 'ENDGAME_CONTINUE', playerId: localSeatId, choice: 'quit' }) }}
+          />
+        )
+      })()}
+
+      {/* A runner-up's own slice of the ceremony: minor city + card upgrade,
+          on THEIR machine, after everyone ahead of them has recorded. */}
+      {runnerUpWizardOpen && onlineMatch && localSeatId && (() => {
+        const cast = endGameCast(gameState)
+        const winPlayer = cast ? gameState.players.find(p => p.id === cast.eg.winnerId) : null
+        if (!cast || !winPlayer) return null
+        return (
+          <WinScreen
+            winner={winPlayer}
+            winCondition={cast.eg.condition}
+            gameNumber={gameState.gameNumber}
+            players={gameState.players}
+            territories={gameState.territories}
+            legacyState={legacyState}
+            legacyEvents={legacyEvents}
+            variant="online-runnerup"
+            runnerUpIds={[localSeatId]}
+            onComplete={handleRunnerUpRewardsComplete}
+          />
+        )
+      })()}
+
       {/* Win ceremony — blocked until comeback power choice is resolved */}
       {/* Win ceremony waits until pending choices resolve — a missile power
           earned on the winning star is picked BEFORE the game ends */}
       {showWinScreen && winScreenArmed && winnerPlayerId && !comebackEliminatedPlayer && !missilePowerPendingPlayerId && (() => {
         const winPlayer = gameState.players.find(p => p.id === winnerPlayerId)
         if (!winPlayer) return null
+        // ONLINE the ceremony is split: this machine runs the WINNER's slice
+        // (plus any AI runner-ups it answers for) and only when it IS the
+        // winner's machine — the detecting machine and the winner's are almost
+        // always the same, but only one may run the wizard.
+        const cast = onlineMatch ? endGameCast(gameState) : null
+        if (cast) {
+          const winnerMachine = localSeatId === cast.eg.winnerId || (cast.winnerIsAi && aiAuthority)
+          if (!winnerMachine || cast.eg.rewardsDone[cast.eg.winnerId]) return null
+        }
         return (
           <WinScreen
             winner={winPlayer}
@@ -8706,6 +8983,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             legacyState={legacyState}
             legacyEvents={legacyEvents}
             unlockOptions={unlockOptions}
+            variant={cast ? 'online-winner' : 'hotseat'}
+            runnerUpIds={cast ? cast.aiRunnerUpIds : undefined}
             onComplete={handleWinScreenComplete}
           />
         )

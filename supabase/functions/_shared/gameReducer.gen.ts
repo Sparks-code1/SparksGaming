@@ -553,12 +553,12 @@ function checkReinforcementPlacement(state, territoryId, rules) {
   const t = state.territories[territoryId];
   if (!t) return { ok: false, reason: "No such territory" };
   if (territoryId === rules.falloutZoneTerritoryId && rules.playerFactionId !== "mutants") {
-    return { ok: false, reason: "\u2622 Only the Mutants can draft troops into the Fallout Zone" };
+    return { ok: false, reason: "\xE2\u02DC\xA2 Only the Mutants can draft troops into the Fallout Zone" };
   }
   if (rules.isCautiousWeakness) {
     const placedInto = new Set(rules.placementHistory);
     if (!placedInto.has(territoryId) && placedInto.size >= 2) {
-      return { ok: false, reason: "\u26A0 Cautious \u2014 you can only place recruited troops into 2 territories" };
+      return { ok: false, reason: "\xE2\u0161\xA0 Cautious \xE2\u20AC\u201D you can only place recruited troops into 2 territories" };
     }
   }
   return { ok: true };
@@ -836,7 +836,7 @@ function gameReducer(state, action, rng) {
           ...state,
           territories: {
             ...state.territories,
-            // 3 troops on re-entry — the same number the component always used.
+            // 3 troops on re-entry â€” the same number the component always used.
             [action.territoryId]: { ...t, occupyingPlayerId: action.playerId, troops: 3 }
           },
           players: state.players.map((p) => p.id === action.playerId ? { ...p, isEliminated: false, joinedWarThisGame: true } : p),
@@ -859,9 +859,40 @@ function gameReducer(state, action, rng) {
       if (!winner || winner.isEliminated) return only(state);
       if (state.phase === "game-over") return only(state);
       return {
-        state: { ...state, phase: "game-over", winnerId: action.winnerId },
+        state: {
+          ...state,
+          phase: "game-over",
+          winnerId: action.winnerId,
+          // Seed the shared ceremony: every machine renders the reward
+          // progress and the continue gate from this one document.
+          endGame: {
+            winnerId: action.winnerId,
+            condition: action.condition,
+            rewardsDone: {},
+            continues: {}
+          }
+        },
         effects: [{ kind: "game-ended", winnerId: action.winnerId, condition: action.condition }]
       };
+    }
+    case "ENDGAME_REWARDS_DONE": {
+      const eg = state.endGame;
+      if (!eg || !state.players.some((p) => p.id === action.playerId)) return only(state);
+      if (eg.rewardsDone[action.playerId]) return only(state);
+      return only({
+        ...state,
+        endGame: { ...eg, rewardsDone: { ...eg.rewardsDone, [action.playerId]: true } }
+      });
+    }
+    case "ENDGAME_CONTINUE": {
+      const eg = state.endGame;
+      if (!eg || !state.players.some((p) => p.id === action.playerId)) return only(state);
+      if (eg.continues[action.playerId]) return only(state);
+      const choice = action.choice === "quit" ? "quit" : "continue";
+      return only({
+        ...state,
+        endGame: { ...eg, continues: { ...eg.continues, [action.playerId]: choice } }
+      });
     }
     case "PLACE_SEA_LINE": {
       if (action.a === action.b) return only(state);
@@ -1087,7 +1118,7 @@ function gameReducer(state, action, rng) {
           currentPlayerIndex: nextIdx,
           turnNumber: isNewRound ? state.turnNumber + 1 : state.turnNumber,
           // A fresh turn for the incoming player. Without this the SERVER's
-          // copy of `turn` was never reset (or set at all) — it served the
+          // copy of `turn` was never reset (or set at all) â€” it served the
           // initial board's zeroes forever, and every echo overwrote the
           // client's own tracking with them mid-turn.
           turn: {
@@ -1124,7 +1155,7 @@ function clampCombatModifiers(m) {
   const clamp = (v, lo, hi, dflt = 0) => typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.trunc(v))) : dflt;
   const override = m?.attackerMaxDiceOverride;
   return {
-    // Never MORE than the standard 3 attacker dice — only ever a restriction.
+    // Never MORE than the standard 3 attacker dice â€” only ever a restriction.
     attackerMaxDiceOverride: typeof override === "number" ? clamp(override, 1, 3, 3) : void 0,
     attackerBonusAllDice: clamp(m?.attackerBonusAllDice, -5, 5),
     attackerSubtractLowest: !!m?.attackerSubtractLowest,
@@ -1204,7 +1235,7 @@ function applyCombatOutcome(state, action) {
     });
     if (survivors < 1) {
       console.warn(
-        `[Combat] ${moving} troops cannot pay the ${action.entryCostTotal}-troop entry at ${action.tgtId} \u2014 capping at 1 survivor; the entry cost was not fully paid.`
+        `[Combat] ${moving} troops cannot pay the ${action.entryCostTotal}-troop entry at ${action.tgtId} \xE2\u20AC\u201D capping at 1 survivor; the entry cost was not fully paid.`
       );
     }
     tgt.troops = Math.max(1, survivors);

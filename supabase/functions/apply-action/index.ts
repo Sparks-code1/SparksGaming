@@ -130,6 +130,11 @@ const SERVER_ACTIONS = new Set([
   'POST_COMBAT_MISSILES',
   'COMBAT_NEXT_ROUND',
   'CLEAR_COMBAT',
+  // End-of-game ceremony: once-per-player progress flags every machine
+  // renders from. Sent by any seat about ITSELF (stamped below), after the
+  // game is over — they carry their own authorization branch.
+  'ENDGAME_REWARDS_DONE',
+  'ENDGAME_CONTINUE',
 ])
 
 /** Deterministic per-action seed: fold the match's base seed with the action
@@ -313,6 +318,15 @@ Deno.serve(async (req: Request) => {
     if (!idleRoll && !aiDefense && mySlot.player_id !== combat.defenderId) {
       return json({ error: 'only the defender answers for the defense', code: 'wrong-player' }, 403)
     }
+  } else if (action.type === 'ENDGAME_REWARDS_DONE' || action.type === 'ENDGAME_CONTINUE') {
+    // The end-of-game ceremony belongs to every SEAT, not to a turn — the
+    // game is over and "whose turn it is" is meaningless. Any human
+    // participant may report progress; the payload is stamped with the
+    // caller's own seat below, so nobody can mark another player done or
+    // decide for them. The one exception: the HOST reports an AI winner's
+    // rewards, since the host's machine runs the computer's win ceremony.
+    if (!state?.endGame) return json({ error: 'the game is not over', code: 'action-not-allowed' }, 409)
+    if (mySlot.is_ai) return json({ error: 'AI seats do not report endgame progress', code: 'wrong-player' }, 403)
   } else if (action.type === 'APPLY_EVENT_TROOPS' || action.type === 'SEED_CARD_PILES') {
     // APPLY_EVENT_TROOPS: event rewards belong to a player the BOARD picked
     // (largest population, fewest territories, lowest roll) — usually NOT
@@ -357,8 +371,17 @@ Deno.serve(async (req: Request) => {
 
   // A spectator missile is stamped with the CALLER's seat — whatever playerId
   // the client wrote is discarded, so nobody spends a missile they don't own.
+  // Endgame progress flags are stamped the same way, with one carve-out: the
+  // HOST may mark an AI's rewards done (its machine ran the AI's ceremony).
+  const endgameStamp = (a: Action & { playerId?: string }): Action => {
+    const targetIsAi = !!seats.find((s) => s.player_id === a.playerId)?.is_ai
+    const hostForAi = a.type === 'ENDGAME_REWARDS_DONE' && targetIsAi && match.created_by === user.id
+    return hostForAi ? a : { ...a, playerId: mySlot.player_id }
+  }
   const safeAction = action.type === 'SPECTATOR_MISSILE'
     ? { ...action, playerId: mySlot.player_id }
+    : (action.type === 'ENDGAME_REWARDS_DONE' || action.type === 'ENDGAME_CONTINUE')
+    ? endgameStamp(action as Action & { playerId?: string })
     : sanitize(action, state, legacy, factionOf)
   const seed = actionSeed(Number(match.rng_seed), match.action_seq)
 

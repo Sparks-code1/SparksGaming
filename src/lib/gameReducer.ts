@@ -1,5 +1,5 @@
-/**
- * gameReducer — the pure, headless rules engine for Risk Legacy.
+﻿/**
+ * gameReducer â€” the pure, headless rules engine for Risk Legacy.
  *
  * This is Step 1 of the server-authoritative multiplayer refactor. Game logic
  * currently lives inline inside GameBoard.tsx (52 `setGameState` sites tangled
@@ -20,7 +20,7 @@
  *     in a later step.
  *
  * SCOPE: draft/reinforce-phase actions (done) + combat resolution math
- * (this step — the pure dice engine, extracted from AttackModal). Attack/fortify
+ * (this step â€” the pure dice engine, extracted from AttackModal). Attack/fortify
  * reducer actions and the GameState expansion they need are being layered on
  * next, one verified stage at a time.
  */
@@ -29,7 +29,7 @@ import { initialTurnState, type ActiveCombat, type GameState, type ServerCardPil
 import type { Territory } from '@/types/territory'
 import { applyCustomSeaLines, applyHqReserveTroops, continentsHeldInFull, injectAlienIslandTerritory, legalJoinWarTerritoryIds, troopsAfterEntry } from '@/lib/gameLogic'
 
-// ─── Injected randomness ────────────────────────────────────────────────────
+// â”€â”€â”€ Injected randomness â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** All non-determinism the reducer may need, injected so transitions stay pure
  *  and reproducible (and can later be seeded/verified server-side). */
@@ -38,11 +38,11 @@ export interface Rng {
   next(): number
   /** Integer in [minInclusive, maxInclusive]. */
   int(minInclusive: number, maxInclusive: number): number
-  /** Fisher–Yates shuffle — returns a NEW array, never mutates the input. */
+  /** Fisherâ€“Yates shuffle â€” returns a NEW array, never mutates the input. */
   shuffle<T>(arr: readonly T[]): T[]
 }
 
-/** Default RNG backed by Math.random — preserves current client behaviour.
+/** Default RNG backed by Math.random â€” preserves current client behaviour.
  *  Server code will supply a seeded implementation instead. */
 export function createMathRng(): Rng {
   const next = () => Math.random()
@@ -61,10 +61,10 @@ export function createMathRng(): Rng {
 }
 
 /**
- * Deterministic seeded RNG (mulberry32). Same seed → same sequence, on any
+ * Deterministic seeded RNG (mulberry32). Same seed â†’ same sequence, on any
  * runtime. This is what the SERVER uses: it seeds each action's resolution
  * (e.g. `seed = hash(matchId, actionSeq)`), runs the reducer, and the outcome is
- * reproducible and auditable — no trust in the client's dice. Portable to Deno /
+ * reproducible and auditable â€” no trust in the client's dice. Portable to Deno /
  * Edge Functions (no Math.random, no platform APIs).
  */
 export function createSeededRng(seed: number): Rng {
@@ -89,7 +89,7 @@ export function createSeededRng(seed: number): Rng {
   }
 }
 
-// ─── Actions ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * A serializable player intent. In the multiplayer model the client sends one
@@ -112,7 +112,7 @@ export type Action =
    *  server, which will care that the attacker stopped. */
   | { type: 'RETREAT' }
   /**
-   * A combat round's dice are final — hold them open for spectator missiles.
+   * A combat round's dice are final â€” hold them open for spectator missiles.
    *
    * Dispatched by the ACTOR's machine after every modifier and battle-side
    * missile has been applied, before losses are computed. The dice are
@@ -126,27 +126,27 @@ export type Action =
    * unmodified 6.
    *
    * Server-only in practice: the edge function refuses it unless the window is
-   * open, the die is unclaimed (first click wins — a loser is refused, so the
+   * open, the die is unclaimed (first click wins â€” a loser is refused, so the
    * missile is never charged), the caller is a participant who is NOT a side
    * in the battle, and the caller actually has a missile left (campaign count
    * minus this game's `missileSpends` ledger). `playerId` is overwritten with
-   * the caller's own seat during sanitize — a client cannot spend someone
+   * the caller's own seat during sanitize â€” a client cannot spend someone
    * else's missile.
    */
   | { type: 'SPECTATOR_MISSILE'; roundKey: string; side: 'atk' | 'def'; dieIndex: number; playerId: string }
-  /** The actor resumes the battle — the window closes, late missiles refuse. */
+  /** The actor resumes the battle â€” the window closes, late missiles refuse. */
   | { type: 'CLOSE_COMBAT_WINDOW'; roundKey: string }
   /**
    * Take one card into the current player's hand from a SERVER-OWNED pile.
    *
    * `face-up`: the card must be on the sideboard; spot 1 refills from the
    * territory deck's head. `coin`: the card must be in the resource pile.
-   * Runs only when `state.cards` exists (online matches) — in hotseat the
+   * Runs only when `state.cards` exists (online matches) â€” in hotseat the
    * component's cardState owns the piles and this action refuses, so the two
    * owners can never both apply a draw. Which cards a player may LEGALLY pick
    * (face-up-you-control-first, Purist cap, homelands) is judged by the
    * client's `cardDrawBlockReason` against legacy state the reducer cannot
-   * read — the reducer enforces the structural half: a card can only be drawn
+   * read â€” the reducer enforces the structural half: a card can only be drawn
    * once, because it leaves the pile atomically under the server's version
    * guard.
    */
@@ -154,15 +154,15 @@ export type Action =
   /**
    * Trade cards from the current player's hand: coins return to the resource
    * pile, territory cards go to the discard. The troop bonus is NOT modelled
-   * here — it arrives as ordinary PLACE_REINFORCEMENTs, exactly as in hotseat.
+   * here â€” it arrives as ordinary PLACE_REINFORCEMENTs, exactly as in hotseat.
    */
   | { type: 'TRADE_IN_CARDS'; playerId: string; cardIds: string[] }
   /**
    * Board troop changes decided by an EVENT CARD (Join the Cause, Control the
    * People troops, the fortify event, Resistance, Riot, the fallout event,
    * Beam Down). The targets and amounts are event rules judged client-side
-   * against card/legacy state the reducer cannot read — same interim trust as
-   * RESOLVE_COMBAT — but the server clamps each delta, floors troops at zero
+   * against card/legacy state the reducer cannot read â€” same interim trust as
+   * RESOLVE_COMBAT â€” but the server clamps each delta, floors troops at zero
    * (a vacated territory loses its owner), and only lets `occupyingPlayerId`
    * be set on land that is genuinely empty. Before this action, every one of
    * these effects existed only on the machine that resolved the event.
@@ -171,7 +171,7 @@ export type Action =
   /**
    * Mobile HQ: move the player's HQ token to an adjacent owned territory.
    * Adjacency is client-judged (sea lines live in legacy); the reducer
-   * enforces the structural half — mover owns both ends, no second HQ there.
+   * enforces the structural half â€” mover owns both ends, no second HQ there.
    */
   | { type: 'MOVE_HQ'; playerId: string; fromId: string; toId: string }
   /**
@@ -180,36 +180,45 @@ export type Action =
    * `legalJoinWarTerritoryIds` the offer was built from.
    */
   | { type: 'JOIN_WAR'; playerId: string; territoryId: string }
-  /** The eliminated player declines to rejoin — recorded so they are never
+  /** The eliminated player declines to rejoin â€” recorded so they are never
    *  offered again (an echo restoring "undecided" would re-open the modal). */
   | { type: 'FORFEIT_WAR'; playerId: string }
   /**
    * The game is over. Wins are detected on the machine that saw the condition
    * (stars and missions read legacy state), and used to be a bare local write
-   * — the other machines never learned the game had ended. The reducer only
+   * â€” the other machines never learned the game had ended. The reducer only
    * records a winner that exists and is alive.
    */
   | { type: 'END_GAME'; winnerId: string; condition: 'mission' | 'elimination' | 'stars' }
   /**
-   * MAP SURGERY — permanent board changes that used to be bare local writes.
+   * END-OF-GAME CEREMONY â€” progress flags every machine renders from.
+   * REWARDS_DONE: this player's legacy rewards are recorded (winner steps, or
+   * a runner-up's minor city + card upgrade). CONTINUE: their table decision
+   * once all rewards are in. Both are once-per-player and refuse to run
+   * without the endGame session END_GAME seeds.
+   */
+  | { type: 'ENDGAME_REWARDS_DONE'; playerId: string }
+  | { type: 'ENDGAME_CONTINUE'; playerId: string; choice: 'continue' | 'quit' }
+  /**
+   * MAP SURGERY â€” permanent board changes that used to be bare local writes.
    * Each is structural: the reducer applies exactly the shape the campaign
    * rules allow, judged against its own board. The legacy-side record
    * (stickers, history, destroyed-city registry) stays with the resolving
-   * client as before — these own only what lives in GameState.
+   * client as before â€” these own only what lives in GameState.
    */
   /** Island Empire reward: a two-way sea adjacency between two territories. */
   | { type: 'PLACE_SEA_LINE'; a: string; b: string }
   /** Alien milestone: Alien Island appears as a real territory, connected to
-   *  the two chosen endpoints. Idempotent — a second inject changes nothing. */
+   *  the two chosen endpoints. Idempotent â€” a second inject changes nothing. */
   | { type: 'INJECT_ALIEN_ISLAND'; island: { x: number; y: number; connectedTerritoryIds: [string, string] } }
   /** Die Humans ruin / the nuclear Fallout Zone: everything on the territory
-   *  is gone — troops, owner, cities, any HQ (and its activeHqs entry).
+   *  is gone â€” troops, owner, cities, any HQ (and its activeHqs entry).
    *  `clearScars` is the nuclear variant. */
   | { type: 'OBLITERATE_TERRITORY'; territoryId: string; clearScars?: boolean }
   /** World Capital burying covered cities / a Riot demolishing an HQ city:
    *  the named cities are marked destroyed; `demolishHq` clears the HQ field. */
   | { type: 'DESTROY_CITIES'; territoryId: string; cityIds: string[]; demolishHq?: boolean }
-  /** A scar card lands on the board. One scar per territory — the second is
+  /** A scar card lands on the board. One scar per territory â€” the second is
    *  refused here exactly as the placement UI refuses it. */
   | { type: 'PLACE_SCAR'; territoryId: string; scarType: string }
   /**
@@ -219,18 +228,18 @@ export type Action =
    * every DRAW_CARD / TRADE_IN_CARDS no-ops against it and hands silently die
    * on echoes again. The host's machine dispatches this once when it adopts
    * such a match, seeding the piles and hands from its own card state.
-   * Applies ONLY while `state.cards` is absent — on a seeded match it is a
+   * Applies ONLY while `state.cards` is absent â€” on a seeded match it is a
    * no-op, so a duplicate (echo, two eager machines racing) changes nothing:
    * the first seed through the version guard wins.
    */
   | { type: 'SEED_CARD_PILES'; cards: ServerCardPiles; hands: Record<string, string[]> }
   /**
-   * INTERACTIVE ONLINE COMBAT — a battle between two humans becomes shared
+   * INTERACTIVE ONLINE COMBAT â€” a battle between two humans becomes shared
    * state so the defender participates and everyone else can watch.
    *
    * COMBAT_OFFER opens the session (attacker's machine, on the battle modal).
    * COMBAT_PROPOSE_AUTO asks to auto-resolve; COMBAT_DEFENSE_CHOICE is the
-   * defender's answer — auto only happens when BOTH said yes, either side
+   * defender's answer â€” auto only happens when BOTH said yes, either side
    * preferring dice forces a manual battle. POST_COMBAT_DICE carries one
    * side's RAW roll for the current round (the attacker posts theirs without
    * waiting); COMBAT_NEXT_ROUND clears the slots for the next roll.
@@ -243,7 +252,7 @@ export type Action =
   | { type: 'COMBAT_PROPOSE_AUTO'; key: string }
   | { type: 'COMBAT_DEFENSE_CHOICE'; key: string; accept: boolean }
   | { type: 'POST_COMBAT_DICE'; key: string; round: number; side: 'atk' | 'def'; dice: number[]; by?: 'defender' | 'attacker-idle' | 'ai' }
-  /** Battle-side missile conversions this round — dice forced to unmodifiable
+  /** Battle-side missile conversions this round â€” dice forced to unmodifiable
    *  6s during the missile phase, posted so every screen replays them. */
   | { type: 'POST_COMBAT_MISSILES'; key: string; round: number; flips: Array<{ side: 'atk' | 'def'; dieIndex: number }> }
   | { type: 'COMBAT_NEXT_ROUND'; key: string; round: number }
@@ -251,7 +260,7 @@ export type Action =
   /**
    * Move troops between two owned territories during fortify. `troopsRemoved`
    * leaves the source; `troopsArriving` reaches the destination (they differ
-   * only when the Fallout Zone halves the arrivals — the caller precomputes it).
+   * only when the Fallout Zone halves the arrivals â€” the caller precomputes it).
    */
   | { type: 'CONFIRM_FORTIFY'; srcId: string; dstId: string; troopsRemoved: number; troopsArriving: number }
   /**
@@ -263,7 +272,7 @@ export type Action =
    * `hqReservePlayerIds` names the players whose chosen faction ability is
    * Khan's Strategic Reserve (+1 troop on each controlled HQ at the start of
    * their turn). The ability lives in legacy state the reducer cannot read, so
-   * it arrives as an input — supplied by the caller in hotseat and RECOMPUTED
+   * it arrives as an input â€” supplied by the caller in hotseat and RECOMPUTED
    * from the campaign row on the server, like `endTerritories` itself. The
    * reserve is applied HERE, to the incoming player, because this is the one
    * place the turn actually changes hands: when the client pre-folded it into
@@ -288,14 +297,14 @@ export type Action =
       captured: boolean
       troopsToAdvance: number
       /** Entry cost deducted from arriving troops when capturing an unoccupied
-       *  city / World Capital (0 otherwise). Reads legacy → precomputed. */
+       *  city / World Capital (0 otherwise). Reads legacy â†’ precomputed. */
       entryCostTotal: number
       /** Fallout Zone halves the arriving troops after the entry cost. */
       entryCostFalloutHalf: boolean
       /** Extra defender troops from Mutant Unstable Cloning on a repelled attack (0 if N/A). */
       defenderCloningBonus: number
       /**
-       * Walking into an UNOCCUPIED territory — no dice, no defender, losses 0.
+       * Walking into an UNOCCUPIED territory â€” no dice, no defender, losses 0.
        * Same board mutation as a capture (occupy, advance, entry costs), but
        * deliberately NO `territory-captured` effect: expanding into empty land
        * earns no card, and this flag is what keeps that rule when the move
@@ -312,8 +321,8 @@ export type Action =
       /**
        * The dice as the actor's machine rolled them, round by round. PURELY
        * for spectators: other clients receive this action live and animate the
-       * same battle the attacker saw. The reducer never reads it — the board
-       * change comes from the totals above — so a forged round log can lie
+       * same battle the attacker saw. The reducer never reads it â€” the board
+       * change comes from the totals above â€” so a forged round log can lie
        * only to the audience, never to the game. Bounded by
        * `clampCombatResolution` so the log cannot be used as a payload dump.
        */
@@ -332,7 +341,7 @@ export type Action =
    *
    * `RESOLVE_COMBAT` takes the losses and the capture flag as inputs, because
    * in hotseat the client has already rolled. That makes it useless for server
-   * authority — a server running it applies whatever result the caller claims,
+   * authority â€” a server running it applies whatever result the caller claims,
    * so `{ totalDefLoss: 99, captured: true }` would simply be honoured. This
    * action carries only intent, and the dice are rolled inside the reducer from
    * the injected Rng, which the server seeds and owns.
@@ -355,13 +364,13 @@ export type Action =
       defenderCloningBonus: number
     }
 
-// ─── Effects ──────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Effects â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //
 // The reducer owns only GameState. Consequences that touch LegacyState
-// (Supabase: history log, red stars, comeback powers, scarDeck…), card decks,
+// (Supabase: history log, red stars, comeback powers, scarDeckâ€¦), card decks,
 // sounds, or React modals cannot live in a pure `=> GameState` reducer. So the
-// reducer EMITS effects — descriptors of "what happened" that it can DECIDE from
-// GameState — and the component (which has legacy/deck/modal access) interprets
+// reducer EMITS effects â€” descriptors of "what happened" that it can DECIDE from
+// GameState â€” and the component (which has legacy/deck/modal access) interprets
 // them. In the server model the server runs the reducer, applies effects to the
 // persistent stores, and broadcasts them to clients.
 
@@ -369,7 +378,7 @@ export type Effect =
   /** A territory changed hands. Drives the victory sound + first-capture card award. */
   | { kind: 'territory-captured'; territoryId: string; fromPlayerId: string | null; byPlayerId: string; firstCaptureThisTurn: boolean }
   /** A spectator's missile landed: one die of the open round is now a 6.
-   *  Drives the die flip on every screen — the actor's modal included. */
+   *  Drives the die flip on every screen â€” the actor's modal included. */
   | { kind: 'spectator-missile'; roundKey: string; playerId: string; side: 'atk' | 'def'; dieIndex: number; srcId: string; tgtId: string }
   /** A card left a server-owned pile for a hand. Remote clients mirror their
    *  display cardState from the new GameState when this arrives. */
@@ -396,13 +405,13 @@ export type Effect =
       byPlayerId: string
       /** Cards taken from the eliminated players. Reported here because the
        *  reducer has already moved them to the capturer by the time the
-       *  component sees this — the Forced Occupation private mission needs to
+       *  component sees this â€” the Forced Occupation private mission needs to
        *  know whether any was worth 3+ resources. */
       capturedCardIds: string[]
     }
   /**
    * The resolver rolled a battle. Carries every round so a client can animate
-   * the dice the SERVER rolled instead of inventing its own — without this the
+   * the dice the SERVER rolled instead of inventing its own â€” without this the
    * board would jump straight to the result.
    *
    * Only `DECLARE_ATTACK` emits it; hotseat's `RESOLVE_COMBAT` does not,
@@ -416,7 +425,7 @@ export interface ReducerResult {
   effects: Effect[]
 }
 
-// ─── Pure validation helpers ────────────────────────────────────────────────
+// â”€â”€â”€ Pure validation helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //
 // Rules that produce a user-facing rejection (rather than a state change) can't
 // be expressed as a reducer transition, so they live here as pure predicates.
@@ -449,14 +458,14 @@ export function checkReinforcementPlacement(
 
   // Fallout Zone: only the Mutants may draft troops into it
   if (territoryId === rules.falloutZoneTerritoryId && rules.playerFactionId !== 'mutants') {
-    return { ok: false, reason: '☢ Only the Mutants can draft troops into the Fallout Zone' }
+    return { ok: false, reason: 'â˜¢ Only the Mutants can draft troops into the Fallout Zone' }
   }
 
   // Cautious weakness power: recruited troops go into at most 2 distinct territories
   if (rules.isCautiousWeakness) {
     const placedInto = new Set(rules.placementHistory)
     if (!placedInto.has(territoryId) && placedInto.size >= 2) {
-      return { ok: false, reason: '⚠ Cautious — you can only place recruited troops into 2 territories' }
+      return { ok: false, reason: 'âš  Cautious â€” you can only place recruited troops into 2 territories' }
     }
   }
 
@@ -476,8 +485,8 @@ export function canStartAttack(state: GameState, srcId: string, tgtId: string, p
 }
 
 /** True when `playerId` may fortify from `srcId`: owns it with more than one
- *  troop. (Which destinations are reachable — Saharan connected/disconnected
- *  rules, Short-Sighted weakness — is a separate reachability check.) */
+ *  troop. (Which destinations are reachable â€” Saharan connected/disconnected
+ *  rules, Short-Sighted weakness â€” is a separate reachability check.) */
 export function canStartFortify(state: GameState, srcId: string, playerId: string): boolean {
   const src = state.territories[srcId]
   if (!src) return false
@@ -488,7 +497,7 @@ export function canStartFortify(state: GameState, srcId: string, playerId: strin
  * Should this eliminated player's turn be passed over entirely?
  *
  * Two cases: they already used or forfeited their Join the War option, or they
- * are still undecided but there is nowhere legal to re-enter — in which case
+ * are still undecided but there is nowhere legal to re-enter â€” in which case
  * the only "choice" on offer would be to forfeit, so skip them silently and
  * leave the option open for a later turn if a spot frees up.
  */
@@ -520,10 +529,10 @@ export function computeTurnAdvance(state: GameState): { nextIdx: number; isNewRo
 }
 
 /**
- * End-of-turn scar effects for the ENDING player's territories. Biological −1
+ * End-of-turn scar effects for the ENDING player's territories. Biological âˆ’1
  * (Mercenary +1); the Mutants have both reversed. A territory sitting at 1 troop
- * that takes a loss is vacated (troops 0, owner null) — but never the player's
- * LAST territory. The Fallout Zone gives Mutants +1 there, others −1. Pure:
+ * that takes a loss is vacated (troops 0, owner null) â€” but never the player's
+ * LAST territory. The Fallout Zone gives Mutants +1 there, others âˆ’1. Pure:
  * returns a new territories map + the names of any vacated territories.
  */
 export function applyEndOfTurnScarEffects(
@@ -548,7 +557,7 @@ export function applyEndOfTurnScarEffects(
 
   const applyLoss = (id: string, t: Territory) => {
     if (t.troops <= 1) {
-      // Never vacate the player's LAST territory — would soft-lock them
+      // Never vacate the player's LAST territory â€” would soft-lock them
       if (ownedCount > 1) {
         result[id] = { ...t, troops: 0, occupyingPlayerId: null }
         vacatedNames.push(t.name)
@@ -577,7 +586,7 @@ export function applyEndOfTurnScarEffects(
     const fzT = result[falloutZoneId]
     if (fzT?.occupyingPlayerId === endingPlayerId) {
       // Mutants thrive there; everyone else bleeds a troop a turn and, at one
-      // troop, is driven off entirely — the ground itself finishes the job.
+      // troop, is driven off entirely â€” the ground itself finishes the job.
       // Goes through applyLoss so it behaves exactly like a Bio-hazard scar,
       // including the guard that never takes a player's LAST territory (that
       // would eliminate them by attrition with no way to respond).
@@ -589,7 +598,7 @@ export function applyEndOfTurnScarEffects(
   return { territories: result, vacatedNames }
 }
 
-// ─── Reducer ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Reducer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Apply an action to the game state, returning a new state. Pure and total:
@@ -643,13 +652,13 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
     }
 
     case 'DECLARE_ATTACK': {
-      // The SERVER-AUTHORITATIVE attack. The client declares only its INTENT —
-      // which territory, which target, how many troops advance on a capture —
+      // The SERVER-AUTHORITATIVE attack. The client declares only its INTENT â€”
+      // which territory, which target, how many troops advance on a capture â€”
       // and the dice are rolled here, through the injected Rng.
       //
       // `RESOLVE_COMBAT` below cannot do this: it takes the losses and the
       // capture flag as INPUTS, because in hotseat the client already rolled.
-      // Running that action on a server grants no dice authority at all — it
+      // Running that action on a server grants no dice authority at all â€” it
       // faithfully applies whatever result the caller claims. This action is
       // the one the server accepts; RESOLVE_COMBAT stays for local hotseat.
       const src0 = state.territories[action.srcId]
@@ -691,7 +700,7 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
       return only(state)
 
     case 'OPEN_COMBAT_WINDOW': {
-      // Hold this round's dice still. Replaces any stale window outright — a
+      // Hold this round's dice still. Replaces any stale window outright â€” a
       // window only ever belongs to the newest roll.
       const die = (v: unknown) => typeof v === 'number' && Number.isFinite(v)
         ? Math.max(1, Math.min(6, Math.trunc(v))) : 1
@@ -709,7 +718,7 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
     }
 
     case 'SPECTATOR_MISSILE': {
-      // Legality is judged by `spectatorMissileRefusal` — the edge function
+      // Legality is judged by `spectatorMissileRefusal` â€” the edge function
       // refuses BEFORE applying, so a refused missile is never charged and
       // never logged. The reducer still re-checks the structural parts and
       // no-ops rather than corrupt the window if something slips through.
@@ -754,11 +763,11 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
 
       if (action.source === 'face-up') {
         const at = piles.sideboard.indexOf(action.cardId)
-        if (at < 0) return only(state)        // already taken — the pile is the truth
+        if (at < 0) return only(state)        // already taken â€” the pile is the truth
         const deck = [...piles.territoryDeck]
         const newSpot1Id = deck.length > 0 ? deck.shift()! : null
         // Taking a card shifts the row toward spot 4; the refill slides into
-        // spot 1 — the same motion the physical row makes.
+        // spot 1 â€” the same motion the physical row makes.
         const sideboard = [
           ...(newSpot1Id ? [newSpot1Id] : []),
           ...piles.sideboard.filter(id => id !== action.cardId),
@@ -856,7 +865,7 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
           ...state,
           territories: {
             ...state.territories,
-            // 3 troops on re-entry — the same number the component always used.
+            // 3 troops on re-entry â€” the same number the component always used.
             [action.territoryId]: { ...t, occupyingPlayerId: action.playerId, troops: 3 },
           },
           players: state.players.map(p =>
@@ -883,9 +892,44 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
       if (!winner || winner.isEliminated) return only(state)
       if (state.phase === 'game-over') return only(state)
       return {
-        state: { ...state, phase: 'game-over', winnerId: action.winnerId },
+        state: {
+          ...state,
+          phase: 'game-over',
+          winnerId: action.winnerId,
+          // Seed the shared ceremony: every machine renders the reward
+          // progress and the continue gate from this one document.
+          endGame: {
+            winnerId: action.winnerId,
+            condition: action.condition,
+            rewardsDone: {},
+            continues: {},
+          },
+        },
         effects: [{ kind: 'game-ended', winnerId: action.winnerId, condition: action.condition }],
       }
+    }
+
+    case 'ENDGAME_REWARDS_DONE': {
+      const eg = state.endGame
+      if (!eg || !state.players.some(p => p.id === action.playerId)) return only(state)
+      if (eg.rewardsDone[action.playerId]) return only(state)
+      return only({
+        ...state,
+        endGame: { ...eg, rewardsDone: { ...eg.rewardsDone, [action.playerId]: true } },
+      })
+    }
+
+    case 'ENDGAME_CONTINUE': {
+      const eg = state.endGame
+      if (!eg || !state.players.some(p => p.id === action.playerId)) return only(state)
+      // A decision is final â€” a second click (or a machine replaying its own
+      // echo) must never flip a recorded choice.
+      if (eg.continues[action.playerId]) return only(state)
+      const choice = action.choice === 'quit' ? 'quit' : 'continue'
+      return only({
+        ...state,
+        endGame: { ...eg, continues: { ...eg.continues, [action.playerId]: choice } },
+      })
     }
 
     case 'PLACE_SEA_LINE': {
@@ -899,7 +943,7 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
       if (!island || !Number.isFinite(island.x) || !Number.isFinite(island.y)) return only(state)
       const [c1, c2] = island.connectedTerritoryIds ?? []
       if (!state.territories[c1] || !state.territories[c2] || c1 === c2) return only(state)
-      // The helper is idempotent — a second inject (echo, retry) is a no-op.
+      // The helper is idempotent â€” a second inject (echo, retry) is a no-op.
       return only({ ...state, territories: injectAlienIslandTerritory(state.territories, island) })
     }
 
@@ -1045,7 +1089,7 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
       return only({ ...state, combat: null })
 
     case 'SEED_CARD_PILES': {
-      // Only a match that PREDATES the card piles may be seeded — on any other
+      // Only a match that PREDATES the card piles may be seeded â€” on any other
       // board this is a no-op, which is what makes racing seeds harmless.
       if (state.cards) return only(state)
       const c = action.cards
@@ -1069,7 +1113,7 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
     case 'PLACE_SCAR': {
       const t = state.territories[action.territoryId]
       if (!t) return only(state)
-      // One scar per territory — same rule the placement UI enforces.
+      // One scar per territory â€” same rule the placement UI enforces.
       if ((t.scars?.length ?? 0) > 0) return only(state)
       const scarType = String(action.scarType).slice(0, 40)
       return only({
@@ -1117,7 +1161,7 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
       const dst = state.territories[action.dstId]
       if (!src || !dst) return only(state)
       // A fortify that would strip the source below 1 troop (or "move"
-      // negative troops) is refused outright — same negative-troop corruption
+      // negative troops) is refused outright â€” same negative-troop corruption
       // class as the unclamped advance above.
       if (action.troopsRemoved < 0 || action.troopsArriving < 0
           || src.troops - action.troopsRemoved < 1) return only(state)
@@ -1134,11 +1178,11 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
     case 'END_TURN': {
       // Merge the end-of-turn board FIRST: whether an eliminated player has a
       // legal re-entry (and so is offered a turn at all) must be judged on the
-      // final map — an end-of-turn scar can vacate a territory and open one up.
+      // final map â€” an end-of-turn scar can vacate a territory and open one up.
       //
       // `endTerritories` is computed by the CALLER. On the server that caller is
       // the client, so the server recomputes it instead of trusting the payload
-      // — see `endTurnTerritories` below.
+      // â€” see `endTurnTerritories` below.
       const withEnd: GameState = {
         ...state,
         territories: { ...state.territories, ...action.endTerritories },
@@ -1147,7 +1191,7 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
       const nextPlayerId = withEnd.players[nextIdx]?.id ?? ''
       // Khan's Strategic Reserve for the INCOMING player: +1 troop on each HQ
       // they control, applied at the one true hand-off so it lands exactly
-      // once — on the server too, which used to strip it with the recompute.
+      // once â€” on the server too, which used to strip it with the recompute.
       const reserve = (action.hqReservePlayerIds ?? []).includes(nextPlayerId)
         ? applyHqReserveTroops(withEnd.territories, nextPlayerId, 'khan-hq-troops')
         : { territories: withEnd.territories, grantedTerritoryIds: [] }
@@ -1159,7 +1203,7 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
           currentPlayerIndex: nextIdx,
           turnNumber: isNewRound ? state.turnNumber + 1 : state.turnNumber,
           // A fresh turn for the incoming player. Without this the SERVER's
-          // copy of `turn` was never reset (or set at all) — it served the
+          // copy of `turn` was never reset (or set at all) â€” it served the
           // initial board's zeroes forever, and every echo overwrote the
           // client's own tracking with them mid-turn.
           turn: {
@@ -1185,11 +1229,11 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
   }
 }
 
-// ─── Server-authority guards ─────────────────────────────────────────────────
+// â”€â”€â”€ Server-authority guards â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //
 // Three of the reducer's actions were designed for a trusted caller and carry
-// values the caller computed. That is fine in hotseat — the caller IS the
-// player's own machine — but on a server each one is a hole:
+// values the caller computed. That is fine in hotseat â€” the caller IS the
+// player's own machine â€” but on a server each one is a hole:
 //
 //   RESOLVE_COMBAT.totalDefLoss/captured   the whole combat result
 //   END_TURN.endTerritories                an entire replacement board
@@ -1225,7 +1269,7 @@ export function endTurnTerritories(
  * produce.
  *
  * The server does not model legacy/scar/faction state yet, so it cannot DERIVE
- * the modifiers — it can only refuse impossible ones. That bounds the damage a
+ * the modifiers â€” it can only refuse impossible ones. That bounds the damage a
  * forged stack can do (no 9-dice defenders, no unbounded die bonuses) without
  * pretending to full authority over the modifier layer. The raw submission is
  * logged verbatim so a mismatch is auditable after the fact.
@@ -1235,7 +1279,7 @@ export function clampCombatModifiers(m: Partial<CombatModifiers> | null | undefi
     typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.trunc(v))) : dflt
   const override = m?.attackerMaxDiceOverride
   return {
-    // Never MORE than the standard 3 attacker dice — only ever a restriction.
+    // Never MORE than the standard 3 attacker dice â€” only ever a restriction.
     attackerMaxDiceOverride: typeof override === 'number' ? clamp(override, 1, 3, 3) : undefined,
     attackerBonusAllDice: clamp(m?.attackerBonusAllDice, -5, 5),
     attackerSubtractLowest: !!m?.attackerSubtractLowest,
@@ -1257,14 +1301,14 @@ export function clampCombatModifiers(m: Partial<CombatModifiers> | null | undefi
  * Bound a client-rolled combat result to what the board could actually allow.
  *
  * The interim trust model for online combat: the ACTOR's machine rolls (the
- * interactive modal — missiles, per-round retreats — cannot ride a one-shot
+ * interactive modal â€” missiles, per-round retreats â€” cannot ride a one-shot
  * server roll yet), and the server applies the claimed result only after
  * forcing it through these bounds, derived from ITS OWN board:
  *
- *   · losses cannot exceed the troops actually present
- *   · a capture REQUIRES every defender dead — `captured: true` with
+ *   Â· losses cannot exceed the troops actually present
+ *   Â· a capture REQUIRES every defender dead â€” `captured: true` with
  *     survivors is the flag most worth forging, and it is simply recomputed
- *   · the advance cannot exceed the attacker's survivors minus the one troop
+ *   Â· the advance cannot exceed the attacker's survivors minus the one troop
  *     that must stay behind, and entry costs cannot be negative
  *
  * A forged result can still shade dice luck; it can no longer conjure a
@@ -1292,8 +1336,8 @@ export function clampCombatResolution(
   const totalAtkLoss = int(a.totalAtkLoss, 0, Math.max(0, srcTroops - 1))
   const totalDefLoss = int(a.totalDefLoss, 0, tgtTroops)
   // Two legal ways to take a territory, judged against the SERVER's board:
-  //   conquest  — every defender present died in the claimed fighting
-  //   expansion — the territory is genuinely empty (no troops, no owner);
+  //   conquest  â€” every defender present died in the claimed fighting
+  //   expansion â€” the territory is genuinely empty (no troops, no owner);
   //               claiming "uncontested" against a defended territory is the
   //               same forgery as claiming a capture without the kills
   const uncontested = !!a.uncontested
@@ -1301,10 +1345,10 @@ export function clampCombatResolution(
     ? !!a.captured && !!tgt && tgtTroops === 0 && !tgt.occupyingPlayerId
     : !!a.captured && totalDefLoss >= tgtTroops && tgtTroops > 0
   const survivors = srcTroops - totalAtkLoss
-  // The spectator round log never touches the board — it exists so other
-  // clients can watch the battle — but it is still untrusted JSON headed for
+  // The spectator round log never touches the board â€” it exists so other
+  // clients can watch the battle â€” but it is still untrusted JSON headed for
   // the action log and every subscriber. Bound it hard: at most 40 rounds of
-  // at most 3 dice each, every die 1–6, or nothing at all. Walking into empty
+  // at most 3 dice each, every die 1â€“6, or nothing at all. Walking into empty
   // land rolled no dice, so `uncontested` carries no log.
   const rounds = !uncontested && Array.isArray(a.rounds)
     ? a.rounds.slice(0, 40).flatMap(r => {
@@ -1335,7 +1379,7 @@ export function clampCombatResolution(
 /**
  * Why a SPECTATOR_MISSILE must be refused, or null when it may apply.
  *
- * One source of truth, used by the edge function BEFORE it charges a missile —
+ * One source of truth, used by the edge function BEFORE it charges a missile â€”
  * a refused spend never happened, which is what makes "first click wins, the
  * loser is refunded" true by construction. The codes reach the losing
  * spectator so their screen can say which race they lost.
@@ -1347,7 +1391,7 @@ export function spectatorMissileRefusal(
   opts: {
     /** The spender's missile count from the CAMPAIGN blob (pre-ledger). */
     legacyMissiles: number
-    /** True when the spender is the ATTACKER — the one participant refused
+    /** True when the spender is the ATTACKER â€” the one participant refused
      *  here, because their conversions have their own missile phase. The
      *  DEFENDER fires through this window like any spectator: it is how a
      *  human spends missiles against an AI attacker (whose machine skips the
@@ -1370,8 +1414,8 @@ export function spectatorMissileRefusal(
  * Apply a decided combat result to the board.
  *
  * Shared by both combat paths so they can never disagree about what a capture
- * does: `RESOLVE_COMBAT` (hotseat — the client rolled) and `DECLARE_ATTACK`
- * (server — the server rolled). Only where the dice came from differs.
+ * does: `RESOLVE_COMBAT` (hotseat â€” the client rolled) and `DECLARE_ATTACK`
+ * (server â€” the server rolled). Only where the dice came from differs.
  */
 function applyCombatOutcome(
   state: GameState,
@@ -1404,7 +1448,7 @@ function applyCombatOutcome(
       src.troops -= action.totalAtkLoss
 
       if (action.captured) {
-        // Never move more than the source can spare — one troop must stay.
+        // Never move more than the source can spare â€” one troop must stay.
         // This floor exists because a caller CAN get it wrong: the live "-7
         // troops in Ontario" board came from an AI advance planned against a
         // stale snapshot, applied unclamped. The server clamps its callers;
@@ -1413,25 +1457,25 @@ function applyCombatOutcome(
         const moving = Math.min(Math.max(1, action.troopsToAdvance), Math.max(1, src.troops - 1))
         // Capturer takes the territory. Any enemy HQ token stays on it
         // (activeHqPlayerId is preserved via the {...tgt0} spread), so the
-        // capturer now controls that HQ — matching current behaviour.
+        // capturer now controls that HQ â€” matching current behaviour.
         tgt.occupyingPlayerId = src.occupyingPlayerId
         // Same rule as an uncontested advance: the entry cost comes out of the
         // arriving stack in full. The old `Math.max(1, moving - cost)` refunded
-        // it whenever the mover could not quite afford it — 2 troops into a
+        // it whenever the mover could not quite afford it â€” 2 troops into a
         // major city paid 1, and 1 troop paid nothing.
         const survivors = troopsAfterEntry(moving, {
           total: action.entryCostTotal,
           parts: [],
           falloutHalf: action.entryCostFalloutHalf,
         })
-        // A captured territory cannot hold 0, so this floor has to exist — but
+        // A captured territory cannot hold 0, so this floor has to exist â€” but
         // reaching it means the amount to advance was chosen without checking
         // affordability (AttackModal clamps it), so say so loudly instead of
         // quietly discounting the city.
         if (survivors < 1) {
           console.warn(
             `[Combat] ${moving} troops cannot pay the ${action.entryCostTotal}-troop entry at ${action.tgtId}` +
-            ' — capping at 1 survivor; the entry cost was not fully paid.',
+            ' â€” capping at 1 survivor; the entry cost was not fully paid.',
           )
         }
         tgt.troops = Math.max(1, survivors)
@@ -1460,7 +1504,7 @@ function applyCombatOutcome(
 
         // Elimination: any non-eliminated player who now holds 0 territories is
         // out. Mark them, wipe their hand, and transfer their cards to the
-        // capturer — the GameState mutation that used to live in a setTimeout.
+        // capturer â€” the GameState mutation that used to live in a setTimeout.
         const eliminatedIds = players
           .filter(p => !p.isEliminated && !Object.values(territories).some(t => t.occupyingPlayerId === p.id))
           .map(p => p.id)
@@ -1475,9 +1519,9 @@ function applyCombatOutcome(
         }
       }
 
-      // ── Per-turn combat tracking ────────────────────────────────────────────
+      // â”€â”€ Per-turn combat tracking â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       // This must live HERE, not in the component. The component used to patch
-      // it via setTurn after dispatching — fine in hotseat, but online every
+      // it via setTurn after dispatching â€” fine in hotseat, but online every
       // server echo replaces the whole GameState, and a server that never
       // tracked captures wiped the patches within a round-trip. The visible
       // damage: `firstCaptureThisTurn` above read an eternally-false
@@ -1521,11 +1565,11 @@ function applyCombatOutcome(
         }
       }
 
-      // The battle has resolved — its session and any missile window are over.
+      // The battle has resolved â€” its session and any missile window are over.
       return { state: { ...state, territories, players, turn, combatWindow: null, combat: null }, effects }
 }
 
-// ─── Combat engine (pure) ─────────────────────────────────────────────────────
+// â”€â”€â”€ Combat engine (pure) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //
 // Extracted verbatim from AttackModal's `simulateAutoResolve`, with all dice
 // rolled through the injected `Rng` instead of Math.random. This is the whole
@@ -1542,7 +1586,7 @@ export interface DefenderDiePart { label?: string; highest?: number; lowest?: nu
 /**
  * How much a single modifier source shifts a lone defender die.
  *
- * With one die there is no distinct "highest" and "lowest" — it is both. So a
+ * With one die there is no distinct "highest" and "lowest" â€” it is both. So a
  * source that names only the lowest (Bear Trap) DOES apply to it, and a source
  * naming both (Fortification, Armored Command) applies once rather than twice.
  */
@@ -1557,12 +1601,12 @@ export function singleDieBonus(parts: DefenderDiePart[] | undefined): number {
   return (parts ?? []).reduce((sum, p) => sum + singleDieDelta(p), 0)
 }
 
-/** A die is only ever 1–6, however the modifiers stack. */
+/** A die is only ever 1â€“6, however the modifiers stack. */
 const clampDie = (v: number) => Math.max(1, Math.min(6, v))
 
 /**
  * Apply the summed defender die modifiers to a descending-sorted roll.
- * The highest and lowest dice are shifted by their totals, then clamped ONCE —
+ * The highest and lowest dice are shifted by their totals, then clamped ONCE â€”
  * clamping between sources would discard a bonus at the 1/6 rails and let an
  * opposing penalty through unopposed.
  */
@@ -1575,7 +1619,7 @@ export function applyDefenderDieBonus(
   const out = [...dice]
   if (out.length === 1) {
     // A lone die is both the highest and the lowest, so every source applies to
-    // it — but one naming both (Fortification) applies just once.
+    // it â€” but one naming both (Fortification) applies just once.
     out[0] = clampDie(out[0] + (single ?? bonus.highest))
   } else {
     out[0] = clampDie(out[0] + bonus.highest)
@@ -1586,7 +1630,7 @@ export function applyDefenderDieBonus(
 
 /**
  * The same modifiers as `applyDefenderDieBonus`, revealed one named source at a
- * time for the attack animation — one dice snapshot per part, in order.
+ * time for the attack animation â€” one dice snapshot per part, in order.
  *
  * Deltas accumulate unclamped and are clamped only for display, so the last
  * snapshot is exactly what `applyDefenderDieBonus` returns for the summed
@@ -1617,12 +1661,12 @@ export interface CombatModifiers {
   attackerBonusAllDice: number
   /** Subtract 1 from the attacker's lowest die (Enclave / Bear Trap). */
   attackerSubtractLowest: boolean
-  /** Three-of-a-kind attack + ≥1 kill wipes all defenders (Berserker Rage). */
+  /** Three-of-a-kind attack + â‰¥1 kill wipes all defenders (Berserker Rage). */
   tripleKillEnabled: boolean
   /** Add to defender's highest / lowest die (Bunker, Fortification; negative = Ammo Shortage). */
   defenderDieBonus?: { highest: number; lowest: number }
   /**
-   * Net modifier when the defender rolls exactly ONE die — that die is both
+   * Net modifier when the defender rolls exactly ONE die â€” that die is both
    * their highest and their lowest, so every source applies to it, but a source
    * naming both (Fortification, Armored Command) still applies only once.
    * Cannot be derived from `defenderDieBonus`, which is a lossy sum; build it
@@ -1649,8 +1693,8 @@ export interface CombatRound {
 }
 
 /** One round of a client-rolled battle, as carried on RESOLVE_COMBAT for
- *  spectators (`rounds` above). The final dice after every modifier — what the
- *  attacker's screen showed — not the raw roll. */
+ *  spectators (`rounds` above). The final dice after every modifier â€” what the
+ *  attacker's screen showed â€” not the raw roll. */
 export interface CombatRoundLog {
   atkDice: number[]
   defDice: number[]
@@ -1669,7 +1713,7 @@ export interface CombatOutcome {
   defDoublesRounds: number
 }
 
-/** Roll one die 1–6, re-rolling 1's if required, via the injected Rng. */
+/** Roll one die 1â€“6, re-rolling 1's if required, via the injected Rng. */
 function rollDie(rng: Rng, rerollOnes = false): number {
   let v = rng.int(1, 6)
   while (rerollOnes && v === 1) v = rng.int(1, 6)
@@ -1681,7 +1725,7 @@ function rollN(rng: Rng, n: number, rerollOnes = false): number[] {
   return Array.from({ length: n }, () => rollDie(rng, rerollOnes)).sort((a, b) => b - a)
 }
 
-/** True when 2+ dice share a value (natural doubles — Mutant Unstable Cloning). */
+/** True when 2+ dice share a value (natural doubles â€” Mutant Unstable Cloning). */
 export function hasDoubles(dice: number[]): boolean {
   return dice.length >= 2 && new Set(dice).size < dice.length
 }
@@ -1746,7 +1790,7 @@ export function resolveCombat(
     const aLoss = base.aLoss + (mods.nuclearFallout ? 1 : 0)
     let dLoss = base.dLoss + (mods.nuclearFallout ? 1 : 0)
 
-    // Berserker Rage: three-of-a-kind + ≥1 kill wipes all defenders
+    // Berserker Rage: three-of-a-kind + â‰¥1 kill wipes all defenders
     const tripleKill = mods.tripleKillEnabled
       && finalAtk.length === 3
       && finalAtk[0] === finalAtk[1] && finalAtk[1] === finalAtk[2]
