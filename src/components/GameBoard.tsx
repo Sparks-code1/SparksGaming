@@ -2337,6 +2337,46 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameState.currentPlayerIndex, gameState.phase === 'reinforce', gameState.turnNumber])
 
+  // ── Turn-start draft pool (online) ────────────────────────────────────────
+  // troopsToPlace is computed by handleNextPhase — which runs on the machine
+  // that DISPATCHED the END_TURN. When the previous turn was played on another
+  // machine (the other human, or a host driving the AIs), the incoming
+  // player's own machine never got a fresh pool: it kept whatever its last
+  // local computation left behind — usually the 0 its own previous turn ended
+  // on. The visible symptom was a turn with no reinforcements to place (field
+  // report: "buying a red star disabled my reinforcements" — the buy was just
+  // the last click before noticing; the pool was never filled, and the same
+  // match log shows an AI turn with zero placements from the same staleness).
+  // Recompute at the START of each reinforce phase, once per turn: the key
+  // guard keeps mid-turn changes (trade-in bonuses, Population Boom, the
+  // placement decrements themselves) intact, because none of those change the
+  // key. On the machine that DID run handleNextPhase this recomputes the same
+  // number from the same board and overwrites it harmlessly.
+  const draftPoolKeyRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!onlineMatchRef.current) return   // hotseat: handleNextPhase's local value is exact
+    if (gameState.phase !== 'reinforce') return
+    const cp = gameState.players[gameState.currentPlayerIndex]
+    if (!cp || cp.isEliminated) return
+    const key = `${gameState.turnNumber}:${gameState.currentPlayerIndex}:${cp.id}`
+    if (draftPoolKeyRef.current === key) return
+    draftPoolKeyRef.current = key
+    const troops = calcDraftTroops({
+      playerId: cp.id,
+      factionId: cp.factionId,
+      territories: gameState.territories,
+      legacy: legacyStateRef.current ?? null,
+      ability: playerAbility(cp.id),
+    })
+    // The ref is written synchronously so the AI driver — which runs later in
+    // this same effects pass when an AI's turn arrives over the wire — decides
+    // "place or end phase" against the fresh pool, not the stale render.
+    troopsRef.current = troops
+    setTroopsToPlace(troops)
+    setPlacementHistory([])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState.currentPlayerIndex, gameState.turnNumber, gameState.phase])
+
   // ── 4-star victory watcher: any award path (missions, Agent of Chaos, star
   // powers, bought stars) that pushes a player to 4 stars ends the game ──────
   useEffect(() => {
@@ -2851,7 +2891,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
           return
         }
       }
-      if (troopsToPlace > 0) {
+      // Read the ref, not the render closure: when an AI turn arrives over the
+      // wire, the turn-start pool effect above refills troopsRef in this same
+      // effects pass — the state value in this closure is still the stale 0.
+      if (troopsRef.current > 0) {
         const plan = aiReinforcePlacements(gameState, legacyState, cp.id, 1, diff)
         const tid = plan[0] ?? Object.values(gameState.territories).find(t => t.occupyingPlayerId === cp.id)?.id
         if (tid) run(() => {
