@@ -70,6 +70,15 @@ console.log('\n--- the forgeries ---')
   check('a truthy viaSea collapses to boolean true', sea.viaSea, true)
   const noSea = clampCombatResolution(board(), claim())
   check('an absent viaSea collapses to boolean false', noSea.viaSea, false)
+
+  // The ghost-territory mint: every defender dead but captured false left a
+  // 0-troop territory that still had an owner and an HQ marker. A defender
+  // who was not captured keeps a last troop.
+  const ghost = clampCombatResolution(board(10, 4), claim({ totalDefLoss: 4, captured: false }))
+  check('an uncaptured defender keeps a last troop', ghost.totalDefLoss, 3)
+  check('and the non-capture stands', ghost.captured, false)
+  const ghostOverkill = clampCombatResolution(board(10, 4), claim({ totalDefLoss: 99, captured: false }))
+  check('overkill without a capture spares one too', ghostOverkill.totalDefLoss, 3)
 }
 
 console.log('\n--- uncontested expansion ---')

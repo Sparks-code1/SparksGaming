@@ -1187,6 +1187,7 @@ function clampCombatResolution(state, a) {
   const totalDefLoss = int(a.totalDefLoss, 0, tgtTroops);
   const uncontested = !!a.uncontested;
   const captured = uncontested ? !!a.captured && !!tgt && tgtTroops === 0 && !tgt.occupyingPlayerId : !!a.captured && totalDefLoss >= tgtTroops && tgtTroops > 0;
+  const boundedDefLoss = !uncontested && !captured ? Math.min(totalDefLoss, Math.max(0, tgtTroops - 1)) : totalDefLoss;
   const survivors = srcTroops - totalAtkLoss;
   const rounds = !uncontested && Array.isArray(a.rounds) ? a.rounds.slice(0, 40).flatMap((r2) => {
     const dice = (v) => Array.isArray(v) ? v.slice(0, 3).map((d) => int(d, 1, 6)) : [];
@@ -1198,7 +1199,7 @@ function clampCombatResolution(state, a) {
   return {
     ...a,
     totalAtkLoss: uncontested ? 0 : totalAtkLoss,
-    totalDefLoss: uncontested ? 0 : totalDefLoss,
+    totalDefLoss: uncontested ? 0 : boundedDefLoss,
     captured,
     uncontested,
     troopsToAdvance: captured ? int(a.troopsToAdvance, 1, Math.max(1, survivors - 1)) : 0,

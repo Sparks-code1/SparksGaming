@@ -1357,6 +1357,15 @@ export function clampCombatResolution(
   const captured = uncontested
     ? !!a.captured && !!tgt && tgtTroops === 0 && !tgt.occupyingPlayerId
     : !!a.captured && totalDefLoss >= tgtTroops && tgtTroops > 0
+  // A defender who was NOT captured keeps at least one troop. "All defenders
+  // dead" without a capture is an inconsistent claim — a full kill forces the
+  // advance — and applying it minted ghost territories: zero troops, still
+  // owned, HQ marker standing (a stale-snapshot AI attack did exactly this).
+  // Repair conservatively: spare the last defender rather than invent an
+  // ownership change the attacker never (validly) claimed.
+  const boundedDefLoss = !uncontested && !captured
+    ? Math.min(totalDefLoss, Math.max(0, tgtTroops - 1))
+    : totalDefLoss
   const survivors = srcTroops - totalAtkLoss
   // The spectator round log never touches the board â€” it exists so other
   // clients can watch the battle â€” but it is still untrusted JSON headed for
@@ -1375,7 +1384,7 @@ export function clampCombatResolution(
   return {
     ...a,
     totalAtkLoss: uncontested ? 0 : totalAtkLoss,
-    totalDefLoss: uncontested ? 0 : totalDefLoss,
+    totalDefLoss: uncontested ? 0 : boundedDefLoss,
     captured,
     uncontested,
     troopsToAdvance: captured ? int(a.troopsToAdvance, 1, Math.max(1, survivors - 1)) : 0,
