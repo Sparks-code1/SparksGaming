@@ -36,6 +36,8 @@ const SPIN_MS = 2100
  */
 const ARRIVAL_SPIN_MS = 650
 const SPIN_TICK_MS = 100
+/** Seconds a human defender gets before their machine rolls for them. */
+const AUTO_ROLL_SECONDS = 5
 
 const rollN = (n: number) => Array.from({ length: n }, () => Math.floor(Math.random() * 6) + 1).sort((a, b) => b - a)
 const clampDie = (v: number) => Math.max(1, Math.min(6, v))
@@ -192,6 +194,29 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
   const youOrName = isDefender ? 'you' : defenderName
   const needsConsent = isDefender && combat.autoProposed && combat.defenderAuto === null
   const manual = combat.defenderAuto !== true
+
+  // ── The 5-second defender clock ─────────────────────────────────────────
+  // The defender's machine answers within 5 seconds, one way or another: an
+  // unclicked roll fires itself, and a pending auto-resolve offer times out
+  // as "I roll my own dice" — silence never consents. This always beats the
+  // attacker's 20-second idle fallback, so a PRESENT defender's dice are
+  // rolled by their own machine; the fallback now only covers a machine that
+  // is genuinely gone (that fallback landing first on a lagging screen was
+  // "it won't let him roll his dice" — the button hides once dice exist).
+  // Touching the dice-count picker or the consent buttons restarts the clock.
+  const rollPending = isDefender && manual && !combat.defDice && !defSpin
+  const [autoRollLeft, setAutoRollLeft] = useState(AUTO_ROLL_SECONDS)
+  useEffect(() => {
+    if (!rollPending) return
+    setAutoRollLeft(AUTO_ROLL_SECONDS)
+    const iv = setInterval(() => setAutoRollLeft(s => Math.max(0, s - 1)), 1000)
+    const t = setTimeout(() => {
+      if (needsConsent) onConsent(false)
+      rollDefense()
+    }, AUTO_ROLL_SECONDS * 1000)
+    return () => { clearInterval(iv); clearTimeout(t) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rollPending, needsConsent, diceCount, combat.round, combat.key])
   const aLoss = settled ? settled.winners.filter(w => w === 'def').length + (mods.nuclearFallout ? 1 : 0) : 0
   const dLoss = settled ? settled.winners.filter(w => w === 'atk').length + (mods.nuclearFallout ? 1 : 0) : 0
 
@@ -290,6 +315,9 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
               <button onClick={() => onConsent(true)} style={btn('#2ecc71')}>⚡ Auto-resolve is fine</button>
               <button onClick={() => onConsent(false)} style={btn('#5dade2')}>🎲 I roll my own dice</button>
             </div>
+            <div style={{ fontSize: 10, color: '#7a6a50', marginTop: 6 }}>
+              No answer in {autoRollLeft}s rolls your own dice automatically
+            </div>
           </div>
         )}
 
@@ -307,7 +335,7 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
               </div>
             )}
             <button onClick={rollDefense} style={{ ...btn('#5dade2'), width: '100%' }}>
-              🎲 Roll Defense
+              🎲 Roll Defense — auto in {autoRollLeft}s
             </button>
           </div>
         )}
