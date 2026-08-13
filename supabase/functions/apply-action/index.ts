@@ -327,7 +327,8 @@ Deno.serve(async (req: Request) => {
     // rewards, since the host's machine runs the computer's win ceremony.
     if (!state?.endGame) return json({ error: 'the game is not over', code: 'action-not-allowed' }, 409)
     if (mySlot.is_ai) return json({ error: 'AI seats do not report endgame progress', code: 'wrong-player' }, 403)
-  } else if (action.type === 'APPLY_EVENT_TROOPS' || action.type === 'SEED_CARD_PILES') {
+  } else if (action.type === 'APPLY_EVENT_TROOPS' || action.type === 'SEED_CARD_PILES'
+      || action.type === 'PLACE_SCAR') {
     // APPLY_EVENT_TROOPS: event rewards belong to a player the BOARD picked
     // (largest population, fewest territories, lowest roll) — usually NOT
     // whoever's turn it is, and possibly seated at another machine. Any

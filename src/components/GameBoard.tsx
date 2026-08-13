@@ -4,6 +4,7 @@ import type { Territory, ScarType } from '@/types/territory'
 import type { GameState, EndGameState } from '@/types/game'
 import { initialTurnState } from '@/types/game'
 import EndGameOverlay from './EndGameOverlay'
+import AdminConsole from './AdminConsole'
 import type { LegacyState } from '@/types/legacy'
 import type { Player } from '@/types/player'
 import { TERRITORY_DEFINITIONS, MAP_WIDTH, MAP_HEIGHT, buildTerritory } from '@/data/territoryData'
@@ -437,6 +438,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // every seat reports its own progress; the edge stamps the caller.
     'ENDGAME_REWARDS_DONE',
     'ENDGAME_CONTINUE',
+    // The admin console repairs the board whoever's turn it is; the reducer
+    // still enforces one scar per territory.
+    'PLACE_SCAR',
   ])
   const dispatch = (action: Action) => {
     // ── The turn gate ──────────────────────────────────────────────────────
@@ -6214,6 +6218,160 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameState.endGame])
 
+  // ── Backtick admin console — the table owner's repair tool ────────────────
+  // Everything it does goes through the SAME reducer actions normal play uses
+  // (APPLY_EVENT_TROOPS for troops, PLACE_SCAR for scars), so repairs are
+  // server-authoritative online, appear on every machine, and land in the
+  // action log. Every use also writes a campaign history line — a spanner
+  // with an audit trail, not a cheat code.
+  const [adminOpen, setAdminOpen] = useState(false)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '`') return
+      const el = e.target as HTMLElement | null
+      const tag = el?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || el?.isContentEditable) return
+      e.preventDefault()
+      setAdminOpen(prev => !prev)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  /** Loose territory lookup: "se asia" finds Southeast Asia, "ont" Ontario. */
+  function adminFindTerritories(query: string): Territory[] {
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+    if (words.length === 0) return []
+    const all = Object.values(gameStateRef.current.territories)
+    const wordsOf = (t: Territory) => `${t.name} ${t.id}`.toLowerCase().split(/[\s-]+/).filter(Boolean)
+    const hits = all.filter(t => {
+      const tw = wordsOf(t)
+      return words.every(w => tw.some(x => x.startsWith(w)))
+    })
+    const flat = query.toLowerCase().replace(/[^a-z0-9]/g, '')
+    const exact = hits.filter(t =>
+      t.id.replace(/[^a-z0-9]/g, '') === flat
+      || t.name.toLowerCase().replace(/[^a-z0-9]/g, '') === flat)
+    return exact.length === 1 ? exact : hits
+  }
+
+  function runAdminCommand(raw: string): string[] {
+    const tokens = raw.trim().split(/\s+/)
+    const cmd = tokens[0]?.toLowerCase()
+    const st = gameStateRef.current
+
+    if (!cmd || cmd === 'help') {
+      return [
+        'troops <territory> <n|+n|-n> [player] — set or shift troops; name a player to claim empty land',
+        `scar <territory> <type> — place a scar (${SCAR_META.map(m => m.type).join(', ')})`,
+        'info <territory> — owner, troops, scars',
+        'players — everyone at the table',
+        'Repairs run through the normal server actions and are written to the campaign history.',
+      ]
+    }
+
+    if (cmd === 'players') {
+      return st.players.map(p => {
+        const held = Object.values(st.territories).filter(t => t.occupyingPlayerId === p.id)
+        const troops = held.reduce((s, t) => s + t.troops, 0)
+        return `${p.id} ${p.name}${p.isAI ? ' (AI)' : ''}${p.isEliminated ? ' — eliminated' : ''} — ${held.length} territories, ${troops} troops`
+      })
+    }
+
+    if (cmd === 'info') {
+      const hits = adminFindTerritories(tokens.slice(1).join(' '))
+      if (hits.length === 0) return ['✗ no territory matches']
+      if (hits.length > 6) return ['✗ too many matches — be more specific']
+      return hits.map(t => {
+        const owner = st.players.find(p => p.id === t.occupyingPlayerId)
+        const scars = (t.scars ?? []).map(s => s.type).join(', ')
+        return `${t.name} (${t.id}) — ${owner ? owner.name : 'unoccupied'}, ${t.troops} troops${scars ? `, scars: ${scars}` : ''}`
+      })
+    }
+
+    if (cmd === 'troops') {
+      const numIdx = tokens.findIndex((t, i) => i > 0 && /^[+-]?\d+$/.test(t))
+      if (numIdx < 2) return ['✗ usage: troops <territory> <n|+n|-n> [player]']
+      const hits = adminFindTerritories(tokens.slice(1, numIdx).join(' '))
+      if (hits.length === 0) return ['✗ no territory matches']
+      if (hits.length > 1) return ['✗ ambiguous: ' + hits.slice(0, 6).map(t => t.name).join(', ')]
+      const terr = hits[0]
+      const numTok = tokens[numIdx]
+      const current = terr.troops
+      const target = Math.max(0, /^[+-]/.test(numTok) ? current + parseInt(numTok, 10) : parseInt(numTok, 10))
+      if (target === current) return [`✓ ${terr.name} already at ${current}`]
+
+      const playerQ = tokens.slice(numIdx + 1).join(' ').toLowerCase()
+      let occupantId: string | undefined
+      if (!terr.occupyingPlayerId && target > 0) {
+        const p = st.players.find(pl =>
+          pl.id.toLowerCase() === playerQ || (playerQ && pl.name.toLowerCase().startsWith(playerQ)))
+        if (!p) return [`✗ that land is empty — name who should hold it: troops ${terr.name.toLowerCase()} ${target} <player>`]
+        occupantId = p.id
+      } else if (playerQ) {
+        const owner = st.players.find(p => p.id === terr.occupyingPlayerId)
+        if (owner && owner.id.toLowerCase() !== playerQ && !owner.name.toLowerCase().startsWith(playerQ)) {
+          return [`✗ ${terr.name} is held by ${owner.name} — ownership only changes on empty land`]
+        }
+      }
+
+      // APPLY_EVENT_TROOPS clamps each delta to ±6, so a large correction is
+      // sent as a chain of clamped steps — each one an ordinary, logged,
+      // server-validated action.
+      let remaining = target - current
+      let first = true
+      while (remaining !== 0) {
+        const step = Math.max(-6, Math.min(6, remaining))
+        dispatch({
+          type: 'APPLY_EVENT_TROOPS', note: 'Admin repair',
+          changes: [{
+            territoryId: terr.id, delta: step,
+            ...(first && occupantId ? { occupyingPlayerId: occupantId } : {}),
+          }],
+        })
+        remaining -= step
+        first = false
+      }
+      logHistory(`🔧 Admin repair — ${terr.name}: ${current} → ${target} troops`)
+      return [`✓ ${terr.name}: ${current} → ${target}${occupantId ? ` (${st.players.find(p => p.id === occupantId)?.name})` : ''}`]
+    }
+
+    if (cmd === 'scar') {
+      if (tokens.length < 3) return ['✗ usage: scar <territory> <type>']
+      const typeQ = tokens[tokens.length - 1].toLowerCase()
+      const scarMeta = SCAR_META.find(m =>
+        m.type.toLowerCase() === typeQ
+        || m.type.toLowerCase().startsWith(typeQ)
+        || m.label.toLowerCase().startsWith(typeQ))
+      if (!scarMeta) return ['✗ unknown scar — types: ' + SCAR_META.map(m => m.type).join(', ')]
+      const hits = adminFindTerritories(tokens.slice(1, -1).join(' '))
+      if (hits.length === 0) return ['✗ no territory matches']
+      if (hits.length > 1) return ['✗ ambiguous: ' + hits.slice(0, 6).map(t => t.name).join(', ')]
+      const terr = hits[0]
+      if (terr.id === legacyStateRef.current?.falloutZoneTerritoryId) return ['✗ the Fallout Zone cannot carry a scar']
+      if ((terr.scars?.length ?? 0) > 0) return [`✗ ${terr.name} already has a scar (one per territory)`]
+      dispatch({ type: 'PLACE_SCAR', territoryId: terr.id, scarType: scarMeta.type })
+      const gameNumber = st.gameNumber
+      setLegacyState(prev => {
+        const next: LegacyState = {
+          ...prev,
+          scars: [...prev.scars, { territoryId: terr.id, type: scarMeta.type as ScarType, appliedInGame: gameNumber }],
+          historyLog: [...prev.historyLog, {
+            gameNumber,
+            entry: `🔧 Admin repair — ${scarMeta.label ?? scarMeta.type} placed on ${terr.name}`,
+            timestamp: new Date().toISOString(),
+          }],
+        }
+        legacyStateRef.current = next
+        saveLegacyState(next).catch(() => {})
+        return next
+      })
+      return [`✓ ${scarMeta.type} placed on ${terr.name}`]
+    }
+
+    return ['✗ unknown command — type help']
+  }
+
   const selectedTerritory = selectedId ? (gameState.territories[selectedId] ?? null) : null
   const attackSrcTerritory = attackSrcId ? (gameState.territories[attackSrcId] ?? null) : null
   const attackTgtTerritory = attackTgtId ? (gameState.territories[attackTgtId] ?? null) : null
@@ -8157,6 +8315,11 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             </div>
           </div>
         </div>
+      )}
+
+      {/* Backtick admin console — the table owner's repair tool */}
+      {adminOpen && (
+        <AdminConsole onCommand={runAdminCommand} onClose={() => setAdminOpen(false)} />
       )}
 
       {/* Legacy Panel overlay */}
