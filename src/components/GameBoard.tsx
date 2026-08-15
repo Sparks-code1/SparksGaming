@@ -79,7 +79,7 @@ import ConfettiBurst from './ConfettiBurst'
 import TurnBanner, { type TurnBannerInfo } from './TurnBanner'
 import {
   gameReducer, checkReinforcementPlacement, createMathRng, resolveCombat,
-  canStartAttack, canStartFortify, computeTurnAdvance, applyEndOfTurnScarEffects, MISSILE_WINDOW_MS,
+  canStartAttack, canStartFortify, computeTurnAdvance, applyEndOfTurnScarEffects, MISSILE_WINDOW_MS, missilesCommittedBy,
   type Action, type Effect,
 } from '@/lib/gameReducer'
 
@@ -6984,8 +6984,13 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
               && gameState.combatWindow.srcId === c.srcId
               && gameState.combatWindow.tgtId === c.tgtId
               ? gameState.combatWindow : null}
+            // Pending claims count against the stock as well as charged ones:
+            // the ledger is only folded when the window closes, so a missile
+            // already fired into the open window would otherwise still be
+            // shown as available to fire again.
             missilesLeft={localSeatId
-              ? Math.max(0, ((legacyState.missiles ?? {})[localSeatId] ?? 0) - ((gameState.missileSpends ?? {})[localSeatId] ?? 0))
+              ? Math.max(0, ((legacyState.missiles ?? {})[localSeatId] ?? 0)
+                  - missilesCommittedBy(gameState, localSeatId))
               : 0}
             onFireMissile={async (side, dieIndex) => {
               const match = onlineMatchRef.current

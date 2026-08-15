@@ -517,6 +517,9 @@ export default function AttackModal({
 
   // ── Spectator missile window (online interactive rounds only) ────────────
   const windowKeyRef  = useRef<string | null>(null)
+  /** Earliest this round's window may close, set when it opens — see the
+   *  countdown: the shared deadline arrives a beat after the window does. */
+  const windowFloorRef = useRef(0)
   const windowDiceRef = useRef<{ fa: number[]; fd: number[] }>({ fa: [], fd: [] })
   /** Whether the current round marked resolvedRef when it settles (the two
    *  resolution paths differ on this and the window must preserve each). */
@@ -581,6 +584,12 @@ export default function AttackModal({
     }
     if (markResolved) resolvedRef.current = true
     windowKeyRef.current = spectatorWindow.open({ atk: fa, def: fd })
+    // A floor under the shared deadline. The countdown reads the window out of
+    // game state so that a missile fired anywhere extends it everywhere — but
+    // that state arrives a beat later than this call, and a countdown that
+    // reads "no deadline" as "expired" slams the window shut in its first
+    // tick. Nobody could reach a die.
+    windowFloorRef.current = Date.now() + spectatorWindow.windowMs
     windowDiceRef.current = { fa: [...fa], fd: [...fd] }
     windowMarkResolvedRef.current = markResolved
     windowClosingRef.current = false
@@ -617,8 +626,11 @@ export default function AttackModal({
     if (phase !== 'spectator-window') return
     const t = setInterval(() => {
       const key = windowKeyRef.current
-      const endsAt = key && spectatorWindow ? spectatorWindow.expiryOf(key) : 0
-      const left = endsAt ? Math.ceil((endsAt - Date.now()) / 1000) : 0
+      // The shared deadline once it has arrived, never earlier than the floor
+      // set when the window opened.
+      const shared = key && spectatorWindow ? spectatorWindow.expiryOf(key) : 0
+      const endsAt = Math.max(shared, windowFloorRef.current)
+      const left = Math.ceil((endsAt - Date.now()) / 1000)
       setWindowSecondsLeft(Math.max(0, left))
       if (left <= 0) { clearInterval(t); void endSpectatorWindow() }
     }, 250)
