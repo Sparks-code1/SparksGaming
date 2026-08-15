@@ -260,8 +260,16 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
    * clickable when the window is really here; what shows immediately is that
    * they are about to be, and how long there will be.
    */
+  /*
+   * Deliberately NOT gated on `settled`. That flag means this screen has
+   * finished its own replay of the round — pair winners lit, losses shown —
+   * and it lands a beat after the dice do, which is BEFORE the attacker's
+   * machine has opened the window at all (it animates the modifier stack
+   * first). Gating on it switched the controls off just before they could
+   * ever appear. The window itself is the only thing that ends this.
+   */
   const canMissile = isDefender && (missilesLeft ?? 0) > 0 && !!onFireMissile
-    && !!combat.atkDice && !!combat.defDice && !settled
+    && !!combat.atkDice && !!combat.defDice
   const [autoRollLeft, setAutoRollLeft] = useState(AUTO_ROLL_SECONDS)
   useEffect(() => {
     if (!rollPending) return
