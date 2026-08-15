@@ -8320,6 +8320,18 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             // Online only: hold each round open briefly for spectator missiles.
             // AutoPlay battles skip the window inside the modal.
             spectatorWindow={onlineMatch ? spectatorWindowApiRef.current : undefined}
+            // …and hold it open only when SOMEONE can use it. Every human who
+            // is not the attacker may fire (the defender included, since S18),
+            // so this asks whether any of them still has a missile. Two AIs
+            // trading blows in front of a missile-less table was five dead
+            // seconds per round of pure waiting.
+            audienceCanMissile={(() => {
+              const atkId = attackSrcId ? gameState.territories[attackSrcId]?.occupyingPlayerId : null
+              const spends = gameState.missileSpends ?? {}
+              return gameState.players.some(p =>
+                !p.isAI && !p.isEliminated && p.id !== atkId
+                && ((legacyState.missiles ?? {})[p.id] ?? 0) - (spends[p.id] ?? 0) > 0)
+            })()}
             // EVERY online battle runs through the shared session — human or
             // AI attacker — because the session is what puts the animated
             // battle on every other screen. A human defender rolls their own

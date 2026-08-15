@@ -144,6 +144,13 @@ interface Props {
     close: (roundKey: string) => Promise<Array<{ side: 'atk' | 'def'; dieIndex: number }>>
   }
   /**
+   * Does anyone in the audience actually hold a missile to spend on this
+   * battle? When nobody does, the window is a pause with no button behind it
+   * — five dead seconds every round, most visibly when two AIs fight and the
+   * humans are all watching ("a good delay for the spectators").
+   */
+  audienceCanMissile?: boolean
+  /**
    * Online battle against a HUMAN defender: the fight is a shared session.
    * Auto-resolve needs the defender's consent; manual rounds use the RAW dice
    * the defender's own machine posts (the attacker never waits to roll their
@@ -413,6 +420,7 @@ export default function AttackModal({
   autoPlayFast = false,
   resolveAuto,
   spectatorWindow,
+  audienceCanMissile = true,
   interactiveDefense,
   onClose,
   onApplyResult,
@@ -537,7 +545,12 @@ export default function AttackModal({
    *  computer's dice; it closes itself on the timer with nobody to click
    *  Skip. Only fast-forwarded/one-shot battles bypass it. */
   function windowThenFinish(fa: number[], fd: number[], markResolved: boolean) {
-    if (!spectatorWindow || (autoPlay && !publicAiRounds)) { finishRound(fa, fd, [], markResolved); return }
+    // No window when there is no audience, when the battle is a one-shot
+    // auto-resolve, or when not one watching human holds a missile — an
+    // un-clickable pause is just a delay wearing a countdown.
+    if (!spectatorWindow || (autoPlay && !publicAiRounds) || !audienceCanMissile) {
+      finishRound(fa, fd, [], markResolved); return
+    }
     if (markResolved) resolvedRef.current = true
     windowKeyRef.current = spectatorWindow.open({ atk: fa, def: fd })
     windowDiceRef.current = { fa: [...fa], fd: [...fd] }
@@ -899,16 +912,19 @@ export default function AttackModal({
     if (!autoPlay) return
     if (publicAiRounds) {
       if (phase === 'setup') {
-        const t = setTimeout(() => handleRoll(), 900)
+        const t = setTimeout(() => handleRoll(), 600)
         return () => clearTimeout(t)
       }
       if (phase === 'results') {
         // The same fight-to-the-finish resolveCombat runs internally: press on
         // while a capture is still possible, otherwise close with the result.
+        // Paced for a WATCHER: the dice reached them the moment they were
+        // rolled, so this gap is the only thing between one round's result and
+        // the next round's dice.
         const t = setTimeout(() => {
           if (canContinue) handleAttackAgain()
           else handleClose(captured)
-        }, 1400)
+        }, 1000)
         return () => clearTimeout(t)
       }
       return
