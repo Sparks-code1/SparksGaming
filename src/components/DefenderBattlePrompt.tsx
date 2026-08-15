@@ -17,7 +17,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ActiveCombat, CombatWindowState } from '@/types/game'
 import { DieFace } from './AttackModal'
-import { playDice } from '@/lib/sounds'
+import { playDice, playMissile } from '@/lib/sounds'
 import { diceArrivalKey } from '@/lib/gameLogic'
 
 const ATK_COLOR = '#c0392b'
@@ -64,7 +64,7 @@ function applyDefBonus(dice: number[], hi: number, lo: number): number[] {
   return d
 }
 
-export default function DefenderBattlePrompt({ combat, role, attackerName, defenderName, srcName, tgtName, srcTroops, tgtTroops, mods, combatWindow, missilesLeft, onFireMissile, onConsent, onRollDefense, onResolveNow, onDismiss }: {
+export default function DefenderBattlePrompt({ combat, role, attackerName, defenderName, srcName, tgtName, srcTroops, tgtTroops, mods, combatWindow, missilesLeft, onFireMissile, onConsent, onRollDefense, onResolveNow, myPlayerId, nameOf, onDismiss }: {
   combat: ActiveCombat
   role: 'defender' | 'spectator'
   attackerName: string
@@ -82,6 +82,9 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
   onFireMissile?: (side: 'atk' | 'def', dieIndex: number) => Promise<boolean>
   onConsent: (accept: boolean) => void
   onRollDefense: (dice: number[]) => void
+  /** Who this screen is, and how to name a player — for the missile callout. */
+  myPlayerId?: string | null
+  nameOf?: (playerId: string) => string
   /** Close the missile window now rather than waiting the clock out. The
    *  attacker's machine resolves the round the moment it is gone. */
   onResolveNow?: () => void
@@ -270,6 +273,32 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
    */
   const canMissile = isDefender && (missilesLeft ?? 0) > 0 && !!onFireMissile
     && !!combat.atkDice && !!combat.defDice
+
+  /**
+   * A missile landing, announced on THIS screen.
+   *
+   * The die changing to a 6 is the fact; the callout and the bang are how
+   * anyone notices it happened rather than finding a 6 where they left a 2.
+   * Driven off the window's own flip list so it fires once per flip on every
+   * screen watching — the shooter's included, since their claim can lose a
+   * contested die to someone with priority and quietly change hands.
+   */
+  const [missileNote, setMissileNote] = useState<string | null>(null)
+  const seenFlipsRef = useRef('')
+  useEffect(() => {
+    const flips = combatWindow?.flips ?? []
+    const sig = flips.map(f => `${f.playerId}:${f.side}${f.dieIndex}`).join('|')
+    if (sig === seenFlipsRef.current) return
+    const isNew = sig.length > seenFlipsRef.current.length
+    seenFlipsRef.current = sig
+    const last = flips[flips.length - 1]
+    if (!last || !isNew) return
+    playMissile()
+    const who = last.playerId === myPlayerId ? 'You' : (nameOf?.(last.playerId) ?? 'Someone')
+    setMissileNote(`${who} fired a missile — ${last.side === 'atk' ? "an attacker's" : "a defender's"} die is now a 6`)
+    const t = setTimeout(() => setMissileNote(null), 4_000)
+    return () => clearTimeout(t)
+  }, [combatWindow?.flips, myPlayerId, nameOf])
   const [autoRollLeft, setAutoRollLeft] = useState(AUTO_ROLL_SECONDS)
   useEffect(() => {
     if (!rollPending) return
@@ -326,11 +355,18 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
             <div style={{ display: 'flex', gap: 7, justifyContent: 'center', minHeight: 54 }}>
               {animAtk.length === 0
                 ? <div style={{ fontSize: 11, color: '#7a6a50', alignSelf: 'center' }}>waiting for the roll…</div>
-                : animAtk.map((v, i) => (
-                    <DieFace key={i} value={v} borderColor={ATK_COLOR} spinning={atkSpin}
-                      glow={settled && settled.winners[i] === 'atk' ? WIN_GLOW : undefined}
-                      dim={!!settled && i < settled.winners.length && settled.winners[i] === 'def'} />
-                  ))}
+                : animAtk.map((v, i) => {
+                    // A missile fired at the ATTACKER's dice has to show here
+                    // too. This row is replayed from the session, which knows
+                    // nothing of the window — so the window's flips are folded
+                    // in, and the die reads the 6 it now is.
+                    const taken = (combatWindow?.flips ?? []).some(f => f.side === 'atk' && f.dieIndex === i)
+                    return (
+                      <DieFace key={i} value={taken ? 6 : v} borderColor={ATK_COLOR} spinning={atkSpin}
+                        glow={taken ? '#F1C40F' : settled && settled.winners[i] === 'atk' ? WIN_GLOW : undefined}
+                        dim={!taken && !!settled && i < settled.winners.length && settled.winners[i] === 'def'} />
+                    )
+                  })}
             </div>
           </div>
           <div style={{ color: '#6a5a40', fontSize: 22, alignSelf: 'center', paddingTop: 22 }}>│</div>
@@ -360,6 +396,16 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
             </div>
           </div>
         </div>
+
+        {missileNote && (
+          <div style={{
+            textAlign: 'center', marginBottom: 10, padding: '6px 10px', borderRadius: 7,
+            background: 'rgba(241,196,15,0.10)', border: '1px solid rgba(241,196,15,0.45)',
+            color: '#F1C40F', fontSize: 12,
+          }}>
+            🚀 {missileNote}
+          </div>
+        )}
 
         {settled && (combat.emp || mods.parts.length > 0 || settled.missiles) && (
           <div style={{ fontSize: 10, color: '#b09870', textAlign: 'center', marginBottom: 10 }}>

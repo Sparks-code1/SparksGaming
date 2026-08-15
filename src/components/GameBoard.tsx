@@ -7071,6 +7071,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             onResolveNow={gameState.combatWindow
               ? () => dispatch({ type: 'CLOSE_COMBAT_WINDOW', roundKey: gameState.combatWindow!.roundKey })
               : undefined}
+            myPlayerId={localSeatId}
+            nameOf={(pid: string) => gameState.players.find(p => p.id === pid)?.name ?? 'Someone'}
             onConsent={accept => dispatch({ type: 'COMBAT_DEFENSE_CHOICE', key: c.key, accept })}
             onRollDefense={dice => dispatch({ type: 'POST_COMBAT_DICE', key: c.key, round: c.round, side: 'def', dice })}
             onDismiss={role === 'spectator' ? () => setBattleViewHidden(c.key) : undefined}

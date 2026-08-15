@@ -113,6 +113,20 @@ function synthElimination(): Float32Array {
   return b
 }
 
+/** Missile: a rising launch hiss into a hard low crump. */
+function synthMissile(): Float32Array {
+  const b = buf(0.85)
+  // The launch — bright noise sweeping up as the filter opens.
+  addNoise(b, 0.0, 0.30, 0.22, 1.2, 0.75)
+  addTone(b, 0.0, 0.30, 320, 0.07, 'square', 0.02, 0.6)
+  addTone(b, 0.06, 0.26, 660, 0.05, 'square', 0.02, 0.8)
+  // The hit — low body plus a dirty crack on top.
+  addTone(b, 0.32, 0.45, 82.41, 0.30, 'sine', 0.005, 2.2)
+  addTone(b, 0.32, 0.35, 55.0, 0.22, 'triangle', 0.005, 2.0)
+  addNoise(b, 0.32, 0.28, 0.34, 3.0, 0.35)
+  return b
+}
+
 function synthCoin(): Float32Array {
   const b = buf(0.35)
   // Bright metallic double-ping
@@ -176,7 +190,7 @@ function synthAmbient(): Float32Array {
 
 // ─── Howl instances (lazy, built once) ───────────────────────────────────────
 
-type SoundKey = 'dice' | 'victory' | 'elimination' | 'coin' | 'city' | 'milestone' | 'troop' | 'button'
+type SoundKey = 'dice' | 'victory' | 'elimination' | 'coin' | 'city' | 'milestone' | 'troop' | 'button' | 'missile'
 
 interface SoundDef { synth: () => Float32Array; volume: number; cutoff: boolean }
 
@@ -189,6 +203,7 @@ const DEFS: Record<SoundKey, SoundDef> = {
   milestone:   { synth: synthMilestone,   volume: 0.6,  cutoff: false },
   troop:       { synth: synthTroop,       volume: 0.4,  cutoff: true },  // rapid — cut off
   button:      { synth: synthButton,      volume: 0.35, cutoff: true },  // rapid — cut off
+  missile:     { synth: synthMissile,     volume: 0.75, cutoff: false },
 }
 
 const howls: Partial<Record<SoundKey, Howl>> = {}
@@ -260,6 +275,7 @@ export const playCity        = () => play('city')
 export const playMilestone   = () => play('milestone')
 export const playTroop       = () => play('troop')
 export const playButton      = () => play('button')
+export const playMissile     = () => play('missile')
 
 // ─── Ambient background loop ──────────────────────────────────────────────────
 
