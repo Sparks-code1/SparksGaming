@@ -1247,6 +1247,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   const [attackSrcId,  setAttackSrcId]  = useState<string | null>(null)
   const [attackTgtId,  setAttackTgtId]  = useState<string | null>(null)
   const [showCombat,   setShowCombat]   = useState(false)
+  const showCombatRef = useRef(false)
+  showCombatRef.current = showCombat
   const [showAdvance,  setShowAdvance]  = useState(false)
   const advanceSrcRef = useRef<string | null>(null)
   const advanceTgtRef = useRef<string | null>(null)
@@ -3481,6 +3483,43 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (weaknessNoticeTimer.current) clearTimeout(weaknessNoticeTimer.current)
     weaknessNoticeTimer.current = setTimeout(() => setWeaknessNotice(null), 3500)
   }
+
+  /**
+   * A battle nobody is driving any more.
+   *
+   * The combat SESSION is match state and survives anything; the attacker's
+   * modal is local React state and does not survive a reload. Reload the
+   * attacker's window mid-battle and the two come apart — the attacker's
+   * screen is back on the map with no idea a battle is open, while the
+   * defender sits in a battle screen with no dice coming and no way out. They
+   * must not be able to walk out of a real defence, so nothing offers them an
+   * exit; that is right, and it is why the battle has to be closed from the
+   * other end.
+   *
+   * The machine that owned the attack closes it, and RETREAT is honestly what
+   * happened: no troops have moved (only RESOLVE_COMBAT moves them) and the
+   * attacker may declare the same attack again. The delay is there because a
+   * battle ENDING also has a moment where the modal is gone and the session is
+   * not yet cleared — three seconds is far longer than that gap and far
+   * shorter than a person's patience.
+   */
+  useEffect(() => {
+    const c = gameState.combat
+    if (!onlineMatch || !c || showCombat) return
+    const attacker = gameState.players.find(p => p.id === c.attackerId)
+    const mine = localSeatId === c.attackerId || (!!attacker?.isAI && aiAuthorityRef.current)
+    if (!mine) return
+    const t = window.setTimeout(() => {
+      const still = gameStateRef.current.combat
+      if (!still || still.key !== c.key || showCombatRef.current) return
+      dispatchRef.current({ type: 'RETREAT' })
+      showWeaknessNoticeRef.current('⚔ The battle at '
+        + (gameStateRef.current.territories[c.tgtId]?.name ?? 'that territory')
+        + ' ended when this window reloaded — declare the attack again to continue.')
+    }, 3000)
+    return () => window.clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState.combat?.key, showCombat, onlineMatch, localSeatId])
 
   /**
    * The cards `playerId` would legally be allowed to take on a draw right now:
