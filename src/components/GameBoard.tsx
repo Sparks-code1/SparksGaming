@@ -65,7 +65,7 @@ import SeaLinePlacementModal from './SeaLinePlacementModal'
 import { AI_DIFFICULTY_LABEL, AI_DIFFICULTY_BADGE } from '@/types/ai'
 import { dispatchAction, sendSpectatorMissile, loadMatchState } from '@/lib/actionDispatch'
 import { useMatchSync } from '@/lib/useMatchSync'
-import { findActiveMatch, createOnlineMatch, endOnlineMatch, seatsFromGameState } from '@/lib/onlineMatch'
+import { findMatchById, createOnlineMatch, endOnlineMatch, seatsFromGameState } from '@/lib/onlineMatch'
 import { startLobby } from '@/lib/lobby'
 import { supabase } from '@/lib/supabase'
 import { SerialQueue } from '@/lib/serialQueue'
@@ -6658,15 +6658,16 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
           // status compare-and-swap inside means a second attempt — two
           // machines, one lobby — is refused rather than duplicated.
           await startLobby(lobbyToStart, gameStateRef.current)
-          const active = await findActiveMatch(legacyState.campaignId, gameStateRef.current.gameNumber)
+          // By id: we know exactly which match this is, and a game-number
+          // lookup can land on a previous game's row that was never closed.
+          const active = await findMatchById(lobbyToStart)
           adopt(active ?? { matchId: lobbyToStart, version: 0 }, true)
           showWeaknessNotice('🌐 Online game started — everyone else is now on this board')
         } catch (e) {
           // Maybe the OTHER press won the compare-and-swap — then the match is
           // live and the right move is to join it, not to declare failure.
-          const active = await findActiveMatch(legacyState.campaignId, gameStateRef.current.gameNumber)
-            .catch(() => null)
-          if (active?.matchId === lobbyToStart) { adopt(active, true); return }
+          const active = await findMatchById(lobbyToStart).catch(() => null)
+          if (active) { adopt(active, true); return }
           // Truly failed. The joiners are WATCHING this lobby — a silent local
           // fallback strands them on a wait that can never end, so the lobby
           // is closed and their screens send them back to the campaign.
@@ -6727,9 +6728,16 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
    * Adopt the match this game belongs to.
    *
    * `activeMatchId` on the saved campaign says the game WAS started online;
-   * findActiveMatch confirms it still is. A match abandoned on another machine
-   * drops this client back to hotseat rather than leaving it dispatching into
-   * a row nobody is serving.
+   * looking that id up confirms it still is. A match abandoned on another
+   * machine drops this client back to hotseat rather than leaving it
+   * dispatching into a row nobody is serving.
+   *
+   * BY ID, never by (campaign, game number). The number is bumped by the
+   * winner's machine at the end of a game and legacy has no live sync, so a
+   * client whose copy is behind searched the PREVIOUS game's number, found
+   * that match still sitting there un-closed, decided it was not the one
+   * legacy named, and sat out the game it was seated in — "NOT CONNECTED —
+   * moves are staying on this machine" while everyone else played on.
    */
   useEffect(() => {
     // The start effect OWNS the match while it is creating or flipping one.
@@ -6742,9 +6750,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     const id = legacyState.activeMatchId
     if (!id) { onlineMatchRef.current = null; setOnlineMatch(null); return }
     let cancelled = false
-    void findActiveMatch(legacyState.campaignId, gameState.gameNumber).then(found => {
+    void findMatchById(id).then(found => {
       if (cancelled) return
-      const next = found && found.matchId === id ? found : null
+      const next = found ?? null
       console.info('[Online] adopt-by-activeMatchId:', id.slice(0, 8),
         next ? `→ adopted v${next.version}` : '→ NO ACTIVE MATCH — playing locally')
       onlineMatchRef.current = next

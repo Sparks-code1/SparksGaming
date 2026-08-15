@@ -119,6 +119,27 @@ export async function findActiveMatch(
   return { matchId: data[0].id as string, version: data[0].version as number }
 }
 
+/**
+ * The match with THIS id, if it is still being played.
+ *
+ * The campaign names its live match by id, and an id is unique — so this is
+ * the honest lookup for "am I meant to be in a game right now". Asking by
+ * (campaign, game number) instead is how a machine sat out a game it was
+ * seated in: the campaign's game number is bumped by the winner's machine, so
+ * a client whose copy is behind searched for the OLD game's number, found the
+ * previous match still sitting there un-closed, saw it was not the one legacy
+ * named, and reported NOT CONNECTED while the real game ran without it.
+ */
+export async function findMatchById(matchId: string): Promise<CreatedMatch | null> {
+  const { data, error } = await supabase
+    .from('matches')
+    .select('id, version, status')
+    .eq('id', matchId)
+    .maybeSingle()
+  if (error || !data || data.status !== 'active') return null
+  return { matchId: data.id as string, version: data.version as number }
+}
+
 /** Which roster seat this signed-in user plays in a match, if any. */
 export async function mySeatIn(matchId: string): Promise<string | null> {
   const { data: { user } } = await supabase.auth.getUser()
