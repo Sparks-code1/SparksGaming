@@ -83,11 +83,14 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
 
   useEffect(() => {
     const campaignId = legacy?.campaignId
-    const gameNumber = legacy?.currentGameNumber
-    if (!campaignId || !gameNumber || !user) { setOpenLobby(null); return }
+    if (!campaignId || !user) { setOpenLobby(null); return }
     let cancelled = false
     const look = async () => {
-      const found = await findOpenLobby(campaignId, gameNumber).catch(() => null)
+      // ANY open lobby in this campaign, whatever game number it carries.
+      // Filtering on our own copy's number missed the lobby entirely after a
+      // game ended: the winner's machine bumps the campaign, and nobody
+      // else's copy knows until it re-reads.
+      const found = await findOpenLobby(campaignId).catch(() => null)
       if (!cancelled) setOpenLobby(found?.status === 'lobby' ? found : null)
     }
     void look()
@@ -103,9 +106,19 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
   // seconds rather than acted on: hosting off the stale copy would open a
   // lobby for the game that just ENDED, which nobody's search would find.
   const autoFiredRef = useRef(false)
+  const autoRefreshedRef = useRef(false)
   useEffect(() => {
     if (!autoNextGame || autoFiredRef.current) return
     if (status !== 'found' || !legacy || !user) return
+    // One fresh read before doing anything. This machine's copy predates the
+    // winner's finalize on every machine but the winner's — it is why the
+    // screen offered to "host game #1" for a campaign that had already moved
+    // to game 2.
+    if (!autoRefreshedRef.current) {
+      autoRefreshedRef.current = true
+      void openCampaign(legacy.campaignId)
+      return
+    }
     if (legacy.gameInProgress || legacy.activeGameState) {
       const t = window.setTimeout(() => { void openCampaign(legacy.campaignId) }, 2000)
       return () => window.clearTimeout(t)
@@ -136,8 +149,18 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
   async function joinOpenLobby() {
     if (!openLobby || !legacy || !user) return
     let ls = legacy
-    let me = getRoster(ls).find(m => m.userId === user.id)
     setJoiningLobby(true); setLobbyError(null)
+    try {
+      // The lobby is for a game our copy has not caught up to — the host
+      // finalized the last game and bumped the campaign. Take their copy
+      // before joining, so this machine plays the campaign as it now stands
+      // (their cities, their scars) rather than the one it remembers.
+      if (openLobby.gameNumber !== ls.currentGameNumber) {
+        const fresh = await loadLegacyState(ls.campaignId).catch(() => null)
+        if (fresh) { ls = fresh; setLegacy(fresh); setWorldName(fresh.worldName) }
+      }
+    } catch { /* a failed refresh must not block the join */ }
+    let me = getRoster(ls).find(m => m.userId === user.id)
     try {
       if (!me) {
         // Their remembered name, unless they typed a different one here. The

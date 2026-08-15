@@ -381,15 +381,25 @@ export async function matchState(
 }
 
 /** The lobby waiting for players in this campaign's current game, if any. */
-export async function findOpenLobby(campaignId: string, gameNumber: number): Promise<Lobby | null> {
-  const { data } = await supabase
+/**
+ * The open lobby in this campaign, if someone is hosting one.
+ *
+ * `gameNumber` is a FILTER, not a requirement — pass it only when the caller
+ * genuinely means one specific game. Matching on it by default was how a
+ * joiner missed the game they were invited to: the campaign's game number is
+ * bumped by the WINNER's machine at the end of a game, and legacy has no live
+ * sync, so every other machine still held the previous number and searched
+ * for a lobby that would never exist. A campaign has at most one open lobby,
+ * so "the open one" is the honest question.
+ */
+export async function findOpenLobby(campaignId: string, gameNumber?: number): Promise<Lobby | null> {
+  let q = supabase
     .from('matches')
     .select('id')
     .eq('campaign_id', campaignId)
-    .eq('game_number', gameNumber)
     .eq('status', 'lobby')
-    .order('created_at', { ascending: false })
-    .limit(1)
+  if (typeof gameNumber === 'number') q = q.eq('game_number', gameNumber)
+  const { data } = await q.order('created_at', { ascending: false }).limit(1)
   const id = (data ?? [])[0]?.id as string | undefined
   return id ? readLobby(id) : null
 }
