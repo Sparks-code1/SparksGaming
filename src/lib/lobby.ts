@@ -501,7 +501,31 @@ export async function startLobby(matchId: string, initialState: GameState): Prom
     .maybeSingle()
   if (error) throw new Error(`Could not start the game: ${error.message}`)
   if (!data) throw new Error('Somebody else already started this game')
+  await closeOtherLobbies(lobby.campaignId, matchId)
   return (await readLobby(matchId))!
+}
+
+/**
+ * A game is live — nothing else in this campaign is still "waiting to start".
+ *
+ * A campaign has one game at a time, so any other lobby row is a leftover: a
+ * host who opened one and then began the game another way, or a start that was
+ * abandoned. They do not close themselves, and "the open lobby in this
+ * campaign" finds them forever after — a campaign playing its fourth game
+ * offered its host "Game #1" from a lobby three games old, and both machines
+ * walked into it.
+ *
+ * Best-effort on purpose: failing to tidy up must never fail a start that has
+ * already happened.
+ */
+export async function closeOtherLobbies(campaignId: string, keepMatchId: string): Promise<void> {
+  await supabase
+    .from('matches')
+    .update({ status: 'abandoned' })
+    .eq('campaign_id', campaignId)
+    .eq('status', 'lobby')
+    .neq('id', keepMatchId)
+    .then(() => undefined, () => undefined)
 }
 
 /** Update how many humans the host is waiting for, and reseat the AI. */

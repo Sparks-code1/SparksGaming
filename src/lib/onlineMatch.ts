@@ -13,6 +13,7 @@
  * `state`.
  */
 import { supabase } from '@/lib/supabase'
+import { closeOtherLobbies } from '@/lib/lobby'
 import type { GameState } from '@/types/game'
 import type { LegacyState } from '@/types/legacy'
 
@@ -91,6 +92,11 @@ export async function createOnlineMatch(
     await supabase.from('matches').delete().eq('id', matchId)
     throw new Error(`Could not start the match: ${aErr?.message ?? 'no row returned'}`)
   }
+
+  // This game is the campaign's game now. A lobby somebody opened and then
+  // started another way is a leftover that "the open lobby" would keep finding
+  // — the same tidy-up startLobby does when the lobby itself becomes the game.
+  await closeOtherLobbies(campaignId, matchId)
 
   return { matchId, version: started.version as number }
 }
