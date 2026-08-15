@@ -859,6 +859,30 @@ export function recordedGameNumber(
   return Math.max(boardGameNumber, ...log.map(v => v.gameNumber)) + 1
 }
 
+/**
+ * The lead faction for RULES purposes: null until the World Capital is placed.
+ *
+ * "Lead faction" is not a standing at all until the Capital exists — it arrives
+ * with it, and everything it grants is written in terms of it (the 3 troops sit
+ * ON the Capital; choosing the face-up mission is the other half of the same
+ * unlock). Counting wins earlier says something true about the campaign, which
+ * is why the faction panels show the badge with "activates once the World
+ * Capital is placed" beneath it — but a campaign that has not placed it yet
+ * must not be handing anybody the mission deck. Game 5 of the Test8 campaign
+ * did exactly that.
+ *
+ * Rules ask this. Badges may still ask leadFactionId, because they say so.
+ */
+export function campaignLeadFaction(
+  legacy: {
+    victoryLog?: Array<{ factionId: string }> | null
+    worldCapitalTerritoryId?: string | null
+  } | null | undefined,
+): string | null {
+  if (!legacy?.worldCapitalTerritoryId) return null
+  return leadFactionId(legacy.victoryLog)
+}
+
 /** Wins per faction across the campaign. */
 export function factionWinCounts(
   victoryLog: Array<{ factionId: string }> | undefined | null,

@@ -23,7 +23,7 @@ import WinScreen from './WinScreen'
 import LegacyPanel from './LegacyPanel'
 import CampaignCompleteScreen from './CampaignCompleteScreen'
 import { campaignOutcome, applyCampaignCompletion, championLabel, type CampaignOutcome } from '@/lib/campaign'
-import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALIEN_ISLAND_TERRITORY_ID, calcDraftTroops, applyHqReserveTroops, expandClickAction, legalJoinWarTerritoryIds, cardCoinValue, leadFactionId, resolveResourceDepletion, type ResourceDepletion, troopsAfterEntry, minTroopsToEnter, LEAD_FACTION_WORLD_CAPITAL_TROOPS, worldCapitalReplacedCities, citiesLostOn, reapplyLegacyEdits, countCitiesOn, resolveRiot, resolveResistance, type RiotCityResult, FORTIFICATION_SUPPLY, fortificationsPlaced, canPlaceFortification, FORTIFY_EVENT_TROOPS, FORTIFY_EVENT_CITIES , canSpendForStar, starPurchaseSelection } from '@/lib/gameLogic'
+import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALIEN_ISLAND_TERRITORY_ID, calcDraftTroops, applyHqReserveTroops, expandClickAction, legalJoinWarTerritoryIds, cardCoinValue, campaignLeadFaction, resolveResourceDepletion, type ResourceDepletion, troopsAfterEntry, minTroopsToEnter, LEAD_FACTION_WORLD_CAPITAL_TROOPS, worldCapitalReplacedCities, citiesLostOn, reapplyLegacyEdits, countCitiesOn, resolveRiot, resolveResistance, type RiotCityResult, FORTIFICATION_SUPPLY, fortificationsPlaced, canPlaceFortification, FORTIFY_EVENT_TROOPS, FORTIFY_EVENT_CITIES , canSpendForStar, starPurchaseSelection } from '@/lib/gameLogic'
 import {
   defaultLegacyState, saveLegacyState, loadLegacyState, awardRedStars,
   applyLegacyToTerritories, pickUnlocks, SCAR_META, saveGameSession,
@@ -593,7 +593,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // never a starting location — so the "no HQ adjacent to another" rule does
     // not apply to it, and the lead faction keeps these troops even if another
     // player started next door.
-    const leadFaction = leadFactionId(initialLegacy?.victoryLog)
+    const leadFaction = campaignLeadFaction(initialLegacy)
     const wcId = initialLegacy?.worldCapitalTerritoryId
     if (leadFaction && wcId && territories[wcId]) {
       const leadPlayer = players.find(p => p.factionId === leadFaction)
@@ -2171,7 +2171,11 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // mission starts face-up. Defer the flip and open the picker instead; the
     // normal "first card off the deck" applies when there is no lead faction
     // (or its faction is not in this game).
-    const lead = leadFactionId(legacyStateRef.current?.victoryLog)
+    //
+    // campaignLeadFaction, not leadFactionId: the lead faction is not a rule
+    // until the World Capital is placed. This asked for the standing alone,
+    // and so ran the picker in a campaign that had never seen a Capital.
+    const lead = campaignLeadFaction(legacyStateRef.current)
     const leadPlayer = lead
       ? gameStateRef.current.players.find(p => p.factionId === lead)
       : undefined

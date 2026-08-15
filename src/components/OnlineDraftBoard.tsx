@@ -202,7 +202,10 @@ export default function OnlineDraftBoard({
                           )}
                           {fid === leadFaction && (
                             <span
-                              title={`Lead faction — the most campaign wins (${factionWins[fid] ?? 0}). Picks the starting face-up mission, and begins each game owning the World Capital with ${LEAD_FACTION_WORLD_CAPITAL_TROOPS} troops.`}
+                              title={`Lead faction — the most campaign wins (${factionWins[fid] ?? 0}). ${
+                                legacy.worldCapitalTerritoryId
+                                  ? `Picks the starting face-up mission, and begins each game owning the World Capital with ${LEAD_FACTION_WORLD_CAPITAL_TROOPS} troops.`
+                                  : 'Lead-faction rules activate once the World Capital is placed — until then this is a record, not an advantage.'}`}
                               style={{
                                 fontSize: 9, fontWeight: 'bold', letterSpacing: 0.5,
                                 color: '#7a5c00', background: 'rgba(212,175,55,0.55)',
