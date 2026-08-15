@@ -6546,8 +6546,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         'troops <territory> <n|+n|-n> [player] — set or shift troops; name a player to claim empty land',
         `scar <territory> <type> — place a scar (${SCAR_META.map(m => m.type).join(', ')})`,
         'stars <player> <n|+n|-n> — set or shift this game\'s red stars',
+        'missiles <player> <n|+n|-n> — set or shift what they can still fire',
         'info <territory> — owner, troops, scars',
-        'players — everyone at the table, with stars',
+        'players — everyone at the table, with stars and missiles',
         'Repairs run through the normal server actions and are written to the campaign history.',
       ]
     }
@@ -6561,6 +6562,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         const stars = purchased[p.id] ?? 0
         return `${p.id} ${p.name}${p.isAI ? ' (AI)' : ''}${p.isEliminated ? ' — eliminated' : ''}`
           + ` — ${held.length} territories, ${troops} troops, ★ ${stars} earned + ${hqStars} HQ`
+          + `, 🚀 ${missilesInHand(p.id)}`
       })
     }
 
@@ -6601,6 +6603,47 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         out.push('⚠ that reaches 4 stars — the victory screen is about to open')
       }
       return out
+    }
+
+    if (cmd === 'missiles' || cmd === 'missile') {
+      const numTok = tokens[tokens.length - 1]
+      if (tokens.length < 3 || !/^[+-]?\d+$/.test(numTok)) {
+        return ['✗ usage: missiles <player> <n|+n|-n>']
+      }
+      const q = tokens.slice(1, -1).join(' ').toLowerCase()
+      const p = st.players.find(pl =>
+        pl.id.toLowerCase() === q || pl.name.toLowerCase().startsWith(q))
+      if (!p) return ['✗ no player matches — try `players`']
+      // What they can FIRE is the campaign stock minus this match's spending,
+      // and the ledger is the server's to hold — so a repair moves the stock,
+      // and the number below is what the board will show.
+      const spent = missilesCommittedBy(st, p.id)
+      const current = missilesInHand(p.id)
+      const target = Math.max(0, Math.min(20,
+        /^[+-]/.test(numTok) ? current + parseInt(numTok, 10) : parseInt(numTok, 10)))
+      if (target === current) return [`✓ ${p.name} can already fire ${current} missile${current !== 1 ? 's' : ''}`]
+      const stock = target + spent
+      const applyMissiles = (b: LegacyState): LegacyState => ({
+        ...b,
+        missiles: { ...(b.missiles ?? {}), [p.id]: stock },
+        historyLog: [...b.historyLog, {
+          gameNumber: st.gameNumber,
+          entry: `🔧 Admin repair — ${p.name}: ${current} → ${target} missile${target !== 1 ? 's' : ''}`,
+          timestamp: new Date().toISOString(),
+        }],
+      })
+      setLegacyState(prev => {
+        const next = applyMissiles(prev)
+        legacyStateRef.current = next
+        saveLegacyState(next, { reapply: applyMissiles }).catch(() => {})
+        return next
+      })
+      return [
+        `✓ ${p.name}: ${current} → ${target} missile${target !== 1 ? 's' : ''} to fire`,
+        ...(spent > 0
+          ? [`  (campaign stock set to ${stock} — ${spent} already spent this game)`]
+          : []),
+      ]
     }
 
     if (cmd === 'info') {
