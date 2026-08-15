@@ -6,6 +6,7 @@ import { storeGet, storeSet, storeRemove } from './appStore'
 import { generateJoinCode, normalizeJoinCode, isValidJoinCode } from './joinCode'
 import { addRosterMember, claimRosterSeat, getRoster, createRoster, MAX_ROSTER_NAME } from './roster'
 import { SerialQueue } from './serialQueue'
+import { reapplyLegacyEdits } from './gameLogic'
 
 // ─── Campaign identity ────────────────────────────────────────────────────────
 // Campaigns are keyed by a generated UUID, so any number of them coexist in the
@@ -235,6 +236,9 @@ export async function loadLegacyState(campaignId: string): Promise<LegacyState |
     // The COLUMN is authoritative — a code left behind in old saved JSON must
     // never be shown as if it were the real one.
     if (!joinCodeColumnMissing) ls.joinCode = row.join_code ?? null
+    // This is now the copy this client agrees with — the baseline a refused
+    // write is rebuilt against.
+    noteKnownState(ls)
     return ls
   } catch {
     return null
@@ -450,6 +454,24 @@ export function saveLegacyState(state: LegacyState, opts?: SaveOptions): Promise
 /** Retries of a re-applied write before giving up (each is one round trip). */
 const MAX_REAPPLY_ATTEMPTS = 3
 
+/**
+ * The last copy of each campaign this client is known to agree with — the
+ * newest of what it read and what it successfully wrote.
+ *
+ * It is the baseline for the DEFAULT rebuild: when a write is refused and the
+ * caller gave no `reapply`, the difference between this and the attempted
+ * write is exactly what this machine was trying to change, and that diff can
+ * be replayed onto the winner's copy. Without it the fallback is to discard
+ * the change, which is how a scar placed on one machine vanished when the
+ * other placed theirs — and how every other unguarded write could lose a
+ * campaign record nobody would notice until the next game.
+ */
+const lastKnownStates = new Map<string, LegacyState>()
+
+function noteKnownState(state: LegacyState) {
+  if (state?.campaignId) lastKnownStates.set(state.campaignId, state)
+}
+
 async function performSave(state: LegacyState, opts?: SaveOptions, attempt = 0): Promise<void> {
   // supabase-js RESOLVES on failure with an `error` field rather than throwing.
   // Ignoring it — as this did — makes a rejected write indistinguishable from a
@@ -510,14 +532,22 @@ async function performSave(state: LegacyState, opts?: SaveOptions, attempt = 0):
         // The NEXT save carries newer state and is a legitimate write.
         noteLegacyVersion(state.campaignId, actual)
 
-        // An award re-applies itself onto the winner's copy and goes again,
-        // rather than being dropped on the floor.
-        if (fresh && opts?.reapply && attempt < MAX_REAPPLY_ATTEMPTS) {
-          const merged = opts.reapply(fresh)
+        // Rebuild this change on the winner's copy and go again, rather than
+        // dropping it on the floor. An explicit `reapply` knows exactly how
+        // (an award increments, a finalize is idempotent); everything else
+        // falls back to replaying THIS machine's diff — what changed between
+        // the copy it last agreed with and the write it just attempted —
+        // which is right for the many writes that simply append a campaign
+        // record: a scar, a city, a history line.
+        const known = lastKnownStates.get(state.campaignId)
+        const rebuild = opts?.reapply
+          ?? (known ? (f: LegacyState) => reapplyLegacyEdits(f, known, state) : undefined)
+        if (fresh && rebuild && attempt < MAX_REAPPLY_ATTEMPTS) {
+          const merged = rebuild(fresh)
           publishFreshLegacy(merged)     // the app adopts the MERGED copy
           return performSave(merged, opts, attempt + 1)
         }
-        if (fresh) publishFreshLegacy(fresh)
+        if (fresh) { noteKnownState(fresh); publishFreshLegacy(fresh) }
         setConnection({
           state: 'error',
           message: 'Another player changed this campaign — your change was not saved',
@@ -526,6 +556,7 @@ async function performSave(state: LegacyState, opts?: SaveOptions, attempt = 0):
         throw new StaleCampaignError(state.campaignId, expected, actual)
       } else {
         legacyVersions.set(state.campaignId, data.legacy_version as number)
+        noteKnownState(state)          // the server and this client now agree
       }
     } else {
       const { data, error } = await supabase.from('campaigns').upsert({
@@ -542,7 +573,10 @@ async function performSave(state: LegacyState, opts?: SaveOptions, attempt = 0):
         })
         if (e2) message = e2.message || 'Unknown database error'
       } else if (error) message = error.message || 'Unknown database error'
-      else if (data) legacyVersions.set(state.campaignId, data.legacy_version as number)
+      else if (data) {
+        legacyVersions.set(state.campaignId, data.legacy_version as number)
+        noteKnownState(state)
+      }
     }
   } catch (e) {
     if (e instanceof StaleCampaignError) throw e

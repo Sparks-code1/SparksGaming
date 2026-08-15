@@ -5955,22 +5955,30 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       description: `${type} placed on ${territory.name} (Game ${gameNumber})`,
       territoryId: territory.id,
     }
-    const newScars = [...legacyState.scars, { territoryId: territory.id, type, appliedInGame: gameNumber }]
-    const newDealtScars = placingCardId
-      ? legacyState.dealtScars.map(d =>
-          d.cardId === placingCardId ? { ...d, placed: true, placedOnTerritoryId: territory.id } : d,
-        )
-      : legacyState.dealtScars
-
-    const newLegacy: LegacyState = {
-      ...legacyState,
-      scars: newScars,
-      dealtScars: newDealtScars,
-      historyLog: [...legacyState.historyLog, { gameNumber, entry: event.description, timestamp: new Date().toISOString() }],
+    // One pure ADD, applied to whatever copy is current — including another
+    // machine's, if theirs lands first. Built from a render-closure copy and
+    // saved flat, this write lost a scar every time two players placed in the
+    // same stretch: a bunker on Brazil vanished when the host placed theirs.
+    const stamp = new Date().toISOString()
+    const addScar = (b: LegacyState): LegacyState => {
+      if ((b.scars ?? []).some(s => s.territoryId === territory.id)) return b   // already recorded
+      return {
+        ...b,
+        scars: [...(b.scars ?? []), { territoryId: territory.id, type, appliedInGame: gameNumber }],
+        dealtScars: placingCardId
+          ? (b.dealtScars ?? []).map(d =>
+              d.cardId === placingCardId ? { ...d, placed: true, placedOnTerritoryId: territory.id } : d)
+          : (b.dealtScars ?? []),
+        historyLog: [...b.historyLog, { gameNumber, entry: event.description, timestamp: stamp }],
+      }
     }
-    setLegacyState(newLegacy)
+    setLegacyState(prev => {
+      const next = addScar(prev)
+      legacyStateRef.current = next
+      saveLegacyState(next, { reapply: addScar }).catch(() => {})
+      return next
+    })
     setLegacyEvents(prev => [...prev, event])
-    saveLegacyState(newLegacy).catch(() => {})
 
     // Clear all placement state
     setScarTarget(null)

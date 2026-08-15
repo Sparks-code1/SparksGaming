@@ -1,10 +1,10 @@
-// The end-of-game ceremony is the one moment two machines are guaranteed to
+﻿// The end-of-game ceremony is the one moment two machines are guaranteed to
 // write the campaign within seconds of each other: the winner records their
 // signature, major city and fortification; each runner-up then records a
 // minor city and a card upgrade; the winner's machine finally carries the
 // campaign into the next game.
 //
-// The first live run lost almost all of it — one city survived, no signature,
+// The first live run lost almost all of it â€” one city survived, no signature,
 // no fortification, no major city, and the campaign still said "Game 1". The
 // refusal protocol was doing its job (a stale write was refused) but the
 // ceremony's writes carried no way to rebuild themselves, so the loser simply
@@ -52,7 +52,7 @@ function fakeRow(initial: LegacyState) {
 const cityNames = (s: LegacyState) => s.stickers.map(x => x.name).sort()
 const signed = (s: LegacyState) => (s.victoryLog ?? []).map(v => v.winnerName)
 
-// ─── 1. The loss, as it happened ─────────────────────────────────────────────
+// â”€â”€â”€ 1. The loss, as it happened â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 console.log('--- without a rebuild, the winner\'s whole slice is lost ---')
 {
   const row = fakeRow(base())
@@ -75,10 +75,10 @@ console.log('--- without a rebuild, the winner\'s whole slice is lost ---')
   // The runner-up then writes its city from the copy it holds.
   const testEdited: LegacyState = { ...testBaseline, stickers: [sticker('Testburg', 'city:minor')] }
   row.save(refused.version, mergeLegacyEdits(refused.adopt, testBaseline, testEdited))
-  check('exactly one city survives — the reported bug', cityNames(row.value), ['Testburg'])
+  check('exactly one city survives â€” the reported bug', cityNames(row.value), ['Testburg'])
 }
 
-// ─── 2. With the rebuild ─────────────────────────────────────────────────────
+// â”€â”€â”€ 2. With the rebuild â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 console.log('\n--- re-applying the diff keeps every reward ---')
 {
   const row = fakeRow(base())
@@ -109,7 +109,7 @@ console.log('\n--- re-applying the diff keeps every reward ---')
   check('the signature is still there', signed(row.value), ['Ryan'])
 }
 
-// ─── 3. Finalize is idempotent ───────────────────────────────────────────────
+// â”€â”€â”€ 3. Finalize is idempotent â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 console.log('\n--- carrying the campaign forward cannot happen twice ---')
 {
   // Mirrors applyFinalize's guard: a base already past this game is untouched,
@@ -124,6 +124,33 @@ console.log('\n--- carrying the campaign forward cannot happen twice ---')
   const twice = applyFinalize(once)
   check('applying it again changes nothing', twice.currentGameNumber, 2)
   check('and it is the same object', twice === once, true)
+}
+
+// â”€â”€â”€ 4. The DEFAULT rebuild, for writes that never asked for one â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+console.log('\n--- an ordinary append survives without naming a rebuild ---')
+{
+  // What performSave now does when a write is refused and the caller gave no
+  // `reapply`: replay the diff between the copy this client last agreed with
+  // and the write it attempted, onto the winner's copy. Scars are the case
+  // that reported it â€” one placed on each machine, one surviving.
+  const row = fakeRow(base())
+  const knownToTest = row.value                     // both machines read v1
+
+  // The host places theirs first.
+  const hostScar = { ...row.value, scars: [{ territoryId: 'ukraine', type: 'bunker', appliedInGame: 1 }] as never }
+  row.save(row.version, hostScar)
+
+  // test's write was built on v1 and is refused; the default rebuild replays
+  // only what test changed.
+  const testScar: LegacyState = {
+    ...knownToTest,
+    scars: [{ territoryId: 'brazil', type: 'bunker', appliedInGame: 1 }] as never,
+  }
+  const defaultRebuild = (f: LegacyState) => reapplyLegacyEdits(f, knownToTest, testScar)
+  const res = row.save(1, testScar, defaultRebuild)
+  check('the rebuilt write is accepted', res.ok, true)
+  check('both scars are on the board',
+    (row.value.scars ?? []).map(s => s.territoryId).sort(), ['brazil', 'ukraine'])
 }
 
 console.log(pass ? '\nceremonyracetest: all passed' : '\nceremonyracetest: FAILURES PRESENT')
