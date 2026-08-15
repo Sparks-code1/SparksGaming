@@ -1538,17 +1538,27 @@ export default function AttackModal({
                     const won  = phase === 'results' && i < pairWinners.length && pairWinners[i] === 'atk'
                     const lost = phase === 'results' && i < pairWinners.length && pairWinners[i] === 'def'
                     const modFlash = phase === 'modifiers' && flashInfo?.side === 'atk' && flashInfo.indices.has(i)
-                    const canClick = phase === 'missile-phase' && attackerMissiles > 0 && !atkConverted.has(i)
+                    // Two ways a die of ours becomes a 6: the hotseat missile
+                    // phase, and the shared window online. Both are a click on
+                    // THIS die — there is no second row of the same dice.
+                    const windowTaken = windowFlips.some(f => f.side === 'atk' && f.dieIndex === i)
+                    const canClickPhase = phase === 'missile-phase' && attackerMissiles > 0 && !atkConverted.has(i)
+                    const canClickWindow = phase === 'spectator-window' && attackerMissiles > 0
+                      && !windowTaken && !windowFiring && !!spectatorWindow
+                    const canClick = canClickPhase || canClickWindow
                     return (
                       <DieFace
                         key={i}
-                        value={v}
+                        value={windowTaken ? 6 : v}
                         borderColor={ATK_COLOR}
                         spinning={phase === 'rolling'}
-                        glow={won ? WIN_GLOW : modFlash ? '#F1C40F' : undefined}
+                        glow={won ? WIN_GLOW : (modFlash || windowTaken) ? '#F1C40F' : undefined}
                         dim={lost}
                         clickable={canClick}
-                        onClick={canClick ? () => {
+                        onClick={!canClick ? undefined : canClickWindow ? () => {
+                          setWindowFiring(true)
+                          void spectatorWindow!.fire('atk', i).finally(() => setWindowFiring(false))
+                        } : () => {
                           const next = [...pendingAtkDice]
                           next[i] = 6
                           setPendingAtkDice(next)
@@ -1557,7 +1567,7 @@ export default function AttackModal({
                           onAttackerUsedMissile?.()
                           rollMissileCountRef.current += 1
                           onMissilePlaced?.('attacker', rollMissileCountRef.current)
-                        } : undefined}
+                        }}
                       />
                     )
                   })}
@@ -1698,37 +1708,9 @@ export default function AttackModal({
                 </div>
                 <div style={{ fontSize: 11, color: '#a09070', marginBottom: 8 }}>
                   {attackerMissiles > 0
-                    ? 'Click one of YOUR dice to turn it into an unmodifiable 6. The defender and the watching table may answer — every missile buys another 5 seconds.'
-                    : 'The defender and the watching table may fire a missile at one die. Every missile buys another 5 seconds.'}
+                    ? 'Click one of your own dice above to force it to a 6. The defender and the watching table may answer — every missile buys everyone another 7 seconds.'
+                    : 'The defender and the watching table may fire a missile at one die. Every missile buys another 7 seconds.'}
                 </div>
-                {attackerMissiles > 0 && (
-                  <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginBottom: 8 }}>
-                    {atkDice.map((v, i) => {
-                      const taken = windowFlips.some(f => f.side === 'atk' && f.dieIndex === i)
-                      return (
-                        <button
-                          key={i}
-                          disabled={taken || windowFiring}
-                          onClick={() => {
-                            if (!spectatorWindow) return
-                            setWindowFiring(true)
-                            void spectatorWindow.fire('atk', i).finally(() => setWindowFiring(false))
-                          }}
-                          style={{
-                            fontSize: 26, lineHeight: 1, padding: '2px 6px', borderRadius: 6,
-                            background: taken ? 'rgba(46,204,113,0.18)' : 'rgba(0,0,0,0.3)',
-                            border: taken ? '1px solid #2ecc71' : '1px dashed #F1C40F',
-                            color: taken ? '#2ecc71' : '#e8dcc8',
-                            cursor: taken || windowFiring ? 'default' : 'pointer',
-                          }}
-                          title={taken ? 'Already a missile 6' : 'Fire one of your missiles at this die'}
-                        >
-                          {['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'][Math.max(1, Math.min(6, v))]}
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
                 {windowFlips.map((f, i) => (
                   <div key={i} style={{ fontSize: 11, color: '#2ecc71', marginBottom: 4 }}>
                     🚀 {f.playerName} turned {f.side === 'atk' ? "an attacker's" : "a defender's"} die into a 6

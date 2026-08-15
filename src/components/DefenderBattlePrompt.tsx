@@ -248,6 +248,20 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
    * auto-roll clock running down against dice that have not been thrown.
    */
   const rollPending = isDefender && manual && !!combat.atkDice && !combat.defDice && !defSpin
+
+  /**
+   * May this screen put a missile on one of its own dice?
+   *
+   * Answered from the moment both rolls are on the table, rather than only
+   * once the WINDOW has arrived here. The window is opened by the attacker's
+   * machine and reaches this one over the wire, so gating the controls on it
+   * made the option appear late — or never, when this machine's copy of the
+   * state arrived after the window had already closed. The dice only become
+   * clickable when the window is really here; what shows immediately is that
+   * they are about to be, and how long there will be.
+   */
+  const canMissile = isDefender && (missilesLeft ?? 0) > 0 && !!onFireMissile
+    && !!combat.atkDice && !!combat.defDice && !settled
   const [autoRollLeft, setAutoRollLeft] = useState(AUTO_ROLL_SECONDS)
   useEffect(() => {
     if (!rollPending) return
@@ -321,11 +335,20 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
                 ? <div style={{ fontSize: 11, color: '#7a6a50', alignSelf: 'center' }}>
                     {isDefender ? 'your dice go here' : `${defenderName} rolls…`}
                   </div>
-                : animDef.map((v, i) => (
-                    <DieFace key={i} value={v} borderColor={DEF_COLOR} spinning={defSpin}
-                      glow={settled && settled.winners[i] === 'def' ? WIN_GLOW : undefined}
-                      dim={!!settled && i < settled.winners.length && settled.winners[i] === 'atk'} />
-                  ))}
+                : animDef.map((v, i) => {
+                    const taken = (combatWindow?.flips ?? []).some(f => f.side === 'def' && f.dieIndex === i)
+                    const clickable = canMissile && !taken && !!combatWindow && !missileInFlight
+                    return (
+                      <DieFace key={i} value={taken ? 6 : v} borderColor={DEF_COLOR} spinning={defSpin}
+                        glow={taken ? '#F1C40F' : settled && settled.winners[i] === 'def' ? WIN_GLOW : undefined}
+                        dim={!!settled && i < settled.winners.length && settled.winners[i] === 'atk'}
+                        clickable={clickable}
+                        onClick={clickable ? () => {
+                          setMissileInFlight(true)
+                          void onFireMissile!('def', i).finally(() => setMissileInFlight(false))
+                        } : undefined} />
+                    )
+                  })}
             </div>
           </div>
         </div>
@@ -414,51 +437,28 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
         )}
 
         {/* ── The missile window, from the defender's chair ──────────────────
-            Open for a few seconds after the modifiers settle. Your missiles,
-            the same server arbitration spectators get: first claim on a die
-            wins, a lost race is never charged. */}
-        {isDefender && combatWindow && (missilesLeft ?? 0) > 0 && onFireMissile && (
+            Your own dice ARE the buttons — a second row of the same five dice
+            was one row too many, and put the thing you were choosing between
+            in two places at once. This is the caption for them. */}
+        {canMissile && (
           <div style={{
             marginTop: 12, paddingTop: 10, borderTop: '1px solid rgba(200,148,10,0.25)',
             textAlign: 'center',
           }}>
-            <div style={{ fontSize: 11, color: '#F1C40F', marginBottom: 6 }}>
-              🚀 Missile window{windowSecondsLeft !== null ? ` — ${windowSecondsLeft}s` : ''} — turn one of
-              your dice into an unmodifiable 6 ({missilesLeft} left)
+            <div style={{ fontSize: 11, color: '#F1C40F', marginBottom: 4 }}>
+              🚀 {combatWindow
+                ? `Missile window${windowSecondsLeft !== null ? ` — ${windowSecondsLeft}s` : ''} — click one of your dice above to force it to a 6`
+                : 'Missile window opening…'}
+              {' '}({missilesLeft} left)
             </div>
             <div style={{ fontSize: 10, color: '#7a6040', marginBottom: 6 }}>
-              Every missile fired by anyone gives everyone another {Math.round(MISSILE_WINDOW_SECONDS)} seconds to answer.
+              Every missile fired by anyone gives everyone another {MISSILE_WINDOW_SECONDS} seconds to answer.
             </div>
-            <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
-              {combatWindow.defDice.map((v, i) => {
-                const taken = combatWindow.flips.some(f => f.side === 'def' && f.dieIndex === i)
-                return (
-                  <button
-                    key={i}
-                    disabled={taken || missileInFlight}
-                    onClick={() => {
-                      setMissileInFlight(true)
-                      void onFireMissile('def', i).finally(() => setMissileInFlight(false))
-                    }}
-                    style={{
-                      fontSize: 26, lineHeight: 1, padding: '2px 6px', borderRadius: 6,
-                      background: taken ? 'rgba(46,204,113,0.18)' : 'rgba(0,0,0,0.3)',
-                      border: taken ? '1px solid #2ecc71' : '1px dashed #F1C40F',
-                      color: taken ? '#2ecc71' : '#7fb3d3',
-                      cursor: taken || missileInFlight ? 'default' : 'pointer',
-                    }}
-                    title={taken ? 'Already a missile 6' : 'Fire the missile at this die'}
-                  >
-                    {['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'][Math.max(1, Math.min(6, v))]}
-                  </button>
-                )
-              })}
-            </div>
-            {onResolveNow && (
+            {combatWindow && onResolveNow && (
               <button
                 onClick={onResolveNow}
                 style={{
-                  marginTop: 8, padding: '7px 16px', borderRadius: 7, fontSize: 11,
+                  padding: '7px 16px', borderRadius: 7, fontSize: 11,
                   border: '1px solid rgba(200,148,10,0.45)', background: 'rgba(200,148,10,0.12)',
                   color: '#E8DCC8', cursor: 'pointer', fontFamily: 'Georgia, serif',
                 }}
