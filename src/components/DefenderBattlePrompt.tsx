@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ActiveCombat, CombatWindowState } from '@/types/game'
 import { DieFace } from './AttackModal'
 import { playDice } from '@/lib/sounds'
+import { diceArrivalKey } from '@/lib/gameLogic'
 
 const ATK_COLOR = '#c0392b'
 const DEF_COLOR = '#2471a3'
@@ -107,39 +108,57 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
     setDiceCount(c => Math.min(c, combat.defDiceMax))
   }, [combat.round, combat.key, combat.defDiceMax])
 
-  // A side's dice arrive: a short landing flourish, then the real values.
-  // These are wire arrivals — already rolled — so they get ARRIVAL_SPIN_MS,
-  // not the full theater; the defender's own click animates via rollDefense.
+  /**
+   * A side's dice arrive: a short landing flourish, then the real values.
+   *
+   * Keyed by the VALUES, not the array. The board is rebuilt from the server
+   * on every poll, so `combat.atkDice` is a new array five seconds after it is
+   * the same dice — and an identity dependency re-ran this effect mid-flourish
+   * every time. The re-run tore down the timer that ends the spin, then hit
+   * the "already seen" guard and returned, leaving the spin latched ON with no
+   * timer left to clear it: dice that never arrive, a Roll button that never
+   * appears (it waits on !defSpin), a settle that never runs (it waits on both
+   * spins) — a battle screen frozen with no way out. That is what stranded
+   * Ryan, and the same latch is why spectators once "kept rolling" after a
+   * battle had already been decided.
+   *
+   * The cleanup clears the flag as well, so no teardown can ever leave it set.
+   */
+  const atkSig = diceArrivalKey(combat, combat.atkDice)
   useEffect(() => {
-    if (!combat.atkDice || seenAtkRef.current) return
+    const dice = combat.atkDice
+    if (!atkSig || !dice) return
     seenAtkRef.current = true
     playDice()
     setAtkSpin(true)
-    const spin = setInterval(() => setAnimAtk(rollN(combat.atkDice!.length)), SPIN_TICK_MS)
+    const spin = setInterval(() => setAnimAtk(rollN(dice.length)), SPIN_TICK_MS)
     const stop = setTimeout(() => {
       clearInterval(spin)
-      setAnimAtk(combat.atkDice!)
+      setAnimAtk(dice)
       setAtkSpin(false)
     }, ARRIVAL_SPIN_MS)
-    return () => { clearInterval(spin); clearTimeout(stop) }
+    return () => { clearInterval(spin); clearTimeout(stop); setAtkSpin(false) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [combat.atkDice])
+  }, [atkSig])
 
   // The defense arriving from ELSEWHERE (spectator view; or the idle roll the
-  // attacker made) — the defender's own click animates via rollDefense.
+  // attacker made) — the defender's own click animates via rollDefense. Same
+  // value-keying as above, for the same reason.
+  const defSig = diceArrivalKey(combat, combat.defDice)
   useEffect(() => {
-    if (!combat.defDice || seenDefRef.current) return
+    const dice = combat.defDice
+    if (!defSig || !dice) return
     seenDefRef.current = true
     setDefSpin(true)
-    const spin = setInterval(() => setAnimDef(rollN(combat.defDice!.length)), SPIN_TICK_MS)
+    const spin = setInterval(() => setAnimDef(rollN(dice.length)), SPIN_TICK_MS)
     const stop = setTimeout(() => {
       clearInterval(spin)
-      setAnimDef(combat.defDice!)
+      setAnimDef(dice)
       setDefSpin(false)
     }, ARRIVAL_SPIN_MS)
-    return () => { clearInterval(spin); clearTimeout(stop) }
+    return () => { clearInterval(spin); clearTimeout(stop); setDefSpin(false) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [combat.defDice])
+  }, [defSig])
 
   // Both rolls in, nothing spinning: apply the table's modifiers, then any
   // missile conversions, and light the pair winners. Recomputes if the

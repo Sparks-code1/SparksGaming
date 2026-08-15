@@ -884,6 +884,28 @@ export function campaignLeadFaction(
 }
 
 /**
+ * The identity of a dice ARRIVAL, for animating it exactly once.
+ *
+ * A battle screen watching a shared session is re-rendered from a board that
+ * the server rebuilds on every poll, so `combat.atkDice` is a brand-new array
+ * a few seconds after it is the same three dice. An effect keyed on the array
+ * itself therefore re-runs mid-animation — tearing down the timer that ENDS
+ * the landing spin, and leaving the spin latched on with nothing left to clear
+ * it. The dice never land, the Roll button never appears (it waits on the
+ * spin), the round never settles (it waits on both spins), and the defender is
+ * stranded in a battle screen that offers no way out.
+ *
+ * Keyed by round and values: one animation per real arrival, no animation for
+ * the same dice arriving again down the wire.
+ */
+export function diceArrivalKey(
+  combat: { key: string; round: number },
+  dice: number[] | null | undefined,
+): string | null {
+  return dice ? `${combat.key}#${combat.round}:${dice.join(',')}` : null
+}
+
+/**
  * How many missiles each side may spend FROM THE ATTACKER'S SCREEN, in the
  * battle-side missile phase.
  *

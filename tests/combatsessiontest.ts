@@ -8,6 +8,7 @@
 // the turn.
 import { gameReducer, createMathRng, type Action } from '@/lib/gameReducer'
 import { initialTurnState, type GameState } from '@/types/game'
+import { diceArrivalKey } from '@/lib/gameLogic'
 
 let pass = 0, fail = 0
 function check(name: string, cond: boolean, detail = '') {
@@ -154,6 +155,33 @@ console.log('\n— the session dies with the battle —')
   check('END_TURN closes it', ended.state.combat === null)
   const cleared = gameReducer(s1, { type: 'CLEAR_COMBAT' } as Action, rng)
   check('CLEAR_COMBAT closes it', cleared.state.combat === null)
+}
+
+console.log('\n— a dice ARRIVAL happens once, however often the board is rebuilt —')
+{
+  // Every screen watching a battle rebuilds its board from the server on each
+  // poll, so the dice ARRAY is new a few seconds after it is the same dice.
+  // The landing animation was keyed on that array: it re-ran mid-flourish,
+  // tore down the timer that ends the spin, hit its "already seen" guard and
+  // returned — leaving the spin latched on with nothing left to clear it. The
+  // dice never landed, the Roll button never appeared (it waits on the spin),
+  // the round never settled (it waits on both spins), and the defender was
+  // stranded in a battle screen that deliberately offers no way out.
+  const c = { key: 'east-africa>middle-east@8.6', round: 1 }
+  const rolled = [6, 5, 4]
+
+  check('the same dice arriving again is the same arrival',
+    diceArrivalKey(c, rolled) === diceArrivalKey(c, [...rolled]),
+    `${diceArrivalKey(c, rolled)} vs ${diceArrivalKey(c, [...rolled])}`)
+  check('different dice are a new arrival',
+    diceArrivalKey(c, rolled) !== diceArrivalKey(c, [6, 5, 3]))
+  check('the SAME dice in the next round are a new arrival',
+    diceArrivalKey(c, rolled) !== diceArrivalKey({ ...c, round: 2 }, rolled))
+  check('the same dice in a different battle are a new arrival',
+    diceArrivalKey(c, rolled) !== diceArrivalKey({ ...c, key: 'other@9.1' }, rolled))
+  check('dice not yet rolled have no arrival to animate',
+    diceArrivalKey(c, null) === null && diceArrivalKey(c, undefined) === null)
+  check('one die is still an arrival', diceArrivalKey(c, [4]) !== null)
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)
