@@ -257,6 +257,28 @@ export interface CombatWindowState {
   /** Dice AFTER every scar/ability modifier — what the attacker's screen shows. */
   atkDice: number[]
   defDice: number[]
-  /** Missile flips already applied, in arrival order. First claim on a die wins. */
+  /**
+   * The winning claim on each die, derived from `claims` — this is what every
+   * screen renders and what the round resolves against.
+   */
   flips: Array<{ playerId: string; side: 'atk' | 'def'; dieIndex: number }>
+  /**
+   * Every missile claimed on this roll, in arrival order and never dropped.
+   *
+   * Arrival order does NOT decide a contested die: two people reaching for the
+   * same die is a matter of priority, not reflexes, and the loser's missile is
+   * never charged (see missilePriority). Keeping the losing claims makes that
+   * visible — a screen can say whose missile went through and whose was
+   * returned — and makes the outcome recomputable rather than path-dependent.
+   */
+  claims?: Array<{ playerId: string; side: 'atk' | 'def'; dieIndex: number }>
+  /**
+   * When the window closes, as epoch ms. Every screen counts down to the same
+   * instant, and every accepted claim pushes it out again: a missile is news
+   * the other side must be given time to answer.
+   */
+  expiresAt?: number
+  /** Turn-order ranks (attacker 0, defender 1, then round the table) — see
+   *  missilePriority. Carried so every screen resolves ties the same way. */
+  priority?: Record<string, number>
 }

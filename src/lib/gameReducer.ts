@@ -127,7 +127,7 @@ export type Action =
    * the server; what the window buys is a place where a spectator's missile
    * can land under SERVER arbitration instead of anyone's say-so.
    */
-  | { type: 'OPEN_COMBAT_WINDOW'; roundKey: string; srcId: string; tgtId: string; atkDice: number[]; defDice: number[] }
+  | { type: 'OPEN_COMBAT_WINDOW'; roundKey: string; srcId: string; tgtId: string; atkDice: number[]; defDice: number[]; expiresAt?: number }
   /**
    * A spectator spends one missile to turn ONE die of the open round into an
    * unmodified 6.
@@ -140,7 +140,7 @@ export type Action =
    * the caller's own seat during sanitize â€” a client cannot spend someone
    * else's missile.
    */
-  | { type: 'SPECTATOR_MISSILE'; roundKey: string; side: 'atk' | 'def'; dieIndex: number; playerId: string }
+  | { type: 'SPECTATOR_MISSILE'; roundKey: string; side: 'atk' | 'def'; dieIndex: number; playerId: string; expiresAt?: number }
   /** The actor resumes the battle â€” the window closes, late missiles refuse. */
   | { type: 'CLOSE_COMBAT_WINDOW'; roundKey: string }
   /**
@@ -744,6 +744,13 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
       // window only ever belongs to the newest roll.
       const die = (v: unknown) => typeof v === 'number' && Number.isFinite(v)
         ? Math.max(1, Math.min(6, Math.trunc(v))) : 1
+      // Who outranks whom on a contested die, settled once when the window
+      // opens so every screen resolves the same way. The battle names the two
+      // principals; the board names them when there is no session (hotseat).
+      const atkId = state.combat?.attackerId
+        ?? state.territories[action.srcId]?.occupyingPlayerId ?? ''
+      const defId = state.combat?.defenderId
+        ?? state.territories[action.tgtId]?.occupyingPlayerId ?? ''
       return only({
         ...state,
         combatWindow: {
@@ -753,6 +760,9 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
           atkDice: (Array.isArray(action.atkDice) ? action.atkDice : []).slice(0, 3).map(die),
           defDice: (Array.isArray(action.defDice) ? action.defDice : []).slice(0, 3).map(die),
           flips: [],
+          claims: [],
+          expiresAt: typeof action.expiresAt === 'number' ? action.expiresAt : undefined,
+          priority: missilePriority(state.players, atkId, defId),
         },
       })
     }
@@ -766,8 +776,24 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
       if (!w || w.roundKey !== action.roundKey) return only(state)
       const dice = action.side === 'atk' ? w.atkDice : w.defDice
       if (action.dieIndex < 0 || action.dieIndex >= dice.length) return only(state)
-      if (w.flips.some(f => f.side === action.side && f.dieIndex === action.dieIndex)) return only(state)
+      // One missile per die per PLAYER. Somebody else already claiming it is
+      // not a refusal — both claims stand, and priority decides which one is
+      // charged when the window closes.
+      const claims = w.claims ?? []
+      if (claims.some(c => c.side === action.side && c.dieIndex === action.dieIndex
+        && c.playerId === action.playerId)) return only(state)
+      const nextClaims = [...claims, {
+        playerId: action.playerId, side: action.side, dieIndex: action.dieIndex,
+      }]
+      // The die reads 6 whoever wins it, so the dice settle on the first claim
+      // and never change again; only the NAME on the flip can still change.
       const flipped = dice.map((d, i) => (i === action.dieIndex ? 6 : d))
+      // A missile is news the other side must be given time to answer, so
+      // every accepted claim pushes the deadline out again — bounded, so a
+      // client cannot hold a battle open by naming a distant hour.
+      const asked = typeof action.expiresAt === 'number' ? action.expiresAt : 0
+      const ceiling = (w.expiresAt ?? asked) + MISSILE_WINDOW_MS
+      const expiresAt = Math.max(w.expiresAt ?? 0, Math.min(asked, ceiling))
       return {
         state: {
           ...state,
@@ -775,11 +801,9 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
             ...w,
             atkDice: action.side === 'atk' ? flipped : w.atkDice,
             defDice: action.side === 'def' ? flipped : w.defDice,
-            flips: [...w.flips, { playerId: action.playerId, side: action.side, dieIndex: action.dieIndex }],
-          },
-          missileSpends: {
-            ...(state.missileSpends ?? {}),
-            [action.playerId]: ((state.missileSpends ?? {})[action.playerId] ?? 0) + 1,
+            claims: nextClaims,
+            flips: resolveMissileClaims(nextClaims, w.priority),
+            expiresAt: expiresAt || undefined,
           },
         },
         effects: [{
@@ -789,11 +813,19 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
       }
     }
 
-    case 'CLOSE_COMBAT_WINDOW':
+    case 'CLOSE_COMBAT_WINDOW': {
       // Key-checked so a late CLOSE from a previous round cannot slam a window
       // that a newer roll just opened.
-      if (state.combatWindow && state.combatWindow.roundKey !== action.roundKey) return only(state)
-      return only({ ...state, combatWindow: null })
+      const w = state.combatWindow
+      if (w && w.roundKey !== action.roundKey) return only(state)
+      if (!w) return only({ ...state, combatWindow: null })
+      // Charging happens HERE, and only for the claims that actually landed.
+      // A missile that lost a contested die was never spent — no refund is
+      // needed because nothing was ever taken.
+      const spends = { ...(state.missileSpends ?? {}) }
+      for (const f of w.flips) spends[f.playerId] = (spends[f.playerId] ?? 0) + 1
+      return only({ ...state, combatWindow: null, missileSpends: spends })
+    }
 
     case 'DRAW_CARD': {
       const piles = state.cards
@@ -1443,6 +1475,62 @@ export function clampCombatResolution(
  * loser is refunded" true by construction. The codes reach the losing
  * spectator so their screen can say which race they lost.
  */
+/** How long the missile window holds, and how far one missile pushes it out. */
+export const MISSILE_WINDOW_MS = 5_000
+
+/**
+ * Who wins a die two people reached for.
+ *
+ * Attacker first, then the defender, then everyone else in turn order starting
+ * after the attacker. Reflexes decide nothing: the same two claims resolve the
+ * same way whichever arrived first, and the loser's missile is never charged
+ * (only winning claims are folded into the ledger when the window closes).
+ *
+ * Contested dice are the only thing this decides. Two missiles on DIFFERENT
+ * dice both go through — there is nothing to arbitrate.
+ */
+export function missilePriority(
+  players: Array<{ id: string }>,
+  attackerId: string,
+  defenderId: string,
+): Record<string, number> {
+  const rank: Record<string, number> = { [attackerId]: 0, [defenderId]: 1 }
+  const start = players.findIndex(p => p.id === attackerId)
+  let next = 2
+  for (let i = 1; i <= players.length; i++) {
+    const p = players[(Math.max(0, start) + i) % players.length]
+    if (!p || p.id === attackerId || p.id === defenderId) continue
+    if (rank[p.id] === undefined) rank[p.id] = next++
+  }
+  return rank
+}
+
+/** The claim that actually lands on each die: lowest rank, arrival breaking ties. */
+export function resolveMissileClaims(
+  claims: Array<{ playerId: string; side: 'atk' | 'def'; dieIndex: number }>,
+  priority: Record<string, number> | undefined,
+): Array<{ playerId: string; side: 'atk' | 'def'; dieIndex: number }> {
+  const best = new Map<string, { claim: typeof claims[number]; rank: number; at: number }>()
+  claims.forEach((c, at) => {
+    const key = `${c.side}${c.dieIndex}`
+    // An unranked claimant sorts after everyone ranked, never ahead of them.
+    const rank = priority?.[c.playerId] ?? Number.MAX_SAFE_INTEGER
+    const cur = best.get(key)
+    if (!cur || rank < cur.rank) best.set(key, { claim: c, rank, at })
+  })
+  return [...best.values()].sort((a, b) => a.at - b.at).map(x => x.claim)
+}
+
+/** Missiles this player has committed AND pledged in the open window. */
+export function missilesCommittedBy(
+  state: Pick<GameState, 'combatWindow' | 'missileSpends'>,
+  playerId: string,
+): number {
+  const ledger = (state.missileSpends ?? {})[playerId] ?? 0
+  const pending = (state.combatWindow?.claims ?? []).filter(c => c.playerId === playerId).length
+  return ledger + pending
+}
+
 export function spectatorMissileRefusal(
   state: Pick<GameState, 'combatWindow' | 'missileSpends'>,
   action: { roundKey: string; side: 'atk' | 'def'; dieIndex: number },
@@ -1450,22 +1538,25 @@ export function spectatorMissileRefusal(
   opts: {
     /** The spender's missile count from the CAMPAIGN blob (pre-ledger). */
     legacyMissiles: number
-    /** True when the spender is the ATTACKER â€” the one participant refused
-     *  here, because their conversions have their own missile phase. The
-     *  DEFENDER fires through this window like any spectator: it is how a
-     *  human spends missiles against an AI attacker (whose machine skips the
-     *  interactive phase entirely). */
-    isAttacker: boolean
+    /**
+     * Unused now. The attacker was once refused here, because the attacker's
+     * missiles were spent in a separate phase on the attacker's own screen -
+     * which is also how the attacker came to be spending the DEFENDER's
+     * missiles for them. There is one window now and everyone fires into it.
+     */
+    isAttacker?: boolean
   },
-): 'window-closed' | 'bad-die' | 'die-taken' | 'no-missiles' | 'not-a-spectator' | null {
-  if (opts.isAttacker) return 'not-a-spectator'
+): 'window-closed' | 'bad-die' | 'die-taken' | 'no-missiles' | null {
   const w = state.combatWindow
   if (!w || w.roundKey !== action.roundKey) return 'window-closed'
   const dice = action.side === 'atk' ? w.atkDice : w.defDice
   if (!Number.isInteger(action.dieIndex) || action.dieIndex < 0 || action.dieIndex >= dice.length) return 'bad-die'
-  if (w.flips.some(f => f.side === action.side && f.dieIndex === action.dieIndex)) return 'die-taken'
-  const spent = (state.missileSpends ?? {})[spenderId] ?? 0
-  if (opts.legacyMissiles - spent < 1) return 'no-missiles'
+  // Losing a contested die is no longer a refusal: it is settled by priority
+  // when the window closes, and a losing claim is never charged. What IS
+  // refused is claiming the same die twice — one missile per die per player.
+  if ((w.claims ?? []).some(c => c.side === action.side && c.dieIndex === action.dieIndex
+    && c.playerId === spenderId)) return 'die-taken'
+  if (opts.legacyMissiles - missilesCommittedBy(state, spenderId) < 1) return 'no-missiles'
   return null
 }
 

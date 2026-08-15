@@ -64,24 +64,73 @@ console.log('\n— one missile turns exactly one die into a 6 —')
   check('its neighbour is untouched', s2.combatWindow?.defDice[1] === 1)
   check('the attacker row is untouched', JSON.stringify(s2.combatWindow?.atkDice) === '[5,3,2]')
   check('the flip is recorded with its spender', s2.combatWindow?.flips[0]?.playerId === 'p3')
-  check('the spend lands in the match ledger', s2.missileSpends?.p3 === 1)
+  check('the claim is pledged, not yet charged',
+    (s2.combatWindow?.claims ?? []).length === 1 && s2.missileSpends?.p3 === undefined)
+  const closed = gameReducer(s2, { type: 'CLOSE_COMBAT_WINDOW', roundKey: 'src>tgt#3.1' } as Action, rng)
+  check('the ledger is charged when the window closes', closed.state.missileSpends?.p3 === 1)
   const eff = effects.find(e => e.kind === 'spectator-missile')
   check('an effect tells every screen', !!eff && (eff as { dieIndex: number }).dieIndex === 0)
 }
 
-console.log('\n— first click wins; different dice both land —')
+console.log('\n— two people, one die: priority decides, not reflexes —')
 {
+  // The table: p1 attacks p2, p3 watches. Attacker outranks defender outranks
+  // everyone else in turn order after the attacker.
   const { state: s1 } = gameReducer(base(), open(), rng)
-  const { state: s2 } = gameReducer(s1, missile(), rng)
-  // The same die again — the reducer refuses to double-apply even if the edge
-  // gate were somehow bypassed.
-  const { state: s3, effects } = gameReducer(s2, missile({ playerId: 'p2' }), rng)
-  check('a second missile on the same die is a no-op', s3 === s2 || JSON.stringify(s3) === JSON.stringify(s2))
-  check('and emits nothing', effects.length === 0)
-  // A different die from another spectator applies cleanly.
-  const { state: s4 } = gameReducer(s2, missile({ side: 'atk', dieIndex: 2 }), rng)
-  check('a different die still flips', s4.combatWindow?.atkDice[2] === 6)
-  check('both spends are on the ledger', s4.missileSpends?.p3 === 2)
+  const prio = s1.combatWindow?.priority ?? {}
+  check('the attacker outranks everyone', prio.p1 === 0)
+  check('then the defender', prio.p2 === 1)
+  check('then the rest of the table', prio.p3 === 2)
+
+  // p3 (a spectator) claims first; the ATTACKER claims the same die after.
+  const { state: s2 } = gameReducer(s1, missile({ playerId: 'p3' }), rng)
+  const { state: s3, effects } = gameReducer(s2, missile({ playerId: 'p1' }), rng)
+  check('the later claim is still recorded', (s3.combatWindow?.claims ?? []).length === 2)
+  check('and it is announced like any other', effects.length === 1)
+  check('the die belongs to the attacker, who claimed it SECOND',
+    s3.combatWindow?.flips.filter(f => f.side === 'def' && f.dieIndex === 0)[0]?.playerId === 'p1')
+  check('the die still reads 6 — only the name on it changed',
+    s3.combatWindow?.defDice[0] === 6)
+
+  const done = gameReducer(s3, { type: 'CLOSE_COMBAT_WINDOW', roundKey: 'src>tgt#3.1' } as Action, rng)
+  check('only the winner pays', done.state.missileSpends?.p1 === 1)
+  check('the loser is charged nothing — it was never taken',
+    done.state.missileSpends?.p3 === undefined)
+
+  // Order does not matter: attacker first, spectator second, same outcome.
+  const { state: r2 } = gameReducer(s1, missile({ playerId: 'p1' }), rng)
+  const { state: r3 } = gameReducer(r2, missile({ playerId: 'p3' }), rng)
+  check('claiming first buys nothing',
+    r3.combatWindow?.flips.filter(f => f.dieIndex === 0)[0]?.playerId === 'p1')
+
+  // The same player cannot claim one die twice.
+  const { state: twice, effects: none } = gameReducer(s2, missile({ playerId: 'p3' }), rng)
+  check('one missile per die per player', (twice.combatWindow?.claims ?? []).length === 1)
+  check('and the repeat announces nothing', none.length === 0)
+
+  // DIFFERENT dice are not contested at all — both go through, both are paid.
+  const { state: d2 } = gameReducer(s1, missile({ playerId: 'p2', side: 'def', dieIndex: 0 }), rng)
+  const { state: d3 } = gameReducer(d2, missile({ playerId: 'p1', side: 'atk', dieIndex: 2 }), rng)
+  const dDone = gameReducer(d3, { type: 'CLOSE_COMBAT_WINDOW', roundKey: 'src>tgt#3.1' } as Action, rng)
+  check('two missiles on two dice both land',
+    d3.combatWindow?.defDice[0] === 6 && d3.combatWindow?.atkDice[2] === 6)
+  check('and both are charged',
+    dDone.state.missileSpends?.p1 === 1 && dDone.state.missileSpends?.p2 === 1)
+}
+
+console.log('\n— every missile buys the other side time to answer —')
+{
+  const t0 = 1_000_000
+  const { state: s1 } = gameReducer(base(), open({ expiresAt: t0 + 5_000 }), rng)
+  check('the window carries a deadline every screen counts down to',
+    s1.combatWindow?.expiresAt === t0 + 5_000)
+  const { state: s2 } = gameReducer(s1, missile({ expiresAt: t0 + 9_000 }), rng)
+  check('a missile pushes the deadline out', s2.combatWindow?.expiresAt === t0 + 9_000)
+  const { state: s3 } = gameReducer(s2, missile({ playerId: 'p2', expiresAt: t0 + 1_000 }), rng)
+  check('and never pulls it back in', s3.combatWindow?.expiresAt === t0 + 9_000)
+  const { state: s4 } = gameReducer(s2, missile({ playerId: 'p2', expiresAt: t0 + 999_999 }), rng)
+  check('a client cannot hold the battle open by naming a distant hour',
+    s4.combatWindow?.expiresAt === t0 + 14_000)
 }
 
 console.log('\n— the refusal gate (what the edge function runs BEFORE charging) —')
@@ -94,19 +143,25 @@ console.log('\n— the refusal gate (what the edge function runs BEFORE charging
     spectatorMissileRefusal(w, missile({ roundKey: 'old#1' }) as never, 'p3', ok) === 'window-closed')
   check('an out-of-range die → bad-die',
     spectatorMissileRefusal(w, missile({ dieIndex: 5 }) as never, 'p3', ok) === 'bad-die')
-  check('the ATTACKER is refused — their conversions have their own phase',
-    spectatorMissileRefusal(w, missile() as never, 'p1', { ...ok, isAttacker: true }) === 'not-a-spectator')
-  check('the DEFENDER fires like any spectator — missiles against the AI',
+  check('the ATTACKER fires into the same window as everyone else',
+    spectatorMissileRefusal(w, missile() as never, 'p1', { ...ok, isAttacker: true }) === null)
+  check('so does the DEFENDER',
     spectatorMissileRefusal(w, missile() as never, 'p2', ok) === null)
   check('no missiles left → no-missiles',
     spectatorMissileRefusal(w, missile() as never, 'p3', { ...ok, legacyMissiles: 0 }) === 'no-missiles')
 
   const { state: taken } = gameReducer(w, missile(), rng)
-  check('a claimed die → die-taken (the loser is refunded by never paying)',
-    spectatorMissileRefusal(taken, missile() as never, 'p2', ok) === 'die-taken')
+  check('a die somebody ELSE claimed is open — priority will settle it',
+    spectatorMissileRefusal(taken, missile() as never, 'p2', ok) === null)
+  check('but claiming your own die twice is refused',
+    spectatorMissileRefusal(taken, missile() as never, 'p3', ok) === 'die-taken')
   check('the ledger counts against the campaign stock: 2 owned, 2 spent → no-missiles',
     spectatorMissileRefusal(
       { ...taken, missileSpends: { p3: 2 } }, missile({ dieIndex: 1 }) as never, 'p3', ok,
+    ) === 'no-missiles')
+  check('a pledge in the open window counts too: 2 owned, 1 charged, 1 pledged',
+    spectatorMissileRefusal(
+      { ...taken, missileSpends: { p3: 1 } }, missile({ dieIndex: 1 }) as never, 'p3', ok,
     ) === 'no-missiles')
 }
 

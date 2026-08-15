@@ -142,6 +142,10 @@ interface Props {
     open: (dice: { atk: number[]; def: number[] }) => string
     peekFlips: (roundKey: string) => Array<{ side: 'atk' | 'def'; dieIndex: number; playerName: string }>
     close: (roundKey: string) => Promise<Array<{ side: 'atk' | 'def'; dieIndex: number }>>
+    /** The shared deadline for this round's window; every missile pushes it out. */
+    expiryOf: (roundKey: string) => number
+    /** Fire one of MY missiles into the window — the attacker fires here too. */
+    fire: (side: 'atk' | 'def', dieIndex: number) => Promise<boolean>
   }
   /**
    * Does anyone in the audience actually hold a missile to spend on this
@@ -521,6 +525,8 @@ export default function AttackModal({
   const [windowSecondsLeft, setWindowSecondsLeft] = useState(0)
   /** Flips shown live while the window is open (names for the banner). */
   const [windowFlips, setWindowFlips] = useState<Array<{ side: 'atk' | 'def'; dieIndex: number; playerName: string }>>([])
+  /** A missile of ours is in flight to the server — one click, one missile. */
+  const [windowFiring, setWindowFiring] = useState(false)
 
   /**
    * The shared round tail: fold in any spectator flips, re-sort for pairing
@@ -565,9 +571,12 @@ export default function AttackModal({
    *  Skip. Only fast-forwarded/one-shot battles bypass it. */
   function windowThenFinish(fa: number[], fd: number[], markResolved: boolean) {
     // No window when there is no audience, when the battle is a one-shot
-    // auto-resolve, or when not one watching human holds a missile — an
-    // un-clickable pause is just a delay wearing a countdown.
-    if (!spectatorWindow || (autoPlay && !publicAiRounds) || !audienceCanMissile) {
+    // auto-resolve, or when nobody at all holds a missile — an un-clickable
+    // pause is just a delay wearing a countdown. The ATTACKER counts as
+    // somebody: their missiles are spent here now, in the same window as
+    // everyone else's.
+    if (!spectatorWindow || (autoPlay && !publicAiRounds)
+      || (!audienceCanMissile && attackerMissiles < 1)) {
       finishRound(fa, fd, [], markResolved); return
     }
     if (markResolved) resolvedRef.current = true
@@ -598,15 +607,21 @@ export default function AttackModal({
     finishRound(fa, fd, flips, false)   // resolvedRef already set on entry
   }
 
-  // Window countdown; hitting zero closes it exactly like Skip.
+  /**
+   * Window countdown, read from the SHARED deadline rather than counted down
+   * locally — every missile fired by anyone pushes that deadline out, and the
+   * other side must see the same clock they are answering against. Reaching
+   * zero closes the window exactly as the button does.
+   */
   useEffect(() => {
     if (phase !== 'spectator-window') return
     const t = setInterval(() => {
-      setWindowSecondsLeft(prev => {
-        if (prev <= 1) { clearInterval(t); void endSpectatorWindow(); return 0 }
-        return prev - 1
-      })
-    }, 1_000)
+      const key = windowKeyRef.current
+      const endsAt = key && spectatorWindow ? spectatorWindow.expiryOf(key) : 0
+      const left = endsAt ? Math.ceil((endsAt - Date.now()) / 1000) : 0
+      setWindowSecondsLeft(Math.max(0, left))
+      if (left <= 0) { clearInterval(t); void endSpectatorWindow() }
+    }, 250)
     return () => clearInterval(t)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase])
@@ -713,9 +728,15 @@ export default function AttackModal({
   function proceedToResolution(fa: number[], fd: number[]) {
     // Public AI rounds skip the interactive missile phase — nobody is at this
     // modal to click it, and stalling here froze the computer's turn the
-    // moment either side held a missile. (A human defender's missile agency
-    // against AI attacks is a known gap, noted in the tracker.)
-    const hasMissiles = !publicAiRounds && (attackerMissiles > 0 || defenderMissilesHere > 0)
+    // moment either side held a missile.
+    //
+    // Online, this phase is skipped for a different reason: there is ONE
+    // missile step now and it is the window, where the attacker, the defender
+    // and every spectator fire into the same round and a contested die is
+    // settled by priority. A private phase here would decide dice before the
+    // defender had seen them.
+    const hasMissiles = !publicAiRounds && !spectatorWindow
+      && (attackerMissiles > 0 || defenderMissilesHere > 0)
     if (hasMissiles) {
       // Enter missile phase — players may convert dice to 6s before resolution
       setPendingAtkDice([...fa])
@@ -1657,23 +1678,52 @@ export default function AttackModal({
               </div>
             )}
 
-            {/* ── Spectator missile window ── */}
+            {/* ── The missile window: everyone fires into this one ── */}
             {phase === 'spectator-window' && (
               <div style={{ textAlign: 'center', marginBottom: 14 }}>
                 <div style={{ fontSize: 13, color: '#F1C40F', fontWeight: 'bold', marginBottom: 6, letterSpacing: 1 }}>
-                  ✦ SPECTATOR MISSILES — {windowSecondsLeft}s
+                  🚀 MISSILE WINDOW — {windowSecondsLeft}s
                 </div>
                 <div style={{ fontSize: 11, color: '#a09070', marginBottom: 8 }}>
-                  Players outside this battle may fire a missile at one die.
-                  A hit turns it into an unmodifiable 6.
+                  {attackerMissiles > 0
+                    ? 'Click one of YOUR dice to turn it into an unmodifiable 6. The defender and the watching table may answer — every missile buys another 5 seconds.'
+                    : 'The defender and the watching table may fire a missile at one die. Every missile buys another 5 seconds.'}
                 </div>
+                {attackerMissiles > 0 && (
+                  <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginBottom: 8 }}>
+                    {atkDice.map((v, i) => {
+                      const taken = windowFlips.some(f => f.side === 'atk' && f.dieIndex === i)
+                      return (
+                        <button
+                          key={i}
+                          disabled={taken || windowFiring}
+                          onClick={() => {
+                            if (!spectatorWindow) return
+                            setWindowFiring(true)
+                            void spectatorWindow.fire('atk', i).finally(() => setWindowFiring(false))
+                          }}
+                          style={{
+                            fontSize: 26, lineHeight: 1, padding: '2px 6px', borderRadius: 6,
+                            background: taken ? 'rgba(46,204,113,0.18)' : 'rgba(0,0,0,0.3)',
+                            border: taken ? '1px solid #2ecc71' : '1px dashed #F1C40F',
+                            color: taken ? '#2ecc71' : '#e8dcc8',
+                            cursor: taken || windowFiring ? 'default' : 'pointer',
+                          }}
+                          title={taken ? 'Already a missile 6' : 'Fire one of your missiles at this die'}
+                        >
+                          {['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'][Math.max(1, Math.min(6, v))]}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
                 {windowFlips.map((f, i) => (
                   <div key={i} style={{ fontSize: 11, color: '#2ecc71', marginBottom: 4 }}>
                     🚀 {f.playerName} turned {f.side === 'atk' ? "an attacker's" : "a defender's"} die into a 6
                   </div>
                 ))}
                 <button onClick={() => { void endSpectatorWindow() }} style={btnStyle('secondary')}>
-                  Skip ▸
+                  Resolve battle ▸
                 </button>
               </div>
             )}

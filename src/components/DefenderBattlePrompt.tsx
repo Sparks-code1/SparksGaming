@@ -39,6 +39,8 @@ const ARRIVAL_SPIN_MS = 650
 const SPIN_TICK_MS = 100
 /** Seconds a human defender gets before their machine rolls for them. */
 const AUTO_ROLL_SECONDS = 5
+/** Mirrors MISSILE_WINDOW_MS — shown so the table knows what a missile buys. */
+const MISSILE_WINDOW_SECONDS = 5
 
 const rollN = (n: number) => Array.from({ length: n }, () => Math.floor(Math.random() * 6) + 1).sort((a, b) => b - a)
 const clampDie = (v: number) => Math.max(1, Math.min(6, v))
@@ -62,7 +64,7 @@ function applyDefBonus(dice: number[], hi: number, lo: number): number[] {
   return d
 }
 
-export default function DefenderBattlePrompt({ combat, role, attackerName, defenderName, srcName, tgtName, srcTroops, tgtTroops, mods, combatWindow, missilesLeft, onFireMissile, onConsent, onRollDefense, onDismiss }: {
+export default function DefenderBattlePrompt({ combat, role, attackerName, defenderName, srcName, tgtName, srcTroops, tgtTroops, mods, combatWindow, missilesLeft, onFireMissile, onConsent, onRollDefense, onResolveNow, onDismiss }: {
   combat: ActiveCombat
   role: 'defender' | 'spectator'
   attackerName: string
@@ -80,8 +82,22 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
   onFireMissile?: (side: 'atk' | 'def', dieIndex: number) => Promise<boolean>
   onConsent: (accept: boolean) => void
   onRollDefense: (dice: number[]) => void
+  /** Close the missile window now rather than waiting the clock out. The
+   *  attacker's machine resolves the round the moment it is gone. */
+  onResolveNow?: () => void
   onDismiss?: () => void
 }) {
+  /** The shared deadline, counted down from state so a missile fired anywhere
+   *  extends it on every screen at once. */
+  const [windowSecondsLeft, setWindowSecondsLeft] = useState<number | null>(null)
+  useEffect(() => {
+    const endsAt = combatWindow?.expiresAt
+    if (!endsAt) { setWindowSecondsLeft(null); return }
+    const tick = () => setWindowSecondsLeft(Math.max(0, Math.ceil((endsAt - Date.now()) / 1000)))
+    tick()
+    const t = setInterval(tick, 250)
+    return () => clearInterval(t)
+  }, [combatWindow?.expiresAt])
   const [missileInFlight, setMissileInFlight] = useState(false)
   const [diceCount, setDiceCount] = useState(combat.defDiceMax)
   const [atkSpin, setAtkSpin] = useState(false)
@@ -392,7 +408,11 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
             textAlign: 'center',
           }}>
             <div style={{ fontSize: 11, color: '#F1C40F', marginBottom: 6 }}>
-              🚀 Missile window — turn one of your dice into an unmodifiable 6 ({missilesLeft} left)
+              🚀 Missile window{windowSecondsLeft !== null ? ` — ${windowSecondsLeft}s` : ''} — turn one of
+              your dice into an unmodifiable 6 ({missilesLeft} left)
+            </div>
+            <div style={{ fontSize: 10, color: '#7a6040', marginBottom: 6 }}>
+              Every missile fired by anyone gives everyone another {Math.round(MISSILE_WINDOW_SECONDS)} seconds to answer.
             </div>
             <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
               {combatWindow.defDice.map((v, i) => {
@@ -419,6 +439,18 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
                 )
               })}
             </div>
+            {onResolveNow && (
+              <button
+                onClick={onResolveNow}
+                style={{
+                  marginTop: 8, padding: '7px 16px', borderRadius: 7, fontSize: 11,
+                  border: '1px solid rgba(200,148,10,0.45)', background: 'rgba(200,148,10,0.12)',
+                  color: '#E8DCC8', cursor: 'pointer', fontFamily: 'Georgia, serif',
+                }}
+              >
+                Resolve battle ▸
+              </button>
+            )}
           </div>
         )}
       </div>

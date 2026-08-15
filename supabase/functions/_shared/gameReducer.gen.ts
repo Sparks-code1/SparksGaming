@@ -713,6 +713,8 @@ function gameReducer(state, action, rng) {
       return only(state);
     case "OPEN_COMBAT_WINDOW": {
       const die = (v) => typeof v === "number" && Number.isFinite(v) ? Math.max(1, Math.min(6, Math.trunc(v))) : 1;
+      const atkId = state.combat?.attackerId ?? state.territories[action.srcId]?.occupyingPlayerId ?? "";
+      const defId = state.combat?.defenderId ?? state.territories[action.tgtId]?.occupyingPlayerId ?? "";
       return only({
         ...state,
         combatWindow: {
@@ -721,7 +723,10 @@ function gameReducer(state, action, rng) {
           tgtId: action.tgtId,
           atkDice: (Array.isArray(action.atkDice) ? action.atkDice : []).slice(0, 3).map(die),
           defDice: (Array.isArray(action.defDice) ? action.defDice : []).slice(0, 3).map(die),
-          flips: []
+          flips: [],
+          claims: [],
+          expiresAt: typeof action.expiresAt === "number" ? action.expiresAt : void 0,
+          priority: missilePriority(state.players, atkId, defId)
         }
       });
     }
@@ -730,8 +735,17 @@ function gameReducer(state, action, rng) {
       if (!w || w.roundKey !== action.roundKey) return only(state);
       const dice = action.side === "atk" ? w.atkDice : w.defDice;
       if (action.dieIndex < 0 || action.dieIndex >= dice.length) return only(state);
-      if (w.flips.some((f) => f.side === action.side && f.dieIndex === action.dieIndex)) return only(state);
+      const claims = w.claims ?? [];
+      if (claims.some((c) => c.side === action.side && c.dieIndex === action.dieIndex && c.playerId === action.playerId)) return only(state);
+      const nextClaims = [...claims, {
+        playerId: action.playerId,
+        side: action.side,
+        dieIndex: action.dieIndex
+      }];
       const flipped = dice.map((d, i) => i === action.dieIndex ? 6 : d);
+      const asked = typeof action.expiresAt === "number" ? action.expiresAt : 0;
+      const ceiling = (w.expiresAt ?? asked) + MISSILE_WINDOW_MS;
+      const expiresAt = Math.max(w.expiresAt ?? 0, Math.min(asked, ceiling));
       return {
         state: {
           ...state,
@@ -739,11 +753,9 @@ function gameReducer(state, action, rng) {
             ...w,
             atkDice: action.side === "atk" ? flipped : w.atkDice,
             defDice: action.side === "def" ? flipped : w.defDice,
-            flips: [...w.flips, { playerId: action.playerId, side: action.side, dieIndex: action.dieIndex }]
-          },
-          missileSpends: {
-            ...state.missileSpends ?? {},
-            [action.playerId]: ((state.missileSpends ?? {})[action.playerId] ?? 0) + 1
+            claims: nextClaims,
+            flips: resolveMissileClaims(nextClaims, w.priority),
+            expiresAt: expiresAt || void 0
           }
         },
         effects: [{
@@ -757,9 +769,14 @@ function gameReducer(state, action, rng) {
         }]
       };
     }
-    case "CLOSE_COMBAT_WINDOW":
-      if (state.combatWindow && state.combatWindow.roundKey !== action.roundKey) return only(state);
-      return only({ ...state, combatWindow: null });
+    case "CLOSE_COMBAT_WINDOW": {
+      const w = state.combatWindow;
+      if (w && w.roundKey !== action.roundKey) return only(state);
+      if (!w) return only({ ...state, combatWindow: null });
+      const spends = { ...state.missileSpends ?? {} };
+      for (const f of w.flips) spends[f.playerId] = (spends[f.playerId] ?? 0) + 1;
+      return only({ ...state, combatWindow: null, missileSpends: spends });
+    }
     case "DRAW_CARD": {
       const piles = state.cards;
       if (!piles) return only(state);
@@ -1222,15 +1239,40 @@ function clampCombatResolution(state, a) {
     rounds
   };
 }
+var MISSILE_WINDOW_MS = 5e3;
+function missilePriority(players, attackerId, defenderId) {
+  const rank = { [attackerId]: 0, [defenderId]: 1 };
+  const start = players.findIndex((p) => p.id === attackerId);
+  let next = 2;
+  for (let i = 1; i <= players.length; i++) {
+    const p = players[(Math.max(0, start) + i) % players.length];
+    if (!p || p.id === attackerId || p.id === defenderId) continue;
+    if (rank[p.id] === void 0) rank[p.id] = next++;
+  }
+  return rank;
+}
+function resolveMissileClaims(claims, priority) {
+  const best = /* @__PURE__ */ new Map();
+  claims.forEach((c, at) => {
+    const key = `${c.side}${c.dieIndex}`;
+    const rank = priority?.[c.playerId] ?? Number.MAX_SAFE_INTEGER;
+    const cur = best.get(key);
+    if (!cur || rank < cur.rank) best.set(key, { claim: c, rank, at });
+  });
+  return [...best.values()].sort((a, b) => a.at - b.at).map((x) => x.claim);
+}
+function missilesCommittedBy(state, playerId) {
+  const ledger = (state.missileSpends ?? {})[playerId] ?? 0;
+  const pending = (state.combatWindow?.claims ?? []).filter((c) => c.playerId === playerId).length;
+  return ledger + pending;
+}
 function spectatorMissileRefusal(state, action, spenderId, opts) {
-  if (opts.isAttacker) return "not-a-spectator";
   const w = state.combatWindow;
   if (!w || w.roundKey !== action.roundKey) return "window-closed";
   const dice = action.side === "atk" ? w.atkDice : w.defDice;
   if (!Number.isInteger(action.dieIndex) || action.dieIndex < 0 || action.dieIndex >= dice.length) return "bad-die";
-  if (w.flips.some((f) => f.side === action.side && f.dieIndex === action.dieIndex)) return "die-taken";
-  const spent = (state.missileSpends ?? {})[spenderId] ?? 0;
-  if (opts.legacyMissiles - spent < 1) return "no-missiles";
+  if ((w.claims ?? []).some((c) => c.side === action.side && c.dieIndex === action.dieIndex && c.playerId === spenderId)) return "die-taken";
+  if (opts.legacyMissiles - missilesCommittedBy(state, spenderId) < 1) return "no-missiles";
   return null;
 }
 function applyCombatOutcome(state, action) {
@@ -1425,6 +1467,7 @@ function resolveCombat(atkTroopsStart, defTroopsStart, mods, rng) {
   };
 }
 export {
+  MISSILE_WINDOW_MS,
   applyDefenderDieBonus,
   applyEndOfTurnScarEffects,
   canStartAttack,
@@ -1440,7 +1483,10 @@ export {
   endTurnTerritories,
   gameReducer,
   hasDoubles,
+  missilePriority,
+  missilesCommittedBy,
   resolveCombat,
+  resolveMissileClaims,
   singleDieBonus,
   singleDieDelta,
   spectatorMissileRefusal

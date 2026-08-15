@@ -79,7 +79,7 @@ import ConfettiBurst from './ConfettiBurst'
 import TurnBanner, { type TurnBannerInfo } from './TurnBanner'
 import {
   gameReducer, checkReinforcementPlacement, createMathRng, resolveCombat,
-  canStartAttack, canStartFortify, computeTurnAdvance, applyEndOfTurnScarEffects,
+  canStartAttack, canStartFortify, computeTurnAdvance, applyEndOfTurnScarEffects, MISSILE_WINDOW_MS,
   type Action, type Effect,
 } from '@/lib/gameReducer'
 
@@ -873,13 +873,34 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   /** The api handed to AttackModal — online battles only. Refs throughout, so
    *  the object can be created once and stay stable across renders. */
   const spectatorWindowApiRef = useRef({
-    windowMs: 5_000,
+    windowMs: MISSILE_WINDOW_MS,
     open: (dice: { atk: number[]; def: number[] }) => {
       const srcId = attackSrcRef.current ?? '', tgtId = attackTgtRef.current ?? ''
       const key = `${srcId}>${tgtId}#${gameStateRef.current.turnNumber}.${++windowSeqRef.current}`
       spectatorFlipsRef.current = { key, flips: [] }
-      dispatch({ type: 'OPEN_COMBAT_WINDOW', roundKey: key, srcId, tgtId, atkDice: dice.atk, defDice: dice.def })
+      dispatch({
+        type: 'OPEN_COMBAT_WINDOW', roundKey: key, srcId, tgtId,
+        atkDice: dice.atk, defDice: dice.def,
+        // The deadline every screen counts down to. The reducer is clock-free
+        // by contract, so the instant is decided here and travels with the
+        // action; every missile pushes it out again.
+        expiresAt: Date.now() + MISSILE_WINDOW_MS,
+      })
       return key
+    },
+    /** The shared deadline, or 0 when this round's window is not open. */
+    expiryOf: (key: string) => {
+      const w = gameStateRef.current.combatWindow
+      return w && w.roundKey === key ? (w.expiresAt ?? 0) : 0
+    },
+    /** Fire one of MY missiles into the open window — attacker included. */
+    fire: async (side: 'atk' | 'def', dieIndex: number) => {
+      const match = onlineMatchRef.current
+      const w = gameStateRef.current.combatWindow
+      if (!match || !w) return false
+      const res = await sendSpectatorMissile(match.matchId, w.roundKey, side, dieIndex)
+      if (!res.ok) showWeaknessNoticeRef.current(`🚀 ${res.message}`)
+      return res.ok
     },
     peekFlips: (key: string) => {
       const cur = spectatorFlipsRef.current
@@ -6974,6 +6995,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
               if (!res.ok) showWeaknessNotice(`🚀 ${res.message}`)
               return res.ok
             }}
+            // Closing the window IS the defender saying "resolve it" — the
+            // attacker's machine is waiting on that window and finishes the
+            // round the moment it is gone.
+            onResolveNow={gameState.combatWindow
+              ? () => dispatch({ type: 'CLOSE_COMBAT_WINDOW', roundKey: gameState.combatWindow!.roundKey })
+              : undefined}
             onConsent={accept => dispatch({ type: 'COMBAT_DEFENSE_CHOICE', key: c.key, accept })}
             onRollDefense={dice => dispatch({ type: 'POST_COMBAT_DICE', key: c.key, round: c.round, side: 'def', dice })}
             onDismiss={role === 'spectator' ? () => setBattleViewHidden(c.key) : undefined}

@@ -265,11 +265,10 @@ Deno.serve(async (req: Request) => {
     // counts; a refusal happens before anything is charged, which is what
     // "first click wins, the loser is refunded" means in practice.
     if (mySlot.is_ai) return json({ error: 'AI seats do not spend spectator missiles', code: 'not-a-spectator' }, 403)
-    const w = state?.combatWindow
-    // Only the ATTACKER is refused here — their conversions have their own
-    // missile phase. The DEFENDER fires through this window like any
-    // spectator; it is how a human spends missiles against an AI attacker.
-    const attackerId = w ? state?.territories?.[w.srcId]?.occupyingPlayerId : null
+    // One window, everyone in it: attacker, defender and every spectator
+    // holding a missile. A contested die is settled by priority when the
+    // window closes, not by who reached it first, and only the claim that
+    // lands is ever charged.
     const { data: campaignRow } = await admin
       .from('campaigns').select('legacy_state').eq('id', match.campaign_id).single()
     const legacyMissiles = Number(campaignRow?.legacy_state?.missiles?.[mySlot.player_id] ?? 0)
@@ -277,18 +276,24 @@ Deno.serve(async (req: Request) => {
       state,
       action as { roundKey: string; side: 'atk' | 'def'; dieIndex: number },
       mySlot.player_id,
-      { legacyMissiles, isAttacker: !!attackerId && mySlot.player_id === attackerId },
+      { legacyMissiles },
     )
     if (refusal) {
       const words: Record<string, string> = {
         'window-closed': 'the missile window has closed',
         'bad-die': 'no such die in this round',
-        'die-taken': 'another missile already claimed that die — yours is refunded',
+        'die-taken': 'you have already put a missile on that die',
         'no-missiles': 'no missiles left to spend',
-        'not-a-spectator': 'players in the battle use their own missile phase',
+        'not-a-spectator': 'AI seats do not spend missiles',
       }
       return json({ error: words[refusal] ?? refusal, code: refusal }, 409)
     }
+  } else if (action.type === 'CLOSE_COMBAT_WINDOW') {
+    // The missile window belongs to the whole table, so anyone in the battle
+    // may close it — "resolve the battle" is a defender's answer as much as an
+    // attacker's, and closing early only forfeits their own remaining time.
+    // The dice are already decided; nothing here can change them.
+    if (mySlot.is_ai) return json({ error: 'AI seats do not close the window', code: 'wrong-player' }, 403)
   } else if (
     action.type === 'COMBAT_DEFENSE_CHOICE'
     || (action.type === 'POST_COMBAT_DICE' && (action as { side?: string }).side === 'def')
