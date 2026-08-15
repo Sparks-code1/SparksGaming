@@ -3506,6 +3506,24 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   }
 
   /**
+   * Missiles this player can still fire, which is what every readout means.
+   *
+   * The campaign blob holds the stock a player STARTED the game with — it is
+   * only reconciled when the game ends, because a match's spending lives in
+   * the match (`missileSpends`), where the server can arbitrate it. So the
+   * blob alone says "one missile" for the rest of the game no matter how many
+   * were fired, which is what the board was showing.
+   *
+   * Claims pledged into an open window count too: the ledger is folded when
+   * the window closes, and until then a missile already fired is not a missile
+   * still held.
+   */
+  function missilesInHand(playerId: string): number {
+    const stock = (legacyState.missiles ?? {})[playerId] ?? 0
+    return Math.max(0, stock - missilesCommittedBy(gameState, playerId))
+  }
+
+  /**
    * A battle nobody is driving any more.
    *
    * The combat SESSION is match state and survives anything; the attacker's
@@ -7481,7 +7499,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
                     )
                   })()}
                   {(() => {
-                    const missiles = (legacyState.missiles ?? {})[player.id] ?? 0
+                    const missiles = missilesInHand(player.id)
                     if (missiles === 0) return null
                     return (
                       <span title={`${missiles} missile${missiles !== 1 ? 's' : ''}`}
@@ -8202,7 +8220,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
           { id: 'mp-rally',      label: '♛ Rally',       hint: '+2 troops in every HQ you control', onClick: activateRally,      active: false },
         ].filter(p => owned.includes(p.id))
         if (draftPowers.length === 0) return null
-        const missiles = (legacyState.missiles ?? {})[cp.id] ?? 0
+        const missiles = missilesInHand(cp.id)
         return (
           <div style={{
             position: 'absolute', bottom: 80, left: 12, zIndex: 60,
@@ -8369,8 +8387,11 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         const atkMaxDice: number | undefined = undefined
 
         // Missiles
-        const atkMissiles = (legacyState.missiles ?? {})[currentPlayer.id] ?? 0
-        const defMissiles = defPlayerId ? ((legacyState.missiles ?? {})[defPlayerId] ?? 0) : 0
+        // What each side can still FIRE — the campaign stock less anything this
+        // match has already spent or pledged. The blob alone would keep
+        // offering a missile that is gone.
+        const atkMissiles = missilesInHand(currentPlayer.id)
+        const defMissiles = defPlayerId ? missilesInHand(defPlayerId) : 0
 
         // EMP missile power: dice in this territory can't be modified for the rest
         // of the turn — all die-value modifiers are zeroed, and missiles (which
