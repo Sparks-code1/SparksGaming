@@ -1,8 +1,9 @@
 // Join the War: an eliminated player is only offered a turn when there is
 // somewhere legal to re-enter. With nowhere to go they are skipped silently
 // rather than being asked to forfeit.
-import { computeTurnAdvance } from '@/lib/gameReducer'
+import { computeTurnAdvance, gameReducer, createMathRng } from '@/lib/gameReducer'
 import { legalJoinWarTerritoryIds } from '@/lib/gameLogic'
+import { initialTurnState } from '@/types/game'
 
 let pass = true
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -86,6 +87,31 @@ check('already forfeited -> skipped even though a spot exists',
   const vacated = { a: T('a', null), b: T('b', 'p2') }
   check('a territory vacated at end of turn re-opens the Join the War offer',
     computeTurnAdvance(state(vacated)).nextIdx, 1)
+}
+
+// ── the hand-off itself reaches the reducer ───────────────────────────────
+{
+  // The offer used to be opened by committing the turn advance LOCALLY and
+  // returning before END_TURN — so the server still believed the previous
+  // player was up, and its next echo handed the turn straight back to them:
+  // knock a faction out, watch them rejoin, then find yourself taking a
+  // second turn while the rest of the table waited. END_TURN owns this
+  // hand-off now, so the reducer's own state names the re-entering player.
+  const s = { ...state(OPEN), phase: 'fortify', turn: initialTurnState() } as never
+  const { state: after } = gameReducer(s, {
+    type: 'END_TURN', endTerritories: {}, hqReservePlayerIds: [],
+  } as never, createMathRng())
+  check('END_TURN hands the turn to the re-entering player', after.currentPlayerIndex, 1)
+  check('and they are still eliminated until they answer',
+    after.players[1].isEliminated, true)
+
+  // Their answer moves the game on from THERE, not from the previous player.
+  const { state: joined } = gameReducer(after, {
+    type: 'JOIN_WAR', playerId: 'p1', territoryId: 'open',
+  } as never, createMathRng())
+  check('joining puts them back in the war', joined.players[1].isEliminated, false)
+  check('and it is their turn to reinforce',
+    [joined.currentPlayerIndex, joined.phase], [1, 'reinforce'])
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

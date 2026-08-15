@@ -5801,9 +5801,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       // 'hq-reserve' effect carries the notice). It used to be pre-folded into
       // `endTerritories` here — which the server's recompute discarded, so an
       // online Khan lost their ability at every turn end. The board below is
-      // therefore the post-scar, PRE-reserve board; the one place that still
-      // commits it directly (the Join the War early-return) hands the turn to
-      // an eliminated player, who controls no HQs, so no reserve is owed there.
+      // therefore the post-scar, PRE-reserve board. Every hand-off goes
+      // through END_TURN now, the Join the War one included.
       const endTerritories = scarResult.territories
       const hqReservePlayerIds = gameState.players
         .filter(p => playerAbility(p.id) === 'khan-hq-troops')
@@ -5885,8 +5884,20 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
                Object.values(gameState.activeHqs ?? {}),
                legacyStateRef.current?.falloutZoneTerritoryId,
              ).length > 0) {
-        setGameState(prev => ({ ...prev, territories: { ...prev.territories, ...endTerritories }, currentPlayerIndex: nextIdx }))
-        setJoinTheWarPlayerId(nextPlayerId)
+        // The turn hand-off goes through the REDUCER here like any other. It
+        // used to be committed locally with a bare setGameState — the server
+        // never learned the turn had moved, so its currentPlayerIndex still
+        // named the player who had just finished, and the next echo handed
+        // the turn straight back to them: knock a faction out, watch them
+        // rejoin, and then find yourself taking a second turn while everyone
+        // else waited. computeTurnAdvance already lands on an eliminated
+        // player who still has this decision to make, and an eliminated
+        // player holds no HQs, so no Strategic Reserve is owed on this hop.
+        dispatch({ type: 'END_TURN', endTerritories, hqReservePlayerIds, playerId: actorId })
+        // Hotseat asks right here. ONLINE the offer is derived from state by
+        // the effect below, so the question reaches the machine of the player
+        // whose re-entry it is — not whoever happened to end their turn.
+        if (!onlineMatchRef.current) setJoinTheWarPlayerId(nextPlayerId)
         return
       }
 
@@ -5917,6 +5928,33 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       dispatch({ type: 'END_TURN', endTerritories, hqReservePlayerIds, playerId: actorId })
     }
   }
+
+  /**
+   * ONLINE: the Join the War offer, derived from the board every machine
+   * already shares.
+   *
+   * The turn genuinely belongs to the eliminated player now (END_TURN hands it
+   * to them), so the decision is theirs to make on their own machine — the
+   * host answers only for an AI seat. Derived rather than announced, so a
+   * machine that reloads mid-offer still finds it, and the machine that ended
+   * the previous turn is not left holding somebody else's choice.
+   */
+  useEffect(() => {
+    if (!onlineMatchRef.current) return
+    const st = gameState
+    const cur = st.players[st.currentPlayerIndex]
+    const owed = !!cur?.isEliminated && cur.joinedWarThisGame === undefined
+      && legalJoinWarTerritoryIds(
+           st.territories,
+           Object.values(st.activeHqs ?? {}),
+           legacyStateRef.current?.falloutZoneTerritoryId,
+         ).length > 0
+    if (!owed) { if (joinTheWarPlayerId) setJoinTheWarPlayerId(null); return }
+    const mine = cur.isAI ? aiAuthorityRef.current : localSeatRef.current === cur.id
+    if (!mine) return
+    if (joinTheWarPlayerId !== cur.id) setJoinTheWarPlayerId(cur.id)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState.currentPlayerIndex, gameState.players, gameState.territories, localSeatId, joinTheWarPlayerId])
 
   // ── Scar placement ────────────────────────────────────────────────────────
   function handlePlaceScar(type: ScarType) {
