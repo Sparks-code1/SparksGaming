@@ -21,6 +21,7 @@ import { hasRoster, getRoster, createRoster, addRosterMember } from '@/lib/roste
 import { BUILD_STAMP } from '@/lib/buildStamp'
 import { matchState, reconcileSeats, setLobbyShape, readLobby, type Lobby } from '@/lib/lobby'
 import { DRAFT_TROOP_SLOTS, DRAFT_COIN_SLOTS, type SetupDoc } from '@/lib/setupFlow'
+import { isComputerSeat } from '@/lib/onlineMatch'
 import LobbyScreen from '@/components/LobbyScreen'
 import OnlineSetupScreen from '@/components/OnlineSetupScreen'
 
@@ -316,10 +317,24 @@ export default function App() {
     abilityChoices: Record<string, string>,
     weaknessChoices: Record<string, string> = {},
   ) {
-    // Merge the human/AI slot configuration chosen earlier into each setup
+    // Merge the human/AI slot configuration chosen earlier into each setup.
+    //
+    // Online, a seat with no account is a computer player whatever the slots
+    // screen said — nobody can send actions for it, so leaving it human builds
+    // a board that stops on its turn. The board must carry the same answer the
+    // seat rows will (see isComputerSeat), because the AI driver reads the
+    // board and the server reads the seats.
+    const roster = legacy ? getRoster(legacy) : []
     const withAI: PlayerSetup[] = setups.map(s => {
       const cfg = slotConfig[s.playerId]
-      return cfg?.isAI ? { ...s, isAI: true, aiDifficulty: cfg.difficulty } : { ...s, isAI: false, aiDifficulty: undefined }
+      const isAI = isComputerSeat({
+        online: playOnline,
+        markedAI: cfg?.isAI,
+        accountUserId: roster.find(m => m.id === s.playerId)?.userId,
+      })
+      return isAI
+        ? { ...s, isAI: true, aiDifficulty: cfg?.difficulty ?? 'medium' }
+        : { ...s, isAI: false, aiDifficulty: undefined }
     })
     setPlayerSetups(withAI)
     setPlayerOrder(order)

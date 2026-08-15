@@ -154,18 +154,44 @@ export async function endOnlineMatch(matchId: string, status: 'complete' | 'aban
   await supabase.from('matches').update({ status }).eq('id', matchId)
 }
 
+/**
+ * Is this seat played by the computer?
+ *
+ * ONLINE, a seat with no account is a computer seat whatever anyone ticked.
+ * The server accepts an action only from the account holding the seat, so a
+ * human-marked seat with no account cannot be played by anybody — not its
+ * "owner", who does not exist, and not the host, who is refused. The game
+ * stops dead the first time the turn reaches it, and to the table it looks
+ * like a player who will not move. Game 4 of the Test8 campaign was published
+ * with three seats like that.
+ *
+ * Offline this does not apply: an unclaimed seat is somebody at the keyboard.
+ */
+export function isComputerSeat(opts: {
+  online: boolean
+  markedAI?: boolean
+  accountUserId?: string | null
+}): boolean {
+  return !!opts.markedAI || (opts.online && !opts.accountUserId)
+}
+
 /** Seats built from the roster + the seating this game actually uses. */
 export function seatsFromGameState(state: GameState, legacy: LegacyState): SeatSpec[] {
   const roster = legacy.roster ?? []
-  return state.players.map((p, i) => ({
-    seat: i,
-    playerId: p.id,
-    name: p.name,
-    factionId: p.factionId,
+  return state.players.map((p, i) => {
     // A roster member linked to an account is the person who may act for that
-    // seat; everyone else is an AI or an unclaimed local seat.
-    userId: roster.find(m => m.id === p.id)?.userId ?? null,
-    isAI: !!p.isAI,
-    aiDifficulty: (p.aiDifficulty as SeatSpec['aiDifficulty']) ?? null,
-  }))
+    // seat; everyone else is a computer player — these seats are being written
+    // for an online match by definition.
+    const userId = roster.find(m => m.id === p.id)?.userId ?? null
+    const isAI = isComputerSeat({ online: true, markedAI: p.isAI, accountUserId: userId })
+    return {
+      seat: i,
+      playerId: p.id,
+      name: p.name,
+      factionId: p.factionId,
+      userId,
+      isAI,
+      aiDifficulty: (p.aiDifficulty as SeatSpec['aiDifficulty']) ?? (isAI ? 'medium' : null),
+    }
+  })
 }
