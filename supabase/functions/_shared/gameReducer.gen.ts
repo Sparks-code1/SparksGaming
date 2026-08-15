@@ -769,6 +769,16 @@ function gameReducer(state, action, rng) {
         }]
       };
     }
+    case "SPEND_MISSILE": {
+      if (!state.players.some((p) => p.id === action.playerId)) return only(state);
+      return only({
+        ...state,
+        missileSpends: {
+          ...state.missileSpends ?? {},
+          [action.playerId]: ((state.missileSpends ?? {})[action.playerId] ?? 0) + 1
+        }
+      });
+    }
     case "CLOSE_COMBAT_WINDOW": {
       const w = state.combatWindow;
       if (w && w.roundKey !== action.roundKey) return only(state);

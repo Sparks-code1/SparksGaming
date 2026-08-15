@@ -192,6 +192,29 @@ console.log('\n— the window closes and cannot be reopened by accident —')
     } as Action, rng).state.missileSpends?.p3 === 1)
 }
 
+console.log('\n— one pile: missile powers spend from it too —')
+{
+  // A missile power (EMP and the rest) discards a missile to fire. That
+  // discard used to come out of the campaign blob while battle missiles came
+  // out of the match ledger — two piles for one stock, so the board could
+  // offer a missile another pile had already spent.
+  const { state: s1 } = gameReducer(base(), { type: 'SPEND_MISSILE', playerId: 'p1' } as Action, rng)
+  check('the discard lands on the match ledger', s1.missileSpends?.p1 === 1)
+  const { state: s2 } = gameReducer(s1, { type: 'SPEND_MISSILE', playerId: 'p1' } as Action, rng)
+  check('a second discard adds to it', s2.missileSpends?.p1 === 2)
+  const stranger = gameReducer(s2, { type: 'SPEND_MISSILE', playerId: 'nobody' } as Action, rng)
+  check('a player who is not at this table spends nothing', stranger.state === s2)
+
+  // And it is the same pile the window's refusal counts against.
+  const { state: w } = gameReducer(s1, open(), rng)
+  check('a discard counts against what is left to fire in a battle',
+    spectatorMissileRefusal(w, missile({ playerId: 'p1' }) as never, 'p1',
+      { legacyMissiles: 1 }) === 'no-missiles')
+  check('…and someone who has spent nothing may still fire',
+    spectatorMissileRefusal(w, missile({ playerId: 'p3' }) as never, 'p3',
+      { legacyMissiles: 1 }) === null)
+}
+
 console.log('\n— the ledger folds into the campaign exactly once, at game end —')
 {
   // The arithmetic finalizeAndReturnToLobby applies: campaign stock minus the

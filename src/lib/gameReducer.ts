@@ -141,6 +141,9 @@ export type Action =
    * else's missile.
    */
   | { type: 'SPECTATOR_MISSILE'; roundKey: string; side: 'atk' | 'def'; dieIndex: number; playerId: string; expiresAt?: number }
+  /** A missile spent OUTSIDE a battle window — discarded to power a missile
+   *  power (EMP and the rest). Same pile as every other missile this match. */
+  | { type: 'SPEND_MISSILE'; playerId: string }
   /** The actor resumes the battle â€” the window closes, late missiles refuse. */
   | { type: 'CLOSE_COMBAT_WINDOW'; roundKey: string }
   /**
@@ -811,6 +814,22 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
           side: action.side, dieIndex: action.dieIndex, srcId: w.srcId, tgtId: w.tgtId,
         }],
       }
+    }
+
+    case 'SPEND_MISSILE': {
+      // Missile powers discard a missile to fire. That discard used to come
+      // straight out of the campaign blob while battle missiles came out of
+      // the match ledger — two piles for one stock, so the board could offer a
+      // missile that another pile had already spent. One pile now; the ledger
+      // folds into the campaign when the game ends, exactly as before.
+      if (!state.players.some(p => p.id === action.playerId)) return only(state)
+      return only({
+        ...state,
+        missileSpends: {
+          ...(state.missileSpends ?? {}),
+          [action.playerId]: ((state.missileSpends ?? {})[action.playerId] ?? 0) + 1,
+        },
+      })
     }
 
     case 'CLOSE_COMBAT_WINDOW': {

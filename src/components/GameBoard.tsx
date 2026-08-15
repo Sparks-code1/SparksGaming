@@ -3436,14 +3436,18 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
    *  the player has no missiles or already used this power this turn. */
   function activateMissilePower(playerId: string, powerId: string, powerName: string): boolean {
     if (usedMissilePowersRef.current.has(powerId)) return false
-    const available = (legacyStateRef.current?.missiles ?? {})[playerId] ?? 0
+    // The same stock every other missile is drawn from — see missilesInHand.
+    const available = Math.max(0, ((legacyStateRef.current?.missiles ?? {})[playerId] ?? 0)
+      - missilesCommittedBy(gameStateRef.current, playerId))
     if (available <= 0) return false
     const playerName = gameStateRef.current.players.find(p => p.id === playerId)?.name ?? playerId
+    // The discard goes on the MATCH ledger, like a battle missile, and folds
+    // into the campaign when the game ends. Online that means the server
+    // records it; the blob is left to the legacy writer.
+    dispatchRef.current({ type: 'SPEND_MISSILE', playerId })
     setLegacyState(prev => {
-      const missiles = { ...(prev.missiles ?? {}), [playerId]: Math.max(0, ((prev.missiles ?? {})[playerId] ?? 0) - 1) }
       const next: LegacyState = {
         ...prev,
-        missiles,
         historyLog: [...prev.historyLog, {
           gameNumber: gameStateRef.current.gameNumber,
           entry: `🚀 ${playerName} discarded a missile to activate ${powerName}`,

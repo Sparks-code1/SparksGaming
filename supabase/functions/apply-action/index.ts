@@ -86,6 +86,9 @@ const SERVER_ACTIONS = new Set([
   // side in the battle, missile actually available).
   'OPEN_COMBAT_WINDOW',
   'SPECTATOR_MISSILE',
+  // A missile discarded to power a missile power — the acting player's own,
+  // on their own turn, so the turn gate below is the whole check.
+  'SPEND_MISSILE',
   'CLOSE_COMBAT_WINDOW',
   // Card piles are server state in online matches: a draw removes the card
   // from the pile atomically under the version guard, so two clients can
