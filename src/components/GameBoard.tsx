@@ -72,6 +72,8 @@ import { SerialQueue } from '@/lib/serialQueue'
 import LiveStatusBadge from './LiveStatusBadge'
 import SpectatorCombatOverlay, { SpectatorLiveRound, type LiveRoundView } from './SpectatorCombatOverlay'
 import DefenderBattlePrompt from './DefenderBattlePrompt'
+import MissileStrikeLayer from './MissileStrikeLayer'
+import { emitMissileStrike } from '@/lib/missileFx'
 import { buildSpectatorReport, spectatorDisplayMs, type SpectatorCombatReport } from '@/lib/spectatorCombat'
 import { aiReinforcePlacements, aiAttackPlan, aiFortifyMove, aiTradeInDecision, rivalsOnMatchPoint, aiBonusTroopTarget } from '@/lib/ai'
 import { playVictory, playElimination, playCoin, playCity, playMilestone, playTroop, playMissile, startAmbient, stopAmbient } from '@/lib/sounds'
@@ -5391,8 +5393,17 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         // The bang belongs to whoever is NOT looking at the battle prompt —
         // that screen plays its own from the window's flip list, and two
         // sources on one machine is one missile heard twice.
-        if (localSeatRef.current === gameStateRef.current.combat?.attackerId) playMissile()
         const shooter = gameStateRef.current.players.find(p => p.id === e.playerId)?.name ?? 'A spectator'
+        // The attacker's screen has no battle prompt of its own, so the bang
+        // and the strike are played from here for that seat only — the prompt
+        // does both for everyone else, and one missile must be heard once.
+        if (localSeatRef.current === gameStateRef.current.combat?.attackerId) {
+          playMissile()
+          emitMissileStrike({
+            side: e.side, dieIndex: e.dieIndex,
+            who: e.playerId === localSeatRef.current ? 'You' : shooter,
+          })
+        }
         showWeaknessNotice(`🚀 ${shooter} fired a missile — ${e.side === 'atk' ? "an attacker's" : "a defender's"} die turns into a 6`)
         break
       }
@@ -6985,6 +6996,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', background: '#C4A830' }}>
+      {/* Missile strikes, over everything and clickable through — the battle
+          screens below draw the dice, this draws what hits them. */}
+      <MissileStrikeLayer />
       <LiveStatusBadge
         status={liveStatus}
         onRetry={() => { void matchSync?.resync() }}

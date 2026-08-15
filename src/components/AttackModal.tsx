@@ -5,6 +5,7 @@ import { playDice } from '@/lib/sounds'
 import { resolveCombat, createMathRng, singleDieDelta, singleDieBonus, defenderDieSteps, type CombatModifiers, type CombatOutcome, type CombatRoundLog } from '@/lib/gameReducer'
 import type { ActiveCombat } from '@/types/game'
 import { troopsAfterEntry, minTroopsToEnter, battleMissileControls, type EntryCost } from '@/lib/gameLogic'
+import { dieKey } from '@/lib/missileFx'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -220,6 +221,7 @@ export function DieFace({
   spinning,
   clickable,
   onClick,
+  dataDie,
 }: {
   value: number
   borderColor: string
@@ -229,6 +231,8 @@ export function DieFace({
   spinning?: boolean
   clickable?: boolean
   onClick?: () => void
+  /** Identifies this die to the missile strike layer — see missileFx. */
+  dataDie?: string
 }) {
   // Settle bounce the moment the roll lands
   const wasSpinning = useRef(false)
@@ -249,6 +253,7 @@ export function DieFace({
   return (
     <div
       onClick={clickable ? onClick : undefined}
+      data-die={dataDie}
       className={`die3d-scene${spinning ? ' spinning' : landed ? ' die-land' : ''}`}
       style={{
         width: size,
@@ -1549,6 +1554,7 @@ export default function AttackModal({
                     return (
                       <DieFace
                         key={i}
+                        dataDie={dieKey('atk', i)}
                         value={windowTaken ? 6 : v}
                         borderColor={ATK_COLOR}
                         spinning={phase === 'rolling'}
@@ -1600,6 +1606,7 @@ export default function AttackModal({
                     return (
                       <DieFace
                         key={i}
+                        dataDie={dieKey('def', i)}
                         value={v}
                         borderColor={DEF_COLOR}
                         spinning={phase === 'rolling'}

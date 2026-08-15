@@ -19,6 +19,7 @@ import type { ActiveCombat, CombatWindowState } from '@/types/game'
 import { DieFace } from './AttackModal'
 import { playDice, playMissile } from '@/lib/sounds'
 import { diceArrivalKey } from '@/lib/gameLogic'
+import { emitMissileStrike, dieKey } from '@/lib/missileFx'
 
 const ATK_COLOR = '#c0392b'
 const DEF_COLOR = '#2471a3'
@@ -295,6 +296,8 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
     if (!last || !isNew) return
     playMissile()
     const who = last.playerId === myPlayerId ? 'You' : (nameOf?.(last.playerId) ?? 'Someone')
+    // The strike flies on this screen, aimed at the die it actually hit.
+    emitMissileStrike({ side: last.side, dieIndex: last.dieIndex, who })
     setMissileNote(`${who} fired a missile — ${last.side === 'atk' ? "an attacker's" : "a defender's"} die is now a 6`)
     const t = setTimeout(() => setMissileNote(null), 4_000)
     return () => clearTimeout(t)
@@ -362,7 +365,7 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
                     // in, and the die reads the 6 it now is.
                     const taken = (combatWindow?.flips ?? []).some(f => f.side === 'atk' && f.dieIndex === i)
                     return (
-                      <DieFace key={i} value={taken ? 6 : v} borderColor={ATK_COLOR} spinning={atkSpin}
+                      <DieFace key={i} value={taken ? 6 : v} borderColor={ATK_COLOR} spinning={atkSpin} dataDie={dieKey('atk', i)}
                         glow={taken ? '#F1C40F' : settled && settled.winners[i] === 'atk' ? WIN_GLOW : undefined}
                         dim={!taken && !!settled && i < settled.winners.length && settled.winners[i] === 'def'} />
                     )
@@ -383,7 +386,7 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
                     const taken = (combatWindow?.flips ?? []).some(f => f.side === 'def' && f.dieIndex === i)
                     const clickable = canMissile && !taken && !!combatWindow && !missileInFlight
                     return (
-                      <DieFace key={i} value={taken ? 6 : v} borderColor={DEF_COLOR} spinning={defSpin}
+                      <DieFace key={i} value={taken ? 6 : v} borderColor={DEF_COLOR} spinning={defSpin} dataDie={dieKey('def', i)}
                         glow={taken ? '#F1C40F' : settled && settled.winners[i] === 'def' ? WIN_GLOW : undefined}
                         dim={!!settled && i < settled.winners.length && settled.winners[i] === 'atk'}
                         clickable={clickable}
