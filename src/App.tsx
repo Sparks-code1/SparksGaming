@@ -445,10 +445,30 @@ export default function App() {
         onSetupStarted={started => {
           // The host has begun setup — the dice are about to be rolled, and
           // this player rolls their own on the setup screen.
+          //
+          // But first: the scar deal. The host deals this game's cards on the
+          // way here and saves them, and the deal is the only place the
+          // campaign tells a player what they are holding this game — a
+          // joiner who is dropped straight onto the dice never sees it. Their
+          // copy of the campaign predates the deal (and the roster names the
+          // host may have just added for the AI), so it is re-read here.
           setPlayOnline(true)
           setSetupLobby(started)
           setLobby(null)
-          setScreen('online-setup')
+          void (async () => {
+            const fresh = await loadLegacyState(started.campaignId).catch(() => null)
+            const ls = fresh ?? legacy
+            if (fresh) { setLegacy(fresh); applyRosterNames(getRoster(fresh)) }
+            const deals = (ls?.dealtScars ?? [])
+              .filter(d => d.gameNumber === ls?.currentGameNumber)
+            // Who is at this table. The host builds this on the slots screen,
+            // which a joiner never sees — without it every recipient on the
+            // deal screen reads "Unknown". The seats are reconciled by now, so
+            // their ids are the campaign's own.
+            setRosterIds(started.seats.map(s => s.playerId))
+            if (deals.length > 0) { setGameDeals(deals); setScreen('scar-dealing') }
+            else setScreen('online-setup')
+          })()
         }}
       />
     )
