@@ -116,8 +116,6 @@ export default function OnlineSetupScreen({ lobby: initial, legacy, user, onComp
     if (next.setup) {
       docRef.current = next.setup
       setDoc(next.setup)
-      // A round bump means a tie: my old die is void, roll again.
-      if (pendingRoll && next.setup.round !== pendingRoll.round) setPendingRoll(null)
     }
     if (next.status === 'active' && !activeRef.current) {
       activeRef.current = true
@@ -126,6 +124,21 @@ export default function OnlineSetupScreen({ lobby: initial, legacy, user, onComp
       })
     }
   }), [initial.matchId])
+
+  /**
+   * A tie at the top voids the tied dice — so it voids my declaration too.
+   *
+   * This used to live inside the lobby subscription, which is created ONCE:
+   * the callback closed over `pendingRoll` from the first render, where it is
+   * null, so the clear could never fire. The joiner's screen kept showing
+   * "counting…" for a die the host had already thrown away, the Roll button
+   * stayed hidden behind that pending state, and the host waited for a roll
+   * their opponent had no way left to send. An effect keyed on the round
+   * cannot go stale that way.
+   */
+  useEffect(() => {
+    setPendingRoll(p => (p && p.round !== doc.round ? null : p))
+  }, [doc.round])
 
   // ── Who this machine speaks for ─────────────────────────────────────────
   const minePids = seats.filter(s => s.userId === user.id).map(s => s.playerId)
@@ -160,6 +173,24 @@ export default function OnlineSetupScreen({ lobby: initial, legacy, user, onComp
   const actor = expectedActor(doc)
   const iAct = !!actor && controlled.has(actor)
   const waiting = awaitedRolls(doc, ctxRef.current)
+
+  /**
+   * The computer players roll their own dice.
+   *
+   * They have no screen, so somebody's machine must throw for them, and it
+   * was the host's — by hand, one button per AI, every round and again after
+   * every tie. The host's machine still does the throwing; it just does not
+   * wait to be asked. One at a time, with a beat between, so the table sees
+   * each die land rather than three appearing at once.
+   */
+  useEffect(() => {
+    if (!isHost || doc.phase !== 'dice') return
+    const owed = seats.find(s => s.isAI && doc.rolls[s.playerId] === undefined)
+    if (!owed) return
+    const t = setTimeout(() => castRoll(owed.playerId), 500)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost, doc.phase, doc.round, doc.rolls])
 
   // An AI seat never sees a screen — when the weakness phase lands on one, the
   // host's machine accepts the first unclaimed power for it instead of handing
