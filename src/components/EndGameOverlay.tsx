@@ -12,8 +12,9 @@ interface Props {
   humanIds: string[]
   /** This machine's seat, if it holds one. */
   myId: string | null
-  /** What each player recorded — read back out of the campaign. */
-  recap: Array<{ playerId: string; lines: string[] }>
+  /** What each player recorded — read back out of the campaign. Optional and
+   *  defaulted: a missing recap must never be able to blank the ceremony. */
+  recap?: Array<{ playerId: string; lines: string[] }>
   onContinue: () => void
   onQuit: () => void
 }
@@ -40,7 +41,7 @@ function factionColor(factionId: string | undefined): string {
  * frozen board that looked like a game still in progress.
  */
 export default function EndGameOverlay({
-  endGame, players, gameNumber, rewardOrder, humanIds, myId, recap, onContinue, onQuit,
+  endGame, players, gameNumber, rewardOrder, humanIds, myId, recap = [], onContinue, onQuit,
 }: Props) {
   const nameOf = (pid: string) => players.find(p => p.id === pid)?.name ?? pid
   const winner = players.find(p => p.id === endGame.winnerId)
