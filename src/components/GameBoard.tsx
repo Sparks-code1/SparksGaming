@@ -682,7 +682,21 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   const [beamDownActive,          setBeamDownActive]          = useState(false)
   const [alienStarBanner,         setAlienStarBanner]         = useState<string | null>(null)
   // Nuclear milestone (3 missiles on one combat roll)
-  interface PendingNuclear { bringerPlayerId: string; bringerFactionId: string; falloutTerritoryId: string }
+  /**
+   * The Unthinkable, as it stands on THIS screen.
+   *
+   * Shown on every machine — it is a permanent change to the board and the
+   * table is entitled to watch it happen — but written by exactly one.
+   * `canCommit` is that distinction: the machine that owns the battle
+   * obliterates the territory and records the Bringer; everyone else is
+   * reading the announcement and closes it when they have read it.
+   */
+  interface PendingNuclear {
+    bringerPlayerId: string
+    bringerFactionId: string
+    falloutTerritoryId: string
+    canCommit: boolean
+  }
   const [pendingNuclear,          setPendingNuclear]          = useState<PendingNuclear | null>(null)
   const pendingNuclearRef = useRef<PendingNuclear | null>(null)
   const [missilePowerPendingPlayerId, setMissilePowerPendingPlayerId] = useState<string | null>(null)
@@ -3529,30 +3543,64 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
    * flip; only one of them may raise a modal that writes the campaign.
    */
   const nuclearWindowRef = useRef<string | null>(null)
+  /** Set on the attacker's machine when the fire falls: this battle is over. */
+  const nuclearEndsBattleRef = useRef(false)
   useEffect(() => {
     const w = gameState.combatWindow
     if (!onlineMatch || !w || (w.flips?.length ?? 0) < 3) return
     if (nuclearWindowRef.current === w.roundKey) return
     if (legacyStateRef.current.nuclearMilestoneTriggered || pendingNuclearRef.current) return
-    const c = gameState.combat
-    const attacker = c ? gameState.players.find(p => p.id === c.attackerId) : null
-    const mine = c
-      ? (localSeatId === c.attackerId || (!!attacker?.isAI && aiAuthorityRef.current))
-      : aiAuthorityRef.current
-    if (!mine) return
     // The third missile is the one that brings the fire.
     const third = w.flips[2]
     const bringer = gameState.players.find(p => p.id === third.playerId)
     if (!bringer) return
+
+    // EVERY screen raises it — a crater is news for the whole table, and the
+    // defender used to learn about it by finding a hole in the board later.
+    // Only the machine that owns the battle writes it.
+    const c = gameState.combat
+    const attacker = c ? gameState.players.find(p => p.id === c.attackerId) : null
+    const owns = c
+      ? (localSeatId === c.attackerId || (!!attacker?.isAI && aiAuthorityRef.current))
+      : aiAuthorityRef.current
+
     nuclearWindowRef.current = w.roundKey
     pendingNuclearRef.current = {
       bringerPlayerId: bringer.id,
       bringerFactionId: bringer.factionId,
       falloutTerritoryId: w.tgtId,
+      canCommit: owns,
     }
     setPendingNuclear(pendingNuclearRef.current)
+
+    if (owns) {
+      // The attack is over. Three missiles on one roll ends the battle — the
+      // territory is about to stop existing in any form worth attacking, and
+      // the attacker carried on rolling into it because nothing said stop.
+      // The window is closed now rather than waited out, so THIS roll resolves
+      // immediately and the battle ends on the round the fire fell in.
+      nuclearEndsBattleRef.current = true
+      dispatchRef.current({ type: 'CLOSE_COMBAT_WINDOW', roundKey: w.roundKey })
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameState.combatWindow?.roundKey, gameState.combatWindow?.flips?.length, onlineMatch, localSeatId])
+
+  /**
+   * …and once that round has resolved, the battle closes itself.
+   *
+   * Waits for the window to be gone — the round folds its missiles in as it
+   * closes — so the roll the fire fell on still counts. Then the attack ends
+   * the way a retreat does: no troops move, and the attacker may not roll
+   * again into a crater.
+   */
+  useEffect(() => {
+    if (!nuclearEndsBattleRef.current) return
+    if (gameState.combatWindow) return
+    nuclearEndsBattleRef.current = false
+    setShowCombat(false)
+    if (gameStateRef.current.combat) dispatchRef.current({ type: 'RETREAT' })
+    showWeaknessNoticeRef.current('☢ Three missiles on one roll — the attack ends here')
+  }, [gameState.combatWindow])
 
   /**
    * Missiles this player can still fire, which is what every readout means.
@@ -4594,6 +4642,14 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   function handleNuclearMilestoneComplete() {
     const pending = pendingNuclearRef.current
     if (!pending) return
+    // A screen that is only watching closes the announcement and writes
+    // nothing: the crater and the Bringer are recorded once, by the machine
+    // that owns the battle, and arrive here like any other board change.
+    if (!pending.canCommit) {
+      pendingNuclearRef.current = null
+      setPendingNuclear(null)
+      return
+    }
     const { bringerPlayerId, bringerFactionId, falloutTerritoryId } = pending
     const territoryName = gameStateRef.current.territories[falloutTerritoryId]?.name ?? falloutTerritoryId
     const bringerName = gameStateRef.current.players.find(p => p.id === bringerPlayerId)?.name ?? 'Unknown'
@@ -6684,6 +6740,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         bringerPlayerId: p.id,
         bringerFactionId: p.factionId,
         falloutTerritoryId: hits[0].id,
+        // Typed at this keyboard, so this machine records it.
+        canCommit: true,
       }
       setPendingNuclear(pendingNuclearRef.current)
       return [`☢ Nuclear Milestone — ${p.name} is the Bringer, fallout on ${hits[0].name}`]
@@ -8604,6 +8662,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
                 bringerPlayerId: bringerPlayer.id,
                 bringerFactionId: bringerPlayer.factionId,
                 falloutTerritoryId: attackTgtTerritory.id,
+                // The hotseat path: one machine, and it is this one.
+                canCommit: true,
               }
               setPendingNuclear(pendingNuclearRef.current)
             }}
