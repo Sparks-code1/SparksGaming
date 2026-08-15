@@ -144,6 +144,9 @@ export type Action =
   /** A missile spent OUTSIDE a battle window — discarded to power a missile
    *  power (EMP and the rest). Same pile as every other missile this match. */
   | { type: 'SPEND_MISSILE'; playerId: string }
+  /** Join the Cause is waiting on a player who is probably not the one whose
+   *  turn it is. `playerId: null` clears it once they have chosen. */
+  | { type: 'SET_JOIN_CAUSE_PENDING'; playerId: string | null }
   /** The actor resumes the battle â€” the window closes, late missiles refuse. */
   | { type: 'CLOSE_COMBAT_WINDOW'; roundKey: string }
   /**
@@ -814,6 +817,14 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
           side: action.side, dieIndex: action.dieIndex, srcId: w.srcId, tgtId: w.tgtId,
         }],
       }
+    }
+
+    case 'SET_JOIN_CAUSE_PENDING': {
+      // Who is owed the choice, so their machine can offer it and every other
+      // machine can stay out of the way. Cleared with null when they answer.
+      if (action.playerId === null) return only({ ...state, pendingJoinCause: null })
+      if (!state.players.some(p => p.id === action.playerId)) return only(state)
+      return only({ ...state, pendingJoinCause: action.playerId })
     }
 
     case 'SPEND_MISSILE': {

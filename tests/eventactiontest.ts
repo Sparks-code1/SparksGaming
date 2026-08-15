@@ -10,6 +10,7 @@ import { gameReducer, createMathRng, type Action } from '@/lib/gameReducer'
 import { initialTurnState, type GameState } from '@/types/game'
 
 let pass = 0, fail = 0
+// (Join the Cause's beneficiary is asserted at the end of this file.)
 function check(name: string, cond: boolean, detail = '') {
   if (cond) { pass++; console.log(`  ok   ${name}`) }
   else { fail++; console.log(`  FAIL ${name} ${detail}`) }
@@ -214,6 +215,26 @@ console.log('\n— map surgery: scars —')
   check('the scar lands with the game number', scars.length === 1 && scars[0].type === 'bunker' && scars[0].appliedInGame === 1)
   const second = gameReducer(s, { type: 'PLACE_SCAR', territoryId: 'b', scarType: 'ammo-shortage' } as Action, rng)
   check('one scar per territory — the second is refused', second.state === s)
+}
+
+console.log('\n— Join the Cause belongs to whoever won it, not to the turn —')
+{
+  // The card resolves on the CURRENT player's machine, and its reward goes to
+  // the largest population — usually somebody else. Ryan won it and Test was
+  // offered the choice, on Test's screen, because the whole thing lived in
+  // local state on the machine that dismissed the card. The beneficiary is
+  // match state now, so exactly one machine offers it: theirs.
+  const s0 = base()
+  const named = gameReducer(s0, { type: 'SET_JOIN_CAUSE_PENDING', playerId: 'p2' } as Action, rng).state
+  check('the winner is named in shared state', named.pendingJoinCause === 'p2')
+  check('and it is not the player whose turn it is',
+    named.pendingJoinCause !== named.players[named.currentPlayerIndex].id)
+
+  const cleared = gameReducer(named, { type: 'SET_JOIN_CAUSE_PENDING', playerId: null } as Action, rng).state
+  check('answering it clears the claim', cleared.pendingJoinCause === null)
+
+  const stranger = gameReducer(named, { type: 'SET_JOIN_CAUSE_PENDING', playerId: 'nobody' } as Action, rng)
+  check('a player who is not at this table cannot be named', stranger.state === named)
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

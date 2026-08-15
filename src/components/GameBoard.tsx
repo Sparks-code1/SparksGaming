@@ -454,6 +454,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // defender's own button was refused by their own machine — "it's Test's
     // turn" — before the server, which allows it, ever heard about it.
     'CLOSE_COMBAT_WINDOW',
+    // Join the Cause names its winner from the current player's machine and is
+    // cleared from the WINNER's — who is, by the nature of the card, usually
+    // not the player whose turn it is.
+    'SET_JOIN_CAUSE_PENDING',
     // End-of-game ceremony: the game is over, "whose turn" is meaningless —
     // every seat reports its own progress; the edge stamps the caller.
     'ENDGAME_REWARDS_DONE',
@@ -825,6 +829,14 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   // Mysterious Island: an immediate (non-fortify-phase) sideboard draw is pending
   const [eventDrawActive,         setEventDrawActive]         = useState(false)
   const [showJoinTheCause,        setShowJoinTheCause]        = useState(false)
+  /**
+   * Is a Join the Cause choice outstanding anywhere?
+   *
+   * Hotseat keeps it in the local flag; online it lives in match state, named
+   * to the player who won it. The AI driver asks this — a computer leader's
+   * reward is claimed by whichever machine runs the computer, and it must not
+   * march on past a choice that is still open on somebody's screen.
+   */
   const [unlockOptions,    setUnlockOptions]    = useState<UnlockOption[]>([])
   const [winnerPlayerId,   setWinnerPlayerId]   = useState<string | null>(null)
   // 'stars' has always been a legal way to win — the victory log's type says
@@ -2579,7 +2591,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (dieHumansPendingCardId && isHumanId(factionPlayer('aliens'))) return 'a Die Humans choice'
     if (beamDownActive && isHumanId(factionPlayer('aliens'))) return 'a Beam Down placement'
     if (mutantsEvolvePendingCardId && isHumanId(factionPlayer('mutants'))) return 'a Mutants Evolve choice'
-    if (showJoinTheCause && isHumanId(largestPopulationPlayerId())) return 'a Join the Cause choice'
+    if (joinCauseOpen && isHumanId(largestPopulationPlayerId())) return 'a Join the Cause choice'
     if (joinCausePlacement && isHumanId(joinCausePlacement.playerId)) return 'a Join the Cause placement'
     if (fortifyEvent && isHumanId(fortifyEvent.playerId)) {
       return fortifyEvent.phase === 'choice' ? 'a Fortify choice' : 'a Fortify placement'
@@ -2954,7 +2966,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         return
       }
     }
-    if (showJoinTheCause) {
+    if (joinCauseOpen) {
       const leaderId = largestPopulationPlayerId()
       if (leaderId && !isHuman(leaderId)) {
         run(() => resolveAiJoinCauseChoice(leaderId))
@@ -3224,7 +3236,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       step(() => { if (first) handleLeadMissionPick(first); else setLeadMissionPick(null) })
       return
     }
-    if (showJoinTheCause) {
+    if (joinCauseOpen) {
       const leaderId = largestPopulationPlayerId()
       if (isAiOwned(leaderId)) { step(() => resolveAiJoinCauseChoice(leaderId!)); return }
     }
@@ -3537,6 +3549,20 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     setWeaknessNotice(msg)
     if (weaknessNoticeTimer.current) clearTimeout(weaknessNoticeTimer.current)
     weaknessNoticeTimer.current = setTimeout(() => setWeaknessNotice(null), 3500)
+  }
+
+  /** Is a Join the Cause choice outstanding anywhere? Hotseat keeps it in the
+   *  local flag; online it lives in match state, named to the player who won
+   *  it. The AI driver asks this — it must not march past a choice that is
+   *  still open on somebody's screen. */
+  const joinCauseOpen = showJoinTheCause || !!gameState.pendingJoinCause
+
+  /** The Join the Cause choice is answered — close it here and everywhere. */
+  function closeJoinCause() {
+    setShowJoinTheCause(false)
+    if (onlineMatchRef.current && gameStateRef.current.pendingJoinCause) {
+      dispatch({ type: 'SET_JOIN_CAUSE_PENDING', playerId: null })
+    }
   }
 
   /**
@@ -4475,7 +4501,19 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (!effect) return
     const state = gameStateRef.current
 
-    if (effect.kind === 'join-the-cause') setShowJoinTheCause(true)
+    if (effect.kind === 'join-the-cause') {
+      // The card is dismissed on the CURRENT player's machine, but the reward
+      // belongs to the largest population — usually somebody else. Online, say
+      // whose it is in match state so their machine offers it and this one
+      // does not; the local flag stays for hotseat, where there is only ever
+      // one screen.
+      const leaderId = largestPopulationPlayerId()
+      if (onlineMatchRef.current && leaderId) {
+        dispatch({ type: 'SET_JOIN_CAUSE_PENDING', playerId: leaderId })
+      } else {
+        setShowJoinTheCause(true)
+      }
+    }
     if (effect.kind === 'die-humans') {
       const alienPlayer = state.players.find(p => p.factionId === 'aliens' && !p.isEliminated)
       if (alienPlayer && hasRuinableCity()) {
@@ -9879,8 +9917,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         )
       })()}
 
-      {/* Join the Cause interactive choice */}
-      {showJoinTheCause && (() => {
+      {/* Join the Cause — offered on the machine of whoever won it. Online
+          that is the seat named in match state; hotseat it is this screen,
+          because there is only one. */}
+      {(onlineMatch
+        ? gameState.pendingJoinCause === localSeatId && !!localSeatId
+        : showJoinTheCause) && (() => {
         // Missions are one shared face-up card now. The "New Mission" reward
         // swaps that shared mission for any card still in the deck.
         const currentMissionId = cardState.currentMissionId ?? null
@@ -9900,11 +9942,11 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             reinforceTargets={ownedCityIds(leaderId).length}
             onDecline={() => {
               const name = gameState.players.find(p => p.id === leaderId)?.name ?? 'Player'
-              setShowJoinTheCause(false)
+              closeJoinCause()
               logHistory(`🫂 Join the Cause — ${name} had the largest population but could take neither reward`)
             }}
             onChooseTroops={(playerId) => {
-              setShowJoinTheCause(false)
+              closeJoinCause()
               startJoinCauseTroops(playerId)
             }}
             onChooseMission={(_playerId, missionId) => {
@@ -9928,7 +9970,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
               showWeaknessNotice(`📜 New shared mission revealed: ${md?.description ?? missionId}`)
               const leaderName = gameState.players.find(p => p.id === leaderId)?.name ?? 'Player'
               logHistory(`🫂 Join the Cause — ${leaderName} had the largest population and swapped the shared mission for: ${md?.description ?? missionId}`)
-              setShowJoinTheCause(false)
+              closeJoinCause()
             }}
           />
         )

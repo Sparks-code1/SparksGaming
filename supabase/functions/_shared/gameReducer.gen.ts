@@ -769,6 +769,11 @@ function gameReducer(state, action, rng) {
         }]
       };
     }
+    case "SET_JOIN_CAUSE_PENDING": {
+      if (action.playerId === null) return only({ ...state, pendingJoinCause: null });
+      if (!state.players.some((p) => p.id === action.playerId)) return only(state);
+      return only({ ...state, pendingJoinCause: action.playerId });
+    }
     case "SPEND_MISSILE": {
       if (!state.players.some((p) => p.id === action.playerId)) return only(state);
       return only({

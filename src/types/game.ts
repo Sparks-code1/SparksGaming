@@ -140,6 +140,20 @@ export interface GameState {
   combatWindow?: CombatWindowState | null
 
   /**
+   * A Join the Cause reward waiting to be chosen, and WHO chooses it.
+   *
+   * Event cards resolve on the machine that dismissed them — the current
+   * player's — which is right for an event that acts on the board, and wrong
+   * for one that hands somebody else a choice. Join the Cause goes to the
+   * largest population, who is usually not the player whose turn it is: their
+   * reward was being picked, on another screen, by their opponent.
+   *
+   * Holding the beneficiary in match state means every machine knows the
+   * choice is outstanding and exactly one of them offers it.
+   */
+  pendingJoinCause?: string | null
+
+  /**
    * Missiles spent by SPECTATORS this game, by player id — the match-side
    * ledger. Campaign missile counts live in the legacy blob, which the server
    * never writes (single-writer rule); the server records spends HERE instead,
