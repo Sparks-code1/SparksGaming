@@ -12,6 +12,8 @@ interface Props {
   humanIds: string[]
   /** This machine's seat, if it holds one. */
   myId: string | null
+  /** What each player recorded — read back out of the campaign. */
+  recap: Array<{ playerId: string; lines: string[] }>
   onContinue: () => void
   onQuit: () => void
 }
@@ -38,7 +40,7 @@ function factionColor(factionId: string | undefined): string {
  * frozen board that looked like a game still in progress.
  */
 export default function EndGameOverlay({
-  endGame, players, gameNumber, rewardOrder, humanIds, myId, onContinue, onQuit,
+  endGame, players, gameNumber, rewardOrder, humanIds, myId, recap, onContinue, onQuit,
 }: Props) {
   const nameOf = (pid: string) => players.find(p => p.id === pid)?.name ?? pid
   const winner = players.find(p => p.id === endGame.winnerId)
@@ -103,6 +105,52 @@ export default function EndGameOverlay({
             )
           })}
         </div>
+
+        {/* ── The recap: what everyone actually took ──────────────────────
+            Shown once every reward is in, before anyone commits to another
+            game — these marks are permanent and the next game is played
+            against them, so the table should read them together. It is built
+            from the CAMPAIGN, not from the choices as they were made, so a
+            player with no line is a player whose rewards did not save. */}
+        {allRewardsDone && recap.length > 0 && (
+          <div style={{
+            marginBottom: 14, padding: '12px 14px', borderRadius: 9,
+            background: 'rgba(0,0,0,0.28)', border: '1px solid rgba(200,148,10,0.28)',
+            textAlign: 'left',
+          }}>
+            <div style={{
+              fontSize: 9.5, letterSpacing: 1.6, textTransform: 'uppercase',
+              color: 'rgba(200,148,10,0.65)', marginBottom: 8,
+            }}>
+              What this game left on the board
+            </div>
+            {recap.map(r => (
+              <div key={r.playerId} style={{ marginBottom: 8 }}>
+                <div style={{
+                  fontSize: 12, fontWeight: 'bold',
+                  color: factionColor(players.find(p => p.id === r.playerId)?.factionId),
+                }}>
+                  {nameOf(r.playerId)}
+                </div>
+                {r.lines.map((l, i) => (
+                  <div key={i} style={{ fontSize: 11, color: '#b09870', marginLeft: 10, lineHeight: 1.5 }}>
+                    {l}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+        {allRewardsDone && recap.length === 0 && (
+          <div style={{
+            marginBottom: 14, padding: '10px 12px', borderRadius: 9, fontSize: 11,
+            background: 'rgba(231,76,60,0.10)', border: '1px solid rgba(231,76,60,0.40)',
+            color: '#e08070', textAlign: 'left',
+          }}>
+            ⚠ Nothing from this ceremony has reached the campaign. Do not
+            continue — the rewards are not saved.
+          </div>
+        )}
 
         {/* ── Continue gate ── */}
         {!allRewardsDone ? (

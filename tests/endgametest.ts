@@ -5,6 +5,7 @@
 // frozen board that looked like a game still in progress.
 import { gameReducer, createMathRng, type Action } from '@/lib/gameReducer'
 import { initialTurnState, type GameState } from '@/types/game'
+import { endGameRecap } from '@/lib/gameLogic'
 
 let pass = 0, fail = 0
 function check(name: string, cond: boolean, detail = '') {
@@ -87,5 +88,45 @@ console.log('\n— CONTINUE: recorded once, never flipped —')
   check('refused before the game ends', !noSession.endGame)
 }
 
-console.log(`\nendgametest: ${pass} passed, ${fail} failed`)
+
+// ─── The recap: what the ceremony actually recorded ─────────────────────────
+// Game 4 of the Test8 campaign ran its whole ceremony on both screens — the
+// winner signed, the runner-up chose on their own machine — and NOTHING
+// reached the campaign: no victory entry, no cities, no fortification, while
+// the game number still advanced. Nobody found out for a game and a half.
+//
+// The recap is read back out of the campaign rather than tracked as the
+// choices are made, so it shows what was RECORDED. An empty recap is the
+// failure, visible at the table, before anyone commits to another game.
+{
+  const territoryName = (id: string) => ({ peru: 'Peru', brazil: 'Brazil' } as Record<string, string>)[id] ?? id
+  const legacy = {
+    victoryLog: [{ gameNumber: 4, winnerName: 'ryan', winnerPlayerId: 'p1', factionId: 'bear', winCondition: 'stars' }],
+    stickers: [
+      { targetId: 'peru', name: 'Peru City', description: 'city:major', appliedInGame: 4, placedByPlayerId: 'p1' },
+      { targetId: 'brazil', name: 'Brazil City', description: 'city:minor', appliedInGame: 4, placedByPlayerId: 'p2' },
+      { targetId: 'peru', name: 'Fortification', description: 'fortification:10', appliedInGame: 4, placedByPlayerId: 'p1' },
+      // An earlier game's city must not appear in this game's recap.
+      { targetId: 'egypt', name: 'Old City', description: 'city:major', appliedInGame: 3, placedByPlayerId: 'p2' },
+    ],
+    scars: [{ territoryId: 'brazil', cancelledInGame: 4, cancelledByPlayerId: 'p2' }],
+  }
+  const recap = endGameRecap(legacy as never, 4, territoryName)
+  const forP1 = recap.find(r => r.playerId === 'p1')?.lines ?? []
+  const forP2 = recap.find(r => r.playerId === 'p2')?.lines ?? []
+  check('the winner\'s signature is recorded', forP1.some(l => l.includes('Signed the board')))
+  check('their major city, by name and place',
+    forP1.some(l => l.includes('MAJOR') && l.includes('Peru City') && l.includes('Peru')))
+  check('their fortification', forP1.some(l => l.includes('Fortified Peru')))
+  check('the runner-up\'s minor city', forP2.some(l => l.includes('Brazil City')))
+  check('and their cancelled scar', forP2.some(l => l.includes('Cancelled the scar')))
+  check('an earlier game\'s city stays in that game',
+    !forP1.concat(forP2).some(l => l.includes('Old City')))
+  check('a ceremony that saved NOTHING recaps as nothing — the alarm',
+    endGameRecap({ victoryLog: [], stickers: [], scars: [] } as never, 4, territoryName).length === 0)
+}
+
+
+console.log(`
+endgametest: ${pass} passed, ${fail} failed`)
 if (fail > 0) process.exit(1)

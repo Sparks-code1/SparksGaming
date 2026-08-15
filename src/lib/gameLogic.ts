@@ -884,6 +884,60 @@ export function campaignLeadFaction(
 }
 
 /**
+ * What each player took out of the end-of-game ceremony.
+ *
+ * Read back out of the CAMPAIGN rather than tracked as the choices are made:
+ * the campaign is the thing that will still say this tomorrow, so a recap
+ * built from it shows what was actually recorded — and an empty line is a
+ * ceremony whose writes did not land, which is worth seeing at the table
+ * rather than discovering three games later.
+ *
+ * The permanent marks are what the next game is played against, which is why
+ * the table wants them side by side before anyone commits to continuing.
+ */
+export function endGameRecap(
+  legacy: {
+    stickers?: Array<{ targetId: string; name: string; description: string; appliedInGame: number; placedByPlayerId?: string }>
+    victoryLog?: Array<{ gameNumber: number; winnerName: string; winnerPlayerId?: string; factionId: string; winCondition: string }>
+    scars?: Array<{ territoryId: string; cancelledInGame?: number; cancelledByPlayerId?: string }>
+    namedContinents?: Record<string, { customName: string; namedByPlayerId?: string; namedInGame?: number }>
+  } | null | undefined,
+  gameNumber: number,
+  territoryName: (id: string) => string,
+): Array<{ playerId: string; lines: string[] }> {
+  const byPlayer = new Map<string, string[]>()
+  const add = (pid: string | undefined | null, line: string) => {
+    if (!pid) return
+    byPlayer.set(pid, [...(byPlayer.get(pid) ?? []), line])
+  }
+
+  const win = (legacy?.victoryLog ?? []).find(v => v.gameNumber === gameNumber)
+  if (win?.winnerPlayerId) {
+    add(win.winnerPlayerId, `✍ Signed the board as ${win.winnerName}`)
+  }
+
+  for (const s of legacy?.stickers ?? []) {
+    if (s.appliedInGame !== gameNumber) continue
+    const where = territoryName(s.targetId)
+    if (s.description.startsWith('city:major')) add(s.placedByPlayerId, `★ Founded ${s.name} — a MAJOR city on ${where}`)
+    else if (s.description.startsWith('city:minor')) add(s.placedByPlayerId, `● Founded ${s.name} on ${where}`)
+    else if (s.description.startsWith('fortification:')) add(s.placedByPlayerId, `◎ Fortified ${where}`)
+  }
+
+  for (const s of legacy?.scars ?? []) {
+    if (s.cancelledInGame === gameNumber) {
+      add(s.cancelledByPlayerId, `✗ Cancelled the scar on ${territoryName(s.territoryId)}`)
+    }
+  }
+
+  for (const [contId, c] of Object.entries(legacy?.namedContinents ?? {})) {
+    if (c?.namedInGame === gameNumber) add(c.namedByPlayerId, `⌘ Named ${contId} “${c.customName}”`)
+  }
+
+  return [...byPlayer.entries()].map(([playerId, lines]) => ({ playerId, lines }))
+}
+
+/**
  * The identity of a dice ARRIVAL, for animating it exactly once.
  *
  * A battle screen watching a shared session is re-rendered from a board that
