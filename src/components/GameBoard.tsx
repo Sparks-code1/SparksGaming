@@ -6830,6 +6830,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         `scar <territory> <type> — place a scar (${SCAR_META.map(m => m.type).join(', ')})`,
         'stars <player> <n|+n|-n> — set or shift this game\'s red stars',
         'missiles <player> <n|+n|-n> — set or shift what they can still fire',
+        'city <territory> <major|minor> <player> [name] — record a city a ceremony lost',
         'nuclear <player> <territory> — raise the Nuclear Milestone for a battle it was missed in',
         'info <territory> — owner, troops, scars',
         'players — everyone at the table, with stars and missiles',
@@ -6887,6 +6888,58 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         out.push('⚠ that reaches 4 stars — the victory screen is about to open')
       }
       return out
+    }
+
+    if (cmd === 'city') {
+      // Restores a city a ceremony failed to record. Founder and game are the
+      // parts that matter beyond the sticker itself: a MAJOR city is a legal
+      // HQ start for the player who founded it, scar or no scar, and that
+      // permission is read from placedByPlayerId.
+      if (tokens.length < 4) return ['✗ usage: city <territory> <major|minor> <player> [name]']
+      const kind = tokens[2].toLowerCase()
+      if (kind !== 'major' && kind !== 'minor') return ['✗ the second word must be major or minor']
+      const hits = adminFindTerritories(tokens[1])
+      if (hits.length === 0) return ['✗ no territory matches']
+      if (hits.length > 1) return [`✗ ${hits.length} territories match — be more specific`]
+      const t = hits[0]
+      const q = tokens[3].toLowerCase()
+      const p = st.players.find(pl => pl.id.toLowerCase() === q || pl.name.toLowerCase().startsWith(q))
+      if (!p) return ['✗ no player matches — try `players`']
+      const label = tokens.slice(4).join(' ').trim() || `${t.name} City`
+      if (legacyStateRef.current.stickers.some(s =>
+        s.targetId === t.id && s.description.startsWith('city:'))) {
+        return [`✗ ${t.name} already carries a city`]
+      }
+      const sticker = {
+        id: `city-${Date.now()}-${p.id}`,
+        name: label,
+        description: `city:${kind}` as const,
+        placement: 'territory' as const,
+        targetId: t.id,
+        appliedInGame: st.gameNumber,
+        placedByPlayerId: p.id,
+      }
+      const applyCity = (b: LegacyState): LegacyState => ({
+        ...b,
+        stickers: [...b.stickers, sticker],
+        historyLog: [...b.historyLog, {
+          gameNumber: st.gameNumber,
+          entry: `🔧 Admin repair — ${label} (${kind} city) recorded on ${t.name}, founded by ${p.name}`,
+          timestamp: new Date().toISOString(),
+        }],
+      })
+      setLegacyState(prev => {
+        const next = applyCity(prev)
+        legacyStateRef.current = next
+        saveLegacyState(next, { reapply: applyCity }).catch(() => {})
+        return next
+      })
+      return [
+        `✓ ${label} — ${kind} city on ${t.name}, founded by ${p.name}`,
+        ...(kind === 'major'
+          ? [`  ${p.name} may start an HQ there in later games, scarred or not`]
+          : []),
+      ]
     }
 
     if (cmd === 'nuclear') {
