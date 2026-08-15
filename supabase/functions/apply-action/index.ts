@@ -89,7 +89,7 @@ const SERVER_ACTIONS = new Set([
   // Join the Cause: the current player's machine names the beneficiary when
   // the card resolves; the BENEFICIARY's machine clears it when they choose.
   // Both are legitimate off-turn, so it carries its own branch below.
-  'SET_JOIN_CAUSE_PENDING',
+  'SET_PENDING_EVENT',
   // A missile discarded to power a missile power — the acting player's own,
   // on their own turn, so the turn gate below is the whole check.
   'SPEND_MISSILE',
@@ -295,7 +295,7 @@ Deno.serve(async (req: Request) => {
       }
       return json({ error: words[refusal] ?? refusal, code: refusal }, 409)
     }
-  } else if (action.type === 'SET_JOIN_CAUSE_PENDING' || action.type === 'CLOSE_COMBAT_WINDOW') {
+  } else if (action.type === 'SET_PENDING_EVENT' || action.type === 'CLOSE_COMBAT_WINDOW') {
     // Two actions that belong to the table rather than to the turn.
     //
     // The missile window: anyone in the battle may close it. "Resolve battle"

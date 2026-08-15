@@ -769,10 +769,16 @@ function gameReducer(state, action, rng) {
         }]
       };
     }
-    case "SET_JOIN_CAUSE_PENDING": {
-      if (action.playerId === null) return only({ ...state, pendingJoinCause: null });
-      if (!state.players.some((p) => p.id === action.playerId)) return only(state);
-      return only({ ...state, pendingJoinCause: action.playerId });
+    case "SET_PENDING_EVENT": {
+      const p = action.pending;
+      if (!p) return only({ ...state, pendingEvent: null });
+      const kinds = ["join-cause", "control-people", "die-humans", "fortify-event"];
+      if (!kinds.includes(p.kind)) return only(state);
+      if (!state.players.some((pl) => pl.id === p.playerId)) return only(state);
+      return only({
+        ...state,
+        pendingEvent: { kind: p.kind, playerId: p.playerId, ...p.cardId ? { cardId: p.cardId } : {} }
+      });
     }
     case "SPEND_MISSILE": {
       if (!state.players.some((p) => p.id === action.playerId)) return only(state);

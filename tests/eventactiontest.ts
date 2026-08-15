@@ -217,24 +217,39 @@ console.log('\n— map surgery: scars —')
   check('one scar per territory — the second is refused', second.state === s)
 }
 
-console.log('\n— Join the Cause belongs to whoever won it, not to the turn —')
+console.log('\n— an event choice belongs to whoever won it, not to the turn —')
 {
-  // The card resolves on the CURRENT player's machine, and its reward goes to
-  // the largest population — usually somebody else. Ryan won it and Test was
-  // offered the choice, on Test's screen, because the whole thing lived in
-  // local state on the machine that dismissed the card. The beneficiary is
-  // match state now, so exactly one machine offers it: theirs.
+  // Event cards resolve on the CURRENT player's machine, and several of them
+  // hand a choice to somebody else: Join the Cause and Control the People to
+  // the largest population, Die Humans to whoever plays the Aliens. Ryan won
+  // Join the Cause and Test was offered it, on Test's screen, because the
+  // whole thing lived in local state on the machine that dismissed the card.
+  // The chooser is match state now, so exactly one machine offers it: theirs.
   const s0 = base()
-  const named = gameReducer(s0, { type: 'SET_JOIN_CAUSE_PENDING', playerId: 'p2' } as Action, rng).state
-  check('the winner is named in shared state', named.pendingJoinCause === 'p2')
+  const claim = (over: object = {}) =>
+    ({ type: 'SET_PENDING_EVENT', pending: { kind: 'join-cause', playerId: 'p2', ...over } } as Action)
+
+  const named = gameReducer(s0, claim(), rng).state
+  check('the chooser is named in shared state', named.pendingEvent?.playerId === 'p2')
+  check('with the kind of choice they owe', named.pendingEvent?.kind === 'join-cause')
   check('and it is not the player whose turn it is',
-    named.pendingJoinCause !== named.players[named.currentPlayerIndex].id)
+    named.pendingEvent?.playerId !== named.players[named.currentPlayerIndex].id)
 
-  const cleared = gameReducer(named, { type: 'SET_JOIN_CAUSE_PENDING', playerId: null } as Action, rng).state
-  check('answering it clears the claim', cleared.pendingJoinCause === null)
+  const cleared = gameReducer(named, { type: 'SET_PENDING_EVENT', pending: null } as Action, rng).state
+  check('answering it clears the claim', cleared.pendingEvent === null)
 
-  const stranger = gameReducer(named, { type: 'SET_JOIN_CAUSE_PENDING', playerId: 'nobody' } as Action, rng)
+  const stranger = gameReducer(named, claim({ playerId: 'nobody' }), rng)
   check('a player who is not at this table cannot be named', stranger.state === named)
+  const nonsense = gameReducer(named, claim({ kind: 'free-troops-please' }), rng)
+  check('nor an event that does not exist', nonsense.state === named)
+
+  // The card rides along for the choices that decide whether it is spent or
+  // returned — the chooser's machine never saw it dismissed, so it cannot
+  // know the card id any other way.
+  const withCard = gameReducer(s0, claim({ kind: 'die-humans', cardId: 'ec-die-humans' }), rng).state
+  check('the card travels with the claim', withCard.pendingEvent?.cardId === 'ec-die-humans')
+  check('and is absent when there is nothing to spend',
+    named.pendingEvent?.cardId === undefined)
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

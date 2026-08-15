@@ -25,7 +25,7 @@
  * next, one verified stage at a time.
  */
 
-import { initialTurnState, type ActiveCombat, type GameState, type ServerCardPiles } from '@/types/game'
+import { initialTurnState, type ActiveCombat, type GameState, type ServerCardPiles, type PendingEventChoice } from '@/types/game'
 import type { Territory } from '@/types/territory'
 import { applyCustomSeaLines, applyHqReserveTroops, continentsHeldInFull, injectAlienIslandTerritory, legalJoinWarTerritoryIds, troopsAfterEntry } from '@/lib/gameLogic'
 
@@ -144,9 +144,9 @@ export type Action =
   /** A missile spent OUTSIDE a battle window — discarded to power a missile
    *  power (EMP and the rest). Same pile as every other missile this match. */
   | { type: 'SPEND_MISSILE'; playerId: string }
-  /** Join the Cause is waiting on a player who is probably not the one whose
-   *  turn it is. `playerId: null` clears it once they have chosen. */
-  | { type: 'SET_JOIN_CAUSE_PENDING'; playerId: string | null }
+  /** An event choice is waiting on a player the board picked — probably not
+   *  the one whose turn it is. `pending: null` clears it once they answer. */
+  | { type: 'SET_PENDING_EVENT'; pending: PendingEventChoice | null }
   /** The actor resumes the battle â€” the window closes, late missiles refuse. */
   | { type: 'CLOSE_COMBAT_WINDOW'; roundKey: string }
   /**
@@ -819,12 +819,18 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
       }
     }
 
-    case 'SET_JOIN_CAUSE_PENDING': {
-      // Who is owed the choice, so their machine can offer it and every other
+    case 'SET_PENDING_EVENT': {
+      // Who is owed a choice, so their machine can offer it and every other
       // machine can stay out of the way. Cleared with null when they answer.
-      if (action.playerId === null) return only({ ...state, pendingJoinCause: null })
-      if (!state.players.some(p => p.id === action.playerId)) return only(state)
-      return only({ ...state, pendingJoinCause: action.playerId })
+      const p = action.pending
+      if (!p) return only({ ...state, pendingEvent: null })
+      const kinds = ['join-cause', 'control-people', 'die-humans', 'fortify-event']
+      if (!kinds.includes(p.kind)) return only(state)
+      if (!state.players.some(pl => pl.id === p.playerId)) return only(state)
+      return only({
+        ...state,
+        pendingEvent: { kind: p.kind, playerId: p.playerId, ...(p.cardId ? { cardId: p.cardId } : {}) },
+      })
     }
 
     case 'SPEND_MISSILE': {

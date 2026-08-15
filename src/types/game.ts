@@ -140,18 +140,22 @@ export interface GameState {
   combatWindow?: CombatWindowState | null
 
   /**
-   * A Join the Cause reward waiting to be chosen, and WHO chooses it.
+   * An event choice waiting on a player the BOARD picked, not the turn.
    *
    * Event cards resolve on the machine that dismissed them — the current
    * player's — which is right for an event that acts on the board, and wrong
-   * for one that hands somebody else a choice. Join the Cause goes to the
-   * largest population, who is usually not the player whose turn it is: their
-   * reward was being picked, on another screen, by their opponent.
+   * for one that hands somebody else a decision. Join the Cause and Control
+   * the People go to the largest population; Die Humans goes to whoever plays
+   * the Aliens; the fortify event goes to its own pick. None of them is
+   * reliably the player whose turn it is, and all of them were being answered
+   * on the acting machine — one player choosing another's reward.
    *
-   * Holding the beneficiary in match state means every machine knows the
-   * choice is outstanding and exactly one of them offers it.
+   * Naming the chooser in match state means every machine knows a choice is
+   * outstanding, and exactly one of them offers it. What happens AFTER the
+   * choice (placing the troops, picking the city) stays local to that machine
+   * and travels as ordinary board actions, exactly as it always did.
    */
-  pendingJoinCause?: string | null
+  pendingEvent?: PendingEventChoice | null
 
   /**
    * Missiles spent by SPECTATORS this game, by player id — the match-side
@@ -263,6 +267,21 @@ export interface ServerCardPiles {
 }
 
 /** One combat round's final dice, held open for spectator missiles. */
+/** The kinds of event choice that belong to a board-picked player. */
+export type PendingEventKind =
+  | 'join-cause'
+  | 'control-people'
+  | 'die-humans'
+  | 'fortify-event'
+
+export interface PendingEventChoice {
+  kind: PendingEventKind
+  /** Whose choice it is — named by the machine that resolved the card. */
+  playerId: string
+  /** The card, where the choice decides whether it is spent or returned. */
+  cardId?: string
+}
+
 export interface CombatWindowState {
   /** Unique per roll — a missile naming a stale key is refused ("window closed"). */
   roundKey: string

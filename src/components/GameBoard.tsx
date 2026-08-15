@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import * as PIXI from 'pixi.js'
 import type { Territory, ScarType } from '@/types/territory'
-import type { GameState, EndGameState } from '@/types/game'
+import type { GameState, EndGameState, PendingEventKind } from '@/types/game'
 import { initialTurnState } from '@/types/game'
 import EndGameOverlay from './EndGameOverlay'
 import AdminConsole from './AdminConsole'
@@ -457,7 +457,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // Join the Cause names its winner from the current player's machine and is
     // cleared from the WINNER's — who is, by the nature of the card, usually
     // not the player whose turn it is.
-    'SET_JOIN_CAUSE_PENDING',
+    'SET_PENDING_EVENT',
     // End-of-game ceremony: the game is over, "whose turn" is meaningless —
     // every seat reports its own progress; the edge stamps the caller.
     'ENDGAME_REWARDS_DONE',
@@ -2701,7 +2701,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     const eligible = new Set(ownedCityIds(playerId))
     const cityId = aiBonusTroopTarget(gameStateRef.current, playerId, t => eligible.has(t.id))
     if (cityId) dispatch({ type: 'APPLY_EVENT_TROOPS', note: 'Control the People — 5 troops raised', changes: [{ territoryId: cityId, delta: 5 }] })
-    setControlPeopleChoice(null)
+    closeEventChoice(() => setControlPeopleChoice(null))
   }
   /**
    * One step of an AI's Fortify event.
@@ -2714,7 +2714,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
    */
   function stepAiFortifyEvent(fe: FortifyEvent) {
     const eligible = new Set(ownedCityIds(fe.playerId))
-    if (eligible.size === 0) { updateFortifyEvent(null); returnEventCardToDiscard(fe.cardId); return }
+    if (eligible.size === 0) { closeEventChoice(() => updateFortifyEvent(null)); returnEventCardToDiscard(fe.cardId); return }
     const best = (allowed: Set<string>) =>
       aiBonusTroopTarget(gameStateRef.current, fe.playerId, t => allowed.has(t.id)) ?? [...allowed][0]
 
@@ -2767,7 +2767,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
 
   /** Finish the troops option: the card goes to the discard, not the bin. */
   function finishFortifyTroops(cardId: string) {
-    updateFortifyEvent(null)
+    closeEventChoice(() => updateFortifyEvent(null))
     returnEventCardToDiscard(cardId)
   }
 
@@ -2782,7 +2782,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     const st = gameStateRef.current
     const name = st.players.find(p => p.id === playerId)?.name ?? 'Player'
     const terrName = st.territories[territoryId]?.name ?? territoryId
-    updateFortifyEvent(null)
+    closeEventChoice(() => updateFortifyEvent(null))
 
     setLegacyState(prev => {
       // Re-checked against the state being written, not the render that drew
@@ -3551,19 +3551,81 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     weaknessNoticeTimer.current = setTimeout(() => setWeaknessNotice(null), 3500)
   }
 
-  /** Is a Join the Cause choice outstanding anywhere? Hotseat keeps it in the
-   *  local flag; online it lives in match state, named to the player who won
-   *  it. The AI driver asks this — it must not march past a choice that is
-   *  still open on somebody's screen. */
-  const joinCauseOpen = showJoinTheCause || !!gameState.pendingJoinCause
-
-  /** The Join the Cause choice is answered — close it here and everywhere. */
-  function closeJoinCause() {
-    setShowJoinTheCause(false)
-    if (onlineMatchRef.current && gameStateRef.current.pendingJoinCause) {
-      dispatch({ type: 'SET_JOIN_CAUSE_PENDING', playerId: null })
+  /**
+   * The event choice this machine is holding, if any.
+   *
+   * Online it is match state, so every machine knows a choice is outstanding
+   * and only the chooser's screen offers it. Hotseat has no such state — one
+   * screen, and the local flags are the whole story.
+   */
+  const pendingEvent = gameState.pendingEvent ?? null
+  const pendingEventIs = (kind: PendingEventKind) => pendingEvent?.kind === kind
+  /** Is this event's choice open ANYWHERE — my screen, or somebody else's? */
+  const eventChoiceOpen = (kind: PendingEventKind, localFlag: boolean) =>
+    localFlag || pendingEventIs(kind)
+  /**
+   * Name the player who owes a choice, so their machine offers it.
+   * Hotseat sets the local flag instead — there is only one screen to offer it
+   * on, and it is this one.
+   */
+  function openEventChoice(kind: PendingEventKind, playerId: string | null | undefined, local: () => void, cardId?: string) {
+    if (onlineMatchRef.current && playerId) {
+      dispatch({ type: 'SET_PENDING_EVENT', pending: { kind, playerId, ...(cardId ? { cardId } : {}) } })
+    } else {
+      local()
     }
   }
+
+  /**
+   * The card this choice is about.
+   *
+   * Hotseat holds it in the local pending state; online the chooser's machine
+   * never had it — the card was dismissed somewhere else — so it travels on
+   * the shared claim instead. Whichever machine is answering, this is where
+   * the card id comes from.
+   */
+  function eventCardId(kind: PendingEventKind, local: string | null): string | null {
+    if (local) return local
+    const p = gameStateRef.current.pendingEvent
+    return p && p.kind === kind ? (p.cardId ?? null) : null
+  }
+
+  /** A choice has been answered — clear it here and for the table. */
+  function closeEventChoice(local: () => void) {
+    local()
+    if (onlineMatchRef.current && gameStateRef.current.pendingEvent) {
+      dispatch({ type: 'SET_PENDING_EVENT', pending: null })
+    }
+  }
+
+  const joinCauseOpen = eventChoiceOpen('join-cause', showJoinTheCause)
+  const closeJoinCause = () => closeEventChoice(() => setShowJoinTheCause(false))
+
+  /**
+   * The claim arrives; the machine it names opens the choice locally.
+   *
+   * Everything after the choice — placing troops city by city, the fortify
+   * event's three phases, picking which city falls — is a step machine that
+   * already works, and works on ONE machine. So rather than move those
+   * flows into shared state, the machine that owes the answer seeds the same
+   * local state the card would have set had it been dismissed here. The rest
+   * is unchanged, including hotseat, which never sees a claim at all.
+   */
+  const bridgedEventRef = useRef('')
+  useEffect(() => {
+    const p = gameState.pendingEvent
+    if (!onlineMatch || !p || !localSeatId || p.playerId !== localSeatId) return
+    const sig = `${p.kind}:${p.playerId}:${p.cardId ?? ''}`
+    if (bridgedEventRef.current === sig) return
+    bridgedEventRef.current = sig
+    if (p.kind === 'join-cause') setShowJoinTheCause(true)
+    if (p.kind === 'control-people') setControlPeopleChoice(p.playerId)
+    if (p.kind === 'die-humans' && p.cardId) setDieHumansPendingCardId(p.cardId)
+    if (p.kind === 'fortify-event' && p.cardId) {
+      updateFortifyEvent({ phase: 'choice', playerId: p.playerId, cardId: p.cardId })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState.pendingEvent, localSeatId, onlineMatch])
 
   /**
    * Nuclear Milestone: three missiles on ONE roll.
@@ -4503,21 +4565,16 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
 
     if (effect.kind === 'join-the-cause') {
       // The card is dismissed on the CURRENT player's machine, but the reward
-      // belongs to the largest population — usually somebody else. Online, say
-      // whose it is in match state so their machine offers it and this one
-      // does not; the local flag stays for hotseat, where there is only ever
-      // one screen.
-      const leaderId = largestPopulationPlayerId()
-      if (onlineMatchRef.current && leaderId) {
-        dispatch({ type: 'SET_JOIN_CAUSE_PENDING', playerId: leaderId })
-      } else {
-        setShowJoinTheCause(true)
-      }
+      // belongs to the largest population — usually somebody else.
+      openEventChoice('join-cause', largestPopulationPlayerId(), () => setShowJoinTheCause(true))
     }
     if (effect.kind === 'die-humans') {
       const alienPlayer = state.players.find(p => p.factionId === 'aliens' && !p.isEliminated)
       if (alienPlayer && hasRuinableCity()) {
-        setDieHumansPendingCardId(cardId)
+        // The Aliens choose which city falls — and the Aliens are a faction,
+        // not the player whose turn it is.
+        openEventChoice('die-humans', alienPlayer.id,
+          () => setDieHumansPendingCardId(cardId), cardId)
       } else {
         // No Alien player in the game or no minor city to ruin — the card is
         // only destroyed if used, so return it to the discard
@@ -4548,7 +4605,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       // destroyed — nothing was used.
       const leaderId = largestPopulationPlayerId()
       if (leaderId && ownedCityIds(leaderId).length > 0) {
-        updateFortifyEvent({ phase: 'choice', playerId: leaderId, cardId })
+        // The leader picks how to fortify. The phases AFTER the choice stay on
+        // their machine — this only decides whose machine that is.
+        openEventChoice('fortify-event', leaderId,
+          () => updateFortifyEvent({ phase: 'choice', playerId: leaderId, cardId }), cardId)
       } else {
         const name = state.players.find(p => p.id === leaderId)?.name ?? 'The leader'
         showWeaknessNotice(`⛨ Fortify — ${name} controls no city, so nothing can be reinforced`)
@@ -4556,9 +4616,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       }
     }
     if (effect.kind === 'control-the-people') {
-      // The largest-population player chooses their reward
+      // The largest-population player chooses their reward — on their screen.
       const leaderId = largestPopulationPlayerId()
-      if (leaderId) setControlPeopleChoice(leaderId)
+      openEventChoice('control-people', leaderId, () => { if (leaderId) setControlPeopleChoice(leaderId) })
     }
     if (effect.kind === 'riot') applyRiotEvent()
     if (effect.kind === 'agent-of-chaos') applyAgentOfChaos()
@@ -4587,7 +4647,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   }
 
   function handleDieHumansRuin(territoryId: string) {
-    const cardId = dieHumansPendingCardId
+    const cardId = eventCardId('die-humans', dieHumansPendingCardId)
     if (!cardId) return
     const territoryName = gameStateRef.current.territories[territoryId]?.name ?? territoryId
     const alienPlayer = gameStateRef.current.players.find(p => p.factionId === 'aliens')
@@ -4642,14 +4702,14 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       saveLegacyState(next).catch(() => {})
       return next
     })
-    setDieHumansPendingCardId(null)
+    closeEventChoice(() => setDieHumansPendingCardId(null))
   }
 
   function handleDieHumansDecline() {
-    const cardId = dieHumansPendingCardId
+    const cardId = eventCardId('die-humans', dieHumansPendingCardId)
     if (!cardId) return
     returnEventCardToDiscard(cardId)
-    setDieHumansPendingCardId(null)
+    closeEventChoice(() => setDieHumansPendingCardId(null))
   }
 
   // ── Beam Down event: Aliens drop 5 troops into an unoccupied city ─────────
@@ -9271,7 +9331,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
                     if (!ownsCity) { showWeaknessNotice('🏛 You control no city — take the maneuver instead'); return }
                     controlTroopsRef.current = controlPeopleChoice
                     setControlTroopsPlayerId(controlPeopleChoice)
-                    setControlPeopleChoice(null)
+                    closeEventChoice(() => setControlPeopleChoice(null))
                   }}
                   disabled={!ownsCity}
                   style={{
@@ -9287,7 +9347,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
                   onClick={() => {
                     controlManeuverRef.current = { playerId: controlPeopleChoice, srcId: null }
                     setControlManeuver({ playerId: controlPeopleChoice, srcId: null })
-                    setControlPeopleChoice(null)
+                    closeEventChoice(() => setControlPeopleChoice(null))
                   }}
                   style={{
                     padding: '14px 16px', borderRadius: 8, textAlign: 'left',
@@ -9920,9 +9980,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       {/* Join the Cause — offered on the machine of whoever won it. Online
           that is the seat named in match state; hotseat it is this screen,
           because there is only one. */}
-      {(onlineMatch
-        ? gameState.pendingJoinCause === localSeatId && !!localSeatId
-        : showJoinTheCause) && (() => {
+      {showJoinTheCause && (() => {
         // Missions are one shared face-up card now. The "New Mission" reward
         // swaps that shared mission for any card still in the deck.
         const currentMissionId = cardState.currentMissionId ?? null
