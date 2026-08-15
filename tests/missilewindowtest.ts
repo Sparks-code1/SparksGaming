@@ -6,7 +6,7 @@
 // is that gate, and a refusal means the missile was never charged. These
 // asserts pin both halves, plus the version-CAS story that makes two missiles
 // on one die impossible rather than merely unlikely.
-import { gameReducer, createMathRng, spectatorMissileRefusal, type Action } from '@/lib/gameReducer'
+import { gameReducer, createMathRng, spectatorMissileRefusal, MISSILE_WINDOW_MS, type Action } from '@/lib/gameReducer'
 import { battleMissileControls } from '@/lib/gameLogic'
 import { initialTurnState, type GameState } from '@/types/game'
 
@@ -121,16 +121,18 @@ console.log('\n— two people, one die: priority decides, not reflexes —')
 console.log('\n— every missile buys the other side time to answer —')
 {
   const t0 = 1_000_000
-  const { state: s1 } = gameReducer(base(), open({ expiresAt: t0 + 5_000 }), rng)
+  const { state: s1 } = gameReducer(base(), open({ expiresAt: t0 + MISSILE_WINDOW_MS }), rng)
   check('the window carries a deadline every screen counts down to',
-    s1.combatWindow?.expiresAt === t0 + 5_000)
+    s1.combatWindow?.expiresAt === t0 + MISSILE_WINDOW_MS)
   const { state: s2 } = gameReducer(s1, missile({ expiresAt: t0 + 9_000 }), rng)
   check('a missile pushes the deadline out', s2.combatWindow?.expiresAt === t0 + 9_000)
   const { state: s3 } = gameReducer(s2, missile({ playerId: 'p2', expiresAt: t0 + 1_000 }), rng)
   check('and never pulls it back in', s3.combatWindow?.expiresAt === t0 + 9_000)
   const { state: s4 } = gameReducer(s2, missile({ playerId: 'p2', expiresAt: t0 + 999_999 }), rng)
-  check('a client cannot hold the battle open by naming a distant hour',
-    s4.combatWindow?.expiresAt === t0 + 14_000)
+  check('a client cannot hold the battle open by naming a distant hour — one'
+    + ' missile buys one window, no more',
+    s4.combatWindow?.expiresAt === t0 + 9_000 + MISSILE_WINDOW_MS,
+    String(s4.combatWindow?.expiresAt))
 }
 
 console.log('\n— the refusal gate (what the edge function runs BEFORE charging) —')

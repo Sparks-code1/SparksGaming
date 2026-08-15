@@ -1239,7 +1239,7 @@ function clampCombatResolution(state, a) {
     rounds
   };
 }
-var MISSILE_WINDOW_MS = 5e3;
+var MISSILE_WINDOW_MS = 7e3;
 function missilePriority(players, attackerId, defenderId) {
   const rank = { [attackerId]: 0, [defenderId]: 1 };
   const start = players.findIndex((p) => p.id === attackerId);

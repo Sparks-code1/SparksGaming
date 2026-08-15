@@ -1476,7 +1476,7 @@ export function clampCombatResolution(
  * spectator so their screen can say which race they lost.
  */
 /** How long the missile window holds, and how far one missile pushes it out. */
-export const MISSILE_WINDOW_MS = 5_000
+export const MISSILE_WINDOW_MS = 7_000
 
 /**
  * Who wins a die two people reached for.

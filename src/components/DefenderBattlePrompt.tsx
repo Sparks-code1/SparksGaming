@@ -40,7 +40,7 @@ const SPIN_TICK_MS = 100
 /** Seconds a human defender gets before their machine rolls for them. */
 const AUTO_ROLL_SECONDS = 5
 /** Mirrors MISSILE_WINDOW_MS — shown so the table knows what a missile buys. */
-const MISSILE_WINDOW_SECONDS = 5
+const MISSILE_WINDOW_SECONDS = 7
 
 const rollN = (n: number) => Array.from({ length: n }, () => Math.floor(Math.random() * 6) + 1).sort((a, b) => b - a)
 const clampDie = (v: number) => Math.max(1, Math.min(6, v))
@@ -239,7 +239,15 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
   // is genuinely gone (that fallback landing first on a lagging screen was
   // "it won't let him roll his dice" — the button hides once dice exist).
   // Touching the dice-count picker or the consent buttons restarts the clock.
-  const rollPending = isDefender && manual && !combat.defDice && !defSpin
+  /**
+   * The defence answers a roll that exists.
+   *
+   * The attacker posts their dice the moment they roll and never waits for the
+   * defender, so "the attacker has rolled" is simply `atkDice` being there.
+   * Until it is, there is nothing to defend against: no Roll button, and no
+   * auto-roll clock running down against dice that have not been thrown.
+   */
+  const rollPending = isDefender && manual && !!combat.atkDice && !combat.defDice && !defSpin
   const [autoRollLeft, setAutoRollLeft] = useState(AUTO_ROLL_SECONDS)
   useEffect(() => {
     if (!rollPending) return
@@ -356,7 +364,14 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
           </div>
         )}
 
-        {isDefender && !needsConsent && manual && !combat.defDice && !defSpin && (
+        {/* Nothing to defend against yet — the attacker has not thrown. */}
+        {isDefender && !needsConsent && manual && !combat.defDice && !combat.atkDice && (
+          <div style={{ textAlign: 'center', fontSize: 11, color: '#b09870' }}>
+            Waiting for {attackerName} to roll…
+          </div>
+        )}
+
+        {isDefender && !needsConsent && manual && !combat.defDice && !defSpin && !!combat.atkDice && (
           <div style={{ textAlign: 'center' }}>
             {combat.defDiceMax > 1 && (
               <div style={{ marginBottom: 10, fontSize: 11, color: '#b09870' }}>

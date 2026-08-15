@@ -16,7 +16,7 @@
  */
 import { supabase, SUPABASE_URL } from '@/lib/supabase'
 import {
-  gameReducer, createMathRng,
+  gameReducer, createMathRng, MISSILE_WINDOW_MS,
   type Action, type Effect, type Rng,
 } from '@/lib/gameReducer'
 import type { GameState } from '@/types/game'
@@ -180,7 +180,13 @@ export async function sendSpectatorMissile(
   const { data: { session } } = await supabase.auth.getSession()
   if (!session) return { ok: false, code: 'unauthenticated', message: 'Sign in to play online.' }
 
-  const action = { type: 'SPECTATOR_MISSILE', roundKey, side, dieIndex, playerId: '' }
+  // The deadline this missile buys everyone else. The reducer is clock-free by
+  // contract, so the instant travels with the action; the server clamps how far
+  // one missile may push it, and never lets it move backwards.
+  const action = {
+    type: 'SPECTATOR_MISSILE', roundKey, side, dieIndex, playerId: '',
+    expiresAt: Date.now() + MISSILE_WINDOW_MS,
+  }
   for (let attempt = 0; attempt < 3; attempt++) {
     let res: Response
     try {
