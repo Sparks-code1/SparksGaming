@@ -829,6 +829,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   // Mysterious Island: an immediate (non-fortify-phase) sideboard draw is pending
   const [eventDrawActive,         setEventDrawActive]         = useState(false)
   const [showJoinTheCause,        setShowJoinTheCause]        = useState(false)
+  /** Ref mirror: the AI driver asks about this from above its declaration. */
+  const showJoinTheCauseRef = useRef(false)
+  showJoinTheCauseRef.current = showJoinTheCause
   /**
    * Is a Join the Cause choice outstanding anywhere?
    *
@@ -2591,7 +2594,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (dieHumansPendingCardId && isHumanId(factionPlayer('aliens'))) return 'a Die Humans choice'
     if (beamDownActive && isHumanId(factionPlayer('aliens'))) return 'a Beam Down placement'
     if (mutantsEvolvePendingCardId && isHumanId(factionPlayer('mutants'))) return 'a Mutants Evolve choice'
-    if (joinCauseOpen && isHumanId(largestPopulationPlayerId())) return 'a Join the Cause choice'
+    if (joinCauseIsOpen() && isHumanId(largestPopulationPlayerId())) return 'a Join the Cause choice'
     if (joinCausePlacement && isHumanId(joinCausePlacement.playerId)) return 'a Join the Cause placement'
     if (fortifyEvent && isHumanId(fortifyEvent.playerId)) {
       return fortifyEvent.phase === 'choice' ? 'a Fortify choice' : 'a Fortify placement'
@@ -2966,7 +2969,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         return
       }
     }
-    if (joinCauseOpen) {
+    if (joinCauseIsOpen()) {
       const leaderId = largestPopulationPlayerId()
       if (leaderId && !isHuman(leaderId)) {
         run(() => resolveAiJoinCauseChoice(leaderId))
@@ -3236,7 +3239,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       step(() => { if (first) handleLeadMissionPick(first); else setLeadMissionPick(null) })
       return
     }
-    if (joinCauseOpen) {
+    if (joinCauseIsOpen()) {
       const leaderId = largestPopulationPlayerId()
       if (isAiOwned(leaderId)) { step(() => resolveAiJoinCauseChoice(leaderId!)); return }
     }
@@ -3558,11 +3561,21 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
    * and only the chooser's screen offers it. Hotseat has no such state — one
    * screen, and the local flags are the whole story.
    */
-  const pendingEvent = gameState.pendingEvent ?? null
-  const pendingEventIs = (kind: PendingEventKind) => pendingEvent?.kind === kind
+  /**
+   * Function declarations, not consts, and read through the REF.
+   *
+   * The AI driver and the "what is everyone waiting on" helpers sit hundreds
+   * of lines above this point and ask these questions during the component's
+   * own body. A `const` here is in its temporal dead zone up there: the board
+   * threw on render and both windows went blank. A hoisted function cannot be.
+   */
+  function pendingEventIs(kind: PendingEventKind): boolean {
+    return gameStateRef.current.pendingEvent?.kind === kind
+  }
   /** Is this event's choice open ANYWHERE — my screen, or somebody else's? */
-  const eventChoiceOpen = (kind: PendingEventKind, localFlag: boolean) =>
-    localFlag || pendingEventIs(kind)
+  function eventChoiceOpen(kind: PendingEventKind, localFlag: boolean): boolean {
+    return localFlag || pendingEventIs(kind)
+  }
   /**
    * Name the player who owes a choice, so their machine offers it.
    * Hotseat sets the local flag instead — there is only one screen to offer it
@@ -3598,8 +3611,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     }
   }
 
-  const joinCauseOpen = eventChoiceOpen('join-cause', showJoinTheCause)
-  const closeJoinCause = () => closeEventChoice(() => setShowJoinTheCause(false))
+  function joinCauseIsOpen(): boolean { return eventChoiceOpen('join-cause', showJoinTheCauseRef.current) }
+  function closeJoinCause() { closeEventChoice(() => setShowJoinTheCause(false)) }
 
   /**
    * The claim arrives; the machine it names opens the choice locally.
