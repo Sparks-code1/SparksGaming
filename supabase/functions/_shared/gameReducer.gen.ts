@@ -963,6 +963,7 @@ function gameReducer(state, action, rng) {
       const activeHqs = Object.fromEntries(
         Object.entries(state.activeHqs ?? {}).filter(([, tId]) => tId !== action.territoryId)
       );
+      const spared = !!action.sparePlayerId && t.occupyingPlayerId === action.sparePlayerId;
       return only({
         ...state,
         activeHqs,
@@ -970,8 +971,8 @@ function gameReducer(state, action, rng) {
           ...state.territories,
           [action.territoryId]: {
             ...t,
-            occupyingPlayerId: null,
-            troops: 0,
+            occupyingPlayerId: spared ? t.occupyingPlayerId : null,
+            troops: spared ? t.troops : 0,
             cities: [],
             activeHqPlayerId: void 0,
             scars: action.clearScars ? [] : t.scars

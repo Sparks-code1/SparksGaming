@@ -4801,8 +4801,20 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     const bringerName = gameStateRef.current.players.find(p => p.id === bringerPlayerId)?.name ?? 'Unknown'
 
     // Fallout Zone: obliterate everything on the territory — through the
-    // reducer, so the crater is the same crater on every board.
-    dispatch({ type: 'OBLITERATE_TERRITORY', territoryId: falloutTerritoryId, clearScars: true })
+    // reducer, so the crater is the same crater on every board. Everything
+    // except the Mutants, who are unharmed by fallout everywhere else in this
+    // game (entry cost, movement, combat) and were being swept off the ground
+    // that makes them what they are.
+    const mutantHolder = gameStateRef.current.players.find(p =>
+      p.factionId === 'mutants' && !p.isEliminated
+      && gameStateRef.current.territories[falloutTerritoryId]?.occupyingPlayerId === p.id)
+    dispatch({
+      type: 'OBLITERATE_TERRITORY', territoryId: falloutTerritoryId, clearScars: true,
+      ...(mutantHolder ? { sparePlayerId: mutantHolder.id } : {}),
+    })
+    if (mutantHolder) {
+      showWeaknessNotice(`☢ ${mutantHolder.name} holds the Fallout Zone — the Mutants are untouched by it`)
+    }
 
     // The attacking force goes with it: one troop per die on the roll that
     // brought the fire. Everything in the territory was already destroyed by

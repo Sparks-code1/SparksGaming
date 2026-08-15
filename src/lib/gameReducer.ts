@@ -227,7 +227,7 @@ export type Action =
   /** Die Humans ruin / the nuclear Fallout Zone: everything on the territory
    *  is gone â€” troops, owner, cities, any HQ (and its activeHqs entry).
    *  `clearScars` is the nuclear variant. */
-  | { type: 'OBLITERATE_TERRITORY'; territoryId: string; clearScars?: boolean }
+  | { type: 'OBLITERATE_TERRITORY'; territoryId: string; clearScars?: boolean; /** Faction the blast does not touch — the Mutants in a Fallout Zone. */ sparePlayerId?: string }
   /** World Capital burying covered cities / a Riot demolishing an HQ city:
    *  the named cities are marked destroyed; `demolishHq` clears the HQ field. */
   | { type: 'DESTROY_CITIES'; territoryId: string; cityIds: string[]; demolishHq?: boolean }
@@ -1060,6 +1060,11 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
       if (!t) return only(state)
       const activeHqs = Object.fromEntries(
         Object.entries(state.activeHqs ?? {}).filter(([, tId]) => tId !== action.territoryId))
+      // The Mutants are not harmed by fallout — they are what fallout makes.
+      // Their army stands where everything else is swept away; the city, the
+      // HQ and the rest of the ground go regardless, because the crater is
+      // still a crater.
+      const spared = !!action.sparePlayerId && t.occupyingPlayerId === action.sparePlayerId
       return only({
         ...state,
         activeHqs,
@@ -1067,7 +1072,9 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
           ...state.territories,
           [action.territoryId]: {
             ...t,
-            occupyingPlayerId: null, troops: 0, cities: [],
+            occupyingPlayerId: spared ? t.occupyingPlayerId : null,
+            troops: spared ? t.troops : 0,
+            cities: [],
             activeHqPlayerId: undefined,
             scars: action.clearScars ? [] : t.scars,
           },

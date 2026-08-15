@@ -192,6 +192,21 @@ console.log('\n— map surgery: obliteration (Ruin / Fallout Zone) —')
   const { state: nuke } = gameReducer(st, { type: 'OBLITERATE_TERRITORY', territoryId: 'a', clearScars: true } as Action, rng)
   check('the Fallout Zone scours even the scars',
     (nuke.territories as Record<string, { scars: unknown[] }>).a.scars.length === 0)
+
+  // The Mutants are not harmed by fallout — entry cost, movement and combat
+  // all say so already. The blast that MAKES the Fallout Zone was sweeping
+  // their army off the ground that makes them what they are.
+  const { state: spared } = gameReducer(st, {
+    type: 'OBLITERATE_TERRITORY', territoryId: 'a', clearScars: true, sparePlayerId: 'p1',
+  } as Action, rng)
+  check('the Mutants keep their troops and the ground',
+    t(spared, 'a').troops === t(st, 'a').troops && t(spared, 'a').occupyingPlayerId === 'p1')
+  check('but the crater is still a crater — city and HQ go',
+    t(spared, 'a').activeHqPlayerId == null && spared.activeHqs.p1 === undefined)
+  check('sparing somebody who is not standing there changes nothing',
+    t(gameReducer(st, {
+      type: 'OBLITERATE_TERRITORY', territoryId: 'a', clearScars: true, sparePlayerId: 'p2',
+    } as Action, rng).state, 'a').troops === 0)
 }
 
 console.log('\n— map surgery: city destruction (World Capital / Riot) —')
