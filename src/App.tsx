@@ -20,7 +20,7 @@ import { MOCK_PLAYERS, applyRosterNames } from '@/data/mockGameState'
 import { hasRoster, getRoster, createRoster, addRosterMember } from '@/lib/roster'
 import { BUILD_STAMP } from '@/lib/buildStamp'
 import { matchState, reconcileSeats, setLobbyShape, readLobby, type Lobby } from '@/lib/lobby'
-import type { SetupDoc } from '@/lib/setupFlow'
+import { DRAFT_TROOP_SLOTS, DRAFT_COIN_SLOTS, type SetupDoc } from '@/lib/setupFlow'
 import LobbyScreen from '@/components/LobbyScreen'
 import OnlineSetupScreen from '@/components/OnlineSetupScreen'
 
@@ -277,12 +277,23 @@ export default function App() {
   async function handleOnlineSetupComplete(doc: SetupDoc) {
     const lobbySeats = setupLobby?.seats ?? []
     if (!doc.order) return
-    const setups: PlayerSetup[] = doc.order.map(pid => ({
-      playerId: pid,
-      name: lobbySeats.find(s => s.playerId === pid)?.name ?? pid,
-      factionId: doc.factions[pid] ?? 'enclave-of-the-bear',
-      startingTerritoryId: doc.territories[pid] ?? '',
-    }))
+    // A drafted game carries two more things off the board: the troop and coin
+    // slots each player claimed. They are stored as slot INDEXES, resolved
+    // against the same tables the hotseat board offers.
+    const troopSlots = DRAFT_TROOP_SLOTS(doc.order.length)
+    const coinSlots = DRAFT_COIN_SLOTS(doc.order.length)
+    const setups: PlayerSetup[] = doc.order.map(pid => {
+      const t = (doc.troops ?? {})[pid]
+      const c = (doc.coins ?? {})[pid]
+      return {
+        playerId: pid,
+        name: lobbySeats.find(s => s.playerId === pid)?.name ?? pid,
+        factionId: doc.factions[pid] ?? 'enclave-of-the-bear',
+        startingTerritoryId: doc.territories[pid] ?? '',
+        ...(t !== undefined ? { startingTroops: troopSlots[t] } : {}),
+        ...(c !== undefined ? { startingCoins: coinSlots[c] } : {}),
+      }
+    })
     await handleSetupComplete(
       setups, doc.order,
       { ...(legacy?.chosenFactionAbilities ?? {}), ...doc.abilities },
@@ -460,10 +471,9 @@ export default function App() {
         players={rosterIds.map(id => MOCK_PLAYERS.find(p => p.id === id)!).filter(Boolean)}
         onContinue={() => {
           // Online, the dice and every pick happen on a shared document each
-          // player drives from their own screen. Draft-order campaigns still
-          // run their draft on the host — the draft board is not distributed
-          // yet — so they keep the classic host-side flow.
-          if (playOnline && setupLobby && !legacy?.draftOrderUnlocked) setScreen('online-setup')
+          // player drives from their own screen — the draft board included,
+          // since S43. Offline still walks the hotseat screens.
+          if (playOnline && setupLobby) setScreen('online-setup')
           else setScreen('dice-roll')
         }}
       />

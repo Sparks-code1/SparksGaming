@@ -18,6 +18,7 @@ import {
 } from './FactionChoicePanels'
 import WeaknessPowerPicker from './WeaknessPowerPicker'
 import HQMapPicker from './HQMapPicker'
+import OnlineDraftBoard from './OnlineDraftBoard'
 
 interface Props {
   /** The lobby AFTER reconciliation — seats carry real roster ids. */
@@ -61,6 +62,10 @@ export default function OnlineSetupScreen({ lobby: initial, legacy, user, onComp
         .filter(ab => !!ab && !(legacy.removedAbilityIds ?? []).includes(ab.id))
         .map(ab => ab!.id),
     needsWeakness: (fid: string) => needsWeaknessPower(fid, legacy),
+    // A campaign that has unlocked the draft replaces the faction phase with
+    // the draft board. It used to leave the online path entirely — the host
+    // ran the hotseat draft and everyone else waited in the lobby.
+    draft: !!legacy.draftOrderUnlocked,
   })
 
   const [doc, setDoc] = useState<SetupDoc>(initial.setup ?? initialSetup(players))
@@ -171,6 +176,22 @@ export default function OnlineSetupScreen({ lobby: initial, legacy, user, onComp
     if (pick) hostAdvance(applyPick(docRef.current, ctxRef.current, actor, pick.id))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc, actor, aiSeat])
+
+  // ── The draft gets the full-width board ─────────────────────────────────
+  if (doc.phase === 'draft' && actor) {
+    return (
+      <OnlineDraftBoard
+        doc={doc}
+        legacy={legacy}
+        actor={actor}
+        iAct={iAct}
+        minePids={minePids}
+        seatName={seatName}
+        isAI={(pid: string) => !!seats.find(s => s.playerId === pid)?.isAI}
+        onClaim={castPick}
+      />
+    )
+  }
 
   // ── Territory phase gets the full-width map layout ──────────────────────
   if (doc.phase === 'territory' && actor) {

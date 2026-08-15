@@ -3,6 +3,7 @@ import { MOCK_PLAYERS, FACTION_COLORS } from '@/data/mockGameState'
 import { needsWeaknessPower, WEAKNESS_POWERS } from '@/data/weaknessPowers'
 import { factionPowers } from '@/lib/factionPowers'
 import { leadFactionId, factionWinCounts, LEAD_FACTION_WORLD_CAPITAL_TROOPS } from '@/lib/gameLogic'
+import { DRAFT_TROOP_SLOTS, DRAFT_COIN_SLOTS } from '@/lib/setupFlow'
 import type { FactionId } from '@/types/faction'
 import type { LegacyState } from '@/types/legacy'
 import type { PlayerSetup } from './GameSetupScreen'
@@ -45,13 +46,11 @@ function availableFactions(legacy: { alienMilestoneTriggered?: boolean; nuclearM
   ]
 }
 
-// Draftable slot values by player count (one slot per player)
-function troopSlots(n: number): number[] {
-  if (n === 4) return [10, 8, 8, 6]
-  if (n === 5) return [10, 10, 8, 8, 6]
-  return [10, 8, 8, 6, 6].slice(0, n)
-}
-function coinSlots(n: number): number[]   { return [2, 1, 1, 0, 0].slice(0, n) }
+// Draftable slot values by player count (one slot per player). Shared with the
+// online draft board — the same campaign must offer the same slots whichever
+// screen it is drafted on.
+const troopSlots = DRAFT_TROOP_SLOTS
+const coinSlots = DRAFT_COIN_SLOTS
 
 type DraftListId = 'faction' | 'troops' | 'coins' | 'order'
 const DRAFT_LISTS: Array<{ id: DraftListId; label: string; icon: string }> = [
