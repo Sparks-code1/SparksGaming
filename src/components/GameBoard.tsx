@@ -309,6 +309,25 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   const [aiAuthority, setAiAuthority] = useState(true)
   const aiAuthorityRef = useRef(true)
   aiAuthorityRef.current = aiAuthority
+  /**
+   * Did this machine HOST the match that was played — remembered past its end.
+   *
+   * `aiAuthority` answers "am I the host of the match I am in", and falls back
+   * to true with no match at all, because hotseat is its own host. That is
+   * right while a game is running and wrong the moment one ends: the ceremony
+   * completes the match and clears the pointer, so by the time the continue
+   * gate asks who should host the NEXT game, every machine has fallen back to
+   * "me" — and both windows opened a lobby, each for their own idea of the
+   * game number.
+   *
+   * This latches the answer while the match still exists and never resets it,
+   * so the table keeps the host it had.
+   */
+  const hostedMatchRef = useRef<boolean | null>(null)
+  function settleAuthority(mine: boolean) {
+    setAiAuthority(mine)
+    hostedMatchRef.current = mine
+  }
 
   /**
    * Send an action to the server instead of applying it here.
@@ -6753,8 +6772,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       return next
     })
     const goNext = !anyQuit
+    // Who opens the next game: whoever hosted THIS one. Asking aiAuthority
+    // here asked a question whose match had just been completed and cleared,
+    // and every machine answered "me".
+    const hostsNext = hostedMatchRef.current ?? aiAuthorityRef.current
     window.setTimeout(() => {
-      onReturnToLobby(goNext ? (aiAuthorityRef.current ? 'host-next' : 'join-next') : undefined)
+      onReturnToLobby(goNext ? (hostsNext ? 'host-next' : 'join-next') : undefined)
     }, goNext ? 900 : 2600)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameState.endGame])
@@ -7192,15 +7215,15 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   // Settle AI authority for the current match (see the state's doc above).
   useEffect(() => {
     if (!onlineMatch) { setAiAuthority(true); return }   // hotseat
-    if (joinedMatch?.matchId === onlineMatch.matchId) { setAiAuthority(false); return }
-    if (lobbyToStart === onlineMatch.matchId) { setAiAuthority(true); return }
+    if (joinedMatch?.matchId === onlineMatch.matchId) { settleAuthority(false); return }
+    if (lobbyToStart === onlineMatch.matchId) { settleAuthority(true); return }
     // A resumed or adopted match: ask the row who created it.
     let cancelled = false
     void (async () => {
       const { data: { user } } = await supabase.auth.getUser()
       const { data } = await supabase
         .from('matches').select('created_by').eq('id', onlineMatch.matchId).maybeSingle()
-      if (!cancelled) setAiAuthority(!!user && data?.created_by === user.id)
+      if (!cancelled) settleAuthority(!!user && data?.created_by === user.id)
     })()
     return () => { cancelled = true }
   }, [onlineMatch?.matchId, joinedMatch?.matchId, lobbyToStart])
