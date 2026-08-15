@@ -3,15 +3,16 @@ import type { LegacyState } from '@/types/legacy'
 import {
   loadLegacyState, loadGameHistory, saveLegacyState, createCampaign, ensureJoinCode,
   getActiveCampaignId, setActiveCampaignId, clearActiveCampaignId, setLocalSeat,
+  getPreferredName, setPreferredName,
   type GameSessionRow, SCAR_META,
 } from '@/lib/legacyApi'
 import JoinCodeCard from './JoinCodeCard'
 import JoinCampaignPanel from './JoinCampaignPanel'
 import { TERRITORY_DEFINITIONS } from '@/data/territoryData'
-import { getScarCard, getInitialScarDeck } from '@/data/scarCards'
+import { getInitialScarDeck } from '@/data/scarCards'
 import CampaignVictoryScreen from './CampaignVictoryScreen'
 import CampaignPicker from './CampaignPicker'
-import AuthPanel from './AuthPanel'
+import AccountMenu from './AccountMenu'
 import { getCurrentUser, onAuthChange, type AuthUser } from '@/lib/auth'
 import { claimRosterSeat, getRoster, addRosterMember, MAX_ROSTER_NAME } from '@/lib/roster'
 import CampaignRosterPanel from './CampaignRosterPanel'
@@ -60,10 +61,11 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
   const [createError, setCreateError] = useState<string | null>(null)
 
   // ── Optional account ─────────────────────────────────────────────────────
-  // Signing in is never required. `authDismissed` records that the player chose
-  // to continue without one, which simply hides the panel for this visit.
+  // Signing in is never required, and the whole account lives behind one small
+  // button now (AccountMenu) rather than a panel in the way of the campaign.
   const [user, setUser] = useState<AuthUser | null>(null)
-  const [authDismissed, setAuthDismissed] = useState(false)
+  /** What this player calls themself — fills in every join form. */
+  const [playerName, setPlayerName] = useState('')
   /** Guards the button that would throw away a game still in progress. */
   const [confirmRestart, setConfirmRestart] = useState(false)
 
@@ -138,7 +140,11 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
     setJoiningLobby(true); setLobbyError(null)
     try {
       if (!me) {
-        const added = addRosterMember(getRoster(ls), joinName, ls.currentGameNumber,
+        // Their remembered name, unless they typed a different one here. The
+        // name they actually join with becomes the remembered one.
+        const chosen = (joinName.trim() || playerName.trim())
+        if (chosen && chosen !== playerName) { setPlayerName(chosen); void setPreferredName(chosen) }
+        const added = addRosterMember(getRoster(ls), chosen, ls.currentGameNumber,
           { userId: user.id, userEmail: user.email })
         if (!added.ok || !added.member) throw new Error(added.reason ?? 'Could not join the campaign')
         ls = { ...ls, roster: added.roster }
@@ -164,7 +170,7 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
     if (!legacy || !user) return
     const me = getRoster(legacy).find(m => m.userId === user.id)
     if (!me) {
-      setHostError('Link your account to your name first — the Account panel above does it in one click.')
+      setHostError('Link your account to your name first — My Account, top right, does it in one click.')
       return
     }
     setHostingGame(true); setHostError(null)
@@ -270,6 +276,12 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
     getActiveCampaignId()
       .then(id => (id ? openCampaign(id) : setStatus('picking')))
       .catch(() => setStatus('picking'))
+    void getPreferredName().then(n => {
+      if (!n) return
+      setPlayerName(n)
+      // Founding a campaign asks the same question; answer it in advance.
+      setFounderName(prev => prev || n)
+    }).catch(() => {})
   }, [])
 
   // Normalize fields that may be missing from legacy Supabase records.
@@ -304,6 +316,11 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
         user ? { userId: user.id, userEmail: user.email } : undefined,
       )
       console.log('[Campaign] created', fresh.campaignId, fresh.joinCode, 'founder:', founderName)
+      // The name they founded under is the one this device remembers.
+      if (founderName.trim() !== playerName) {
+        setPlayerName(founderName.trim())
+        void setPreferredName(founderName.trim())
+      }
       await setActiveCampaignId(fresh.campaignId)
       setLegacy(normalizeLegacy(fresh))
       setSessions([])
@@ -341,6 +358,19 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
         color: '#E8DCC8', fontFamily: 'Georgia, serif',
         boxShadow: '0 16px 60px rgba(0,0,0,0.90)',
       }}>
+        {/* Account — one small button, top right */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: -14 }}>
+          <AccountMenu
+            user={user}
+            legacy={legacy}
+            playerName={playerName}
+            onNameChange={name => { setPlayerName(name); void setPreferredName(name) }}
+            onAuthed={setUser}
+            onSignedOut={() => setUser(null)}
+            onClaimSeat={handleClaimSeat}
+          />
+        </div>
+
         {/* Title */}
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
           <div style={{ fontSize: 28, fontWeight: 'bold', color: '#C8940A', letterSpacing: 2 }}>
@@ -376,7 +406,9 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
         {status === 'joining' && (
           <JoinCampaignPanel
             user={user}
+            defaultName={playerName}
             onJoined={handleJoined}
+            onNameChosen={name => { setPlayerName(name); void setPreferredName(name) }}
             onCancel={() => setStatus(joinReturnTo)}
           />
         )}
@@ -410,31 +442,6 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
           </div>
         )}
 
-        {/* Account — optional, and dismissible straight through to the game */}
-        {!authDismissed && (
-          <AuthPanel
-            user={user}
-            legacy={legacy}
-            onAuthed={setUser}
-            onSignedOut={() => setUser(null)}
-            onContinueWithout={() => setAuthDismissed(true)}
-            onClaimSeat={handleClaimSeat}
-          />
-        )}
-        {authDismissed && (
-          <div style={{ textAlign: 'right', marginBottom: 12 }}>
-            <button
-              onClick={() => setAuthDismissed(false)}
-              style={{
-                background: 'none', border: 'none', cursor: 'pointer',
-                color: '#6a5030', fontSize: 11, fontFamily: 'Georgia, serif',
-                textDecoration: 'underline',
-              }}>
-              {user ? `Signed in as ${user.email}` : 'Sign in or create an account'}
-            </button>
-          </div>
-        )}
-
         {/* Existing campaign */}
         {(status === 'found' || status === 'error') && legacy && (
           <>
@@ -444,7 +451,9 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
             {openLobby && user && (() => {
               const mine = openLobby.createdBy === user.id
               const claimed = getRoster(legacy).find(m => m.userId === user.id)
-              const needsName = !mine && !claimed
+              // A remembered name IS their answer — only a player this device
+              // has never named is asked, and only once ever.
+              const needsName = !mine && !claimed && !playerName.trim()
               const joinDisabled = joiningLobby || (needsName && !joinName.trim())
               return (
                 <div style={{
@@ -489,6 +498,7 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
                     }}>
                     {mine ? 'Return to Your Lobby →'
                       : joiningLobby ? 'Joining…'
+                      : !claimed && playerName.trim() ? `Join as ${playerName.trim()} →`
                       : claimed ? `Join This Game as ${claimed.name} →`
                       : `Join as ${joinName.trim() || '…'} →`}
                   </button>
@@ -522,25 +532,11 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
               </Section>
             )}
 
-            {/* Scar deck */}
-            <Section title={`Scar Card Pool — ${legacy.scarDeck?.length ?? 0} of ${getInitialScarDeck().length} remaining`}>
-              {(legacy.scarDeck?.length ?? 0) === 0 ? (
-                <div style={{ fontSize: 11, color: '#4a3020', fontStyle: 'italic' }}>Pool exhausted — no cards dealt this game</div>
-              ) : (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                  {(legacy.scarDeck ?? []).map(cardId => {
-                    const card = getScarCard(cardId)
-                    const meta = card ? SCAR_META.find(m => m.type === card.type) : null
-                    return card && meta ? (
-                      <span key={cardId} style={{
-                        fontSize: 10, padding: '2px 7px', borderRadius: 7,
-                        background: `${meta.color}12`, border: `1px solid ${meta.color}30`, color: meta.color,
-                      }}>{meta.icon} {card.name}</span>
-                    ) : null
-                  })}
-                </div>
-              )}
-            </Section>
+            {/* The scar POOL is deliberately not shown here. Which cards are
+                still in the box is a mid-game concern, dealt at the start of
+                each game and visible in the Legacy panel — announcing "6 of 6
+                remaining" before anyone has sat down was noise on the one
+                screen that should be about picking up where you left off. */}
 
             {/* Map changes */}
             <Section title="Persistent Map Changes">

@@ -7,8 +7,12 @@ import type { AuthUser } from '@/lib/auth'
 interface Props {
   /** Signed-in account, if any. Guests join by picking an unclaimed name. */
   user: AuthUser | null
+  /** The name this player already goes by — fills the form in for them. */
+  defaultName?: string
   /** Joined successfully — the caller opens the campaign as `playerId`. */
   onJoined: (campaignId: string, playerId: string) => void
+  /** A name they typed here becomes the one this device remembers. */
+  onNameChosen?: (name: string) => void
   onCancel: () => void
 }
 
@@ -21,7 +25,7 @@ const GOLD = '#C8940A'
  * player can confirm they are joining the right world — and see who is already
  * in it — before committing to a roster entry that is permanent.
  */
-export default function JoinCampaignPanel({ user, onJoined, onCancel }: Props) {
+export default function JoinCampaignPanel({ user, defaultName = '', onJoined, onNameChosen, onCancel }: Props) {
   const [code, setCode] = useState('')
   const [found, setFound] = useState<JoinLookup | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -45,7 +49,8 @@ export default function JoinCampaignPanel({ user, onJoined, onCancel }: Props) {
         // Default the joiner toward whichever action the campaign allows.
         const free = getRoster(hit.legacy).filter(m => !m.userId)
         setSeatId(user ? null : (free[0]?.id ?? null))
-        setName(user?.email?.split('@')[0] ?? '')
+        // The name they already go by, before falling back to their email.
+        setName(defaultName.trim() || user?.email?.split('@')[0] || '')
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not reach the campaign server')
@@ -65,6 +70,7 @@ export default function JoinCampaignPanel({ user, onJoined, onCancel }: Props) {
           ? { kind: 'existing', playerId: seatId, userId: user?.id, userEmail: user?.email }
           : { kind: 'new', name, userId: user?.id, userEmail: user?.email },
       )
+      if (!seatId && name.trim()) onNameChosen?.(name.trim())
       onJoined(found.campaignId, result.playerId)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not join that campaign')

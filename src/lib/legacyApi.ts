@@ -815,6 +815,24 @@ export function setLocalSeat(campaignId: string, playerId: string): Promise<void
   return storeSet(localSeatKey(campaignId), playerId)
 }
 
+/**
+ * What this player calls themself, remembered across campaigns.
+ *
+ * Joining a game used to mean typing your name again every time, on every
+ * campaign — the person at this machine is the authority on their own name,
+ * but they should only have to say it once. Every join flow defaults to this,
+ * and every name they confirm updates it.
+ */
+const PLAYER_NAME_KEY = 'riskLegacy:playerName'
+
+export function getPreferredName(): Promise<string | null> {
+  return storeGet(PLAYER_NAME_KEY)
+}
+
+export function setPreferredName(name: string): Promise<void> {
+  return storeSet(PLAYER_NAME_KEY, name.trim())
+}
+
 // ─── Game sessions ────────────────────────────────────────────────────────────
 
 export interface GameSessionRow {
