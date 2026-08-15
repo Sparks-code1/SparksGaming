@@ -1,6 +1,6 @@
 import type { LegacyState, DealtScar } from '@/types/legacy'
 import type { Player } from '@/types/player'
-import { SCAR_CARDS, getScarCard } from '@/data/scarCards'
+import { SCAR_CARDS, getScarCard, getEligibleCardIds } from '@/data/scarCards'
 import { SCAR_META } from '@/lib/legacyApi'
 import { FACTION_COLORS } from '@/data/mockGameState'
 
@@ -16,6 +16,12 @@ export default function ScarDealingScreen({ legacy, gameDeals, players, onContin
   const gameNumber = legacy.currentGameNumber
   const remaining = legacy.scarDeck.length
   const totalCards = SCAR_CARDS.length
+  // Why no cards were dealt, in the dealer's own terms: it deals one each or
+  // none at all, so a pool that is merely SHORT deals nothing while still
+  // holding cards. Saying "no scar cards remain" over a visible list of
+  // remaining cards was simply untrue.
+  const eligible = getEligibleCardIds(gameNumber, legacy.scarDeck).length
+  const shortOfPlayers = eligible > 0 && eligible < players.length
 
   return (
     <div style={{
@@ -65,7 +71,11 @@ export default function ScarDealingScreen({ legacy, gameDeals, players, onContin
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
           {gameDeals.length === 0 && (
             <div style={{ textAlign: 'center', padding: '20px 0', fontSize: 13, color: '#5a4020', fontStyle: 'italic' }}>
-              No scar cards remain in the pool — no cards dealt this game.
+              {shortOfPlayers
+                ? `Only ${eligible} scar card${eligible !== 1 ? 's' : ''} left for ${players.length} players — every player gets one or nobody does, so none are dealt this game. They stay in the pool.`
+                : eligible === 0 && remaining > 0
+                ? `The ${remaining} card${remaining !== 1 ? 's' : ''} still in the pool are not in play yet this game — none dealt.`
+                : 'No scar cards remain in the pool — no cards dealt this game.'}
             </div>
           )}
           {gameDeals.map(deal => {

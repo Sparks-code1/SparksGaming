@@ -2448,9 +2448,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       const purchased = (legacyState.purchasedStars ?? {})[p.id] ?? 0
       if (hqStars + purchased >= 4) {
         setWinnerPlayerId(p.id)
-        setWinCondition('mission')
+        // Four stars IS the star victory, whatever awarded the last one —
+        // calling it 'mission' put a lie in the victory log and announced
+        // "🎯 Mission Accomplished" over a win nobody's mission earned.
+        setWinCondition('stars')
         setUnlockOptions(pickUnlocks(gameState.gameNumber))
-        dispatch({ type: 'END_GAME', winnerId: p.id, condition: 'mission' })
+        dispatch({ type: 'END_GAME', winnerId: p.id, condition: 'stars' })
         setTimeout(() => setShowWinScreen(true), 300)
         break
       }
@@ -3841,9 +3844,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       if (newStarTotal >= 4) {
         console.log(`[CoinDeck] 4-star victory triggered for ${winner.name}!`)
         setWinnerPlayerId(winner.id)
-        setWinCondition('mission')
+        setWinCondition('stars')
         setUnlockOptions(pickUnlocks(state.gameNumber))
-        dispatch({ type: 'END_GAME', winnerId: winner.id, condition: 'mission' })
+        dispatch({ type: 'END_GAME', winnerId: winner.id, condition: 'stars' })
         setTimeout(() => setShowWinScreen(true), 300)
       }
       setCoinDeckStarWinner({ kind: 'award', name: winner.name, count: depletion.count })
@@ -4977,9 +4980,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     ).length
     if (hqStars + purchasedAfter >= 4) {
       setWinnerPlayerId(playerId)
-      setWinCondition('mission')
+      setWinCondition('stars')
       setUnlockOptions(pickUnlocks(gameStateRef.current.gameNumber))
-      dispatch({ type: 'END_GAME', winnerId: playerId, condition: 'mission' })
+      dispatch({ type: 'END_GAME', winnerId: playerId, condition: 'stars' })
       setTimeout(() => setShowWinScreen(true), 300)
       return 'won'
     }
@@ -5164,9 +5167,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     ).length
     if (hqStars + purchasedAfter >= 4) {
       setWinnerPlayerId(playerId)
-      setWinCondition('mission')
+      setWinCondition('stars')
       setUnlockOptions(pickUnlocks(gameStateRef.current.gameNumber))
-      dispatch({ type: 'END_GAME', winnerId: playerId, condition: 'mission' })
+      dispatch({ type: 'END_GAME', winnerId: playerId, condition: 'stars' })
       setTimeout(() => setShowWinScreen(true), 300)
       return true
     }
@@ -5539,9 +5542,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       })
       if (fourStarWinner) {
         setWinnerPlayerId(fourStarWinner.id)
-        setWinCondition('mission')
+        setWinCondition('stars')
         setUnlockOptions(pickUnlocks(state.gameNumber))
-        dispatch({ type: 'END_GAME', winnerId: fourStarWinner.id, condition: 'mission' })
+        dispatch({ type: 'END_GAME', winnerId: fourStarWinner.id, condition: 'stars' })
         setTimeout(() => setShowWinScreen(true), 300)
       } else if (!checkMissions(state.territories, state.players, conquestSnapshot)) {
         // Check overall win (mission / elimination)

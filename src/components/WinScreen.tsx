@@ -1302,6 +1302,11 @@ function CityMapPicker({ playerId, legacyState, cityType, factionId, selectedId,
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const hex = FACTION_COLORS[factionId as keyof typeof FACTION_COLORS] ?? 0x888888
   const fr = (hex >> 16) & 0xff, fg = (hex >> 8) & 0xff, fb = hex & 0xff
+  // A readable version of the faction colour for use ON the dark panel. Die
+  // Mechaniker and Marshal Krieg are near-black; drawn straight they vanish.
+  const lift = (v: number) => Math.round(v + (255 - v) * 0.45)
+  const dark = (fr * 0.299 + fg * 0.587 + fb * 0.114) < 90
+  const lr = dark ? lift(fr) : fr, lg = dark ? lift(fg) : fg, lb = dark ? lift(fb) : fb
 
   function isEligible(id: string) {
     // The Fallout Zone is destroyed ground — no city may be built there
@@ -1343,9 +1348,19 @@ function CityMapPicker({ playerId, legacyState, cityType, factionId, selectedId,
 
   void cityType
 
+  // The board rides as a BACKGROUND, not an <img>: this picker remounts on
+  // every step of the ceremony, and an image request cancelled by a remount
+  // leaves a broken-image element showing its alt text — a literal "map"
+  // label over an empty panel, which is what the reward steps were doing.
+  // A background-image simply paints when it arrives.
   return (
-    <div style={{ position: 'relative', width: '100%', height: 280, borderRadius: 6, overflow: 'hidden', border: '1px solid rgba(200,148,10,0.25)' }}>
-      <img src="/Risk_board.svg.png" alt="map" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', filter: 'grayscale(60%) brightness(0.50)', pointerEvents: 'none' }} />
+    <div style={{
+      position: 'relative', width: '100%', height: 280, borderRadius: 6, overflow: 'hidden',
+      border: '1px solid rgba(200,148,10,0.25)',
+      backgroundImage: 'url(/Risk_board.svg.png)',
+      backgroundSize: 'contain', backgroundPosition: 'center', backgroundRepeat: 'no-repeat',
+      backgroundColor: 'rgba(0,0,0,0.35)',
+    }}>
       <svg
         viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
         preserveAspectRatio="xMidYMid meet"
@@ -1364,9 +1379,14 @@ function CityMapPicker({ playerId, legacyState, cityType, factionId, selectedId,
           let stroke = 'rgba(255,255,255,0.06)'
           let strokeW = 0.5
           if (isFallout) { fill = 'rgba(241,196,15,0.20)'; stroke = 'rgba(241,196,15,0.75)'; strokeW = 1.5 }
-          else if (sel) { fill = `rgba(${fr},${fg},${fb},0.55)`; stroke = `rgba(${fr},${fg},${fb},0.95)`; strokeW = 2 }
+          // Selection uses the faction's own colour, LIGHTENED when the faction
+          // is a dark one. Eligibility does not use it at all: painting "you
+          // may click here" in Die Mechaniker's near-black on a near-black
+          // panel made the whole picker look empty and unresponsive — the step
+          // read as a soft-lock until you clicked blind and hit something.
+          else if (sel) { fill = `rgba(${lr},${lg},${lb},0.55)`; stroke = `rgba(${lr},${lg},${lb},0.95)`; strokeW = 2 }
           else if (hov) { fill = 'rgba(80,200,80,0.35)'; stroke = 'rgba(80,220,80,0.85)'; strokeW = 1.5 }
-          else if (eligible) { fill = `rgba(${fr},${fg},${fb},0.10)`; stroke = `rgba(${fr},${fg},${fb},0.30)`; strokeW = 0.8 }
+          else if (eligible) { fill = 'rgba(255,255,255,0.10)'; stroke = 'rgba(200,148,10,0.55)'; strokeW = 1 }
 
           return (
             <g key={def.id}>
