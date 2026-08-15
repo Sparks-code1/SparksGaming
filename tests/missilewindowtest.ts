@@ -7,6 +7,7 @@
 // asserts pin both halves, plus the version-CAS story that makes two missiles
 // on one die impossible rather than merely unlikely.
 import { gameReducer, createMathRng, spectatorMissileRefusal, type Action } from '@/lib/gameReducer'
+import { battleMissileControls } from '@/lib/gameLogic'
 import { initialTurnState, type GameState } from '@/types/game'
 
 let pass = 0, fail = 0
@@ -142,6 +143,44 @@ console.log('\n— the ledger folds into the campaign exactly once, at game end 
     Object.fromEntries(Object.entries(missiles).map(([pid, n]) => [pid, Math.max(0, n - (spends[pid] ?? 0))]))
   check('a spend comes off the stock', JSON.stringify(fold({ p3: 2, p2: 1 }, { p3: 1 })) === '{"p3":1,"p2":1}')
   check('the floor is zero even if counts drifted', fold({ p3: 1 }, { p3: 5 }).p3 === 0)
+}
+
+console.log('\n— the battle-side phase: whose missiles this screen may spend —')
+{
+  // The other half of the same rule, and the half that was wrong. The server
+  // refuses the attacker from the WINDOW because the attacker has their own
+  // phase — but that phase ran on the attacker's screen with the DEFENDER's
+  // dice on it too, charged to the defender's stockpile. Test spent Ryan's
+  // missiles for him, and Ryan never saw it offered.
+  const hotseat = battleMissileControls({
+    attackerMissiles: 2, defenderMissiles: 3, remoteHumanDefender: false })
+  check('at one keyboard both players click their own dice here',
+    hotseat.attacker === 2 && hotseat.defender === 3, JSON.stringify(hotseat))
+
+  const online = battleMissileControls({
+    attackerMissiles: 2, defenderMissiles: 3, remoteHumanDefender: true })
+  check('online, the attacker spends only their own',
+    online.attacker === 2, JSON.stringify(online))
+  check('a remote human defender\'s missiles are not on this screen',
+    online.defender === 0, JSON.stringify(online))
+
+  // An AI defender has no screen of its own, so its missiles stay here — the
+  // attacker's machine is the only machine that can play them at all.
+  const vsAi = battleMissileControls({
+    attackerMissiles: 0, defenderMissiles: 2, remoteHumanDefender: false })
+  check('an AI defender still spends through the attacker\'s machine', vsAi.defender === 2)
+
+  // …and with the defender's dice gone from this phase, a battle where ONLY
+  // the defender holds missiles has no battle-side phase to open at all. It
+  // goes straight to the window, which is where that defender fires.
+  const onlyDefender = battleMissileControls({
+    attackerMissiles: 0, defenderMissiles: 4, remoteHumanDefender: true })
+  check('no phase to open when only the remote defender is armed',
+    onlyDefender.attacker === 0 && onlyDefender.defender === 0, JSON.stringify(onlyDefender))
+
+  check('negative counts never become clickable dice',
+    battleMissileControls({ attackerMissiles: -1, defenderMissiles: -1, remoteHumanDefender: false })
+      .attacker === 0)
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

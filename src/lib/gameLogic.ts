@@ -883,6 +883,33 @@ export function campaignLeadFaction(
   return leadFactionId(legacy.victoryLog)
 }
 
+/**
+ * How many missiles each side may spend FROM THE ATTACKER'S SCREEN, in the
+ * battle-side missile phase.
+ *
+ * At one keyboard both players are present and each clicks their own dice —
+ * that is the whole phase. Online against a human defender they are not
+ * present, and that screen belongs to the attacker: offering the defender's
+ * dice there meant the attacker deciding whether to spend the defender's
+ * stockpile, on their behalf, without them ever seeing it happen.
+ *
+ * A remote human defender spends their own in the missile window that opens
+ * the moment this phase ends — the same server-arbitrated window spectators
+ * fire through, which refuses the attacker (`spectatorMissileRefusal`, code
+ * 'not-a-spectator') and admits the defender for exactly this reason.
+ */
+export function battleMissileControls(opts: {
+  attackerMissiles: number
+  defenderMissiles: number
+  /** The defender is a human at another machine (an online interactive battle). */
+  remoteHumanDefender: boolean
+}): { attacker: number; defender: number } {
+  return {
+    attacker: Math.max(0, opts.attackerMissiles),
+    defender: opts.remoteHumanDefender ? 0 : Math.max(0, opts.defenderMissiles),
+  }
+}
+
 /** Wins per faction across the campaign. */
 export function factionWinCounts(
   victoryLog: Array<{ factionId: string }> | undefined | null,

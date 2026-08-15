@@ -4,7 +4,7 @@ import type { Player } from '@/types/player'
 import { playDice } from '@/lib/sounds'
 import { resolveCombat, createMathRng, singleDieDelta, singleDieBonus, defenderDieSteps, type CombatModifiers, type CombatOutcome, type CombatRoundLog } from '@/lib/gameReducer'
 import type { ActiveCombat } from '@/types/game'
-import { troopsAfterEntry, minTroopsToEnter, type EntryCost } from '@/lib/gameLogic'
+import { troopsAfterEntry, minTroopsToEnter, battleMissileControls, type EntryCost } from '@/lib/gameLogic'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -469,6 +469,25 @@ export default function AttackModal({
   const [flashInfo, setFlashInfo] = useState<{ side: 'atk' | 'def'; indices: Set<number>; label: string } | null>(null)
 
   // Missile state
+  /**
+   * The defender's missiles, as far as THIS screen may spend them.
+   *
+   * At one keyboard both players are here, and each clicks their own dice —
+   * that is the whole missile phase. Online against a HUMAN defender they are
+   * not here, and this modal belongs to the attacker: offering their dice
+   * meant the attacker choosing whether to spend the defender's stockpile, on
+   * the defender's behalf, without them ever seeing it. Test spent Ryan's
+   * missiles for him.
+   *
+   * A remote human defender spends their own, on their own screen, in the
+   * missile window that opens the moment this phase ends — the same
+   * server-arbitrated window spectators fire through, which is already offered
+   * to them and already counts them when deciding whether to open it at all.
+   */
+  const defenderMissilesHere = battleMissileControls({
+    attackerMissiles, defenderMissiles,
+    remoteHumanDefender: !!interactiveDefense?.defenderIsHuman,
+  }).defender
   // Battle-cumulative flags (reported in CombatResolution)
   const [mslAtkUsed, setMslAtkUsed] = useState(false)
   const [mslDefUsed, setMslDefUsed] = useState(false)
@@ -696,7 +715,7 @@ export default function AttackModal({
     // modal to click it, and stalling here froze the computer's turn the
     // moment either side held a missile. (A human defender's missile agency
     // against AI attacks is a known gap, noted in the tracker.)
-    const hasMissiles = !publicAiRounds && (attackerMissiles > 0 || defenderMissiles > 0)
+    const hasMissiles = !publicAiRounds && (attackerMissiles > 0 || defenderMissilesHere > 0)
     if (hasMissiles) {
       // Enter missile phase — players may convert dice to 6s before resolution
       setPendingAtkDice([...fa])
@@ -1142,6 +1161,7 @@ export default function AttackModal({
             {defenderMissiles > 0 && (
               <span style={{ fontSize: 10, color: '#9B59B6', background: 'rgba(155,89,182,0.15)', border: '1px solid rgba(155,89,182,0.40)', borderRadius: 4, padding: '2px 7px' }}>
                 🚀 Defender has {defenderMissiles} missile{defenderMissiles !== 1 ? 's' : ''}
+                {defenderMissilesHere === 0 && ' — theirs to spend'}
               </span>
             )}
           </div>
@@ -1533,7 +1553,7 @@ export default function AttackModal({
                     const won  = phase === 'results' && i < pairWinners.length && pairWinners[i] === 'def'
                     const lost = phase === 'results' && i < pairWinners.length && pairWinners[i] === 'atk'
                     const modFlash = phase === 'modifiers' && flashInfo?.side === 'def' && flashInfo.indices.has(i)
-                    const canClick = phase === 'missile-phase' && defenderMissiles > 0 && !defConverted.has(i)
+                    const canClick = phase === 'missile-phase' && defenderMissilesHere > 0 && !defConverted.has(i)
                     return (
                       <DieFace
                         key={i}
@@ -1557,9 +1577,9 @@ export default function AttackModal({
                     )
                   })}
                 </div>
-                {phase === 'missile-phase' && defenderMissiles > 0 && defConverted.size < pendingDefDice.length && (
+                {phase === 'missile-phase' && defenderMissilesHere > 0 && defConverted.size < pendingDefDice.length && (
                   <div style={{ fontSize: 10, color: '#F1C40F', marginTop: 6 }}>
-                    🚀 Click a die to set it to 6 ({defenderMissiles} left)
+                    🚀 Click a die to set it to 6 ({defenderMissilesHere} left)
                   </div>
                 )}
                 {phase === 'missile-phase' && defConverted.size > 0 && (
