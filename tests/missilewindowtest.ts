@@ -192,6 +192,41 @@ console.log('\n— the window closes and cannot be reopened by accident —')
     } as Action, rng).state.missileSpends?.p3 === 1)
 }
 
+console.log('\n— three missiles on one roll: what counts, and what does not —')
+{
+  // The Nuclear Milestone fires on three missiles in a single roll, and the
+  // board counts them from this window's FLIPS. That count moved here when
+  // the attacker's private missile phase went away online — three missiles
+  // landed on one roll and nothing happened, because the old counter lived in
+  // a phase that no longer runs.
+  const { state: w } = gameReducer(base(), open(), rng)
+  const three = [
+    missile({ playerId: 'p3', side: 'def', dieIndex: 0 }),
+    missile({ playerId: 'p2', side: 'atk', dieIndex: 1 }),
+    missile({ playerId: 'p1', side: 'atk', dieIndex: 2 }),
+  ].reduce((s, a) => gameReducer(s, a, rng).state, w)
+  check('three missiles on three dice are three flips',
+    (three.combatWindow?.flips ?? []).length === 3,
+    JSON.stringify(three.combatWindow?.flips))
+  check('and the third one names the bringer',
+    three.combatWindow?.flips[2]?.playerId === 'p1')
+
+  // Two people reaching for the SAME die is one missile landing, not two.
+  // Counting claims instead of flips would call this a milestone.
+  const contested = [
+    missile({ playerId: 'p3', side: 'def', dieIndex: 0 }),
+    missile({ playerId: 'p2', side: 'def', dieIndex: 0 }),
+    missile({ playerId: 'p1', side: 'def', dieIndex: 0 }),
+  ].reduce((s, a) => gameReducer(s, a, rng).state, w)
+  check('three claims on ONE die are three claims…',
+    (contested.combatWindow?.claims ?? []).length === 3)
+  check('…but only one missile lands, so it is not a milestone',
+    (contested.combatWindow?.flips ?? []).length === 1,
+    JSON.stringify(contested.combatWindow?.flips))
+  check('and the one that landed is the attacker\'s',
+    contested.combatWindow?.flips[0]?.playerId === 'p1')
+}
+
 console.log('\n— one pile: missile powers spend from it too —')
 {
   // A missile power (EMP and the rest) discards a missile to fire. That

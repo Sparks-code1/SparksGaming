@@ -3512,6 +3512,49 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   }
 
   /**
+   * Nuclear Milestone: three missiles on ONE roll.
+   *
+   * Counted from the WINDOW, because that is where missiles are spent now.
+   * The count used to come from the attacker modal's own missile phase, and
+   * online play no longer has one — every missile, from every seat, goes into
+   * the shared window instead. So three missiles landed on a single roll and
+   * nothing happened.
+   *
+   * The window is per ROLL (its key carries the round), so its flip list IS
+   * "missiles on this roll" — and it is the FLIPS, not the claims: two players
+   * reaching for the same die is one missile landing, not two, and must not
+   * count as two towards the milestone.
+   *
+   * Opened on the attacker's machine alone. Every screen can see the third
+   * flip; only one of them may raise a modal that writes the campaign.
+   */
+  const nuclearWindowRef = useRef<string | null>(null)
+  useEffect(() => {
+    const w = gameState.combatWindow
+    if (!onlineMatch || !w || (w.flips?.length ?? 0) < 3) return
+    if (nuclearWindowRef.current === w.roundKey) return
+    if (legacyStateRef.current.nuclearMilestoneTriggered || pendingNuclearRef.current) return
+    const c = gameState.combat
+    const attacker = c ? gameState.players.find(p => p.id === c.attackerId) : null
+    const mine = c
+      ? (localSeatId === c.attackerId || (!!attacker?.isAI && aiAuthorityRef.current))
+      : aiAuthorityRef.current
+    if (!mine) return
+    // The third missile is the one that brings the fire.
+    const third = w.flips[2]
+    const bringer = gameState.players.find(p => p.id === third.playerId)
+    if (!bringer) return
+    nuclearWindowRef.current = w.roundKey
+    pendingNuclearRef.current = {
+      bringerPlayerId: bringer.id,
+      bringerFactionId: bringer.factionId,
+      falloutTerritoryId: w.tgtId,
+    }
+    setPendingNuclear(pendingNuclearRef.current)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState.combatWindow?.roundKey, gameState.combatWindow?.flips?.length, onlineMatch, localSeatId])
+
+  /**
    * Missiles this player can still fire, which is what every readout means.
    *
    * The campaign blob holds the stock a player STARTED the game with — it is
@@ -6562,6 +6605,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         `scar <territory> <type> — place a scar (${SCAR_META.map(m => m.type).join(', ')})`,
         'stars <player> <n|+n|-n> — set or shift this game\'s red stars',
         'missiles <player> <n|+n|-n> — set or shift what they can still fire',
+        'nuclear <player> <territory> — raise the Nuclear Milestone for a battle it was missed in',
         'info <territory> — owner, troops, scars',
         'players — everyone at the table, with stars and missiles',
         'Repairs run through the normal server actions and are written to the campaign history.',
@@ -6618,6 +6662,31 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         out.push('⚠ that reaches 4 stars — the victory screen is about to open')
       }
       return out
+    }
+
+    if (cmd === 'nuclear') {
+      // The milestone the board should have raised itself. Here because the
+      // moment it belongs to has passed by the time anyone notices it was
+      // missed — the window is closed, the round resolved — and the modal is
+      // the only thing that can place the Fallout Zone properly.
+      if (legacyStateRef.current.nuclearMilestoneTriggered) {
+        return ['✗ the Nuclear Milestone has already fired in this campaign']
+      }
+      if (tokens.length < 3) return ['✗ usage: nuclear <player> <territory>']
+      const q = tokens[1].toLowerCase()
+      const p = st.players.find(pl =>
+        pl.id.toLowerCase() === q || pl.name.toLowerCase().startsWith(q))
+      if (!p) return ['✗ no player matches — try `players`']
+      const hits = adminFindTerritories(tokens.slice(2).join(' '))
+      if (hits.length === 0) return ['✗ no territory matches']
+      if (hits.length > 1) return [`✗ ${hits.length} territories match — be more specific`]
+      pendingNuclearRef.current = {
+        bringerPlayerId: p.id,
+        bringerFactionId: p.factionId,
+        falloutTerritoryId: hits[0].id,
+      }
+      setPendingNuclear(pendingNuclearRef.current)
+      return [`☢ Nuclear Milestone — ${p.name} is the Bringer, fallout on ${hits[0].name}`]
     }
 
     if (cmd === 'missiles' || cmd === 'missile') {
