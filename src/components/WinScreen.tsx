@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import ConfettiBurst from './ConfettiBurst'
 import type { Player } from '@/types/player'
@@ -13,7 +13,7 @@ function scarLabel(type: string): string {
 }
 import { FACTION_COLORS, MOCK_PLAYERS } from '@/data/mockGameState'
 import { victoryWinnerId } from '@/lib/roster'
-import { FORTIFICATION_SUPPLY, fortificationsPlaced, SCAR_CANCEL_LIMIT, scarCancelsLeft, canCancelScar } from '@/lib/gameLogic'
+import { FORTIFICATION_SUPPLY, fortificationsPlaced, SCAR_CANCEL_LIMIT, scarCancelsLeft, canCancelScar, recordedGameNumber } from '@/lib/gameLogic'
 import { playCity } from '@/lib/sounds'
 import { CONTINENT_BONUSES, TERRITORY_DEFINITIONS, MAP_WIDTH, MAP_HEIGHT } from '@/data/territoryData'
 import { TERRITORY_CARDS } from '@/data/cards'
@@ -124,10 +124,16 @@ const skipBtn: React.CSSProperties = {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function WinScreen({
-  winner, winCondition, gameNumber, players, territories,
+  winner, winCondition, gameNumber: boardGameNumber, players, territories,
   legacyState, legacyEvents, onComplete,
   variant = 'hotseat', runnerUpIds,
 }: Props) {
+  /** The number this game is recorded as — the board's own unless that number
+   *  is already won by someone else. See recordedGameNumber. */
+  const gameNumber = useMemo(
+    () => recordedGameNumber(boardGameNumber, legacyState.victoryLog, winner.id),
+    [boardGameNumber, legacyState, winner.id])
+
   const [step, setStep]           = useState<WinStep>(
     variant === 'online-runnerup' ? 'runnerup-city' : 'announce')
   const [signedName, setSignedName] = useState(winner.name)
@@ -450,7 +456,9 @@ export default function WinScreen({
     const cleaned: LegacyState = {
       ...legacy,
       purchasedStars: {},
-      currentGameNumber: legacy.currentGameNumber + 1,
+      // Never behind the game just finished: a campaign whose bump was lost
+      // once would otherwise stay one behind forever.
+      currentGameNumber: Math.max(legacy.currentGameNumber, gameNumber) + 1,
       scarDeck: scarDeckWithReturned,
       // Drop the unplaced deal records — their cards are back in the deck, so a
       // stale entry must never resurface in a future game's hand.

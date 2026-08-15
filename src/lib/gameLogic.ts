@@ -828,6 +828,37 @@ export function leadFactionId(
   return leaders.length === 1 ? leaders[0][0] : null
 }
 
+/**
+ * The number a finished game is RECORDED as — normally the board's own.
+ *
+ * A board can carry a stale number. If a campaign's game-number bump is lost
+ * (a legacy write refused and rebuilt from a stale read, as happened before
+ * S36) the next game is started as game 1 all over again, and its ceremony
+ * stamps stickers, cities and the victory log with a number already spoken
+ * for. Two entries then share a number, and every find-by-number lookup —
+ * including the one naming the winner on the game_sessions record — returns
+ * whichever came first. That is how a game Test won came to be filed under
+ * ryan's name.
+ *
+ * A number already won by SOMEBODY ELSE is proof this board is behind, so the
+ * record moves past the whole log instead of colliding with it. The same
+ * winner re-entering their own ceremony keeps their number, so a replayed or
+ * re-adopted ceremony is not pushed forward.
+ */
+export function recordedGameNumber(
+  boardGameNumber: number,
+  victoryLog: Array<{ gameNumber: number; winnerPlayerId?: string }> | undefined | null,
+  winnerPlayerId: string,
+): number {
+  const log = victoryLog ?? []
+  // An entry from before roster ids counts as someone else's: it cannot be
+  // proven to be this winner's, and the safe reading is "already taken".
+  const takenByOther = log.some(v =>
+    v.gameNumber === boardGameNumber && v.winnerPlayerId !== winnerPlayerId)
+  if (!takenByOther) return boardGameNumber
+  return Math.max(boardGameNumber, ...log.map(v => v.gameNumber)) + 1
+}
+
 /** Wins per faction across the campaign. */
 export function factionWinCounts(
   victoryLog: Array<{ factionId: string }> | undefined | null,

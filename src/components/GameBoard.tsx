@@ -6311,7 +6311,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       return {
         ...next,
         purchasedStars: {},
-        currentGameNumber: next.currentGameNumber + 1,
+        // Never behind the game just finished — see WinScreen's finalize.
+        currentGameNumber: Math.max(next.currentGameNumber, gameNumber) + 1,
         scarDeck: [...new Set([...(next.scarDeck ?? []), ...unusedCardIds])],
         dealtScars: (next.dealtScars ?? []).filter(d => !(d.gameNumber === gameNumber && !d.placed)),
         // activeMatchId SURVIVES this write, and that is load-bearing: clearing
@@ -6333,7 +6334,14 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     gameFinishedRef.current = true
     legacyStateRef.current = working
     setLegacyState(working)
-    const winName = (working.victoryLog ?? []).find(v => v.gameNumber === gameNumber)?.winnerName ?? null
+    // THIS game's winner, matched by who actually won — not merely by game
+    // number. A campaign that has (through an earlier bump being lost) two
+    // entries for the same number handed the session record the FIRST one,
+    // so a game Test won was filed under ryan's name.
+    const log = working.victoryLog ?? []
+    const winName = ([...log].reverse().find(v => v.winnerPlayerId === eg.winnerId && v.gameNumber === gameNumber)
+      ?? [...log].reverse().find(v => v.winnerPlayerId === eg.winnerId)
+      ?? [...log].reverse().find(v => v.gameNumber === gameNumber))?.winnerName ?? null
     const winFaction = gameStateRef.current.players.find(p => p.id === eg.winnerId)?.factionId ?? null
     await Promise.all([
       saveLegacyState(working, { reapply: applyFinalize }),
