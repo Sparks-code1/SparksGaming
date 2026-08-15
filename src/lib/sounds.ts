@@ -192,7 +192,21 @@ function synthAmbient(): Float32Array {
 
 type SoundKey = 'dice' | 'victory' | 'elimination' | 'coin' | 'city' | 'milestone' | 'troop' | 'button' | 'missile'
 
-interface SoundDef { synth: () => Float32Array; volume: number; cutoff: boolean }
+/**
+ * A sound is either synthesized or played from a file in /public.
+ *
+ * `src` may list SEVERAL files — not fallback formats, which is what an array
+ * means to Howler, but variants: one is chosen at random per play, so a sound
+ * that fires repeatedly does not wear a groove. A def with both keeps `synth`
+ * as the safety net if the files fail to load (renamed, missing, blocked),
+ * because a silent game is harder to notice than a wrong noise.
+ */
+interface SoundDef {
+  synth: () => Float32Array
+  src?: string[]
+  volume: number
+  cutoff: boolean
+}
 
 const DEFS: Record<SoundKey, SoundDef> = {
   dice:        { synth: synthDice,        volume: 0.7,  cutoff: false }, // dice may overlap
@@ -203,20 +217,49 @@ const DEFS: Record<SoundKey, SoundDef> = {
   milestone:   { synth: synthMilestone,   volume: 0.6,  cutoff: false },
   troop:       { synth: synthTroop,       volume: 0.4,  cutoff: true },  // rapid — cut off
   button:      { synth: synthButton,      volume: 0.35, cutoff: true },  // rapid — cut off
-  missile:     { synth: synthMissile,     volume: 0.75, cutoff: false },
+  // Two recordings, picked between at random — a launch and a detonation.
+  // synthMissile stays as the fallback if neither file loads.
+  missile: {
+    synth: synthMissile,
+    src: [
+      '/49053354-launching-missile-313226.mp3',
+      '/u_cps9x2omzt-missile-boom-481180.mp3',
+    ],
+    volume: 0.75,
+    cutoff: false,
+  },
 }
 
-const howls: Partial<Record<SoundKey, Howl>> = {}
+const howls: Partial<Record<SoundKey, Howl[]>> = {}
 let ambient: Howl | null = null
 
-function getHowl(key: SoundKey): Howl {
-  let h = howls[key]
-  if (!h) {
-    const def = DEFS[key]
-    h = new Howl({ src: [floatToWavDataURI(def.synth())], volume: def.volume, preload: true })
-    howls[key] = h
-  }
-  return h
+/** Every variant of a sound, built once. One entry unless `src` lists more. */
+function getHowls(key: SoundKey): Howl[] {
+  const existing = howls[key]
+  if (existing) return existing
+
+  const def = DEFS[key]
+  const fromSynth = () =>
+    new Howl({ src: [floatToWavDataURI(def.synth())], volume: def.volume, preload: true })
+
+  const built: Howl[] = def.src?.length
+    ? def.src.map((url, i) => new Howl({
+        src: [encodeURI(url)],
+        volume: def.volume,
+        preload: true,
+        // A file that will not load is replaced, in place, by the synthesized
+        // version — so the sound still happens, and the failure shows up in
+        // the console rather than as silence.
+        onloaderror: () => {
+          console.warn(`[sound] ${url} failed to load — using the synthesized ${key}`)
+          const list = howls[key]
+          if (list) list[i] = fromSynth()
+        },
+      }))
+    : [fromSynth()]
+
+  howls[key] = built
+  return built
 }
 
 // ─── Settings (persisted) ─────────────────────────────────────────────────────
@@ -261,8 +304,13 @@ export function toggleMuted(): boolean {
 function play(key: SoundKey) {
   if (muted) return
   try {
-    const h = getHowl(key)
-    if (DEFS[key].cutoff) h.stop() // cut off rapid re-triggers (UI clicks, troop drops)
+    const variants = getHowls(key)
+    // One at random when a sound has several recordings — the missile is a
+    // launch or a detonation, never the same one twice running by design.
+    const h = variants.length === 1
+      ? variants[0]
+      : variants[Math.floor(Math.random() * variants.length)]
+    if (DEFS[key].cutoff) variants.forEach(v => v.stop()) // rapid re-triggers (clicks, troop drops)
     h.play()
   } catch { /* audio unavailable — ignore */ }
 }

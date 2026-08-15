@@ -74,7 +74,7 @@ import SpectatorCombatOverlay, { SpectatorLiveRound, type LiveRoundView } from '
 import DefenderBattlePrompt from './DefenderBattlePrompt'
 import { buildSpectatorReport, spectatorDisplayMs, type SpectatorCombatReport } from '@/lib/spectatorCombat'
 import { aiReinforcePlacements, aiAttackPlan, aiFortifyMove, aiTradeInDecision, rivalsOnMatchPoint, aiBonusTroopTarget } from '@/lib/ai'
-import { playVictory, playElimination, playCoin, playCity, playMilestone, playTroop, startAmbient, stopAmbient } from '@/lib/sounds'
+import { playVictory, playElimination, playCoin, playCity, playMilestone, playTroop, playMissile, startAmbient, stopAmbient } from '@/lib/sounds'
 import ConfettiBurst from './ConfettiBurst'
 import TurnBanner, { type TurnBannerInfo } from './TurnBanner'
 import {
@@ -5388,6 +5388,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
           defDice: e.side === 'def' ? prev.defDice.map((d, i) => (i === e.dieIndex ? 6 : d)) : prev.defDice,
           flips: [...prev.flips, { playerId: e.playerId, side: e.side, dieIndex: e.dieIndex }],
         } : prev)
+        // The bang belongs to whoever is NOT looking at the battle prompt —
+        // that screen plays its own from the window's flip list, and two
+        // sources on one machine is one missile heard twice.
+        if (localSeatRef.current === gameStateRef.current.combat?.attackerId) playMissile()
         const shooter = gameStateRef.current.players.find(p => p.id === e.playerId)?.name ?? 'A spectator'
         showWeaknessNotice(`🚀 ${shooter} fired a missile — ${e.side === 'atk' ? "an attacker's" : "a defender's"} die turns into a 6`)
         break
