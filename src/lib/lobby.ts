@@ -404,6 +404,29 @@ export async function findOpenLobby(campaignId: string, gameNumber?: number): Pr
   return id ? readLobby(id) : null
 }
 
+/**
+ * Is this open lobby for a game the campaign has already left behind?
+ *
+ * The counterpart to findOpenLobby's refusal to filter by game number. That
+ * refusal is right — a machine's own copy LAGS the campaign (the winner's
+ * machine bumps it, and legacy has no live sync), so requiring an exact match
+ * hid the lobby a joiner was invited to. But the lag only runs one way, which
+ * makes the other direction safe to judge: a lobby numbered BELOW our own copy
+ * is one we know has already been played.
+ *
+ * A lobby row left open by a game that was started some other way sat in the
+ * Test8 campaign for three games, and both machines walked into it — the host
+ * saw "hosting Game #1" and the joiner "waiting to start #1" on a campaign
+ * about to play its fourth.
+ */
+export function lobbyIsBehind(
+  lobby: { gameNumber?: number } | null | undefined,
+  currentGameNumber: number | null | undefined,
+): boolean {
+  if (!lobby || typeof lobby.gameNumber !== 'number') return false
+  return lobby.gameNumber < (currentGameNumber ?? 1)
+}
+
 /** Take a seat in someone else's lobby. Idempotent for the seat you hold. */
 export async function takeSeat(matchId: string, request: SeatRequest): Promise<Lobby> {
   const { data: { user } } = await supabase.auth.getUser()

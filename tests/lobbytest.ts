@@ -5,7 +5,8 @@
 // nothing about each other. The rules below are what makes a hosted game a
 // single object: who may sit down, when Start unlocks, and why it is refused.
 import {
-  lobbyReadiness, nextFreeSeat, seatRefusal, reconcileSeats, MIN_SEATS, MAX_SEATS,
+  lobbyReadiness, nextFreeSeat, seatRefusal, reconcileSeats, lobbyIsBehind,
+  MIN_SEATS, MAX_SEATS,
   type LobbySeat,
 } from '@/lib/lobby'
 import { generateAiName, nextAiSeatName, AI_NAME_POOL } from '@/lib/aiNames'
@@ -213,6 +214,29 @@ console.log('\n--- AI names ---')
   check('room is judged against names the table will ADD, not just size: '
     + 'four on the roster plus one new human at the table is full',
     nextAiSeatName(fullRoster.slice(0, 4), ['Ryan', 'Chris', 'Newcomer'], 5, () => 0), 'Hard')
+}
+
+// ─── Which open lobby is still worth showing ──────────────────────────────
+// A lobby row left open by a game started some other way sat in a campaign
+// for three games. "The open lobby" found it every time, so the host was
+// offered "Game #1" and the joiner sat in "waiting to start #1" while the
+// campaign was about to play its fourth game.
+console.log('--- a lobby the campaign has left behind ---')
+{
+  check('a lobby for a finished game is behind', lobbyIsBehind({ gameNumber: 1 }, 4), true)
+  check('the lobby for the game we are on is live', lobbyIsBehind({ gameNumber: 4 }, 4), false)
+
+  // The direction that must NOT be filtered: our copy lags the campaign,
+  // because the winner's machine bumps the number and legacy has no live
+  // sync. A joiner still on 3 must still see the host's game-4 lobby — this
+  // is the bug that made joiners miss the game they were invited to.
+  check('a lobby AHEAD of our copy is the one we were invited to',
+    lobbyIsBehind({ gameNumber: 4 }, 3), false)
+
+  check('no lobby is not a stale lobby', lobbyIsBehind(null, 4), false)
+  check('a lobby with no number is not judged', lobbyIsBehind({}, 4), false)
+  check('a campaign with no number yet defaults to game 1',
+    lobbyIsBehind({ gameNumber: 1 }, undefined), false)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

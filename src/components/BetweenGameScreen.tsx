@@ -17,7 +17,7 @@ import { getCurrentUser, onAuthChange, type AuthUser } from '@/lib/auth'
 import { claimRosterSeat, getRoster, addRosterMember, MAX_ROSTER_NAME } from '@/lib/roster'
 import CampaignRosterPanel from './CampaignRosterPanel'
 import { BUILD_STAMP } from '@/lib/buildStamp'
-import { findOpenLobby, takeSeat, createLobby, type Lobby } from '@/lib/lobby'
+import { findOpenLobby, takeSeat, createLobby, lobbyIsBehind, type Lobby } from '@/lib/lobby'
 
 interface Props {
   onReadyForDiceRoll: (legacy: LegacyState) => void
@@ -91,7 +91,9 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
       // game ended: the winner's machine bumps the campaign, and nobody
       // else's copy knows until it re-reads.
       const found = await findOpenLobby(campaignId).catch(() => null)
-      if (!cancelled) setOpenLobby(found?.status === 'lobby' ? found : null)
+      // …but not one the campaign has already left behind. See lobbyIsBehind.
+      const live = found?.status === 'lobby' && !lobbyIsBehind(found, legacy?.currentGameNumber)
+      if (!cancelled) setOpenLobby(live ? found : null)
     }
     void look()
     const timer = setInterval(look, 4000)
