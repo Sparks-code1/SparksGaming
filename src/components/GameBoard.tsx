@@ -449,6 +449,11 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // ATTACKER's turn by definition; the edge validates the defending seat.
     'COMBAT_DEFENSE_CHOICE',
     'POST_COMBAT_DICE',
+    // "Resolve battle" is the defender's answer as much as the attacker's, and
+    // it is pressed during the attacker's turn by definition. Without this the
+    // defender's own button was refused by their own machine — "it's Test's
+    // turn" — before the server, which allows it, ever heard about it.
+    'CLOSE_COMBAT_WINDOW',
     // End-of-game ceremony: the game is over, "whose turn" is meaningless —
     // every seat reports its own progress; the edge stamps the caller.
     'ENDGAME_REWARDS_DONE',
@@ -696,6 +701,15 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     bringerFactionId: string
     falloutTerritoryId: string
     canCommit: boolean
+    /**
+     * The attacking force that was thrown into the crater: where it came from,
+     * and how many dice it rolled. The attacker loses one troop per die on
+     * that roll — captured HERE, at the moment the third missile lands,
+     * because by the time the announcement is closed the window is gone and
+     * the roll cannot be counted any more.
+     */
+    attackerSrcId?: string
+    attackerDice?: number
   }
   const [pendingNuclear,          setPendingNuclear]          = useState<PendingNuclear | null>(null)
   const pendingNuclearRef = useRef<PendingNuclear | null>(null)
@@ -3570,6 +3584,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       bringerFactionId: bringer.factionId,
       falloutTerritoryId: w.tgtId,
       canCommit: owns,
+      attackerSrcId: w.srcId,
+      attackerDice: w.atkDice.length,
     }
     setPendingNuclear(pendingNuclearRef.current)
 
@@ -4657,6 +4673,25 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // Fallout Zone: obliterate everything on the territory — through the
     // reducer, so the crater is the same crater on every board.
     dispatch({ type: 'OBLITERATE_TERRITORY', territoryId: falloutTerritoryId, clearScars: true })
+
+    // The attacking force goes with it: one troop per die on the roll that
+    // brought the fire. Everything in the territory was already destroyed by
+    // the obliterate above — this is what it cost the side that was throwing
+    // itself at it.
+    const { attackerSrcId, attackerDice } = pending
+    if (attackerSrcId && attackerDice && attackerDice > 0) {
+      dispatch({
+        type: 'APPLY_EVENT_TROOPS',
+        note: 'Nuclear Milestone — the attacking force is lost with the territory',
+        changes: [{ territoryId: attackerSrcId, delta: -attackerDice }],
+      })
+    }
+
+    // Nobody is still in this battle. The session is match state and would
+    // otherwise sit open on every OTHER screen — the defender left staring at
+    // a battle screen over a territory that no longer holds anything, with no
+    // way out of it.
+    if (gameStateRef.current.combat) dispatch({ type: 'CLEAR_COMBAT' })
 
     setLegacyState(prev => {
       const hqSticker = prev.stickers.find(s => s.targetId === falloutTerritoryId && s.description.startsWith('HQ:'))
