@@ -701,9 +701,24 @@ for (const s of spiceMarkers) idFor.set(s.el, s.id)
 // Duplicate circles, plus the fifteen spice markers — those are replaced by the
 // badge drawn at each one's position, not overlaid on it, so the original shape
 // comes out of the output entirely.
+// Each marker is TWO shapes: the circle, and a small filled glyph inside it —
+// the fifteen identical filled paths the first survey of this file found. Both
+// have to go, or the glyph is left behind reading as a stray 0. Matched by
+// proximity to the marker rather than by shape, so it does not depend on the
+// export's path data staying byte-identical.
+const markerGlyphs = paths.filter(e => e.attrs.fill && !e.inMask && !e.attrs.mask).filter(e => {
+  const c = centroid(flatten(e.attrs.d))
+  return spiceMarkers.some(m => Math.hypot(c[0] - m.x, c[1] - m.y) < 14)
+})
+if (markerGlyphs.length !== spiceMarkers.length) {
+  throw new Error(`expected one glyph inside each of the ${spiceMarkers.length} spice markers, `
+    + `found ${markerGlyphs.length} — check the proximity threshold before shipping a board `
+    + `with stray marks on it`)
+}
 const dropped = new Set([
   ...circles.filter(c => !uniqCircles.includes(c)),
   ...spiceMarkers.map(m => m.el),
+  ...markerGlyphs,
 ])
 const dataFor = t => TERRITORY_DATA[t.id] ?? {}
 const nameOf = t => dataFor(t).name
