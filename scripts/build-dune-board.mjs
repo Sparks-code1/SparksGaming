@@ -1110,9 +1110,11 @@ function spiceSymbol(x, y) {
 
 /** Wind: three streams with curled tails, for the storm phase. */
 function windSymbol(x0, y, ink = DECOR.ink) {
-  // The curled tails extend to the right of the strokes, so the glyph's visual
-  // centre sits right of its geometric one. Shift back to sit centred in the circle.
-  const x = x0 - 3
+  // The strokes run from x-12 rightward and the longest tail reaches about x+9,
+  // so the glyph's own centre is a shade LEFT of the coordinate it is given.
+  // Nudge right to sit centred in the circle — an earlier version pushed it the
+  // wrong way and made the lean worse.
+  const x = x0 + 1.5
   const line = (dy, len, r) =>
     `M${round(x - 12)} ${round(y + dy)} h${len} a${r} ${r} 0 1 0 ${round(-r * 0.8)} ${round(-r)}`
   return [[-8.5, 13, 3.6], [0, 17, 4.2], [8.5, 10, 3.2]]
@@ -1135,17 +1137,20 @@ function openHandSymbol(x, y, ink = DECOR.ink) {
 // ── Phase track ───────────────────────────────────────────────────────────────
 // The nine circles across the top are the phases of a round. Only the first two
 // are known so far; the rest stay empty rather than being filled with guesses.
-/** An auction gavel over a pair of cards, for the bidding phase. */
+/** An auction gavel over a pair of fanned cards, for the bidding phase.
+ *  The cards are outlines and sit behind; the mallet is solid and crosses them
+ *  on the diagonal, so the two never compete for the same silhouette. */
 function gavelSymbol(x, y, ink) {
-  const card = (dx, rot) => `<rect x="${round(x + dx - 6)}" y="${round(y - 9)}" width="12" height="16" `
-    + `rx="1.8" fill="none" stroke="${ink}" stroke-width="1.3" `
-    + `transform="rotate(${rot} ${round(x + dx)} ${round(y - 1)})"/>`
-  return card(-4, -14) + card(4, 10)
-    // head, struck through the cards on the diagonal, then the handle below it
-    + `<rect x="${round(x - 3)}" y="${round(y - 11)}" width="15" height="6.5" rx="1.6" fill="${ink}" `
-    + `transform="rotate(40 ${round(x + 4.5)} ${round(y - 7.5)})"/>`
-    + `<path d="M${round(x - 1)} ${round(y - 1)} L${round(x + 9)} ${round(y + 9)}" stroke="${ink}" `
-    + `stroke-width="2.4" stroke-linecap="round"/>`
+  const card = (dx, dy, rot) =>
+    `<rect x="${round(x + dx - 6)}" y="${round(y + dy - 7.5)}" width="12" height="15" rx="1.8" `
+    + `fill="none" stroke="${ink}" stroke-width="1.3" `
+    + `transform="rotate(${rot} ${round(x + dx)} ${round(y + dy)})"/>`
+  return card(-3.5, 1, -17) + card(3.5, 1, 13)
+    // Mallet head across the upper left, handle running down to the right.
+    + `<rect x="${round(x - 13)}" y="${round(y - 11)}" width="14.5" height="6.4" rx="2.2" fill="${ink}" `
+    + `transform="rotate(-35 ${round(x - 5.75)} ${round(y - 7.8)})"/>`
+    + `<path d="M${round(x - 5)} ${round(y - 4)} L${round(x + 7)} ${round(y + 8.5)}" stroke="${ink}" `
+    + `stroke-width="2.6" stroke-linecap="round"/>`
 }
 
 /** A standing figure, for the revival phase. */
