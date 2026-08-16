@@ -1251,7 +1251,15 @@ function clampCombatResolution(state, a) {
     // one, and then it moves none. Forcing the minimum to 1 in THAT case
     // emptied the source instead, leaving an owned 0-troop ghost behind; the
     // reducer reads 0 as "the ground was cleared but not taken".
-    troopsToAdvance: captured ? survivors - 1 >= 1 ? int(a.troopsToAdvance, 1, survivors - 1) : 0 : 0,
+    // …and at least as many as it attacked WITH: three dice thrown means
+    // three troops committed to the ground they take. The computer was
+    // walking into captured territory one troop at a time, which is not a
+    // choice the rules offer anybody. Bounded by what survived, so a costly
+    // win still moves everything it has left.
+    troopsToAdvance: captured ? survivors - 1 >= 1 ? Math.min(
+      survivors - 1,
+      Math.max(int(a.troopsToAdvance, 1, survivors - 1), int(a.atkDiceUsed, 1, 3))
+    ) : 0 : 0,
     entryCostTotal: int(a.entryCostTotal, 0, 12),
     defenderCloningBonus: int(a.defenderCloningBonus, 0, 12),
     // Mission bookkeeping only, but untrusted input still gets a type: any

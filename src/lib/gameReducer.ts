@@ -309,6 +309,9 @@ export type Action =
       totalDefLoss: number
       captured: boolean
       troopsToAdvance: number
+      /** Most dice thrown in one roll of this battle. A capture commits at
+       *  least that many troops — three dice, three troops. */
+      atkDiceUsed?: number
       /** Entry cost deducted from arriving troops when capturing an unoccupied
        *  city / World Capital (0 otherwise). Reads legacy â†’ precomputed. */
       entryCostTotal: number
@@ -1443,6 +1446,8 @@ export function clampCombatResolution(
     entryCostTotal?: number; defenderCloningBonus?: number
     uncontested?: boolean; viaSea?: boolean; sealDefender?: boolean
     rounds?: CombatRoundLog[]
+    /** Most dice thrown in one roll of this battle — the advance floor. */
+    atkDiceUsed?: number
   },
 ): typeof a {
   const int = (v: unknown, lo: number, hi: number) =>
@@ -1497,8 +1502,18 @@ export function clampCombatResolution(
     // one, and then it moves none. Forcing the minimum to 1 in THAT case
     // emptied the source instead, leaving an owned 0-troop ghost behind; the
     // reducer reads 0 as "the ground was cleared but not taken".
+    // …and at least as many as it attacked WITH: three dice thrown means
+    // three troops committed to the ground they take. The computer was
+    // walking into captured territory one troop at a time, which is not a
+    // choice the rules offer anybody. Bounded by what survived, so a costly
+    // win still moves everything it has left.
     troopsToAdvance: captured
-      ? (survivors - 1 >= 1 ? int(a.troopsToAdvance, 1, survivors - 1) : 0)
+      ? (survivors - 1 >= 1
+          ? Math.min(
+              survivors - 1,
+              Math.max(int(a.troopsToAdvance, 1, survivors - 1), int(a.atkDiceUsed, 1, 3)),
+            )
+          : 0)
       : 0,
     entryCostTotal: int(a.entryCostTotal, 0, 12),
     defenderCloningBonus: int(a.defenderCloningBonus, 0, 12),

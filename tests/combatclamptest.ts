@@ -126,6 +126,33 @@ console.log('\n--- the board edges ---')
   check('a real capture always advances at least one troop', minAdvance.troopsToAdvance, 1)
 }
 
+
+console.log('--- you commit what you attacked with ---')
+{
+  // Three dice thrown means three troops onto the ground you take. The
+  // computer was walking into captured territory one troop at a time, which
+  // is not a choice the rules offer anybody — and the clamp only ever
+  // enforced a floor of ONE.
+  const three = clampCombatResolution(board(), claim({ troopsToAdvance: 1, atkDiceUsed: 3 }))
+  check('one troop after a three-dice attack becomes three', three.troopsToAdvance, 3)
+  const two = clampCombatResolution(board(), claim({ troopsToAdvance: 1, atkDiceUsed: 2 }))
+  check('two dice, two troops', two.troopsToAdvance, 2)
+  check('a bigger advance is left alone',
+    clampCombatResolution(board(), claim({ troopsToAdvance: 6, atkDiceUsed: 3 })).troopsToAdvance, 6)
+
+  // The floor never empties the source: what survived still bounds it.
+  const thin = clampCombatResolution(board(3), claim({
+    totalAtkLoss: 1, troopsToAdvance: 1, atkDiceUsed: 3,
+  }))
+  check('a costly win moves what it has and leaves one behind', thin.troopsToAdvance, 1)
+
+  // An old client that sends no dice count keeps the original floor of one.
+  check('no dice count — the floor is one, as before',
+    clampCombatResolution(board(), claim({ troopsToAdvance: 1 })).troopsToAdvance, 1)
+  check('a forged dice count cannot move more than three',
+    clampCombatResolution(board(), claim({ troopsToAdvance: 1, atkDiceUsed: 99 })).troopsToAdvance, 3)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.

@@ -5823,6 +5823,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         type: 'RESOLVE_COMBAT', srcId, tgtId,
         totalAtkLoss: r.totalAtkLoss, totalDefLoss: r.totalDefLoss,
         captured: r.captured, troopsToAdvance: r.troopsToAdvance,
+        // The advance floor — you commit what you attacked with.
+        atkDiceUsed: r.atkDiceUsed,
         entryCostTotal, entryCostFalloutHalf, defenderCloningBonus,
         // Computed here because campaign-placed sea lines live in legacy state
         // the reducer cannot read. Feeds turn.conqueredViaSeaIds (missions).
