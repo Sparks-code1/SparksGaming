@@ -698,7 +698,13 @@ for (const p of playerPositions) idFor.set(p.el, p.id)
 for (const s of trackStops) idFor.set(s.el, s.id)
 for (const s of spiceMarkers) idFor.set(s.el, s.id)
 
-const dropped = new Set(circles.filter(c => !uniqCircles.includes(c)))
+// Duplicate circles, plus the fifteen spice markers — those are replaced by the
+// badge drawn at each one's position, not overlaid on it, so the original shape
+// comes out of the output entirely.
+const dropped = new Set([
+  ...circles.filter(c => !uniqCircles.includes(c)),
+  ...spiceMarkers.map(m => m.el),
+])
 const dataFor = t => TERRITORY_DATA[t.id] ?? {}
 const nameOf = t => dataFor(t).name
 
@@ -887,14 +893,25 @@ for (const t of territories) {
 // spice numbers, so the value goes inside the marker rather than out on the rim.
 // Each marker was matched to its territory by point-in-polygon during the data
 // pass, which is the same match asserted against the transcribed amounts.
+// The badge REPLACES the marker rather than sitting on top of it: the original
+// circles are dropped from the output below, and the spiral-and-number takes the
+// space each one occupied. Nothing else moves — the position is the marker's own.
 const blowOf = new Map(territories.map(t => [t.id, dataFor(t).spiceBlow]))
 for (const m of spiceMarkers) {
   const v = blowOf.get(m.territoryId)
   if (v == null) continue
-  terrain.push(`<circle cx="${round(m.x)}" cy="${round(m.y)}" r="9.5" fill="${DECOR.badge.fill}" `
-    + `stroke="${DECOR.badge.ring}" stroke-width="1.4"/>`)
-  labels.push(`<text x="${round(m.x)}" y="${round(m.y)}" font-size="10" fill="${DECOR.badge.text}" `
-    + `text-anchor="middle" dominant-baseline="central" `
+  // An Archimedean spiral, the board's mark for spice, sitting left of the value.
+  // Kept open — few turns, fast growth — because a tight spiral closes up into
+  // something that reads as a digit, and "spiral 8" then looks like "68".
+  const arm = []
+  for (let k = 0; k <= 30; k++) {
+    const th = k / 30 * 2.5 * Math.PI, rr = 1.1 + th * 0.85
+    arm.push(`${round(m.x - 10 + rr * Math.cos(th))},${round(m.y + rr * Math.sin(th))}`)
+  }
+  labels.push(`<polyline points="${arm.join(' ')}" fill="none" stroke="${DECOR.ink}" `
+    + `stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`)
+  labels.push(`<text x="${round(m.x + 11)}" y="${round(m.y)}" font-size="13" fill="${DECOR.ink}" `
+    + `text-anchor="middle" dominant-baseline="central" data-spice="${m.id}" `
     + `font-family="Georgia, 'Times New Roman', serif" font-weight="bold">${v}</text>`)
 }
 
