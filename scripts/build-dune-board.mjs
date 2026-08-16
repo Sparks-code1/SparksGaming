@@ -49,21 +49,69 @@ const CX = 483.097, CY = 556.456, RIM = 432.5
  *
  *   'territory-07': 'Carthag',
  */
-const TERRITORY_NAMES = {
-  // (empty — add entries as 'territory-NN': 'Name')
+/**
+ * The 42 territories, read off the physical board against the generated ids.
+ *
+ * None of this is in the SVG — it carries no text — so it is the one part of
+ * the build that is transcribed rather than computed. Three assertions below
+ * tie it back to the geometry so a mis-keyed row cannot pass silently:
+ * the Polar Sink must be the central shape, every territory must have exactly
+ * one entry, and the spiceBlow set must match the rect markers the geometry
+ * finds, territory for territory.
+ *
+ *   terrain      'sand' | 'rock' | 'polar-sink'; null where not yet recorded
+ *   stronghold   the five that are
+ *   spiceBlow    6–12, and only on the fifteen carrying a marker
+ *   spiceIncome  the fixed 2 / 2 / 1 the three city strongholds pay out,
+ *                which is NOT a blow — none of them has a marker
+ */
+const TERRITORY_DATA = {
+  'territory-01': { name: 'False Walls East',    terrain: 'rock' },
+  'territory-02': { name: 'Harg Pass',           terrain: 'sand' },
+  'territory-03': { name: 'Polar Sink',          terrain: 'polar-sink' },
+  'territory-04': { name: 'Wind Pass',           terrain: 'sand' },
+  'territory-05': { name: 'Imperial Basin',      terrain: 'sand' },
+  'territory-06': { name: 'Shield Wall',         terrain: 'rock' },
+  'territory-07': { name: 'The Minor Erg',       terrain: 'sand', spiceBlow: 8 },
+  'territory-08': { name: 'Cielago North',       terrain: 'sand', spiceBlow: 8 },
+  'territory-09': { name: 'Wind Pass North',     terrain: 'sand', spiceBlow: 6 },
+  'territory-10': { name: 'False Wall West',     terrain: 'rock' },
+  'territory-11': { name: 'Hagga Basin',         terrain: 'sand', spiceBlow: 6 },
+  'territory-12': { name: 'Arsunt',              terrain: 'sand' },
+  'territory-13': { name: 'Arrakeen',            terrain: null, stronghold: true, spiceIncome: 2, ornithopters: true },
+  'territory-14': { name: 'Rim Wall West',       terrain: 'rock' },
+  'territory-15': { name: 'Hole In The Rock',    terrain: 'sand' },
+  'territory-16': { name: 'Pasty Mesa',          terrain: 'rock' },
+  'territory-17': { name: 'False Wall South',    terrain: 'rock' },
+  'territory-18': { name: 'Cielago Depression',  terrain: 'sand' },
+  'territory-19': { name: 'Cielago West',        terrain: 'sand' },
+  'territory-20': { name: 'Habbanya Erg',        terrain: 'sand', spiceBlow: 8 },
+  'territory-21': { name: 'The Greater Flat',    terrain: 'sand' },
+  'territory-22': { name: 'The Great Flat',      terrain: 'sand', spiceBlow: 8 },
+  'territory-23': { name: 'Funeral Plain',       terrain: 'sand', spiceBlow: 6 },
+  'territory-24': { name: 'Plastic Basin',       terrain: 'rock' },
+  'territory-25': { name: 'Tsimpo',              terrain: 'sand' },
+  'territory-26': { name: 'Carthag',             terrain: null, stronghold: true, spiceIncome: 2, ornithopters: true },
+  'territory-27': { name: 'Old Gap',             terrain: 'sand', spiceBlow: 6 },
+  'territory-28': { name: 'Basin',               terrain: 'sand' },
+  'territory-29': { name: 'Sihaya Ridge',        terrain: 'sand', spiceBlow: 6 },
+  'territory-30': { name: 'Gara Kulon',          terrain: 'sand' },
+  'territory-31': { name: 'Red Chasm',           terrain: 'sand', spiceBlow: 8 },
+  'territory-32': { name: 'South Mesa',          terrain: 'sand', spiceBlow: 10 },
+  'territory-33': { name: "Tuek's Sietch",       terrain: null, stronghold: true, spiceIncome: 1 },
+  'territory-34': { name: 'Cielago East',        terrain: 'sand' },
+  'territory-35': { name: 'Cielago South',       terrain: 'sand', spiceBlow: 12 },
+  'territory-36': { name: 'Meridian',            terrain: 'sand' },
+  'territory-37': { name: 'Habbanya Ridge Flat', terrain: 'sand', spiceBlow: 10 },
+  'territory-38': { name: 'Habbanya Sietch',     terrain: null, stronghold: true },
+  'territory-39': { name: 'Bight Of The Cliff',  terrain: 'sand' },
+  'territory-40': { name: 'Sietch Tabr',         terrain: null, stronghold: true },
+  'territory-41': { name: 'Rock Outcroppings',   terrain: 'sand', spiceBlow: 6 },
+  'territory-42': { name: 'Broken Land',         terrain: 'sand', spiceBlow: 8 },
 }
 
-/**
- * The one name derivable from the file itself.
- *
- * On the Dune map the Polar Sink is the region at the centre of the board, and
- * exactly one shape here sits on the centre. That is a geometric fact, not a
- * shape match, so it is resolved by measurement below rather than pinned to a
- * positional id that could shift if the ordering changes. It is only applied
- * when the centre shape is unambiguous — clearly central in absolute terms, and
- * clearly more central than the next candidate. Otherwise the build leaves it
- * unnamed and says so.
- */
+/** The Polar Sink is the one name the geometry can check: it must be the shape
+ *  sitting on the board's centre, and unambiguously so. */
 const CENTRE_NAME = 'Polar Sink'
 const CENTRE_MAX_R = 40      // must be this close to the true centre
 const CENTRE_MARGIN = 3      // and this many times closer than the runner-up
@@ -321,17 +369,39 @@ if (emptySectors.length) {
   throw new Error(`territory overlaps no sector: ${emptySectors.map(t => t.id).join(', ')}`)
 }
 
-// Resolve the centre shape by measurement, and only accept it if it is
-// unambiguous. A near-tie means two regions straddle the middle and neither can
-// be called the Polar Sink from geometry alone.
+// ── Tie the transcribed table back to the geometry ────────────────────────────
+// The names are hand-entered against a numbered image, which is exactly the
+// step where a row can slip. These three checks would catch that.
+
+// 1. Every territory named once, no entry for a territory that does not exist.
+const missing = territories.filter(t => !TERRITORY_DATA[t.id]).map(t => t.id)
+const orphan = Object.keys(TERRITORY_DATA).filter(id => !territories.some(t => t.id === id))
+if (missing.length) throw new Error(`no TERRITORY_DATA entry for: ${missing.join(', ')}`)
+if (orphan.length) throw new Error(`TERRITORY_DATA names a territory that is not on the board: ${orphan.join(', ')}`)
+const dupeNames = Object.values(TERRITORY_DATA).map(d => d.name)
+  .filter((n, i, a) => a.indexOf(n) !== i)
+if (dupeNames.length) throw new Error(`two territories share a name: ${[...new Set(dupeNames)].join(', ')}`)
+
+// 2. The Polar Sink must be the shape on the centre, and unambiguously so.
 const byCentre = [...territories].sort((a, b) => a.cr - b.cr)
-let centreNote = ''
-if (byCentre.length >= 2 && byCentre[0].cr <= CENTRE_MAX_R && byCentre[0].cr * CENTRE_MARGIN < byCentre[1].cr) {
-  TERRITORY_NAMES[byCentre[0].id] = CENTRE_NAME
-  centreNote = `${byCentre[0].id} named ${CENTRE_NAME} (${byCentre[0].cr.toFixed(0)}px from centre; next nearest ${byCentre[1].cr.toFixed(0)}px)`
-} else {
-  centreNote = `centre shape ambiguous (nearest ${byCentre[0]?.cr.toFixed(0)}px, next ${byCentre[1]?.cr.toFixed(0)}px) — left unnamed`
+// Exactly one, and it must be the centre shape. Written as a hard requirement
+// rather than "if we found one", or the check quietly passes itself the moment
+// the name it looks for stops existing.
+const sinkIds = Object.keys(TERRITORY_DATA).filter(id => TERRITORY_DATA[id].name === CENTRE_NAME)
+if (sinkIds.length !== 1) {
+  throw new Error(`expected exactly one territory named ${CENTRE_NAME}, found ${sinkIds.length}`
+    + ` — the centre check cannot run, so the table is unverified`)
 }
+const sinkId = sinkIds[0]
+if (!(byCentre[0].id === sinkId && byCentre[0].cr <= CENTRE_MAX_R
+      && byCentre[0].cr * CENTRE_MARGIN < byCentre[1].cr)) {
+  throw new Error(`${CENTRE_NAME} is ${sinkId}, but the shape on the board's centre is `
+    + `${byCentre[0].id} (${byCentre[0].cr.toFixed(0)}px vs next ${byCentre[1].cr.toFixed(0)}px). `
+    + `The names are off by at least one row.`)
+}
+const centreNote = `${sinkId} = ${CENTRE_NAME}, ${byCentre[0].cr.toFixed(0)}px from centre (next ${byCentre[1].cr.toFixed(0)}px)`
+
+// 3. spiceBlow vs the markers — checked below, once the markers are found.
 
 // ─── Markers ──────────────────────────────────────────────────────────────────
 const circles = els.filter(e => e.tag === 'circle')
@@ -368,6 +438,22 @@ const spiceMarkers = rects
   .sort((a, b) => bearing(a.x, a.y) - bearing(b.x, b.y))
 spiceMarkers.forEach((s, i) => { s.id = `spice-${i + 1}` })
 
+// Check 3 from above. The rects are found geometrically and the amounts are
+// transcribed by hand, so agreement between them is real evidence the ids were
+// read off correctly — and a mismatch is the likeliest symptom of the table
+// being off by a row.
+const markerHosts = new Set(spiceMarkers.map(s => s.territoryId).filter(Boolean))
+const blowIds = new Set(Object.keys(TERRITORY_DATA).filter(id => TERRITORY_DATA[id].spiceBlow != null))
+const noMarker = [...blowIds].filter(id => !markerHosts.has(id))
+const noAmount = [...markerHosts].filter(id => !blowIds.has(id))
+const homeless = spiceMarkers.filter(s => !s.territoryId).length
+if (noMarker.length || noAmount.length) {
+  throw new Error('spice does not line up with the markers drawn on the board:'
+    + (noMarker.length ? `\n  spiceBlow set but no marker there: ${noMarker.join(', ')}` : '')
+    + (noAmount.length ? `\n  marker there but no spiceBlow: ${noAmount.join(', ')}` : ''))
+}
+if (homeless) throw new Error(`${homeless} spice marker(s) fall outside every territory`)
+
 // ─── Report ───────────────────────────────────────────────────────────────────
 const round = (n, d = 2) => Number(n.toFixed(d))
 
@@ -380,9 +466,15 @@ for (const o of offBoard) {
 }
 console.log(`markers       ${playerPositions.length} player positions, ${spiceMarkers.length} spice, ${trackStops.length} track stops`)
 console.log(`deduped       ${circles.length - uniqCircles.length} duplicate circles`)
-const named = territories.filter(t => TERRITORY_NAMES[t.id]).length
-console.log(`named         ${named}/${territories.length}  (${territories.length - named} awaiting TERRITORY_NAMES)`)
+const named = territories.filter(t => TERRITORY_DATA[t.id]?.name).length
+const holds = Object.values(TERRITORY_DATA).filter(d => d.stronghold).length
+const blows = Object.values(TERRITORY_DATA).filter(d => d.spiceBlow != null)
+const noTerrain = Object.entries(TERRITORY_DATA).filter(([, d]) => !d.terrain).map(([id]) => id)
+console.log(`named         ${named}/${territories.length}`)
 console.log(`centre        ${centreNote}`)
+console.log(`strongholds   ${holds}  ${Object.values(TERRITORY_DATA).filter(d => d.stronghold).map(d => d.name).join(', ')}`)
+console.log(`spice blow    ${blows.length} territories, ${blows.reduce((s, d) => s + d.spiceBlow, 0)} total — matches all ${spiceMarkers.length} markers`)
+if (noTerrain.length) console.log(`terrain       ${noTerrain.length} without one: ${noTerrain.map(id => TERRITORY_DATA[id].name).join(', ')}`)
 
 const spanCounts = territories.reduce((m, t) => (m[t.sectors.length] = (m[t.sectors.length] ?? 0) + 1, m), {})
 console.log(`sector spans  ${Object.entries(spanCounts).map(([k,v]) => `${v}×${k}`).join(', ')}`)
@@ -406,7 +498,8 @@ for (const s of trackStops) idFor.set(s.el, s.id)
 for (const s of spiceMarkers) idFor.set(s.el, s.id)
 
 const dropped = new Set(circles.filter(c => !uniqCircles.includes(c)))
-const nameOf = t => TERRITORY_NAMES[t.id]
+const dataFor = t => TERRITORY_DATA[t.id] ?? {}
+const nameOf = t => dataFor(t).name
 
 let out = svg
 const edits = []
@@ -434,20 +527,26 @@ lines.push(`// terrain and stronghold status are NOT in the SVG: fill TERRITORY_
 lines.push(`// the script and the placeholder fields here, then re-run so the SVG ids and`)
 lines.push(`// this module stay in step.`)
 lines.push(``)
-lines.push(`export type DuneTerrain = 'sand' | 'rock' | 'imperial-basin' | 'polar-sink' | null`)
+lines.push(`export type DuneTerrain = 'sand' | 'rock' | 'polar-sink' | null`)
 lines.push(``)
 lines.push(`export interface DuneTerritory {`)
 lines.push(`  id: string`)
-lines.push(`  /** null until named — see TERRITORY_NAMES in the build script. */`)
-lines.push(`  displayName: string | null`)
+lines.push(`  displayName: string`)
 lines.push(`  /** Storm sectors this territory overlaps, computed from the geometry. */`)
 lines.push(`  sectors: string[]`)
 lines.push(`  /** Where a troop marker sits. Inside the shape even when it is concave. */`)
 lines.push(`  centroid: { x: number; y: number }`)
-lines.push(`  /** Placeholder — to fill in. */`)
+lines.push(`  /** null on the five strongholds, whose terrain is not yet recorded. */`)
 lines.push(`  terrain: DuneTerrain`)
-lines.push(`  /** Placeholder — to fill in. */`)
-lines.push(`  stronghold: boolean | null`)
+lines.push(`  stronghold: boolean`)
+lines.push(`  /** Spice a blow places here (6–12). Exactly the fifteen territories`)
+lines.push(`   *  carrying a marker on the board — the build asserts the two agree. */`)
+lines.push(`  spiceBlow: number | null`)
+lines.push(`  /** The fixed payout of the three city strongholds (2 / 2 / 1). Not a`)
+lines.push(`   *  blow: none of them has a marker. */`)
+lines.push(`  spiceIncome: number | null`)
+lines.push(`  /** Arrakeen and Carthag. */`)
+lines.push(`  ornithopters: boolean`)
 lines.push(`}`)
 lines.push(``)
 lines.push(`export interface DuneSector { id: string; number: number; fromBearing: number; toBearing: number }`)
@@ -466,14 +565,17 @@ lines.push(`]`)
 lines.push(``)
 lines.push(`export const DUNE_TERRITORIES: DuneTerritory[] = [`)
 for (const t of territories) {
-  const name = nameOf(t)
+  const d = dataFor(t)
   lines.push(`  {`)
   lines.push(`    id: ${q(t.id)},`)
-  lines.push(`    displayName: ${name ? q(name) : 'null'},`)
+  lines.push(`    displayName: ${q(d.name)},`)
   lines.push(`    sectors: [${t.sectors.map(s => q(`sector-${s.n}`)).join(', ')}],`)
   lines.push(`    centroid: { x: ${round(t.marker[0])}, y: ${round(t.marker[1])} },`)
-  lines.push(`    terrain: null,`)
-  lines.push(`    stronghold: null,`)
+  lines.push(`    terrain: ${d.terrain ? q(d.terrain) : 'null'},`)
+  lines.push(`    stronghold: ${d.stronghold ? 'true' : 'false'},`)
+  lines.push(`    spiceBlow: ${d.spiceBlow ?? 'null'},`)
+  lines.push(`    spiceIncome: ${d.spiceIncome ?? 'null'},`)
+  lines.push(`    ornithopters: ${d.ornithopters ? 'true' : 'false'},`)
   lines.push(`  },`)
 }
 lines.push(`]`)
