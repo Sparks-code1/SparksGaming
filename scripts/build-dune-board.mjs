@@ -1123,12 +1123,33 @@ function windSymbol(x0, y, ink = DECOR.ink) {
     .join('')
 }
 
+/** Traced from public/8iYuG01.svg. Its own 500-unit, y-flipped space is
+ *  undone in the transform where it is used. */
+const HAND_PATHS = [
+  "M215 410 c-44 -69 -45 -71 -45 -157 0 -81 -2 -89 -27 -115 l-27 -28\n49 -45 c28 -24 53 -44 57 -45 3 0 30 29 58 65 48 60 53 72 63 141 8 56 7 78\n-2 87 -16 16 -42 -2 -54 -37 -7 -22 -6 -32 8 -44 16 -16 17 -16 11 5 -4 12 -3\n24 3 27 5 4 8 -12 6 -37 -4 -67 -16 -97 -38 -97 -7 0 -3 7 7 15 11 8 15 15 8\n15 -7 0 -9 7 -5 17 5 14 2 12 -17 -4 -12 -12 -28 -20 -33 -16 -6 4 -7 1 -2 -6\n5 -9 10 -10 18 -2 18 18 31 12 15 -6 -9 -10 -13 -24 -10 -32 3 -10 0 -11 -9\n-5 -11 6 -10 3 1 -11 10 -13 11 -16 2 -11 -9 5 -15 1 -19 -12 -5 -20 -7 -19\n-40 11 -19 17 -30 33 -24 35 6 2 8 8 5 14 -4 6 0 14 7 19 10 6 14 30 14 76 1\n38 4 73 8 80 4 6 8 23 9 37 1 14 6 26 11 26 4 0 6 3 4 8 -3 4 6 21 20 37 16\n20 21 23 14 8 -6 -12 -16 -25 -21 -28 -6 -4 -8 -11 -5 -16 4 -5 3 -14 -1 -21\n-11 -17 -4 -100 9 -116 11 -14 47 -36 47 -29 0 2 -9 14 -20 27 -27 32 -26 85\n6 155 47 107 5 118 -61 15z",
+  "M256 193 c-6 -14 -5 -15 5 -6 7 7 10 15 7 18 -3 3 -9 -2 -12 -12z",
+  "M200 96 c0 -2 7 -7 16 -10 8 -3 12 -2 9 4 -6 10 -25 14 -25 6z",
+]
+const HAND_SIZE = 19        // spans the lower half of the ring without escaping it
+
 /** An open hand seen edge-on, palm up — CHOAM charity, something given. */
 function openHandSymbol(x, y, ink = DECOR.ink, rot = 0) {
-  // Built from overlapping solids rather than one outline: fingers, palm and
-  // thumb are separate shapes in the same colour, so they merge into a single
-  // silhouette. Far easier to get right than a single path, and each piece can
-  // be moved without re-deriving the curves either side of it.
+  // Real path data, from the supplied icon (public/8iYuG01.svg). Five hand-drawn
+  // attempts read as a blob at this size; a traced outline does not.
+  //
+  // The source wraps its paths in translate(0,50) scale(0.1,-0.1) — a 500-unit
+  // space, y flipped. That is folded into the transform below rather than
+  // reproduced with a <g>, which would sever the layer strip. Transforms apply
+  // right to left: unflip and rescale to 0..50, centre it, size it, turn it,
+  // then place it.
+  const t = (rotDeg, scale) => `translate(${round(x)} ${round(y)}) rotate(${rotDeg}) `
+    + `scale(${round(scale / 50, 4)}) translate(-25 25) scale(0.1 -0.1)`
+  const tf = t(rot, HAND_SIZE)
+  return HAND_PATHS.map(d => `<path d="${d}" fill="${ink}" transform="${tf}"/>`).join('')
+}
+
+/** @deprecated kept only so the old shape can be compared against the icon. */
+function blockHandSymbol(x, y, ink = DECOR.ink, rot = 0) {
   const s = 0.85                                    // fits the phase ring
   // Rotated per element rather than by wrapping the lot in a <g>: the strip
   // that keeps this build re-readable matches to the FIRST </g>, so a nested
@@ -1180,7 +1201,7 @@ const PHASE_SYMBOLS = {
   1: (x, y) => windSymbol(x, y, phaseInk),                            // storm
   2: (x, y) => spiceSpiral(x, y, 1.5, 1.7, phaseInk),                 // spice
   3: (x, y) => spiceSpiral(x, y - 7, 0.95, 1.5, phaseInk)             // CHOAM charity:
-             + openHandSymbol(x, y + 7, phaseInk, 90),                    // spice over an open hand
+             + openHandSymbol(x, y + 6, phaseInk, 90),                    // spice over an open hand
   4: (x, y) => gavelSymbol(x, y, phaseInk),                           // bidding
   5: (x, y) => figureSymbol(x, y, phaseInk),                          // revival
 }
