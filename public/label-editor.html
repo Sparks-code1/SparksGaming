@@ -89,7 +89,50 @@ const edits = new Map()          // territoryId -> {rotate, scale, dx, dy}
 let picked = null
 
 const groups = new Map()         // territoryId -> [text elements]
+const spice = new Map()          // spiceId -> [disc, spiral, value]
+const spiceEdits = new Map()     // spiceId -> {dx, dy}
+let pickedSpice = null
 const round = (n, d = 2) => Number(n.toFixed(d))
+
+/**
+ * Spice badges move as a unit and carry only an offset — never a new position.
+ * The marker coordinates exported in DUNE_SPICE_MARKERS are what the storm and
+ * spice collection resolve against, so a badge nudged clear of a border must
+ * not take the spice with it. Hence a transform rather than rewritten cx/x.
+ */
+function applySpice(id) {
+  const e = spiceEdits.get(id)
+  for (const el of spice.get(id)) {
+    if (e && (e.dx || e.dy)) el.setAttribute('transform', `translate(${round(e.dx)} ${round(e.dy)})`)
+    else el.removeAttribute('transform')
+  }
+}
+
+let spiceDrag = null
+function startSpiceDrag(ev) {
+  pickedSpice = ev.currentTarget.dataset.spice
+  if (picked) { groups.get(picked)?.forEach(el => el.classList.remove('picked')); picked = null }
+  spice.get(pickedSpice).forEach(el => el.classList.add('picked'))
+  for (const [id, els] of spice) if (id !== pickedSpice) els.forEach(el => el.classList.remove('picked'))
+  const value = spice.get(pickedSpice).find(el => el.tagName === 'text')?.textContent ?? ''
+  $('#sel').textContent = `spice ${value}  (${pickedSpice})`
+  $('#breaks').innerHTML = '<span class="hint">spice badge — drag or use arrow keys</span>'
+  const svg = document.querySelector('#stage svg')
+  const box = svg.getBoundingClientRect()
+  const cur = spiceEdits.get(pickedSpice) ?? { dx: 0, dy: 0 }
+  spiceDrag = { x: ev.clientX, y: ev.clientY, dx: cur.dx, dy: cur.dy,
+                sx: svg.viewBox.baseVal.width / box.width }
+  set('dx', cur.dx); set('dy', cur.dy); set('rot', 0); set('scl', 1)
+  ev.currentTarget.setPointerCapture(ev.pointerId)
+  ev.preventDefault()
+}
+
+function moveSpice(dx, dy) {
+  if (!pickedSpice) return
+  spiceEdits.set(pickedSpice, { dx: round(dx), dy: round(dy) })
+  set('dx', round(dx)); set('dy', round(dy))
+  applySpice(pickedSpice); emit()
+}
 
 fetch('dune-board.svg')
   .then(r => r.ok ? r.text() : Promise.reject(r.status))
@@ -102,6 +145,17 @@ fetch('dune-board.svg')
       el.addEventListener('pointerdown', startDrag)
     }
     for (const [id, els] of groups) names.set(id, els.map(e => e.textContent).join(' '))
+    for (const el of document.querySelectorAll('[data-spice]')) {
+      const id = el.dataset.spice
+      if (!spice.has(id)) spice.set(id, [])
+      spice.get(id).push(el)
+      el.style.cursor = 'pointer'
+      el.addEventListener('pointerdown', startSpiceDrag)
+    }
+    for (const [id, els] of spice) {
+      const m = (els[0].getAttribute('transform') || '').match(/translate\(([-\d.]+) ([-\d.]+)\)/)
+      if (m) spiceEdits.set(id, { dx: +m[1], dy: +m[2] })
+    }
     // Seed from whatever the build already has, so the tool opens showing the
     // current state rather than zeros that would silently undo saved work.
     for (const [id, els] of groups) {
@@ -194,6 +248,7 @@ function setBreak(val) {
 }
 
 function pick(id) {
+  if (pickedSpice) { spice.get(pickedSpice)?.forEach(el => el.classList.remove("picked")); pickedSpice = null }
   if (picked) groups.get(picked)?.forEach(el => el.classList.remove('picked'))
   picked = id
   groups.get(id).forEach(el => el.classList.add('picked'))
@@ -207,6 +262,12 @@ function pick(id) {
 function set(k, v) { $('#' + k).value = v; $('#' + k + 'N').value = v }
 
 function change(k, v) {
+  if (pickedSpice && !picked) {
+    if (k !== "dx" && k !== "dy") return
+    const c = spiceEdits.get(pickedSpice) ?? { dx: 0, dy: 0 }
+    moveSpice(k === "dx" ? +v : c.dx, k === "dy" ? +v : c.dy)
+    return
+  }
   if (!picked) return
   const e = { ...editOf(picked), [{ rot: 'rotate', scl: 'scale', dx: 'dx', dy: 'dy' }[k]]: +v }
   edits.set(picked, e)
@@ -230,13 +291,24 @@ function startDrag(ev) {
   ev.preventDefault()
 }
 addEventListener('pointermove', ev => {
+  if (spiceDrag && pickedSpice) {
+    moveSpice(spiceDrag.dx + (ev.clientX - spiceDrag.x) * spiceDrag.sx,
+              spiceDrag.dy + (ev.clientY - spiceDrag.y) * spiceDrag.sx)
+    return
+  }
   if (!drag || !picked) return
   change('dx', round(drag.dx + (ev.clientX - drag.x) * drag.sx))
   change('dy', round(drag.dy + (ev.clientY - drag.y) * drag.sx))
 })
-addEventListener('pointerup', () => { drag = null })
+addEventListener('pointerup', () => { drag = null; spiceDrag = null })
 
 addEventListener('keydown', ev => {
+  if (pickedSpice && !picked && /Arrow/.test(ev.key)) {
+    const s = ev.shiftKey ? 5 : 1, c = spiceEdits.get(pickedSpice) ?? { dx: 0, dy: 0 }
+    const d = { ArrowLeft: [-s, 0], ArrowRight: [s, 0], ArrowUp: [0, -s], ArrowDown: [0, s] }[ev.key]
+    if (d) { moveSpice(c.dx + d[0], c.dy + d[1]); ev.preventDefault() }
+    return
+  }
   if (!picked || /input|textarea/i.test(ev.target.tagName)) return
   const step = ev.shiftKey ? 5 : 1
   const e = editOf(picked)
@@ -258,6 +330,7 @@ $('#reset').onclick = () => {
 }
 $('#clear').onclick = () => {
   for (const id of [...edits.keys()]) { edits.delete(id); apply(id) }
+  for (const id of [...spiceEdits.keys()]) { spiceEdits.delete(id); applySpice(id) }
   if (picked) pick(picked)
   emit()
 }
@@ -273,10 +346,18 @@ function emit() {
     if (e.dy) parts.push(`dy: ${round(e.dy)}`)
     if (parts.length) rows.push(`  '${id}': { ${parts.join(', ')} },`)
   }
-  $('#out').value = rows.length
-    ? `const LABEL_OVERRIDES = {\n${rows.join('\n')}\n}`
-    : 'const LABEL_OVERRIDES = {\n}'
-  $('#count').textContent = `${rows.length} override${rows.length === 1 ? '' : 's'}`
+  const spiceRows = []
+  for (const [id, e] of [...spiceEdits].sort()) {
+    const parts = []
+    if (e.dx) parts.push(`dx: ${round(e.dx)}`)
+    if (e.dy) parts.push(`dy: ${round(e.dy)}`)
+    if (parts.length) spiceRows.push(`  '${id}': { ${parts.join(', ')} },`)
+  }
+  $('#out').value =
+    `const SPICE_OVERRIDES = {\n${spiceRows.join('\n')}${spiceRows.length ? '\n' : ''}}\n\n`
+    + `const LABEL_OVERRIDES = {\n${rows.join('\n')}${rows.length ? '\n' : ''}}`
+  const n = rows.length + spiceRows.length
+  $('#count').textContent = `${rows.length} label, ${spiceRows.length} spice`
 }
 
 $('#copy').onclick = async () => {

@@ -79,6 +79,19 @@ const LABEL_SCALE = 1
  * repulsion, then this. Ids are checked at build time, so a typo fails the
  * build rather than silently doing nothing.
  */
+/**
+ * Nudges for the spice badges, keyed by marker id (spice-1 … spice-15).
+ * Only dx and dy; both optional.
+ *
+ * These move the DRAWING only. The coordinates exported in DUNE_SPICE_MARKERS
+ * stay exactly where the board's own markers are, because spice collection and
+ * the storm resolve against those positions — a badge shifted to sit clear of a
+ * border must not quietly relocate the spice it represents. Same rule the label
+ * overrides follow for centroids.
+ */
+const SPICE_OVERRIDES = {
+}
+
 const LABEL_OVERRIDES = {
   'territory-01': { rotate: -78, dx: 5, dy: -30.62 },
   'territory-02': { breakAfter: 1, scale: 1.1, dx: -24, dy: 3 },
@@ -858,6 +871,8 @@ for (let pass = 0; pass < 6; pass++) {
 // Hand overrides go on last, after placement and repulsion, so they always win.
 // Nothing here touches t.marker — the exported centroid stays where the
 // geometry put it, because troop placement should not follow a label tweak.
+const unknownSpice = Object.keys(SPICE_OVERRIDES).filter(id => !spiceMarkers.some(m => m.id === id))
+if (unknownSpice.length) throw new Error(`SPICE_OVERRIDES names markers that do not exist: ${unknownSpice.join(", ")}`)
 const unknownOverrides = Object.keys(LABEL_OVERRIDES).filter(id => !territories.some(t => t.id === id))
 if (unknownOverrides.length) {
   throw new Error(`LABEL_OVERRIDES names territories that do not exist: ${unknownOverrides.join(', ')}`)
@@ -916,11 +931,15 @@ for (const m of spiceMarkers) {
   const v = blowOf.get(m.territoryId)
   if (v == null) continue
   // An Archimedean spiral, the board's mark for spice, sitting left of the value.
+  // Any nudge is carried as a transform, leaving the base coordinates visible in
+  // the file — so it stays obvious that the marker's own position is unmoved.
+  const o = SPICE_OVERRIDES[m.id] ?? {}
+  const shift = (o.dx || o.dy) ? ` transform="translate(${round(o.dx ?? 0)} ${round(o.dy ?? 0)})"` : ''
   // The symbol sits in its own disc, which also gives the spiral a clean ground
   // where a territory border happens to run underneath it.
   const sx = m.x - 11
   labels.push(`<circle cx="${round(sx)}" cy="${round(m.y)}" r="9.5" fill="${DECOR.badge.fill}" `
-    + `stroke="${DECOR.ink}" stroke-width="1.4"/>`)
+    + `stroke="${DECOR.ink}" stroke-width="1.4" data-spice="${m.id}"${shift}/>`)
   // Kept open — few turns, fast growth — because a tight spiral closes up into
   // something that reads as a digit, and "spiral 8" then looks like "68".
   const arm = []
@@ -929,9 +948,9 @@ for (const m of spiceMarkers) {
     arm.push(`${round(sx + rr * Math.cos(th))},${round(m.y + rr * Math.sin(th))}`)
   }
   labels.push(`<polyline points="${arm.join(' ')}" fill="none" stroke="${DECOR.ink}" `
-    + `stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>`)
+    + `stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" data-spice="${m.id}"${shift}/>`)
   labels.push(`<text x="${round(m.x + 12)}" y="${round(m.y)}" font-size="13" fill="${DECOR.ink}" `
-    + `text-anchor="middle" dominant-baseline="central" data-spice="${m.id}" `
+    + `text-anchor="middle" dominant-baseline="central" data-spice="${m.id}"${shift} `
     + `font-family="Georgia, 'Times New Roman', serif" font-weight="bold">${v}</text>`)
 }
 
