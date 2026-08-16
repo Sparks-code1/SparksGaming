@@ -1200,7 +1200,7 @@ const phaseInk = DECOR.board
 const PHASE_SYMBOLS = {
   1: (x, y) => windSymbol(x, y, phaseInk),                            // storm
   2: (x, y) => spiceSpiral(x, y, 1.5, 1.7, phaseInk),                 // spice
-  3: (x, y) => openHandSymbol(x, y, phaseInk, 0),                   // CHOAM charity
+  3: (x, y) => openHandSymbol(x, y, phaseInk, -90),                   // CHOAM charity
   4: (x, y) => gavelSymbol(x, y, phaseInk),                           // bidding
   5: (x, y) => figureSymbol(x, y, phaseInk),                          // revival
 }
