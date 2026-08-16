@@ -64,11 +64,14 @@ const LABEL_SCALE = 1
  * Keyed by territory id. Every field is optional and falls back to the computed
  * value, so an entry states only what it changes:
  *
- *   rotate  degrees clockwise, pivoting on the label's own anchor
- *   scale   multiplier on the fitted font size, on top of LABEL_SCALE
- *   dx, dy  offset in board units, applied after the repulsion pass
+ *   rotate      degrees clockwise, pivoting on the label's own anchor
+ *   scale       multiplier on the fitted font size, on top of LABEL_SCALE
+ *   dx, dy      offset in board units, applied after the repulsion pass
+ *   breakAfter  force a line break after this many words (1-based). The
+ *               automatic fit picks whichever wrapping allows the larger font,
+ *               which on a wide shape means one long line; this overrules it.
  *
- *   'territory-37': { rotate: -18, dy: 6 },
+ *   'territory-37': { breakAfter: 1, rotate: -18, dy: 6 },
  *
  * These are applied last and always win: automatic placement runs first, then
  * repulsion, then this. Ids are checked at build time, so a typo fails the
@@ -701,17 +704,24 @@ function widthAt(poly, y) {
   return xs.length < 2 ? 0 : Math.max(...xs) - Math.min(...xs)
 }
 
-/** Pick the wrapping and size that fit the space the shape actually offers. */
+/** Pick the wrapping and size that fit the space the shape actually offers.
+ *  A breakAfter override fixes the wrapping, and only the size is fitted. */
 const CHAR_W = 0.58          // caps serif, as a fraction of font size
-function fitLabel(t, name) {
+function fitLabel(t, name, breakAfter) {
   const avail = Math.max(widthAt(t.poly, t.marker[1]), 24) * 0.92
-  let best = null
-  for (const lines of [[name], wrap(name)]) {
-    const longest = Math.max(...lines.map(l => l.length))
-    const size = Math.min(DECOR.label, avail / (CHAR_W * longest))
-    if (!best || size > best.size) best = { lines, size }
+  const sizeFor = lines => Math.min(DECOR.label, avail / (CHAR_W * Math.max(...lines.map(l => l.length))))
+  const fit = lines => ({ lines, size: Math.max(5.5, round(sizeFor(lines), 1)) })
+
+  if (breakAfter) {
+    const words = name.split(' ')
+    if (breakAfter >= words.length) {
+      throw new Error(`breakAfter ${breakAfter} on "${name}" leaves nothing on the second line `
+        + `— it has ${words.length} word${words.length === 1 ? '' : 's'}`)
+    }
+    return fit([words.slice(0, breakAfter).join(' '), words.slice(breakAfter).join(' ')])
   }
-  return { lines: best.lines, size: Math.max(5.5, round(best.size, 1)) }
+  const one = fit([name]), two = fit(wrap(name))
+  return two.size > one.size ? two : one
 }
 
 const terrain = []
@@ -749,7 +759,7 @@ for (const t of territories) {
 // the data module stay purely geometric, because troop placement should not
 // drift to make room for a caption.
 const placed = territories.map(t => {
-  const { lines, size } = fitLabel(t, dataFor(t).name)
+  const { lines, size } = fitLabel(t, dataFor(t).name, LABEL_OVERRIDES[t.id]?.breakAfter)
   return {
     t, lines, size,
     at: t.marker.slice(),

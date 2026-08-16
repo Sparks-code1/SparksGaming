@@ -68,6 +68,12 @@
     </div>
   </fieldset>
 
+  <fieldset><legend>Line break</legend>
+    <p class="hint" style="margin:0 0 6px">Click a gap to break there, or press
+      <b>Enter</b> to cycle. Auto picks whichever wrapping fits the largest font.</p>
+    <div class="row" id="breaks"></div>
+  </fieldset>
+
   <fieldset><legend>Paste into LABEL_OVERRIDES</legend>
     <textarea id="out" readonly spellcheck="false"></textarea>
     <div class="row" style="margin-top:6px">
@@ -95,10 +101,7 @@ fetch('dune-board.svg')
       groups.get(id).push(el)
       el.addEventListener('pointerdown', startDrag)
     }
-    // Capture line offsets before anything can move. Doing this lazily on the
-    // first interaction left "Clear all" collapsing every wrapped name onto one
-    // line, because labels never selected had no offsets recorded yet.
-    captureLines()
+    for (const [id, els] of groups) names.set(id, els.map(e => e.textContent).join(' '))
     // Seed from whatever the build already has, so the tool opens showing the
     // current state rather than zeros that would silently undo saved work.
     for (const [id, els] of groups) {
@@ -108,7 +111,8 @@ fetch('dune-board.svg')
       const scale = round(parseFloat(e.getAttribute('font-size')) / +e.dataset.bs, 3)
       const dx = round(+e.getAttribute('x') - +e.dataset.bx)
       const dy = round(+e.getAttribute('y') - +e.dataset.by)
-      if (rotate || scale !== 1 || dx || dy) edits.set(id, { rotate, scale, dx, dy })
+      const breakAfter = els.length > 1 ? els[0].textContent.trim().split(/\s+/).length : 0
+      if (rotate || scale !== 1 || dx || dy || breakAfter) edits.set(id, { rotate, scale, dx, dy, breakAfter })
     }
     emit()
   })
@@ -118,34 +122,75 @@ fetch('dune-board.svg')
       + 'server — <code>file://</code> blocks the fetch.</p>'
   })
 
-const editOf = id => edits.get(id) ?? { rotate: 0, scale: 1, dx: 0, dy: 0 }
+const editOf = id => edits.get(id) ?? { rotate: 0, scale: 1, dx: 0, dy: 0, breakAfter: 0 }
+const names = new Map()          // territoryId -> full name, as one string
+
+/** Line offsets exactly as the generator computes them: a multiple of the font
+ *  size, not a fixed pixel distance. Deriving them rather than reading them off
+ *  the DOM is what lets the line COUNT change while the block stays centred. */
+const lineFactor = (i, n) => -(n - 1) * 0.58 + i * 1.15
+
+/** Split a name the way the generator does for a given break. */
+function linesFor(id, breakAfter) {
+  const words = names.get(id).split(' ')
+  if (!breakAfter || breakAfter >= words.length) return [names.get(id)]
+  return [words.slice(0, breakAfter).join(' '), words.slice(breakAfter).join(' ')]
+}
 
 function apply(id) {
   const e = editOf(id)
-  for (const el of groups.get(id)) {
-    const bx = +el.dataset.bx, by = +el.dataset.by, bs = +el.dataset.bs
-    // Each line keeps its own vertical offset from the anchor; only the whole
-    // block's size and position change, and every line shares one pivot.
-    const lineDy = (+el.dataset.line || 0)
-    const size = round(bs * e.scale)
+  const lines = linesFor(id, e.breakAfter)
+  let els = groups.get(id)
+  const proto = els[0]
+  // Match the element count to the line count — cloning the first line keeps
+  // every styling attribute the generator wrote.
+  while (els.length < lines.length) {
+    const clone = proto.cloneNode(true)
+    clone.addEventListener('pointerdown', startDrag)
+    proto.parentNode.insertBefore(clone, proto.nextSibling)
+    els.push(clone)
+  }
+  while (els.length > lines.length) els.pop().remove()
+
+  const bx = +proto.dataset.bx, by = +proto.dataset.by, bs = +proto.dataset.bs
+  const size = round(bs * e.scale)
+  const x = round(bx + e.dx), y = round(by + e.dy)
+  els.forEach((el, i) => {
+    el.textContent = lines[i].toUpperCase()
     el.setAttribute('font-size', size)
     el.setAttribute('stroke-width', round(size * 0.28))
-    el.setAttribute('x', round(bx + e.dx))
-    el.setAttribute('y', round(by + e.dy + lineDy))
-    if (e.rotate) el.setAttribute('transform', `rotate(${e.rotate} ${round(bx + e.dx)} ${round(by + e.dy)})`)
+    el.setAttribute('x', x)
+    el.setAttribute('y', round(y + lineFactor(i, lines.length) * size))
+    // One pivot for the whole block, matching what the generator emits.
+    if (e.rotate) el.setAttribute('transform', `rotate(${e.rotate} ${x} ${y})`)
     else el.removeAttribute('transform')
-  }
+  })
 }
 
-// Each label's lines sit at fixed offsets from the anchor. Capture them once,
-// before anything moves, or multi-line names collapse onto each other.
-function captureLines() {
-  for (const [, els] of groups) {
-    const anchorY = +els[0].dataset.by
-    for (const el of els) if (el.dataset.line === undefined) {
-      el.dataset.line = round(+el.getAttribute('y') - anchorY)
-    }
+/** The break controls: one button per gap between words, plus Auto. */
+function renderBreaks() {
+  const box = $('#breaks')
+  box.innerHTML = ''
+  if (!picked) return
+  const words = names.get(picked).split(' ')
+  const cur = editOf(picked).breakAfter
+  const add = (text, val) => {
+    const b = document.createElement('button')
+    b.textContent = text
+    if (val === cur) b.classList.add('primary')
+    b.onclick = () => setBreak(val)
+    box.appendChild(b)
   }
+  add('Auto', 0)
+  for (let i = 1; i < words.length; i++) add(`${words[i - 1]} ⏎ ${words[i]}`, i)
+  if (words.length === 1) box.insertAdjacentHTML('beforeend',
+    '<span class="hint">single word — nothing to break</span>')
+}
+
+function setBreak(val) {
+  if (!picked) return
+  edits.set(picked, { ...editOf(picked), breakAfter: val })
+  apply(picked); renderBreaks(); emit()
 }
 
 function pick(id) {
@@ -156,6 +201,7 @@ function pick(id) {
   $('#sel').textContent = `${name}  (${id})`
   const e = editOf(id)
   set('rot', e.rotate); set('scl', e.scale); set('dx', e.dx); set('dy', e.dy)
+  renderBreaks()
 }
 
 function set(k, v) { $('#' + k).value = v; $('#' + k + 'N').value = v }
@@ -174,7 +220,6 @@ for (const k of ['rot', 'scl', 'dx', 'dy']) {
 
 let drag = null
 function startDrag(ev) {
-  captureLines()
   pick(ev.currentTarget.dataset.territory)
   const svg = document.querySelector('#stage svg')
   const box = svg.getBoundingClientRect()
@@ -195,10 +240,14 @@ addEventListener('keydown', ev => {
   if (!picked || /input|textarea/i.test(ev.target.tagName)) return
   const step = ev.shiftKey ? 5 : 1
   const e = editOf(picked)
+  if (ev.key === 'Enter') {
+    const n = names.get(picked).split(' ').length
+    if (n > 1) setBreak((editOf(picked).breakAfter + 1) % n)
+    ev.preventDefault(); return
+  }
   const k = { ArrowLeft: ['dx', -step], ArrowRight: ['dx', step],
               ArrowUp: ['dy', -step], ArrowDown: ['dy', step] }[ev.key]
   if (!k) return
-  captureLines()
   change(k[0], e[k[0]] + k[1])
   ev.preventDefault()
 })
@@ -217,6 +266,7 @@ function emit() {
   const rows = []
   for (const [id, e] of [...edits].sort()) {
     const parts = []
+    if (e.breakAfter) parts.push(`breakAfter: ${e.breakAfter}`)
     if (e.rotate) parts.push(`rotate: ${round(e.rotate)}`)
     if (e.scale !== 1) parts.push(`scale: ${round(e.scale, 3)}`)
     if (e.dx) parts.push(`dx: ${round(e.dx)}`)
