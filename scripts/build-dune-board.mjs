@@ -1029,15 +1029,23 @@ for (const s of ordered) {
   const mid = (midB - 90) * Math.PI / 180
   const rr = (ringInner + ringOuter) / 2
 
+  const at = (b, r) => {
+    const a = (b - 90) * Math.PI / 180
+    return [CX + r * Math.cos(a), CY + r * Math.sin(a)]
+  }
+  /** A chevron on the band pointing the way the storm travels. Numbering runs
+   *  counter-clockwise, so that is toward DECREASING bearing — derived from the
+   *  convention rather than drawn by hand, so it turns if the convention does. */
+  const chevron = (b, size = 4.2) => {
+    const [px, py] = at(b - 1.1, rr)
+    const [ax, ay] = at(b + 0.5, rr - size)
+    const [bx2, by2] = at(b + 0.5, rr + size)
+    labels.push(`<path d="M${round(ax)} ${round(ay)} L${round(px)} ${round(py)} L${round(bx2)} ${round(by2)}" `
+      + `fill="none" stroke="${ringInk}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`)
+  }
+
   if (s.number === 1) {
-    // Sector 1 is where the storm begins, so it is named rather than numbered,
-    // with arrows showing which way it travels. Numbering runs counter-clockwise,
-    // so the storm advances toward DECREASING bearing — the arrows are derived
-    // from that rather than pointed by hand, and would flip with the convention.
-    const at = (b, r) => {
-      const a = (b - 90) * Math.PI / 180
-      return [CX + r * Math.cos(a), CY + r * Math.sin(a)]
-    }
+    // Sector 1 is where the storm begins, so it is named rather than marked.
     // Upright along the arc: the tangent is the bearing itself, flipped on the
     // lower half of the board so the words never read upside down.
     const spin = midB + (midB > 90 && midB < 270 ? 180 : 0)
@@ -1046,19 +1054,13 @@ for (const s of ordered) {
       + `text-anchor="middle" dominant-baseline="central" letter-spacing="0.4" `
       + `transform="rotate(${round(spin, 1)} ${round(tx)} ${round(ty)})" `
       + `font-family="Georgia, 'Times New Roman', serif">STORM START</text>`)
-    for (const off of [-2.6, -4.6, -6.6]) {
-      const [px, py] = at(midB + off - 1.1, rr)
-      const [ax, ay] = at(midB + off + 0.5, rr - 4.2)
-      const [bx2, by2] = at(midB + off + 0.5, rr + 4.2)
-      labels.push(`<path d="M${round(ax)} ${round(ay)} L${round(px)} ${round(py)} L${round(bx2)} ${round(by2)}" `
-        + `fill="none" stroke="${ringInk}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`)
-    }
+    for (const off of [-2.6, -4.6, -6.6]) chevron(midB + off)
     continue
   }
 
-  labels.push(`<text x="${round(CX + rr * Math.cos(mid))}" y="${round(CY + rr * Math.sin(mid))}" `
-    + `font-size="10" fill="${ringInk}" text-anchor="middle" dominant-baseline="central" `
-    + `font-family="Georgia, 'Times New Roman', serif">${s.number}</text>`)
+  // Every other sector carries one small chevron at its leading edge — the end
+  // the storm reaches first, which is the low-bearing boundary.
+  chevron(norm(s.from) + 3.2, 3.4)
 }
 
 // ── Player seats ──────────────────────────────────────────────────────────────
