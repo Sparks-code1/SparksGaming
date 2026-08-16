@@ -1024,17 +1024,19 @@ for (const o of offBoard) {
   const name = tanks ? 'Tleilaxu Tanks' : 'Spice Bank'
   // Filled, so the dark ink reads — these sit on the navy surround, not the map.
   terrain.push(`<path d="${o.el.attrs.d}" fill="${DECOR.boxFill}"/>`)
-  // Name and mark share a row along the bottom of the box, the mark to the right
-  // of the text. Measured off the shape rather than placed by hand, so it stays
-  // put if the artwork ever moves.
+  // Each group sits in its own outer bottom corner: the tanks bottom-left with
+  // the mark leading, the bank bottom-right with the mark trailing, so both read
+  // outward from the board. Anchored to the shape's own edges rather than
+  // measured from a guessed text width — text-anchor does the aligning, which
+  // survives a rename that a hand-estimated width would not.
   const [x0, , x1, y1] = bbox(o.poly)
-  const cx = (x0 + x1) / 2, cy = y1 - 26
-  const textW = name.length * 13 * 0.62
-  labels.push(`<text x="${round(cx - 14)}" y="${round(cy)}" font-size="13" fill="${DECOR.ink}" `
-    + `text-anchor="middle" dominant-baseline="central" letter-spacing="1.2" `
+  const pad = 26, cy = y1 - 26
+  const symX = tanks ? x0 + pad + 11 : x1 - pad - 11
+  const textX = tanks ? symX + 22 : symX - 22
+  labels.push(`<text x="${round(textX)}" y="${round(cy)}" font-size="13" fill="${DECOR.ink}" `
+    + `text-anchor="${tanks ? 'start' : 'end'}" dominant-baseline="central" letter-spacing="1.2" `
     + `font-family="Georgia, 'Times New Roman', serif">${esc(name.toUpperCase())}</text>`)
-  labels.push(tanks ? tanksSymbol(cx - 14 + textW / 2 + 20, cy)
-                    : spiceSymbol(cx - 14 + textW / 2 + 20, cy))
+  labels.push(tanks ? tanksSymbol(symX, cy) : spiceSymbol(symX, cy))
 }
 
 // ── Stronghold icons ──────────────────────────────────────────────────────────
