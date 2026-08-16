@@ -1124,14 +1124,26 @@ function windSymbol(x0, y, ink = DECOR.ink) {
 }
 
 /** An open hand seen edge-on, palm up — CHOAM charity, something given. */
-function openHandSymbol(x, y, ink = DECOR.ink) {
-  // Deliberately reduced to a cupped palm and a thumb. An anatomical hand turns
-  // to mush at twenty-odd pixels; a shallow bowl with a thumb still reads as a
-  // hand held open, which is the whole point of the mark.
-  return `<path d="M${round(x - 10)} ${round(y - 3)} c0 6 4 9 10 9 c6 0 9 -3 9 -8" `
-    + `fill="none" stroke="${ink}" stroke-width="2.6" stroke-linecap="round"/>`
-    + `<path d="M${round(x - 10.5)} ${round(y - 3)} c-2.5 -2 -6 -0.5 -5.5 2.5" `
-    + `fill="none" stroke="${ink}" stroke-width="2.2" stroke-linecap="round"/>`
+function openHandSymbol(x, y, ink = DECOR.ink, rot = 0) {
+  // Built from overlapping solids rather than one outline: fingers, palm and
+  // thumb are separate shapes in the same colour, so they merge into a single
+  // silhouette. Far easier to get right than a single path, and each piece can
+  // be moved without re-deriving the curves either side of it.
+  const s = 0.85                                    // fits the phase ring
+  // Rotated per element rather than by wrapping the lot in a <g>: the strip
+  // that keeps this build re-readable matches to the FIRST </g>, so a nested
+  // group would sever the layer. Transforms compose left to right, which is
+  // what lets the thumb keep its own tilt underneath this one.
+  const spin = rot ? ` transform="rotate(${rot} ${round(x)} ${round(y)})"` : ''
+  const px = (v) => round(x + v * s)
+  const py = (v) => round(y + v * s)
+  return `<rect x="${px(-1.5)}" y="${py(-13)}" width="${round(5 * s)}" height="${round(15 * s)}" `
+    + `rx="${round(2.5 * s)}" fill="${ink}"${spin}/>`                                       // fingers
+    + `<ellipse cx="${px(1)}" cy="${py(2)}" rx="${round(4.6 * s)}" ry="${round(5.4 * s)}" fill="${ink}"${spin}/>`  // palm
+    + `<ellipse cx="${px(-5.4)}" cy="${py(-2)}" rx="${round(2.2 * s)}" ry="${round(4.6 * s)}" `
+    + `fill="${ink}" transform="rotate(${rot} ${round(x)} ${round(y)}) rotate(-24 ${px(-5)} ${py(-1)})"/>`                // thumb
+    + `<rect x="${px(-2)}" y="${py(5.2)}" width="${round(5.6 * s)}" height="${round(4.4 * s)}" `
+    + `rx="${round(1.6 * s)}" fill="${ink}"${spin}/>`                                     // wrist
 }
 
 // ── Phase track ───────────────────────────────────────────────────────────────
@@ -1168,7 +1180,7 @@ const PHASE_SYMBOLS = {
   1: (x, y) => windSymbol(x, y, phaseInk),                            // storm
   2: (x, y) => spiceSpiral(x, y, 1.5, 1.7, phaseInk),                 // spice
   3: (x, y) => spiceSpiral(x, y - 7, 0.95, 1.5, phaseInk)             // CHOAM charity:
-             + openHandSymbol(x, y + 8, phaseInk),                    // spice over an open hand
+             + openHandSymbol(x, y + 7, phaseInk, 90),                    // spice over an open hand
   4: (x, y) => gavelSymbol(x, y, phaseInk),                           // bidding
   5: (x, y) => figureSymbol(x, y, phaseInk),                          // revival
 }
