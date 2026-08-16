@@ -116,9 +116,21 @@ const CENTRE_NAME = 'Polar Sink'
 const CENTRE_MAX_R = 40      // must be this close to the true centre
 const CENTRE_MARGIN = 3      // and this many times closer than the runner-up
 
-/** Sector numbering: sector-1 is the wedge containing due north (bearing 0°),
- *  then clockwise. Stated as a convention because the export has no numbers. */
-const SECTOR_ONE_BEARING = 0
+/**
+ * Sector numbering.
+ *
+ * The board does not print sector numbers and the export carries none, so this
+ * is a chosen convention rather than a transcription: sector 1 is the wedge on
+ * the south-southwest, and numbering runs COUNTER-clockwise from there, which
+ * puts Arrakeen in 10 and Carthag in 11.
+ *
+ * Expressed as a bearing lying inside sector 1 rather than as a fixed index, so
+ * it survives the geometry being re-derived. Changing either constant renumbers
+ * every sector id, every territory's spiceSector, and all 104 cells in one
+ * rebuild — cheap now, expensive once rules read these ids.
+ */
+const SECTOR_ONE_BEARING = 199.5     // a bearing lying inside the board's sector 1
+const SECTOR_COUNTERCLOCKWISE = true
 
 // ─── SVG parsing ──────────────────────────────────────────────────────────────
 
@@ -278,26 +290,24 @@ const sectors = sectorPaths.map(e => {
   return { el: e, poly, from: Math.min(...adj), to: Math.max(...adj) }
 })
 
-// Number clockwise from the wedge that contains due north.
 const norm = a => ((a % 360) + 360) % 360
-const containsNorth = s => {
+const spans = (s, b) => {
   const f = norm(s.from), t = norm(s.to)
-  return f > t ? (SECTOR_ONE_BEARING >= f || SECTOR_ONE_BEARING <= t) : (SECTOR_ONE_BEARING >= f && SECTOR_ONE_BEARING <= t)
+  return f > t ? (b >= f || b <= t) : (b >= f && b <= t)
 }
-const startIdx = sectors.findIndex(containsNorth)
-if (startIdx < 0) throw new Error('no sector wedge contains due north — check SECTOR_ONE_BEARING')
+
+// Geometric order first: sorted by bearing, so list neighbours are board
+// neighbours. The boundary snapping below depends on that and must happen
+// before any renumbering rearranges the list.
 const byBearing = [...sectors].sort((a, b) => norm(a.from) - norm(b.from))
-const first = byBearing.findIndex(s => s === sectors[startIdx])
-const ordered = [...byBearing.slice(first), ...byBearing.slice(0, first)]
-ordered.forEach((s, i) => { s.id = `sector-${i + 1}`; s.number = i + 1 })
 
 // The dashed wedges are drawn with a stroke width, so consecutive spans leave
 // sub-degree gaps between them. Left alone, a bearing landing in a gap belongs
 // to no sector — fine for the precomputed lookup, wrong for any runtime "which
 // sector is the storm in?" query. Snap each boundary to the midpoint of the gap
 // so the 18 sectors partition the circle exactly.
-for (let i = 0; i < ordered.length; i++) {
-  const cur = ordered[i], next = ordered[(i + 1) % ordered.length]
+for (let i = 0; i < byBearing.length; i++) {
+  const cur = byBearing[i], next = byBearing[(i + 1) % byBearing.length]
   let gap = norm(next.from) - norm(cur.to)
   if (gap > 180) gap -= 360
   if (gap < -180) gap += 360
@@ -305,6 +315,19 @@ for (let i = 0; i < ordered.length; i++) {
   cur.to = mid
   next.from = mid
 }
+
+// Now the board's own numbering: rotate so sector 1 is the anchor wedge, and
+// reverse the rest if the board counts counter-clockwise. Reversing the TAIL
+// keeps the anchor at position 1 while flipping the direction of travel.
+const first = byBearing.findIndex(s => spans(s, norm(SECTOR_ONE_BEARING)))
+if (first < 0) {
+  throw new Error(`no wedge contains bearing ${SECTOR_ONE_BEARING}° — check SECTOR_ONE_BEARING`)
+}
+const clockwise = [...byBearing.slice(first), ...byBearing.slice(0, first)]
+const ordered = SECTOR_COUNTERCLOCKWISE
+  ? [clockwise[0], ...clockwise.slice(1).reverse()]
+  : clockwise
+ordered.forEach((s, i) => { s.id = `sector-${i + 1}`; s.number = i + 1 })
 
 /** Which sector a bearing falls in. */
 function sectorAt(b) {
