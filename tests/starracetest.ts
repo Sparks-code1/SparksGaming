@@ -145,5 +145,26 @@ console.log('\n--- simultaneous awards both survive ---')
   check('both awards are in the history', row.value.historyLog.length, 2)
 }
 
+
+// ─── A red star is a CAPTURED HQ, never your own ───────────────────────────
+// Ryan took one HQ in game 2 and the board declared four stars and an
+// instant win. The tally counted every HQ territory he occupied — his own
+// included — so a player began the game already holding a star, and every
+// count downstream (the HUD, the victory check, the coin-deck award, the
+// star powers) inherited it.
+{
+  const hqStar = (t: { occupyingPlayerId: string | null; activeHqPlayerId?: string }, pid: string) =>
+    t.occupyingPlayerId === pid && !!t.activeHqPlayerId && t.activeHqPlayerId !== pid
+
+  check('your own HQ is not a red star',
+    hqStar({ occupyingPlayerId: 'p1', activeHqPlayerId: 'p1' }, 'p1'), false)
+  check('an HQ you captured is',
+    hqStar({ occupyingPlayerId: 'p1', activeHqPlayerId: 'p2' }, 'p1'), true)
+  check('an HQ you no longer hold is not yours to count',
+    hqStar({ occupyingPlayerId: 'p2', activeHqPlayerId: 'p1' }, 'p1'), false)
+  check('plain ground is not a star',
+    hqStar({ occupyingPlayerId: 'p1' }, 'p1'), false)
+}
+
 console.log(pass ? '\nstarracetest: all passed' : '\nstarracetest: FAILURES PRESENT')
 if (!pass) process.exit(1)

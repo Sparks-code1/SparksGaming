@@ -2183,7 +2183,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   // Shown on the HUD. Does not include permanent campaign stars.
   function countStars(playerId: string, territories: Record<string, Territory>) {
     const hqStars = Object.values(territories).filter(
-      t => t.occupyingPlayerId === playerId && !!t.activeHqPlayerId,
+      t => t.occupyingPlayerId === playerId && !!t.activeHqPlayerId && t.activeHqPlayerId !== playerId,
     ).length
     const purchased = (legacyState.purchasedStars ?? {})[playerId] ?? 0
     return hqStars + purchased
@@ -2534,7 +2534,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     for (const p of gameState.players) {
       if (p.isEliminated) continue
       const hqStars = Object.values(gameState.territories).filter(
-        t => t.occupyingPlayerId === p.id && !!t.activeHqPlayerId,
+        t => t.occupyingPlayerId === p.id && !!t.activeHqPlayerId && t.activeHqPlayerId !== p.id,
       ).length
       const purchased = (legacyState.purchasedStars ?? {})[p.id] ?? 0
       if (hqStars + purchased >= 4) {
@@ -4152,7 +4152,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       const winner = state.players.find(p => p.id === depletion.playerId)
       if (!winner) return
       const hqStars = Object.values(state.territories).filter(
-        t => t.occupyingPlayerId === depletion.playerId && !!t.activeHqPlayerId,
+        t => t.occupyingPlayerId === depletion.playerId && !!t.activeHqPlayerId && t.activeHqPlayerId !== depletion.playerId,
       ).length
       const newStarTotal = hqStars + purchasedAfter
       console.log(`[CoinDeck] ${winner.name} final star total: ${newStarTotal} (hq=${hqStars} purchased=${purchasedAfter})`)
@@ -4528,7 +4528,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
 
     // 4-star victory check (HQ stars + purchased stars)
     const hqStars = Object.values(gameStateRef.current.territories).filter(
-      t => t.occupyingPlayerId === player.id && !!t.activeHqPlayerId,
+      t => t.occupyingPlayerId === player.id && !!t.activeHqPlayerId && t.activeHqPlayerId !== player.id,
     ).length
     if (hqStars + purchasedAfter >= 4) {
       setWinnerPlayerId(player.id)
@@ -5340,7 +5340,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     showWeaknessNotice(`⭐ ${player.name} used their ${missionDef?.name ?? 'star power'} — +1 red star (once per game)`)
 
     const hqStars = Object.values(gameStateRef.current.territories).filter(
-      t => t.occupyingPlayerId === playerId && !!t.activeHqPlayerId,
+      t => t.occupyingPlayerId === playerId && !!t.activeHqPlayerId && t.activeHqPlayerId !== playerId,
     ).length
     if (hqStars + purchasedAfter >= 4) {
       setWinnerPlayerId(playerId)
@@ -5527,7 +5527,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
 
     // 4-star win check (HQ stars + this game's earned stars)
     const hqStars = Object.values(gameStateRef.current.territories).filter(
-      t => t.occupyingPlayerId === playerId && !!t.activeHqPlayerId,
+      t => t.occupyingPlayerId === playerId && !!t.activeHqPlayerId && t.activeHqPlayerId !== playerId,
     ).length
     if (hqStars + purchasedAfter >= 4) {
       setWinnerPlayerId(playerId)
@@ -5912,7 +5912,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       const fourStarWinner = state.players.find(p => {
         if (p.isEliminated) return false
         const hqStars = Object.values(state.territories).filter(
-          t => t.occupyingPlayerId === p.id && !!t.activeHqPlayerId,
+          t => t.occupyingPlayerId === p.id && !!t.activeHqPlayerId && t.activeHqPlayerId !== p.id,
         ).length
         const purchased = (legacyStateRef.current.purchasedStars ?? {})[p.id] ?? 0
         return hqStars + purchased >= 4
@@ -6894,7 +6894,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         return next
       })
       const hqStars = Object.values(st.territories)
-        .filter(t => t.occupyingPlayerId === p.id && !!t.activeHqPlayerId).length
+        .filter(t => t.occupyingPlayerId === p.id && !!t.activeHqPlayerId && t.activeHqPlayerId !== p.id).length
       const out = [`✓ ${p.name}: ${current} → ${target} earned star${target !== 1 ? 's' : ''} (+ ${hqStars} on HQs)`]
       if (hqStars + target >= 4) {
         out.push('⚠ that reaches 4 stars — the victory screen is about to open')
