@@ -1092,13 +1092,13 @@ function tanksSymbol(x, y) {
 
 /** The spice spiral on its own, at any size. Shared so the mark is identical
  *  wherever spice is meant — blow markers, the bank, the phase track. */
-function spiceSpiral(x, y, scale = 1, width = 1.4) {
+function spiceSpiral(x, y, scale = 1, width = 1.4, ink = DECOR.ink) {
   const arm = []
   for (let k = 0; k <= 30; k++) {
     const th = k / 30 * 2.5 * Math.PI, rr = (0.8 + th * 0.7) * scale
     arm.push(`${round(x + rr * Math.cos(th))},${round(y + rr * Math.sin(th))}`)
   }
-  return `<polyline points="${arm.join(' ')}" fill="none" stroke="${DECOR.ink}" `
+  return `<polyline points="${arm.join(' ')}" fill="none" stroke="${ink}" `
     + `stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round"/>`
 }
 
@@ -1109,26 +1109,40 @@ function spiceSymbol(x, y) {
 }
 
 /** Wind: three streams with curled tails, for the storm phase. */
-function windSymbol(x0, y) {
+function windSymbol(x0, y, ink = DECOR.ink) {
   // The curled tails extend to the right of the strokes, so the glyph's visual
   // centre sits right of its geometric one. Shift back to sit centred in the circle.
   const x = x0 - 3
   const line = (dy, len, r) =>
     `M${round(x - 12)} ${round(y + dy)} h${len} a${r} ${r} 0 1 0 ${round(-r * 0.8)} ${round(-r)}`
-  return `<path d="${line(-6, 14, 4)}" fill="none" stroke="${DECOR.ink}" stroke-width="1.6" `
-    + `stroke-linecap="round"/>`
-    + `<path d="${line(0, 18, 4.6)}" fill="none" stroke="${DECOR.ink}" stroke-width="1.6" `
-    + `stroke-linecap="round"/>`
-    + `<path d="${line(6, 11, 3.6)}" fill="none" stroke="${DECOR.ink}" stroke-width="1.6" `
-    + `stroke-linecap="round"/>`
+  return [[-8.5, 13, 3.6], [0, 17, 4.2], [8.5, 10, 3.2]]
+    .map(([dy, len, r]) => `<path d="${line(dy, len, r)}" fill="none" stroke="${ink}" `
+      + `stroke-width="1.7" stroke-linecap="round"/>`)
+    .join('')
+}
+
+/** An open hand seen edge-on, palm up — CHOAM charity, something given. */
+function openHandSymbol(x, y, ink = DECOR.ink) {
+  // Deliberately reduced to a cupped palm and a thumb. An anatomical hand turns
+  // to mush at twenty-odd pixels; a shallow bowl with a thumb still reads as a
+  // hand held open, which is the whole point of the mark.
+  return `<path d="M${round(x - 10)} ${round(y - 3)} c0 6 4 9 10 9 c6 0 9 -3 9 -8" `
+    + `fill="none" stroke="${ink}" stroke-width="2.6" stroke-linecap="round"/>`
+    + `<path d="M${round(x - 10.5)} ${round(y - 3)} c-2.5 -2 -6 -0.5 -5.5 2.5" `
+    + `fill="none" stroke="${ink}" stroke-width="2.2" stroke-linecap="round"/>`
 }
 
 // ── Phase track ───────────────────────────────────────────────────────────────
 // The nine circles across the top are the phases of a round. Only the first two
 // are known so far; the rest stay empty rather than being filled with guesses.
+// Drawn in the board's own navy rather than the map's ink, so the phase marks
+// read as a set of their own against the sand circles.
+const phaseInk = DECOR.board
 const PHASE_SYMBOLS = {
-  1: windSymbol,                                    // storm
-  2: (x, y) => spiceSpiral(x, y, 1.5, 1.7),         // spice
+  1: (x, y) => windSymbol(x, y, phaseInk),                            // storm
+  2: (x, y) => spiceSpiral(x, y, 1.5, 1.7, phaseInk),                 // spice
+  3: (x, y) => spiceSpiral(x, y - 7, 0.95, 1.5, phaseInk)             // CHOAM charity:
+             + openHandSymbol(x, y + 8, phaseInk),                    // spice over an open hand
 }
 for (const [i, stop] of trackStops.entries()) {
   const draw = PHASE_SYMBOLS[i + 1]
