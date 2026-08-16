@@ -45,6 +45,8 @@ const DECOR = {
   'polar-sink': { fill: '#f8f6ee', borders: 1 },
   stronghold: { fill: '#93373a', borders: 3, text: '#f6ead4' },
   badge: { fill: '#f6ecd2', ring: '#3f2c1a', text: '#3f2c1a' },
+  board: '#111a30',          // the navy the printed board is mounted on
+  ringBand: '#efe4c4',       // pale band the storm track is printed on
   stormRing: { inner: 440, outer: 466 },   // the track the storm walks, outside the rim
   label: 10,                 // territory name size, before any scaling
 }
@@ -768,6 +770,12 @@ function fitLabel(t, name, breakAfter) {
 const terrain = []
 // Fills first, then every border pass, so no fill can paint over a neighbour's
 // border. The original black strokes stay on top of all of it.
+// The navy the board is mounted on, then the pale disc the map is printed on.
+// The disc runs out to the storm ring's outer edge, so the gap between the rim
+// and the ring becomes the band the track is printed on — which is what makes
+// dark ticks legible where before they were dark-on-nothing.
+terrain.push(`<rect x="0" y="0" width="970" height="1099" fill="${DECOR.board}"/>`)
+terrain.push(`<circle cx="${CX}" cy="${CY}" r="${DECOR.stormRing.outer}" fill="${DECOR.ringBand}"/>`)
 for (const t of territories) {
   terrain.push(`<path d="${t.el.attrs.d}" fill="${styleFor(t).fill}"/>`)
 }
@@ -922,7 +930,9 @@ for (const o of offBoard) {
   const b = bearing(o.c[0], o.c[1])
   const name = b > 180 ? 'Tleilaxu Tanks' : 'Spice Bank'   // 217° is the left box, 143° the right
   const [lx, ly] = markerPoint(o.poly)
-  labels.push(`<text x="${round(lx)}" y="${round(ly)}" font-size="13" fill="${DECOR.ink}" `
+  // Light on navy: these two boxes sit on the board surround, not on the map,
+  // so they are the one place the dark ink would be invisible.
+  labels.push(`<text x="${round(lx)}" y="${round(ly)}" font-size="13" fill="${DECOR.ringBand}" `
     + `text-anchor="middle" dominant-baseline="central" letter-spacing="1.2" `
     + `font-family="Georgia, 'Times New Roman', serif">${esc(name.toUpperCase())}</text>`)
 }

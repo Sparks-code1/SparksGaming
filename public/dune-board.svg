@@ -1,5 +1,7 @@
 <svg width="970" height="1099" viewBox="0 0 970 1099" fill="none" xmlns="http://www.w3.org/2000/svg">
 <g id="dune-terrain">
+<rect x="0" y="0" width="970" height="1099" fill="#111a30"/>
+<circle cx="483.097" cy="556.456" r="466" fill="#efe4c4"/>
 <path d="M537.097 512.456L524.597 511.456L522.597 501.456L539.097 488.456L548.597 470.956L570.097 484.956L577.597 494.956L595.597 518.456V557.956L589.097 561.956L592.097 575.956L579.597 604.456L554.097 615.956L527.597 596.456L537.097 577.456L550.597 556.956L554.097 530.956L537.097 512.456Z" fill="#c9905f"/>
 <path d="M521.597 604.956L527.597 596.456L554.097 615.956L579.597 604.456L599.597 614.456L591.097 645.956L574.097 645.456L563.597 641.956V661.456L555.76 682.956L519.597 619.456L521.597 604.956Z" fill="#f0e2bb"/>
 <path d="M437.097 519.456L460.097 514.956L483.097 505.956L494.597 504.956L501.097 515.456L516.097 514.956L524.597 511.456L537.097 512.456L554.097 530.956L550.597 556.956L537.097 577.456L527.597 596.456L521.597 604.956L519.597 619.456L500.597 634.956L471.597 636.456L451.81 611.638L440.597 613.456L426.597 607.956L415.097 596.956L406.597 596.456L400.314 587.956L398.097 584.956L403.597 559.456L417.597 534.956L437.097 519.456Z" fill="#f8f6ee"/>
@@ -396,8 +398,8 @@
 <text x="37.2" y="636.34" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">16</text>
 <text x="91.86" y="784.8" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">17</text>
 <text x="194.02" y="905.23" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">18</text>
-<text x="94.45" y="1003.88" font-size="13" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" letter-spacing="1.2" font-family="Georgia, 'Times New Roman', serif">TLEILAXU TANKS</text>
-<text x="874.68" y="1003.88" font-size="13" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" letter-spacing="1.2" font-family="Georgia, 'Times New Roman', serif">SPICE BANK</text>
+<text x="94.45" y="1003.88" font-size="13" fill="#efe4c4" text-anchor="middle" dominant-baseline="central" letter-spacing="1.2" font-family="Georgia, 'Times New Roman', serif">TLEILAXU TANKS</text>
+<text x="874.68" y="1003.88" font-size="13" fill="#efe4c4" text-anchor="middle" dominant-baseline="central" letter-spacing="1.2" font-family="Georgia, 'Times New Roman', serif">SPICE BANK</text>
 <path d="M609.39 245.63 v-7 h4 v-4 h4 v-5 h5 v9 h4 v-6 h5 v13 z" fill="#f6ead4" opacity="0.9"/>
 <circle cx="616.39" cy="267.63" r="2.6" fill="#f6ead4" opacity="0.9"/>
 <circle cx="624.39" cy="267.63" r="2.6" fill="#f6ead4" opacity="0.9"/>
