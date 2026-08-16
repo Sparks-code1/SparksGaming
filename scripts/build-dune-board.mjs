@@ -45,7 +45,7 @@ const DECOR = {
   'polar-sink': { fill: '#f8f6ee', borders: 1 },
   stronghold: { fill: '#93373a', borders: 3, text: '#f6ead4' },
   badge: { fill: '#f6ecd2', ring: '#3f2c1a', text: '#3f2c1a' },
-  badgeRadius: 452,          // just outside the rim, clear of the seat circles
+  stormRing: { inner: 440, outer: 466 },   // the track the storm walks, outside the rim
   label: 10,                 // territory name size, before any scaling
 }
 
@@ -874,37 +874,86 @@ for (const t of territories) {
 // Spice badges sit outside the rim, on the bearing of the sector the blow
 // actually lands in — so a two-sector territory's badge points at the half
 // that can be mined, not at the middle of the whole shape.
-// Two territories can draw their spice from the same sector — The Great Flat
-// and Funeral Plain both mine sector-15 — and their badges would land on the
-// same bearing. Fan those apart within the wedge instead of stacking them.
-const badgeGroups = new Map()
-for (const t of territories) {
-  if (dataFor(t).spiceBlow == null || t.spiceSector == null) continue
-  if (!badgeGroups.has(t.spiceSector)) badgeGroups.set(t.spiceSector, [])
-  badgeGroups.get(t.spiceSector).push(t)
+// ── Spice values, printed on the board's own markers ─────────────────────────
+// The fifteen circular markers already sit where the printed board prints its
+// spice numbers, so the value goes inside the marker rather than out on the rim.
+// Each marker was matched to its territory by point-in-polygon during the data
+// pass, which is the same match asserted against the transcribed amounts.
+const blowOf = new Map(territories.map(t => [t.id, dataFor(t).spiceBlow]))
+for (const m of spiceMarkers) {
+  const v = blowOf.get(m.territoryId)
+  if (v == null) continue
+  terrain.push(`<circle cx="${round(m.x)}" cy="${round(m.y)}" r="9.5" fill="${DECOR.badge.fill}" `
+    + `stroke="${DECOR.badge.ring}" stroke-width="1.4"/>`)
+  labels.push(`<text x="${round(m.x)}" y="${round(m.y)}" font-size="10" fill="${DECOR.badge.text}" `
+    + `text-anchor="middle" dominant-baseline="central" `
+    + `font-family="Georgia, 'Times New Roman', serif" font-weight="bold">${v}</text>`)
+}
+
+// ── Storm track ───────────────────────────────────────────────────────────────
+// A ring outside the rim carrying the 18 sectors the storm walks, with a tick
+// at every boundary. Boundaries come from the sector spans themselves, so the
+// ticks line up with the dashed wedges rather than being evenly spaced by
+// assumption.
+const ringOuter = DECOR.stormRing.outer, ringInner = DECOR.stormRing.inner
+terrain.push(`<circle cx="${CX}" cy="${CY}" r="${ringOuter}" fill="none" stroke="${DECOR.ink}" stroke-width="1.6"/>`)
+terrain.push(`<circle cx="${CX}" cy="${CY}" r="${ringInner}" fill="none" stroke="${DECOR.ink}" stroke-width="1.6"/>`)
+for (const s of ordered) {
+  const a = (norm(s.from) - 90) * Math.PI / 180
+  terrain.push(`<line x1="${round(CX + ringInner * Math.cos(a))}" y1="${round(CY + ringInner * Math.sin(a))}" `
+    + `x2="${round(CX + ringOuter * Math.cos(a))}" y2="${round(CY + ringOuter * Math.sin(a))}" `
+    + `stroke="${DECOR.ink}" stroke-width="1.4"/>`)
+  // Sector number, centred in its arc of the ring.
+  let span = norm(s.to) - norm(s.from)
+  if (span < 0) span += 360
+  const mid = (norm(s.from) + span / 2 - 90) * Math.PI / 180
+  const rr = (ringInner + ringOuter) / 2
+  labels.push(`<text x="${round(CX + rr * Math.cos(mid))}" y="${round(CY + rr * Math.sin(mid))}" `
+    + `font-size="10" fill="${DECOR.ink}" text-anchor="middle" dominant-baseline="central" `
+    + `font-family="Georgia, 'Times New Roman', serif">${s.number}</text>`)
+}
+
+// ── Spice Bank and Tleilaxu Tanks ─────────────────────────────────────────────
+// These boxes are already drawn in the export — they are the two closed stroke
+// shapes that sit entirely outside the rim, which is why the territory pass
+// rejected them. Label them rather than draw new ones, so they stay wherever
+// the artwork put them.
+for (const o of offBoard) {
+  const b = bearing(o.c[0], o.c[1])
+  const name = b > 180 ? 'Tleilaxu Tanks' : 'Spice Bank'   // 217° is the left box, 143° the right
+  const [lx, ly] = markerPoint(o.poly)
+  labels.push(`<text x="${round(lx)}" y="${round(ly)}" font-size="13" fill="${DECOR.ink}" `
+    + `text-anchor="middle" dominant-baseline="central" letter-spacing="1.2" `
+    + `font-family="Georgia, 'Times New Roman', serif">${esc(name.toUpperCase())}</text>`)
+}
+
+// ── Stronghold icons ──────────────────────────────────────────────────────────
+// A city for the two that hold ornithopters, a town for the three sietches, and
+// a spice symbol for each point of income — which is where the 2 / 2 / 1 comes
+// from, so the icons cannot disagree with the data.
+function citySilhouette(x, y, fill) {
+  return `<path d="M${round(x-11)} ${round(y+6)} v-7 h4 v-4 h4 v-5 h5 v9 h4 v-6 h5 v13 z" `
+    + `fill="${fill}" opacity="0.9"/>`
+}
+function townSilhouette(x, y, fill) {
+  return `<path d="M${round(x-9)} ${round(y+5)} v-6 l4-4 l4 4 h3 v-3 l3-2 l3 2 v9 z" `
+    + `fill="${fill}" opacity="0.9"/>`
+}
+function spiceDot(x, y, fill) {
+  return `<circle cx="${round(x)}" cy="${round(y)}" r="2.6" fill="${fill}" opacity="0.9"/>`
 }
 for (const t of territories) {
   const d = dataFor(t)
-  if (d.spiceBlow == null || t.spiceSector == null) continue
-  const sec = ordered.find(s => s.number === t.spiceSector)
-  let span = norm(sec.to) - norm(sec.from)
-  if (span < 0) span += 360
-  const group = badgeGroups.get(t.spiceSector)
-  const slot = group.indexOf(t) - (group.length - 1) / 2
-  const a = (norm(sec.from) + span / 2 + slot * span * 0.42 - 90) * Math.PI / 180
-  const bx = CX + DECOR.badgeRadius * Math.cos(a), by = CY + DECOR.badgeRadius * Math.sin(a)
-  labels.push(`<circle cx="${round(bx)}" cy="${round(by)}" r="15" fill="${DECOR.badge.fill}" `
-    + `stroke="${DECOR.badge.ring}" stroke-width="1.6"/>`)
-  // A small Archimedean spiral, the board's mark for spice.
-  const arm = []
-  for (let k = 0; k <= 26; k++) {
-    const th = k / 26 * 3.4 * Math.PI, rr = 0.9 + th * 0.72
-    arm.push(`${round(bx - 6 + rr * Math.cos(th))},${round(by - 5.5 + rr * Math.sin(th))}`)
+  if (!d.stronghold) continue
+  const p = anchorOf.get(t)
+  const ink = DECOR.stronghold.text
+  const [x, y] = p.at
+  const iconY = y - p.size * (p.lines.length * 0.6 + 0.9)
+  labels.push(d.ornithopters ? citySilhouette(x, iconY, ink) : townSilhouette(x, iconY, ink))
+  const n = d.spiceIncome ?? 0
+  for (let i = 0; i < n; i++) {
+    labels.push(spiceDot(x + (i - (n - 1) / 2) * 8, y + p.size * (p.lines.length * 0.6 + 0.7), ink))
   }
-  labels.push(`<polyline points="${arm.join(' ')}" fill="none" stroke="${DECOR.badge.ring}" `
-    + `stroke-width="1.1" stroke-linecap="round" opacity="0.85"/>`)
-  labels.push(`<text x="${round(bx + 4)}" y="${round(by + 5)}" font-size="12" fill="${DECOR.badge.text}" `
-    + `text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">${d.spiceBlow}</text>`)
 }
 
 out = out.replace(/(<svg[^>]*>)/, `$1\n<g id="dune-terrain">\n${terrain.join('\n')}\n</g>`)

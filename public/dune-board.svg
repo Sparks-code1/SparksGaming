@@ -106,6 +106,41 @@
 <path d="M195.597 414.956L211.097 418.456L219.097 388.456L211.097 382.956L213.597 373.956L207.597 370.956L208.097 360.956L197.597 342.456L194.097 324.956L178.097 318.456L142.097 351.456L141.597 358.456L134.597 373.456L124.597 374.956L123.597 391.956L138.597 409.956L149.597 411.456L159.597 406.956L182.597 415.956L195.597 414.956Z" fill="none" stroke="#3f2c1a" stroke-width="1.8" stroke-linejoin="round"/>
 <path d="M278.597 201.456L268.097 182.096C205.336 218.122 152.47 269.435 114.577 330.956L129.597 344.456L139.097 345.956L142.097 351.456L178.097 318.456L194.097 324.956L211.097 306.456L226.097 265.956L230.597 251.956L244.097 231.956L262.097 221.956L278.597 201.456Z" fill="none" stroke="#3f2c1a" stroke-width="2" stroke-linejoin="round"/>
 <path d="M483.097 124.956C404.835 124.956 331.428 145.742 268.097 182.096L278.597 201.456L297.597 208.456H336.097L354.097 193.456L380.097 190.456L417.097 175.956L458.597 167.456L491.597 169.456L502.097 160.456L515.597 157.456L523.597 143.956L525.097 126.969C511.276 125.637 497.266 124.956 483.097 124.956Z" fill="none" stroke="#3f2c1a" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="575.6" cy="147.96" r="9.5" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.4"/>
+<circle cx="773.6" cy="251.96" r="9.5" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.4"/>
+<circle cx="604.6" cy="495.96" r="9.5" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.4"/>
+<circle cx="891.6" cy="517.96" r="9.5" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.4"/>
+<circle cx="862.6" cy="718.96" r="9.5" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.4"/>
+<circle cx="530.6" cy="700.96" r="9.5" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.4"/>
+<circle cx="495.6" cy="962.96" r="9.5" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.4"/>
+<circle cx="212.6" cy="862.96" r="9.5" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.4"/>
+<circle cx="402.6" cy="606.96" r="9.5" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.4"/>
+<circle cx="82.6" cy="654.96" r="9.5" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.4"/>
+<circle cx="71.6" cy="520.96" r="9.5" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.4"/>
+<circle cx="79.6" cy="472.96" r="9.5" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.4"/>
+<circle cx="135.6" cy="333.96" r="9.5" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.4"/>
+<circle cx="363.6" cy="414.96" r="9.5" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.4"/>
+<circle cx="325.6" cy="171.96" r="9.5" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.4"/>
+<circle cx="483.097" cy="556.456" r="466" fill="none" stroke="#3f2c1a" stroke-width="1.6"/>
+<circle cx="483.097" cy="556.456" r="440" fill="none" stroke="#3f2c1a" stroke-width="1.6"/>
+<line x1="408.74" y1="990.13" x2="404.34" y2="1015.75" stroke="#3f2c1a" stroke-width="1.4"/>
+<line x1="560.7" y1="989.56" x2="565.29" y2="1015.15" stroke="#3f2c1a" stroke-width="1.4"/>
+<line x1="703.42" y1="937.32" x2="716.44" y2="959.83" stroke="#3f2c1a" stroke-width="1.4"/>
+<line x1="819.5" y1="840.07" x2="839.38" y2="856.82" stroke="#3f2c1a" stroke-width="1.4"/>
+<line x1="895.49" y1="709.86" x2="919.86" y2="718.92" stroke="#3f2c1a" stroke-width="1.4"/>
+<line x1="923.08" y1="560.63" x2="949.08" y2="560.87" stroke="#3f2c1a" stroke-width="1.4"/>
+<line x1="897.78" y1="409.35" x2="922.28" y2="400.66" stroke="#3f2c1a" stroke-width="1.4"/>
+<line x1="822.08" y1="275.93" x2="842.11" y2="259.36" stroke="#3f2c1a" stroke-width="1.4"/>
+<line x1="705.72" y1="176.93" x2="718.88" y2="154.51" stroke="#3f2c1a" stroke-width="1.4"/>
+<line x1="562.12" y1="123.61" x2="566.79" y2="98.03" stroke="#3f2c1a" stroke-width="1.4"/>
+<line x1="408.29" y1="122.86" x2="403.87" y2="97.24" stroke="#3f2c1a" stroke-width="1.4"/>
+<line x1="263.66" y1="175.08" x2="250.7" y2="152.54" stroke="#3f2c1a" stroke-width="1.4"/>
+<line x1="146.27" y1="273.36" x2="126.36" y2="256.63" stroke="#3f2c1a" stroke-width="1.4"/>
+<line x1="69.65" y1="405.92" x2="45.22" y2="397.02" stroke="#3f2c1a" stroke-width="1.4"/>
+<line x1="43.1" y1="557.26" x2="17.1" y2="557.31" stroke="#3f2c1a" stroke-width="1.4"/>
+<line x1="70.18" y1="708.45" x2="45.78" y2="717.43" stroke="#3f2c1a" stroke-width="1.4"/>
+<line x1="147.67" y1="841.22" x2="127.85" y2="858.04" stroke="#3f2c1a" stroke-width="1.4"/>
+<line x1="265.53" y1="938.9" x2="252.67" y2="961.5" stroke="#3f2c1a" stroke-width="1.4"/>
 </g>
 <circle cx="483.097" cy="556.456" r="432.5" stroke="black"/>
 <path id="sector-1" d="M410.06 982.744C360.635 974.276 313.059 957.277 269.459 932.508L451.836 611.481C458.216 615.105 462.649 633.143 469.881 634.382L410.06 982.744Z" stroke="black" stroke-width="3" stroke-dasharray="6 6"/>
@@ -328,50 +363,50 @@
 <text x="185.01" y="277.02" font-size="9.7" fill="#3f2c1a" text-anchor="middle" dominant-baseline="middle" font-family="Georgia, 'Times New Roman', serif" letter-spacing="0.5" paint-order="stroke" stroke="#f0e2bb" stroke-width="2.72" stroke-linejoin="round" data-territory="territory-41" data-bx="185.01" data-by="288.28" data-bs="9.7" transform="rotate(-49 185.01 282.65)">ROCK</text>
 <text x="185.01" y="288.18" font-size="9.7" fill="#3f2c1a" text-anchor="middle" dominant-baseline="middle" font-family="Georgia, 'Times New Roman', serif" letter-spacing="0.5" paint-order="stroke" stroke="#f0e2bb" stroke-width="2.72" stroke-linejoin="round" data-territory="territory-41" data-bx="185.01" data-by="288.28" data-bs="9.7" transform="rotate(-49 185.01 282.65)">OUTCROPPINGS</text>
 <text x="405.32" y="153.36" font-size="11.5" fill="#3f2c1a" text-anchor="middle" dominant-baseline="middle" font-family="Georgia, 'Times New Roman', serif" letter-spacing="0.5" paint-order="stroke" stroke="#f0e2bb" stroke-width="3.22" stroke-linejoin="round" data-territory="territory-42" data-bx="326.32" data-by="182.36" data-bs="10" transform="rotate(-11 405.32 153.36)">BROKEN LAND</text>
-<circle cx="876.22" cy="333.4" r="15" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.6"/>
-<polyline points="871.12,327.9 871.32,328.37 871.24,328.99 870.82,329.58 870.07,329.97 869.12,330 868.14,329.57 867.36,328.68 866.99,327.42 867.2,326.02 868.03,324.72 869.42,323.82 871.18,323.55 873.01,324.06 874.57,325.34 875.52,327.25 875.62,329.51 874.75,331.72 872.98,333.47 870.54,334.41 867.81,334.27 865.26,332.98 863.36,330.69 862.52,327.71 862.97,324.52 864.72,321.69 867.57,319.73" fill="none" stroke="#3f2c1a" stroke-width="1.1" stroke-linecap="round" opacity="0.85"/>
-<text x="880.22" y="338.4" font-size="12" fill="#3f2c1a" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">8</text>
-<circle cx="638.46" cy="980.92" r="15" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.6"/>
-<polyline points="633.36,975.42 633.55,975.89 633.47,976.51 633.05,977.1 632.31,977.49 631.35,977.52 630.37,977.09 629.59,976.2 629.23,974.95 629.43,973.54 630.27,972.24 631.66,971.34 633.42,971.07 635.25,971.58 636.8,972.86 637.76,974.77 637.86,977.03 636.99,979.24 635.22,981 632.77,981.93 630.04,981.79 627.49,980.51 625.6,978.21 624.76,975.23 625.2,972.05 626.96,969.21 629.8,967.25" fill="none" stroke="#3f2c1a" stroke-width="1.1" stroke-linecap="round" opacity="0.85"/>
-<text x="642.46" y="985.92" font-size="12" fill="#3f2c1a" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">8</text>
-<circle cx="92.72" cy="784.29" r="15" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.6"/>
-<polyline points="87.62,778.79 87.82,779.27 87.74,779.89 87.31,780.48 86.57,780.87 85.61,780.9 84.63,780.47 83.85,779.57 83.49,778.32 83.69,776.91 84.53,775.62 85.92,774.72 87.68,774.45 89.51,774.95 91.07,776.24 92.02,778.15 92.12,780.4 91.25,782.62 89.48,784.37 87.03,785.31 84.3,785.17 81.75,783.88 79.86,781.59 79.02,778.61 79.47,775.42 81.22,772.58 84.07,770.62" fill="none" stroke="#3f2c1a" stroke-width="1.1" stroke-linecap="round" opacity="0.85"/>
-<text x="96.72" y="789.29" font-size="12" fill="#3f2c1a" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">6</text>
-<circle cx="192.95" cy="209.87" r="15" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.6"/>
-<polyline points="187.85,204.37 188.05,204.85 187.97,205.46 187.55,206.06 186.8,206.45 185.85,206.48 184.87,206.05 184.09,205.15 183.72,203.9 183.93,202.49 184.76,201.2 186.16,200.3 187.91,200.03 189.74,200.53 191.3,201.82 192.25,203.73 192.35,205.98 191.48,208.19 189.71,209.95 187.27,210.88 184.54,210.74 181.99,209.46 180.09,207.16 179.25,204.19 179.7,201 181.45,198.16 184.3,196.2" fill="none" stroke="#3f2c1a" stroke-width="1.1" stroke-linecap="round" opacity="0.85"/>
-<text x="196.95" y="214.87" font-size="12" fill="#3f2c1a" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">6</text>
-<circle cx="38.18" cy="636.16" r="15" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.6"/>
-<polyline points="33.08,630.66 33.28,631.14 33.2,631.75 32.77,632.35 32.03,632.74 31.07,632.77 30.09,632.34 29.31,631.44 28.95,630.19 29.15,628.78 29.99,627.49 31.38,626.59 33.14,626.32 34.97,626.82 36.53,628.11 37.48,630.02 37.58,632.27 36.71,634.48 34.94,636.24 32.5,637.17 29.76,637.03 27.21,635.75 25.32,633.46 24.48,630.48 24.93,627.29 26.68,624.45 29.53,622.49" fill="none" stroke="#3f2c1a" stroke-width="1.1" stroke-linecap="round" opacity="0.85"/>
-<text x="42.18" y="641.16" font-size="12" fill="#3f2c1a" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">8</text>
-<circle cx="33.35" cy="511.35" r="15" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.6"/>
-<polyline points="28.25,505.85 28.45,506.32 28.37,506.94 27.95,507.53 27.2,507.92 26.25,507.95 25.27,507.52 24.49,506.63 24.12,505.37 24.33,503.97 25.16,502.67 26.56,501.77 28.31,501.5 30.14,502.01 31.7,503.29 32.65,505.2 32.75,507.46 31.88,509.67 30.11,511.43 27.67,512.36 24.94,512.22 22.39,510.94 20.49,508.64 19.65,505.66 20.1,502.48 21.85,499.64 24.7,497.68" fill="none" stroke="#3f2c1a" stroke-width="1.1" stroke-linecap="round" opacity="0.85"/>
-<text x="37.35" y="516.35" font-size="12" fill="#3f2c1a" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">8</text>
-<circle cx="44.86" cy="445.77" r="15" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.6"/>
-<polyline points="39.76,440.27 39.95,440.75 39.87,441.37 39.45,441.96 38.71,442.35 37.75,442.38 36.77,441.95 35.99,441.05 35.63,439.8 35.83,438.39 36.67,437.1 38.06,436.2 39.82,435.93 41.65,436.43 43.2,437.72 44.16,439.63 44.26,441.88 43.39,444.1 41.62,445.85 39.17,446.79 36.44,446.65 33.89,445.36 32,443.07 31.16,440.09 31.6,436.9 33.36,434.06 36.2,432.1" fill="none" stroke="#3f2c1a" stroke-width="1.1" stroke-linecap="round" opacity="0.85"/>
-<text x="48.86" y="450.77" font-size="12" fill="#3f2c1a" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">6</text>
-<circle cx="640.44" cy="132.72" r="15" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.6"/>
-<polyline points="635.34,127.22 635.53,127.7 635.45,128.32 635.03,128.91 634.28,129.3 633.33,129.33 632.35,128.9 631.57,128 631.2,126.75 631.41,125.34 632.24,124.05 633.64,123.15 635.4,122.88 637.22,123.39 638.78,124.67 639.73,126.58 639.83,128.83 638.97,131.05 637.19,132.8 634.75,133.74 632.02,133.6 629.47,132.31 627.57,130.02 626.73,127.04 627.18,123.85 628.93,121.02 631.78,119.05" fill="none" stroke="#3f2c1a" stroke-width="1.1" stroke-linecap="round" opacity="0.85"/>
-<text x="644.44" y="137.72" font-size="12" fill="#3f2c1a" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">6</text>
-<circle cx="776" cy="212.2" r="15" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.6"/>
-<polyline points="770.9,206.7 771.1,207.18 771.02,207.8 770.6,208.39 769.85,208.78 768.9,208.81 767.92,208.38 767.14,207.48 766.77,206.23 766.98,204.82 767.81,203.53 769.21,202.63 770.96,202.36 772.79,202.87 774.35,204.15 775.3,206.06 775.4,208.32 774.54,210.53 772.76,212.28 770.32,213.22 767.59,213.08 765.04,211.79 763.14,209.5 762.3,206.52 762.75,203.33 764.5,200.5 767.35,198.53" fill="none" stroke="#3f2c1a" stroke-width="1.1" stroke-linecap="round" opacity="0.85"/>
-<text x="780" y="217.2" font-size="12" fill="#3f2c1a" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">6</text>
-<circle cx="928.91" cy="481.9" r="15" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.6"/>
-<polyline points="923.81,476.4 924,476.88 923.92,477.49 923.5,478.08 922.75,478.48 921.8,478.5 920.82,478.07 920.04,477.18 919.67,475.93 919.88,474.52 920.71,473.22 922.11,472.32 923.87,472.05 925.69,472.56 927.25,473.84 928.2,475.75 928.3,478.01 927.44,480.22 925.66,481.98 923.22,482.91 920.49,482.77 917.94,481.49 916.04,479.19 915.2,476.21 915.65,473.03 917.4,470.19 920.25,468.23" fill="none" stroke="#3f2c1a" stroke-width="1.1" stroke-linecap="round" opacity="0.85"/>
-<text x="932.91" y="486.9" font-size="12" fill="#3f2c1a" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">8</text>
-<circle cx="873.48" cy="784.29" r="15" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.6"/>
-<polyline points="868.38,778.79 868.57,779.27 868.49,779.88 868.07,780.47 867.33,780.87 866.37,780.89 865.39,780.46 864.61,779.57 864.24,778.32 864.45,776.91 865.29,775.61 866.68,774.71 868.44,774.44 870.27,774.95 871.82,776.23 872.77,778.15 872.87,780.4 872.01,782.61 870.24,784.37 867.79,785.3 865.06,785.16 862.51,783.88 860.62,781.58 859.78,778.6 860.22,775.42 861.98,772.58 864.82,770.62" fill="none" stroke="#3f2c1a" stroke-width="1.1" stroke-linecap="round" opacity="0.85"/>
-<text x="877.48" y="789.29" font-size="12" fill="#3f2c1a" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">10</text>
-<circle cx="484.79" cy="1008.45" r="15" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.6"/>
-<polyline points="479.69,1002.95 479.88,1003.43 479.8,1004.05 479.38,1004.64 478.64,1005.03 477.68,1005.06 476.7,1004.63 475.92,1003.73 475.56,1002.48 475.76,1001.07 476.6,999.78 477.99,998.88 479.75,998.61 481.58,999.11 483.13,1000.4 484.09,1002.31 484.19,1004.56 483.32,1006.78 481.55,1008.53 479.1,1009.47 476.37,1009.33 473.82,1008.04 471.93,1005.75 471.09,1002.77 471.53,999.58 473.29,996.74 476.13,994.78" fill="none" stroke="#3f2c1a" stroke-width="1.1" stroke-linecap="round" opacity="0.85"/>
-<text x="488.79" y="1013.45" font-size="12" fill="#3f2c1a" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">12</text>
-<circle cx="194.66" cy="904.46" r="15" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.6"/>
-<polyline points="189.56,898.96 189.76,899.44 189.68,900.05 189.25,900.65 188.51,901.04 187.55,901.07 186.58,900.64 185.79,899.74 185.43,898.49 185.63,897.08 186.47,895.79 187.86,894.89 189.62,894.62 191.45,895.12 193.01,896.41 193.96,898.32 194.06,900.57 193.19,902.79 191.42,904.54 188.98,905.47 186.24,905.34 183.69,904.05 181.8,901.76 180.96,898.78 181.41,895.59 183.16,892.75 186.01,890.79" fill="none" stroke="#3f2c1a" stroke-width="1.1" stroke-linecap="round" opacity="0.85"/>
-<text x="198.66" y="909.46" font-size="12" fill="#3f2c1a" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">10</text>
-<circle cx="91.76" cy="330.28" r="15" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.6"/>
-<polyline points="86.66,324.78 86.85,325.25 86.77,325.87 86.35,326.46 85.61,326.85 84.65,326.88 83.67,326.45 82.89,325.56 82.53,324.3 82.73,322.9 83.57,321.6 84.96,320.7 86.72,320.43 88.55,320.94 90.1,322.22 91.06,324.13 91.16,326.39 90.29,328.6 88.52,330.36 86.07,331.29 83.34,331.15 80.79,329.86 78.9,327.57 78.06,324.59 78.5,321.41 80.26,318.57 83.1,316.61" fill="none" stroke="#3f2c1a" stroke-width="1.1" stroke-linecap="round" opacity="0.85"/>
-<text x="95.76" y="335.28" font-size="12" fill="#3f2c1a" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">6</text>
-<circle cx="329.6" cy="131.32" r="15" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.6"/>
-<polyline points="324.5,125.82 324.7,126.29 324.62,126.91 324.2,127.5 323.45,127.89 322.5,127.92 321.52,127.49 320.74,126.6 320.37,125.34 320.58,123.94 321.41,122.64 322.81,121.74 324.56,121.47 326.39,121.98 327.95,123.26 328.9,125.17 329,127.43 328.14,129.64 326.36,131.4 323.92,132.33 321.19,132.19 318.64,130.91 316.74,128.61 315.9,125.63 316.35,122.45 318.1,119.61 320.95,117.65" fill="none" stroke="#3f2c1a" stroke-width="1.1" stroke-linecap="round" opacity="0.85"/>
-<text x="333.6" y="136.32" font-size="12" fill="#3f2c1a" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">8</text>
+<text x="575.6" y="147.96" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">6</text>
+<text x="773.6" y="251.96" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">6</text>
+<text x="604.6" y="495.96" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">8</text>
+<text x="891.6" y="517.96" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">8</text>
+<text x="862.6" y="718.96" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">10</text>
+<text x="530.6" y="700.96" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">8</text>
+<text x="495.6" y="962.96" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">12</text>
+<text x="212.6" y="862.96" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">10</text>
+<text x="402.6" y="606.96" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">6</text>
+<text x="82.6" y="654.96" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">8</text>
+<text x="71.6" y="520.96" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">8</text>
+<text x="79.6" y="472.96" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">6</text>
+<text x="135.6" y="333.96" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">6</text>
+<text x="363.6" y="414.96" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">6</text>
+<text x="325.6" y="171.96" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">8</text>
+<text x="330.52" y="982.99" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">1</text>
+<text x="484.79" y="1009.45" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">2</text>
+<text x="638.8" y="981.86" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">3</text>
+<text x="774.02" y="903.69" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">4</text>
+<text x="874.34" y="784.79" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">5</text>
+<text x="928.55" y="638.8" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">6</text>
+<text x="929.89" y="481.73" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">7</text>
+<text x="877.09" y="332.9" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">8</text>
+<text x="776.65" y="211.44" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">9</text>
+<text x="640.78" y="131.79" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">10</text>
+<text x="485.3" y="103.46" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">11</text>
+<text x="329.26" y="130.38" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">12</text>
+<text x="192.31" y="209.1" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">13</text>
+<text x="90.89" y="329.78" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">14</text>
+<text x="36.91" y="478.18" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">15</text>
+<text x="37.2" y="636.34" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">16</text>
+<text x="91.86" y="784.8" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">17</text>
+<text x="194.02" y="905.23" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">18</text>
+<text x="94.45" y="1003.88" font-size="13" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" letter-spacing="1.2" font-family="Georgia, 'Times New Roman', serif">TLEILAXU TANKS</text>
+<text x="874.68" y="1003.88" font-size="13" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" letter-spacing="1.2" font-family="Georgia, 'Times New Roman', serif">SPICE BANK</text>
+<path d="M609.39 245.63 v-7 h4 v-4 h4 v-5 h5 v9 h4 v-6 h5 v13 z" fill="#f6ead4" opacity="0.9"/>
+<circle cx="616.39" cy="267.63" r="2.6" fill="#f6ead4" opacity="0.9"/>
+<circle cx="624.39" cy="267.63" r="2.6" fill="#f6ead4" opacity="0.9"/>
+<path d="M458.57 278.95 v-7 h4 v-4 h4 v-5 h5 v9 h4 v-6 h5 v13 z" fill="#f6ead4" opacity="0.9"/>
+<circle cx="465.57" cy="300.95" r="2.6" fill="#f6ead4" opacity="0.9"/>
+<circle cx="473.57" cy="300.95" r="2.6" fill="#f6ead4" opacity="0.9"/>
+<path d="M791.65 705.75 v-6 l4-4 l4 4 h3 v-3 l3-2 l3 2 v9 z" fill="#f6ead4" opacity="0.9"/>
+<circle cx="800.65" cy="740.75" r="2.6" fill="#f6ead4" opacity="0.9"/>
+<path d="M175.55 743.66 v-6 l4-4 l4 4 h3 v-3 l3-2 l3 2 v9 z" fill="#f6ead4" opacity="0.9"/>
+<path d="M162.86 375.57 v-6 l4-4 l4 4 h3 v-3 l3-2 l3 2 v9 z" fill="#f6ead4" opacity="0.9"/>
 </g>
 </svg>
