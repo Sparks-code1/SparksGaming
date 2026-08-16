@@ -3653,6 +3653,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (p.kind === 'join-cause') setShowJoinTheCause(true)
     if (p.kind === 'control-people') setControlPeopleChoice(p.playerId)
     if (p.kind === 'die-humans' && p.cardId) setDieHumansPendingCardId(p.cardId)
+    if (p.kind === 'comeback-power') {
+      const ep = gameStateRef.current.players.find(pl => pl.id === p.playerId)
+      if (ep) setComebackEliminatedPlayer(ep)
+    }
     if (p.kind === 'fortify-event' && p.cardId) {
       updateFortifyEvent({ phase: 'choice', playerId: p.playerId, cardId: p.cardId })
     }
@@ -5748,8 +5752,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             }
             continue   // a second faction eliminated by the same stroke still gets its power
           }
-          setComebackEliminatedPlayer(ep)
+          // The power is theirs to choose — a permanent campaign mark on their
+          // own faction — and this code runs on whichever machine resolved
+          // the battle that eliminated them. Name them, and their screen
+          // offers it; every other screen stays out of it.
           setIsFirstElimination(isFirst)
+          openEventChoice('comeback-power', ep.id, () => setComebackEliminatedPlayer(ep))
           break
         }
         break
@@ -9159,7 +9167,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
               saveLegacyState(next).catch(() => {})
               return next
             })
-            setComebackEliminatedPlayer(null)
+            closeEventChoice(() => setComebackEliminatedPlayer(null))
           }}
         />
       )}
