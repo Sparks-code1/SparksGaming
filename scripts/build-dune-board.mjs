@@ -784,6 +784,11 @@ if (unknownOverrides.length) {
 }
 for (const p of placed) {
   const o = LABEL_OVERRIDES[p.t.id] ?? {}
+  // Keep what the automatic passes decided, before any override touches it.
+  // The label editor needs this to work out what an override VALUE should be:
+  // reading only the final position, it could not tell an entry that already
+  // exists from one still to be written, and tuning would compound each save.
+  p.base = { x: p.at[0], y: p.at[1], size: round(p.size * LABEL_SCALE, 2) }
   p.size = round(p.size * LABEL_SCALE * (o.scale ?? 1), 2)
   p.at = [p.at[0] + (o.dx ?? 0), p.at[1] + (o.dy ?? 0)]
   p.rotate = o.rotate ?? 0
@@ -810,6 +815,7 @@ for (const t of territories) {
       + `fill="${s.text ?? DECOR.ink}" text-anchor="middle" dominant-baseline="middle" `
       + `font-family="Georgia, 'Times New Roman', serif" letter-spacing="0.5" `
       + `paint-order="stroke" stroke="${s.fill}" stroke-width="${round(size * 0.28, 2)}" stroke-linejoin="round"`
+      + ` data-territory="${t.id}" data-bx="${round(p.base.x)}" data-by="${round(p.base.y)}" data-bs="${p.base.size}"`
       + `${d.stronghold ? ' font-weight="bold"' : ''}${spin}>${esc(line.toUpperCase())}</text>`)
   })
 }
