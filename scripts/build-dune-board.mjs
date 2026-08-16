@@ -397,16 +397,39 @@ if (resolve(SRC) === resolve(OUT_SVG)) {
   throw new Error('source and output are the same file — the build would overwrite its own input')
 }
 
-// Tolerate being handed an already-generated board: strip the ids this script
-// assigns before parsing, or a second run appends a duplicate id to every
-// shape. Figma's own mask ids are left alone — the masks reference them.
+const rawSource = readFileSync(SRC, 'utf8')
+
+// A generated board is no longer a usable input. It once was — the ids and
+// layers below are stripped on read precisely so a second pass could reproduce
+// it — but the build now DROPS the fifteen spice markers and their glyphs, so
+// the output no longer carries the shapes the next run would need. Regenerating
+// from it silently loses them, and the failure surfaces much later as spice
+// data that disagrees with a board holding no markers at all. Refuse up front
+// and say which file to use.
+if (/<g id="dune-(?:terrain|labels)">/.test(rawSource)) {
+  throw new Error(`${SRC} is a GENERATED board, not the source export. It no longer contains the `
+    + `spice markers this build removes, so it cannot be rebuilt from. Point SRC at the pristine `
+    + `Figma export (public/dune-board.source.svg).`)
+}
+
+// Strip the ids this script assigns before parsing, so nothing downstream can
+// mistake a previous run's output for source data. Figma's own mask ids are
+// left alone — the masks reference them.
 const MY_IDS = / (?:id="(?:sector|territory|player-position|spice|track)-\d+"|data-name="[^"]*")/g
 // The decoration layers carry <path> elements of their own. Left in place on a
 // re-read they would be classified as territories and sectors, so they come out
 // before anything is parsed. Both layers are flat, which is what lets a
 // non-greedy match to the first </g> take exactly one layer.
 const MY_LAYERS = /<g id="dune-(?:terrain|labels)">[\s\S]*?<\/g>\s*/g
-const svg = readFileSync(SRC, 'utf8').replace(MY_LAYERS, '').replace(MY_IDS, '')
+// Fills this build puts on the dial and phase-track circles. The export's own
+// circles carry stroke only, so removing fill from <circle> is precise — and
+// necessary, or a re-read leaves the old fill in place and the next run adds a
+// second one beside it.
+const MY_CIRCLE_FILLS = /(<circle\b[^>]*?) fill="#[0-9a-fA-F]{3,8}"/g
+const svg = rawSource
+  .replace(MY_LAYERS, '')
+  .replace(MY_IDS, '')
+  .replace(MY_CIRCLE_FILLS, '$1')
 const els = parseElements(svg)
 
 const paths = els.filter(e => e.tag === 'path' && e.attrs.d)
@@ -720,6 +743,18 @@ for (const s of ordered) idFor.set(s.el, s.id)
 for (const t of territories) idFor.set(t.el, t.id)
 for (const p of playerPositions) idFor.set(p.el, p.id)
 for (const s of trackStops) idFor.set(s.el, s.id)
+
+// The turn dial and the phase track are given the map's own sand, so they read
+// as part of the board rather than as holes in the navy. Done by setting fill on
+// the export's own shapes rather than by drawing discs underneath them, which
+// would leave a second set of circles to keep aligned with the first.
+const dialCircle = uniqCircles.find(e => {
+  const r = parseFloat(e.attrs.r)
+  return r > 50 && Math.abs(r - RIM) > 1
+})
+if (!dialCircle) throw new Error('turn dial circle not found — it is the only large circle that is not the board rim')
+const fills = new Map([[dialCircle, DECOR.sand.fill]])
+for (const s of trackStops) fills.set(s.el, DECOR.sand.fill)
 for (const s of spiceMarkers) idFor.set(s.el, s.id)
 
 // Duplicate circles, plus the fifteen spice markers — those are replaced by the
@@ -752,9 +787,11 @@ const edits = []
 for (const e of els) {
   if (dropped.has(e)) { edits.push({ at: e.index, len: e.raw.length, text: '' }); continue }
   const id = idFor.get(e)
-  if (!id) continue
-  const label = e.tag === 'path' && nameOf({ id }) ? ` data-name="${nameOf({ id })}"` : ''
-  edits.push({ at: e.index, len: e.raw.length, text: e.raw.replace(/^<(\w+)/, `<$1 id="${id}"${label}`) })
+  const fill = fills.get(e)
+  if (!id && !fill) continue
+  const label = id && e.tag === 'path' && nameOf({ id }) ? ` data-name="${nameOf({ id })}"` : ''
+  const attrs = (id ? ` id="${id}"${label}` : '') + (fill ? ` fill="${fill}"` : '')
+  edits.push({ at: e.index, len: e.raw.length, text: e.raw.replace(/^<(\w+)/, `<$1${attrs}`) })
 }
 edits.sort((a, b) => b.at - a.at)
 for (const e of edits) out = out.slice(0, e.at) + e.text + out.slice(e.at + e.len)
