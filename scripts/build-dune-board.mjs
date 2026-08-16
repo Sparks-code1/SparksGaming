@@ -1135,18 +1135,44 @@ function openHandSymbol(x, y, ink = DECOR.ink) {
 // ── Phase track ───────────────────────────────────────────────────────────────
 // The nine circles across the top are the phases of a round. Only the first two
 // are known so far; the rest stay empty rather than being filled with guesses.
-// Drawn in the board's own navy rather than the map's ink, so the phase marks
-// read as a set of their own against the sand circles.
+/** An auction gavel over a pair of cards, for the bidding phase. */
+function gavelSymbol(x, y, ink) {
+  const card = (dx, rot) => `<rect x="${round(x + dx - 6)}" y="${round(y - 9)}" width="12" height="16" `
+    + `rx="1.8" fill="none" stroke="${ink}" stroke-width="1.3" `
+    + `transform="rotate(${rot} ${round(x + dx)} ${round(y - 1)})"/>`
+  return card(-4, -14) + card(4, 10)
+    // head, struck through the cards on the diagonal, then the handle below it
+    + `<rect x="${round(x - 3)}" y="${round(y - 11)}" width="15" height="6.5" rx="1.6" fill="${ink}" `
+    + `transform="rotate(40 ${round(x + 4.5)} ${round(y - 7.5)})"/>`
+    + `<path d="M${round(x - 1)} ${round(y - 1)} L${round(x + 9)} ${round(y + 9)}" stroke="${ink}" `
+    + `stroke-width="2.4" stroke-linecap="round"/>`
+}
+
+/** A standing figure, for the revival phase. */
+function figureSymbol(x, y, ink) {
+  return `<circle cx="${round(x)}" cy="${round(y - 7)}" r="3.6" fill="${ink}"/>`
+    + `<path d="M${round(x)} ${round(y - 2.6)} c-5 0 -7.5 3.4 -7.5 8.2 c0 1.4 15 1.4 15 0 `
+    + `c0 -4.8 -2.5 -8.2 -7.5 -8.2 z" fill="${ink}"/>`
+}
+
+// Each mark sits inside a navy ring drawn within its sand circle, which tidies
+// the marks into medallions without covering the circle. An outline, not a
+// disc, so the symbols stay navy and keep reading against the sand.
 const phaseInk = DECOR.board
 const PHASE_SYMBOLS = {
   1: (x, y) => windSymbol(x, y, phaseInk),                            // storm
   2: (x, y) => spiceSpiral(x, y, 1.5, 1.7, phaseInk),                 // spice
   3: (x, y) => spiceSpiral(x, y - 7, 0.95, 1.5, phaseInk)             // CHOAM charity:
              + openHandSymbol(x, y + 8, phaseInk),                    // spice over an open hand
+  4: (x, y) => gavelSymbol(x, y, phaseInk),                           // bidding
+  5: (x, y) => figureSymbol(x, y, phaseInk),                          // revival
 }
 for (const [i, stop] of trackStops.entries()) {
   const draw = PHASE_SYMBOLS[i + 1]
-  if (draw) labels.push(draw(stop.x, stop.y))
+  if (!draw) continue
+  labels.push(`<circle cx="${round(stop.x)}" cy="${round(stop.y)}" r="18.5" fill="none" `
+    + `stroke="${DECOR.board}" stroke-width="1.4"/>`)
+  labels.push(draw(stop.x, stop.y))
 }
 
 for (const o of offBoard) {
