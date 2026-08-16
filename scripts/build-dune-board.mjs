@@ -46,7 +46,8 @@ const DECOR = {
   stronghold: { fill: '#93373a', borders: 3, text: '#f6ead4' },
   badge: { fill: '#f6ecd2', ring: '#3f2c1a', text: '#3f2c1a' },
   board: '#111a30',          // the navy the printed board is mounted on
-  ringBand: '#efe4c4',       // pale band the storm track is printed on
+  ringBand: '#efe4c4',
+  boxFill: '#c2bd9e',        // yellowish grey, the two boxes on the surround       // pale band the storm track is printed on
   stormRing: { inner: 440, outer: 466 },   // the track the storm walks, outside the rim
   label: 10,                 // territory name size, before any scaling
 }
@@ -992,15 +993,48 @@ for (const s of ordered) {
 // shapes that sit entirely outside the rim, which is why the territory pass
 // rejected them. Label them rather than draw new ones, so they stay wherever
 // the artwork put them.
+/** The tanks mark: a vessel — circle, tank rectangle, and a figure suspended
+ *  inside it — which is what the box is for. */
+function tanksSymbol(x, y) {
+  return `<circle cx="${round(x)}" cy="${round(y)}" r="11" fill="none" stroke="${DECOR.ink}" stroke-width="1.4"/>`
+    + `<rect x="${round(x - 5)}" y="${round(y - 7)}" width="10" height="14" rx="1.5" `
+    + `fill="none" stroke="${DECOR.ink}" stroke-width="1.2"/>`
+    + `<circle cx="${round(x)}" cy="${round(y - 3.4)}" r="1.9" fill="${DECOR.ink}"/>`
+    + `<path d="M${round(x)} ${round(y - 1.6)} v4 M${round(x - 2.4)} ${round(y + 0.4)} h4.8 `
+    + `M${round(x)} ${round(y + 2.4)} l-2 3 M${round(x)} ${round(y + 2.4)} l2 3" `
+    + `fill="none" stroke="${DECOR.ink}" stroke-width="1.1" stroke-linecap="round"/>`
+}
+
+/** The spice mark, the same disc-and-spiral used on the board's blow markers. */
+function spiceSymbol(x, y) {
+  const arm = []
+  for (let k = 0; k <= 30; k++) {
+    const th = k / 30 * 2.5 * Math.PI, rr = 0.8 + th * 0.7
+    arm.push(`${round(x + rr * Math.cos(th))},${round(y + rr * Math.sin(th))}`)
+  }
+  return `<circle cx="${round(x)}" cy="${round(y)}" r="10.5" fill="${DECOR.badge.fill}" `
+    + `stroke="${DECOR.ink}" stroke-width="1.4"/>`
+    + `<polyline points="${arm.join(' ')}" fill="none" stroke="${DECOR.ink}" `
+    + `stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>`
+}
+
 for (const o of offBoard) {
   const b = bearing(o.c[0], o.c[1])
-  const name = b > 180 ? 'Tleilaxu Tanks' : 'Spice Bank'   // 217° is the left box, 143° the right
-  const [lx, ly] = markerPoint(o.poly)
-  // Light on navy: these two boxes sit on the board surround, not on the map,
-  // so they are the one place the dark ink would be invisible.
-  labels.push(`<text x="${round(lx)}" y="${round(ly)}" font-size="13" fill="${DECOR.ringBand}" `
+  const tanks = b > 180                                    // 217° is the left box, 143° the right
+  const name = tanks ? 'Tleilaxu Tanks' : 'Spice Bank'
+  // Filled, so the dark ink reads — these sit on the navy surround, not the map.
+  terrain.push(`<path d="${o.el.attrs.d}" fill="${DECOR.boxFill}"/>`)
+  // Name and mark share a row along the bottom of the box, the mark to the right
+  // of the text. Measured off the shape rather than placed by hand, so it stays
+  // put if the artwork ever moves.
+  const [x0, , x1, y1] = bbox(o.poly)
+  const cx = (x0 + x1) / 2, cy = y1 - 26
+  const textW = name.length * 13 * 0.62
+  labels.push(`<text x="${round(cx - 14)}" y="${round(cy)}" font-size="13" fill="${DECOR.ink}" `
     + `text-anchor="middle" dominant-baseline="central" letter-spacing="1.2" `
     + `font-family="Georgia, 'Times New Roman', serif">${esc(name.toUpperCase())}</text>`)
+  labels.push(tanks ? tanksSymbol(cx - 14 + textW / 2 + 20, cy)
+                    : spiceSymbol(cx - 14 + textW / 2 + 20, cy))
 }
 
 // ── Stronghold icons ──────────────────────────────────────────────────────────
