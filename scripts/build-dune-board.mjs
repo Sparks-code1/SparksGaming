@@ -1025,8 +1025,37 @@ for (const s of ordered) {
   // Sector number, centred in its arc of the ring.
   let span = norm(s.to) - norm(s.from)
   if (span < 0) span += 360
-  const mid = (norm(s.from) + span / 2 - 90) * Math.PI / 180
+  const midB = norm(s.from) + span / 2
+  const mid = (midB - 90) * Math.PI / 180
   const rr = (ringInner + ringOuter) / 2
+
+  if (s.number === 1) {
+    // Sector 1 is where the storm begins, so it is named rather than numbered,
+    // with arrows showing which way it travels. Numbering runs counter-clockwise,
+    // so the storm advances toward DECREASING bearing — the arrows are derived
+    // from that rather than pointed by hand, and would flip with the convention.
+    const at = (b, r) => {
+      const a = (b - 90) * Math.PI / 180
+      return [CX + r * Math.cos(a), CY + r * Math.sin(a)]
+    }
+    // Upright along the arc: the tangent is the bearing itself, flipped on the
+    // lower half of the board so the words never read upside down.
+    const spin = midB + (midB > 90 && midB < 270 ? 180 : 0)
+    const [tx, ty] = at(midB + 3.4, rr)
+    labels.push(`<text x="${round(tx)}" y="${round(ty)}" font-size="7.6" fill="${ringInk}" `
+      + `text-anchor="middle" dominant-baseline="central" letter-spacing="0.4" `
+      + `transform="rotate(${round(spin, 1)} ${round(tx)} ${round(ty)})" `
+      + `font-family="Georgia, 'Times New Roman', serif">STORM START</text>`)
+    for (const off of [-2.6, -4.6, -6.6]) {
+      const [px, py] = at(midB + off - 1.1, rr)
+      const [ax, ay] = at(midB + off + 0.5, rr - 4.2)
+      const [bx2, by2] = at(midB + off + 0.5, rr + 4.2)
+      labels.push(`<path d="M${round(ax)} ${round(ay)} L${round(px)} ${round(py)} L${round(bx2)} ${round(by2)}" `
+        + `fill="none" stroke="${ringInk}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`)
+    }
+    continue
+  }
+
   labels.push(`<text x="${round(CX + rr * Math.cos(mid))}" y="${round(CY + rr * Math.sin(mid))}" `
     + `font-size="10" fill="${ringInk}" text-anchor="middle" dominant-baseline="central" `
     + `font-family="Georgia, 'Times New Roman', serif">${s.number}</text>`)
