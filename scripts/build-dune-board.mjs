@@ -20,7 +20,10 @@ import { dirname, resolve, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const SRC = join(root, 'public', 'dune-board (1).svg')
+// The pristine Figma export, kept beside the generated board so the build stays
+// reproducible. Distinct filenames on purpose: OUT_SVG is overwritten on every
+// run, and pointing the two at one path would destroy the source.
+const SRC = join(root, 'public', 'dune-board.source.svg')
 const OUT_SVG = join(root, 'public', 'dune-board.svg')
 const OUT_TS = join(root, 'src', 'data', 'dune', 'boardData.ts')
 
@@ -189,7 +192,15 @@ function markerPoint(poly) {
 
 // ─── Classify ─────────────────────────────────────────────────────────────────
 
-const svg = readFileSync(SRC, 'utf8')
+if (resolve(SRC) === resolve(OUT_SVG)) {
+  throw new Error('source and output are the same file — the build would overwrite its own input')
+}
+
+// Tolerate being handed an already-generated board: strip the ids this script
+// assigns before parsing, or a second run appends a duplicate id to every
+// shape. Figma's own mask ids are left alone — the masks reference them.
+const MY_IDS = / (?:id="(?:sector|territory|player-position|spice|track)-\d+"|data-name="[^"]*")/g
+const svg = readFileSync(SRC, 'utf8').replace(MY_IDS, '')
 const els = parseElements(svg)
 
 const paths = els.filter(e => e.tag === 'path' && e.attrs.d)
