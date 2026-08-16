@@ -1144,17 +1144,29 @@ function loadIcon(file) {
   return { paths, tx, ty, sx, sy, side: Math.abs(ty) }
 }
 
-/** Place a loaded icon: centred on (x,y), sized to `size`, turned by `rot`. */
-function iconSymbol(icon, x, y, size, ink, rot = 0) {
+/**
+ * Place a loaded icon: centred on (x,y), sized to `size`, turned by `rot`.
+ *
+ * `weight` thickens the trace toward a solid mark. The troops and battle icons
+ * are traced LINE ART — forty-odd separate stroke outlines each — so filling
+ * them leaves the figures hollow, with the circle's sand showing through. A
+ * stroke on top closes them up. Given in finished pixels and divided back
+ * through the transform, because stroke-width is measured before it.
+ */
+function iconSymbol(icon, x, y, size, ink, rot = 0, weight = 0) {
   const k = size / icon.side
   const tf = `translate(${round(x)} ${round(y)}) rotate(${rot}) scale(${round(k, 4)}) `
     + `translate(${round(-icon.side / 2)} ${round(icon.side / 2)}) scale(${icon.sx} ${icon.sy})`
-  return icon.paths.map(d => `<path d="${d}" fill="${ink}" transform="${tf}"/>`).join('')
+  const pen = weight
+    ? ` stroke="${ink}" stroke-width="${round(weight / (k * Math.abs(icon.sx)), 1)}" stroke-linejoin="round"`
+    : ''
+  return icon.paths.map(d => `<path d="${d}" fill="${ink}"${pen} transform="${tf}"/>`).join('')
 }
 
 const ICON_HAND = loadIcon('8iYuG01.svg')
 const ICON_TROOPS = loadIcon('TroopsSVG.svg')
 const ICON_BATTLE = loadIcon('Battle.svg')
+const ICON_MENTAT = loadIcon('Mentat.svg')
 
 /** The supplied hand icon, placed. */
 function openHandSymbol(x, y, ink = DECOR.ink, rot = 0) {
@@ -1231,9 +1243,10 @@ const PHASE_SYMBOLS = {
              + openHandSymbol(x, y + 6, phaseInk, -90),               // spice over an open palm
   4: (x, y) => gavelSymbol(x, y, phaseInk),                           // bidding
   5: (x, y) => figureSymbol(x, y, phaseInk),                          // revival
-  6: (x, y) => iconSymbol(ICON_TROOPS, x, y, 27, phaseInk),           // shipment and movement
-  7: (x, y) => iconSymbol(ICON_BATTLE, x, y, 27, phaseInk),           // battles
+  6: (x, y) => iconSymbol(ICON_TROOPS, x, y, 27, phaseInk, 0, 1.1),   // shipment and movement
+  7: (x, y) => iconSymbol(ICON_BATTLE, x, y, 27, phaseInk, 0, 1.1),   // battles
   8: (x, y) => spiceBarrelSymbol(x, y, phaseInk),                     // spice collection
+  9: (x, y) => iconSymbol(ICON_MENTAT, x, y, 27, phaseInk, 0, 1.1),   // mentat pause
 }
 for (const [i, stop] of trackStops.entries()) {
   const draw = PHASE_SYMBOLS[i + 1]
