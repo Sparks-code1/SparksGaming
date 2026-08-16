@@ -2380,7 +2380,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         }
         break
       }
-      setMissilePowerPendingPlayerId(pid)
+      // A missile power is a permanent mark on THEIR faction card — theirs
+      // to choose, on their screen, wherever the star was resolved.
+      openEventChoice('missile-power', pid, () => setMissilePowerPendingPlayerId(pid))
       break
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2984,7 +2986,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       if (mutantId && !isHuman(mutantId)) {
         // The pairing reveals a HIDDEN permanent power — there is nothing to
         // choose on merit, so the AI declines and the card returns to the deck.
-        run(() => { returnEventCardToDiscard(mutantsEvolvePendingCardId); setMutantsEvolvePendingCardId(null) })
+        run(() => { returnEventCardToDiscard(mutantsEvolvePendingCardId); closeEventChoice(() => setMutantsEvolvePendingCardId(null)) })
         return
       }
     }
@@ -3292,7 +3294,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       if (isAiOwned(mutantId)) {
         // The pairing reveals a HIDDEN permanent power — there is nothing to
         // choose on merit, so the AI declines and the card returns to the deck.
-        step(() => { returnEventCardToDiscard(mutantsEvolvePendingCardId); setMutantsEvolvePendingCardId(null) })
+        step(() => { returnEventCardToDiscard(mutantsEvolvePendingCardId); closeEventChoice(() => setMutantsEvolvePendingCardId(null)) })
         return
       }
     }
@@ -3653,6 +3655,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (p.kind === 'join-cause') setShowJoinTheCause(true)
     if (p.kind === 'control-people') setControlPeopleChoice(p.playerId)
     if (p.kind === 'die-humans' && p.cardId) setDieHumansPendingCardId(p.cardId)
+    if (p.kind === 'missile-power') setMissilePowerPendingPlayerId(p.playerId)
+    if (p.kind === 'mutants-evolve' && p.cardId) setMutantsEvolvePendingCardId(p.cardId)
     if (p.kind === 'comeback-power') {
       const ep = gameStateRef.current.players.find(pl => pl.id === p.playerId)
       if (ep) setComebackEliminatedPlayer(ep)
@@ -4661,7 +4665,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (effect.kind === 'mutants-evolve') {
       const mutantPlayer = state.players.find(p => p.factionId === 'mutants' && !p.isEliminated)
       if (mutantPlayer) {
-        setMutantsEvolvePendingCardId(cardId)
+        // The Mutants reveal their own evolution.
+        openEventChoice('mutants-evolve', mutantPlayer.id,
+          () => setMutantsEvolvePendingCardId(cardId), cardId)
       } else {
         // Only destroyed if used — return to the discard when no Mutants are playing
         returnEventCardToDiscard(cardId)
@@ -5156,7 +5162,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   function handleMissilePowerSelect(powerId: string) {
     if (!missilePowerPendingPlayerId) return
     claimMissilePower(missilePowerPendingPlayerId, powerId)
-    setMissilePowerPendingPlayerId(null)
+    closeEventChoice(() => setMissilePowerPendingPlayerId(null))
   }
 
   // ── The Mutants Evolve resolution ──────────────────────────────────────────
@@ -5177,14 +5183,14 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       saveLegacyState(next).catch(() => {})
       return next
     })
-    setMutantsEvolvePendingCardId(null)
+    closeEventChoice(() => setMutantsEvolvePendingCardId(null))
   }
 
   function handleMutantsEvolveSkip() {
     const cardId = mutantsEvolvePendingCardId
     if (!cardId) return
     returnEventCardToDiscard(cardId)
-    setMutantsEvolvePendingCardId(null)
+    closeEventChoice(() => setMutantsEvolvePendingCardId(null))
   }
 
   // ── Mutant Mass Hypnosis: protect a traded territory ──────────────────────

@@ -274,6 +274,8 @@ export type PendingEventKind =
   | 'die-humans'
   | 'fortify-event'
   | 'comeback-power'
+  | 'missile-power'
+  | 'mutants-evolve'
 
 export interface PendingEventChoice {
   kind: PendingEventKind

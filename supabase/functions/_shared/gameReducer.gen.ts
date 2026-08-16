@@ -772,7 +772,7 @@ function gameReducer(state, action, rng) {
     case "SET_PENDING_EVENT": {
       const p = action.pending;
       if (!p) return only({ ...state, pendingEvent: null });
-      const kinds = ["join-cause", "control-people", "die-humans", "fortify-event", "comeback-power"];
+      const kinds = ["join-cause", "control-people", "die-humans", "fortify-event", "comeback-power", "missile-power", "mutants-evolve"];
       if (!kinds.includes(p.kind)) return only(state);
       if (!state.players.some((pl) => pl.id === p.playerId)) return only(state);
       return only({
