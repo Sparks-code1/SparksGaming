@@ -46,7 +46,35 @@ const DECOR = {
   stronghold: { fill: '#93373a', borders: 3, text: '#f6ead4' },
   badge: { fill: '#f6ecd2', ring: '#3f2c1a', text: '#3f2c1a' },
   badgeRadius: 452,          // just outside the rim, clear of the seat circles
-  label: 10,                 // territory name size
+  label: 10,                 // territory name size, before any scaling
+}
+
+/**
+ * Scales every territory label at once. Applied AFTER the automatic fit, so
+ * pushing it above 1 can overflow the narrow shapes the fit was protecting —
+ * that is the intent of a global knob, but it is why the fit does not simply
+ * bake it in.
+ */
+const LABEL_SCALE = 1
+
+/**
+ * Hand adjustments for the labels geometry cannot place well — the thin
+ * crescents, mostly, where there is no interior left to nudge into.
+ *
+ * Keyed by territory id. Every field is optional and falls back to the computed
+ * value, so an entry states only what it changes:
+ *
+ *   rotate  degrees clockwise, pivoting on the label's own anchor
+ *   scale   multiplier on the fitted font size, on top of LABEL_SCALE
+ *   dx, dy  offset in board units, applied after the repulsion pass
+ *
+ *   'territory-37': { rotate: -18, dy: 6 },
+ *
+ * These are applied last and always win: automatic placement runs first, then
+ * repulsion, then this. Ids are checked at build time, so a typo fails the
+ * build rather than silently doing nothing.
+ */
+const LABEL_OVERRIDES = {
 }
 
 // ─── Board frame ──────────────────────────────────────────────────────────────
@@ -747,6 +775,20 @@ for (let pass = 0; pass < 6; pass++) {
     }
   }
 }
+// Hand overrides go on last, after placement and repulsion, so they always win.
+// Nothing here touches t.marker — the exported centroid stays where the
+// geometry put it, because troop placement should not follow a label tweak.
+const unknownOverrides = Object.keys(LABEL_OVERRIDES).filter(id => !territories.some(t => t.id === id))
+if (unknownOverrides.length) {
+  throw new Error(`LABEL_OVERRIDES names territories that do not exist: ${unknownOverrides.join(', ')}`)
+}
+for (const p of placed) {
+  const o = LABEL_OVERRIDES[p.t.id] ?? {}
+  p.size = round(p.size * LABEL_SCALE * (o.scale ?? 1), 2)
+  p.at = [p.at[0] + (o.dx ?? 0), p.at[1] + (o.dy ?? 0)]
+  p.rotate = o.rotate ?? 0
+}
+
 const anchorOf = new Map(placed.map(p => [p.t, p]))
 
 const labels = []
@@ -757,6 +799,9 @@ for (const t of territories) {
   const [x, y] = p.at
   const { lines, size } = p
   const top = y - ((lines.length - 1) * size * 0.58)
+  // One pivot for every line of a wrapped name — the anchor itself — so the
+  // block turns as a unit instead of each line swinging about its own centre.
+  const spin = p.rotate ? ` transform="rotate(${round(p.rotate, 2)} ${round(x)} ${round(y)})"` : ''
   lines.forEach((line, i) => {
     // paint-order puts the stroke behind the glyphs, so a fill-coloured halo
     // keeps the name legible where it crosses its own border without showing
@@ -765,7 +810,7 @@ for (const t of territories) {
       + `fill="${s.text ?? DECOR.ink}" text-anchor="middle" dominant-baseline="middle" `
       + `font-family="Georgia, 'Times New Roman', serif" letter-spacing="0.5" `
       + `paint-order="stroke" stroke="${s.fill}" stroke-width="${round(size * 0.28, 2)}" stroke-linejoin="round"`
-      + `${d.stronghold ? ' font-weight="bold"' : ''}>${esc(line.toUpperCase())}</text>`)
+      + `${d.stronghold ? ' font-weight="bold"' : ''}${spin}>${esc(line.toUpperCase())}</text>`)
   })
 }
 
