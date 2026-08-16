@@ -130,6 +130,14 @@
 <line x1="265.53" y1="938.9" x2="252.67" y2="961.5" stroke="#3f2c1a" stroke-width="1.4"/>
 <path d="M340.613 1097.47L11.5157 1097.94C5.43443 1097.95 0.5 1093.02 0.5 1086.94V893.956C0.5 887.88 5.42487 882.956 11.5 882.956H100.291C103.355 882.956 106.247 884.198 108.355 886.422C121.037 899.805 168.269 948.612 206.097 973.956C249.026 1002.72 320.856 1028.74 344.097 1036.77C348.593 1038.33 351.597 1042.53 351.597 1047.29V1086.47C351.597 1092.54 346.682 1097.46 340.613 1097.47Z" fill="#c2bd9e"/>
 <path d="M628.581 1097.47L957.581 1097.94C963.662 1097.95 968.597 1093.02 968.597 1086.94V893.956C968.597 887.88 963.672 882.956 957.597 882.956H868.836C865.771 882.956 862.878 884.199 860.77 886.424C848.091 899.808 800.873 948.613 763.057 973.955C720.14 1002.72 648.331 1028.73 625.096 1036.77C620.6 1038.32 617.597 1042.53 617.597 1047.29V1086.47C617.597 1092.54 622.512 1097.46 628.581 1097.47Z" fill="#c2bd9e"/>
+<clipPath id="clip-moon"><circle cx="879.11" cy="108.51" r="82.7253"/></clipPath>
+<circle cx="879.11" cy="108.51" r="82.7253" fill="#f0e2bb" stroke="#3f2c1a" stroke-width="1.6"/>
+<circle cx="917.16" cy="98.58" r="86.86" fill="#d8c69c" opacity="0.55" clip-path="url(#clip-moon)"/>
+<circle cx="850.98" cy="83.69" r="12.41" fill="#b09a72" opacity="0.22" clip-path="url(#clip-moon)"/>
+<circle cx="887.38" cy="143.25" r="15.72" fill="#b09a72" opacity="0.18" clip-path="url(#clip-moon)"/>
+<circle cx="836.09" cy="131.67" r="8.27" fill="#b09a72" opacity="0.2" clip-path="url(#clip-moon)"/>
+<circle cx="915.51" cy="73.76" r="9.93" fill="#b09a72" opacity="0.16" clip-path="url(#clip-moon)"/>
+<circle cx="874.14" cy="63.84" r="6.62" fill="#b09a72" opacity="0.18" clip-path="url(#clip-moon)"/>
 </g>
 <circle cx="483.097" cy="556.456" r="432.5" stroke="black"/>
 <path id="sector-1" d="M410.06 982.744C360.635 974.276 313.059 957.277 269.459 932.508L451.836 611.481C458.216 615.105 462.649 633.143 469.881 634.382L410.06 982.744Z" stroke="black" stroke-width="3" stroke-dasharray="6 6"/>
@@ -389,6 +397,7 @@
 <circle cx="37.5" cy="1071.94" r="11" fill="none" stroke="#3f2c1a" stroke-width="1.4"/><rect x="32.5" y="1064.94" width="10" height="14" rx="1.5" fill="none" stroke="#3f2c1a" stroke-width="1.2"/><circle cx="37.5" cy="1068.54" r="1.9" fill="#3f2c1a"/><path d="M37.5 1070.34 v4 M35.1 1072.34 h4.8 M37.5 1074.34 l-2 3 M37.5 1074.34 l2 3" fill="none" stroke="#3f2c1a" stroke-width="1.1" stroke-linecap="round"/>
 <text x="909.6" y="1071.94" font-size="13" fill="#3f2c1a" text-anchor="end" dominant-baseline="central" letter-spacing="1.2" font-family="Georgia, 'Times New Roman', serif">SPICE BANK</text>
 <circle cx="931.6" cy="1071.94" r="10.5" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.4"/><polyline points="932.4,1071.94 932.55,1072.19 932.61,1072.52 932.55,1072.89 932.36,1073.27 932.04,1073.6 931.6,1073.84 931.06,1073.95 930.46,1073.9 929.87,1073.67 929.32,1073.26 928.88,1072.67 928.6,1071.94 928.52,1071.12 928.68,1070.26 929.09,1069.43 929.73,1068.71 930.58,1068.16 931.6,1067.84 932.71,1067.8 933.83,1068.07 934.88,1068.65 935.78,1069.52 936.44,1070.64 936.8,1071.94 936.8,1073.33 936.42,1074.72 935.66,1076 934.56,1077.08 933.18,1077.85 931.6,1078.24" fill="none" stroke="#3f2c1a" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="877.61" y="108.51" font-size="22.34" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" letter-spacing="3" font-family="Georgia, 'Times New Roman', serif">DUNE</text>
 <path d="M609.39 245.63 v-7 h4 v-4 h4 v-5 h5 v9 h4 v-6 h5 v13 z" fill="#f6ead4" opacity="0.9"/>
 <circle cx="616.39" cy="267.63" r="2.6" fill="#f6ead4" opacity="0.9"/>
 <circle cx="624.39" cy="267.63" r="2.6" fill="#f6ead4" opacity="0.9"/>

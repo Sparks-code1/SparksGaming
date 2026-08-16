@@ -1076,6 +1076,35 @@ for (const o of offBoard) {
   labels.push(tanks ? tanksSymbol(symX, cy) : spiceSymbol(symX, cy))
 }
 
+// ── Moon ──────────────────────────────────────────────────────────────────────
+// Mirrors the turn dial across the board's vertical centre line, taking its
+// radius and fill from the dial itself so "same size and colour" stays true if
+// either is ever changed.
+const moonR = parseFloat(dialCircle.attrs.r)
+const moonY = parseFloat(dialCircle.attrs.cy)
+const moonX = 970 - parseFloat(dialCircle.attrs.cx)
+terrain.push(`<clipPath id="clip-moon"><circle cx="${round(moonX)}" cy="${round(moonY)}" r="${moonR}"/></clipPath>`)
+terrain.push(`<circle cx="${round(moonX)}" cy="${round(moonY)}" r="${moonR}" fill="${DECOR.sand.fill}" `
+  + `stroke="${DECOR.ink}" stroke-width="1.6"/>`)
+// The terminator: an oversized disc pushed off to one side and clipped to the
+// moon, which leaves a crescent of the lit surface rather than a hard edge.
+terrain.push(`<circle cx="${round(moonX + moonR * 0.46)}" cy="${round(moonY - moonR * 0.12)}" `
+  + `r="${round(moonR * 1.05)}" fill="#d8c69c" opacity="0.55" clip-path="url(#clip-moon)"/>`)
+// A few craters, largest toward the shadow so the surface reads as curved.
+for (const [dx, dy, r, o] of [[-0.34, -0.30, 0.15, 0.22], [0.10, 0.42, 0.19, 0.18],
+                              [-0.52, 0.28, 0.10, 0.20], [0.44, -0.42, 0.12, 0.16],
+                              [-0.06, -0.54, 0.08, 0.18]]) {
+  terrain.push(`<circle cx="${round(moonX + moonR * dx)}" cy="${round(moonY + moonR * dy)}" `
+    + `r="${round(moonR * r)}" fill="#b09a72" opacity="${o}" clip-path="url(#clip-moon)"/>`)
+}
+// Letter-spacing is added after the LAST character too, so a centred string
+// hangs right of its anchor by half the tracking. Pull it back by that much.
+const moonTrack = 3
+labels.push(`<text x="${round(moonX - moonTrack / 2)}" y="${round(moonY)}" `
+  + `font-size="${round(moonR * 0.27)}" fill="${DECOR.ink}" text-anchor="middle" `
+  + `dominant-baseline="central" letter-spacing="${moonTrack}" `
+  + `font-family="Georgia, 'Times New Roman', serif">DUNE</text>`)
+
 // ── Stronghold icons ──────────────────────────────────────────────────────────
 // A city for the two that hold ornithopters, a town for the three sietches, and
 // a spice symbol for each point of income — which is where the 2 / 2 / 1 comes
