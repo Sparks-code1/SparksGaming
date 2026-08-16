@@ -1090,17 +1090,49 @@ function tanksSymbol(x, y) {
     + `fill="none" stroke="${DECOR.ink}" stroke-width="1.1" stroke-linecap="round"/>`
 }
 
-/** The spice mark, the same disc-and-spiral used on the board's blow markers. */
-function spiceSymbol(x, y) {
+/** The spice spiral on its own, at any size. Shared so the mark is identical
+ *  wherever spice is meant — blow markers, the bank, the phase track. */
+function spiceSpiral(x, y, scale = 1, width = 1.4) {
   const arm = []
   for (let k = 0; k <= 30; k++) {
-    const th = k / 30 * 2.5 * Math.PI, rr = 0.8 + th * 0.7
+    const th = k / 30 * 2.5 * Math.PI, rr = (0.8 + th * 0.7) * scale
     arm.push(`${round(x + rr * Math.cos(th))},${round(y + rr * Math.sin(th))}`)
   }
+  return `<polyline points="${arm.join(' ')}" fill="none" stroke="${DECOR.ink}" `
+    + `stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round"/>`
+}
+
+/** The spice mark, the same disc-and-spiral used on the board's blow markers. */
+function spiceSymbol(x, y) {
   return `<circle cx="${round(x)}" cy="${round(y)}" r="10.5" fill="${DECOR.badge.fill}" `
-    + `stroke="${DECOR.ink}" stroke-width="1.4"/>`
-    + `<polyline points="${arm.join(' ')}" fill="none" stroke="${DECOR.ink}" `
-    + `stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>`
+    + `stroke="${DECOR.ink}" stroke-width="1.4"/>` + spiceSpiral(x, y)
+}
+
+/** Wind: three streams with curled tails, for the storm phase. */
+function windSymbol(x0, y) {
+  // The curled tails extend to the right of the strokes, so the glyph's visual
+  // centre sits right of its geometric one. Shift back to sit centred in the circle.
+  const x = x0 - 3
+  const line = (dy, len, r) =>
+    `M${round(x - 12)} ${round(y + dy)} h${len} a${r} ${r} 0 1 0 ${round(-r * 0.8)} ${round(-r)}`
+  return `<path d="${line(-6, 14, 4)}" fill="none" stroke="${DECOR.ink}" stroke-width="1.6" `
+    + `stroke-linecap="round"/>`
+    + `<path d="${line(0, 18, 4.6)}" fill="none" stroke="${DECOR.ink}" stroke-width="1.6" `
+    + `stroke-linecap="round"/>`
+    + `<path d="${line(6, 11, 3.6)}" fill="none" stroke="${DECOR.ink}" stroke-width="1.6" `
+    + `stroke-linecap="round"/>`
+}
+
+// ── Phase track ───────────────────────────────────────────────────────────────
+// The nine circles across the top are the phases of a round. Only the first two
+// are known so far; the rest stay empty rather than being filled with guesses.
+const PHASE_SYMBOLS = {
+  1: windSymbol,                                    // storm
+  2: (x, y) => spiceSpiral(x, y, 1.5, 1.7),         // spice
+}
+for (const [i, stop] of trackStops.entries()) {
+  const draw = PHASE_SYMBOLS[i + 1]
+  if (draw) labels.push(draw(stop.x, stop.y))
 }
 
 for (const o of offBoard) {
