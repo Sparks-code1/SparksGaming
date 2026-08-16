@@ -6,7 +6,7 @@
 // the script and the placeholder fields here, then re-run so the SVG ids and
 // this module stay in step.
 
-export type DuneTerrain = 'sand' | 'rock' | 'polar-sink' | null
+export type DuneTerrain = 'sand' | 'rock' | 'polar-sink' | 'stronghold'
 
 export interface DuneTerritory {
   id: string
@@ -15,8 +15,14 @@ export interface DuneTerritory {
   sectors: string[]
   /** Where a troop marker sits. Inside the shape even when it is concave. */
   centroid: { x: number; y: number }
-  /** null on the five strongholds, whose terrain is not yet recorded. */
   terrain: DuneTerrain
+  /** The sector a blow puts spice in — one sector, not the whole
+   *  territory. Broken Land spans 1 and 18; its spice is in 18. */
+  spiceSector: string | null
+  /** One per sector this territory overlaps. Troops occupy a CELL, not a
+   *  territory: a stack in Broken Land sector-18 dies to a storm in 18 and
+   *  survives one in sector-1. */
+  cells: DuneCell[]
   stronghold: boolean
   /** Spice a blow places here (6–12). Exactly the fifteen territories
    *  carrying a marker on the board — the build asserts the two agree. */
@@ -27,6 +33,10 @@ export interface DuneTerritory {
   /** Arrakeen and Carthag. */
   ornithopters: boolean
 }
+
+/** A (territory, sector) pair — the actual unit of occupancy. 'at' is where
+ *  to draw the stack; areaShare is how much of the territory this cell is. */
+export interface DuneCell { sector: string; at: { x: number; y: number }; areaShare: number }
 
 export interface DuneSector { id: string; number: number; fromBearing: number; toBearing: number }
 export interface DuneMarker { id: string; x: number; y: number }
@@ -60,14 +70,22 @@ export const DUNE_SECTORS: DuneSector[] = [
 export const DUNE_TERRITORIES: DuneTerritory[] = [
   {
     id: 'territory-01',
-    displayName: 'False Walls East',
+    displayName: 'False Wall East',
     sectors: ['sector-3', 'sector-4', 'sector-5', 'sector-6', 'sector-7'],
     centroid: { x: 563.43, y: 545.61 },
     terrain: 'rock',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-3', at: { x: 544.97, y: 493.23 }, areaShare: 0.136 },
+      { sector: 'sector-4', at: { x: 565.11, y: 510.34 }, areaShare: 0.22 },
+      { sector: 'sector-5', at: { x: 575.26, y: 540.39 }, areaShare: 0.221 },
+      { sector: 'sector-6', at: { x: 568.73, y: 572.28 }, areaShare: 0.226 },
+      { sector: 'sector-7', at: { x: 554.93, y: 596.53 }, areaShare: 0.192 },
+    ],
   },
   {
     id: 'territory-02',
@@ -75,10 +93,15 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-7', 'sector-8'],
     centroid: { x: 557.52, y: 631.37 },
     terrain: 'sand',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-7', at: { x: 580.41, y: 622.41 }, areaShare: 0.303 },
+      { sector: 'sector-8', at: { x: 547.62, y: 635.05 }, areaShare: 0.692 },
+    ],
   },
   {
     id: 'territory-03',
@@ -86,10 +109,31 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-1', 'sector-2', 'sector-3', 'sector-4', 'sector-5', 'sector-6', 'sector-7', 'sector-8', 'sector-9', 'sector-10', 'sector-11', 'sector-12', 'sector-13', 'sector-14', 'sector-15', 'sector-16', 'sector-17', 'sector-18'],
     centroid: { x: 478.23, y: 566.81 },
     terrain: 'polar-sink',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-1', at: { x: 483.56, y: 523.03 }, areaShare: 0.032 },
+      { sector: 'sector-2', at: { x: 493.99, y: 525.84 }, areaShare: 0.028 },
+      { sector: 'sector-3', at: { x: 508.56, y: 528.35 }, areaShare: 0.044 },
+      { sector: 'sector-4', at: { x: 525.11, y: 533.1 }, areaShare: 0.064 },
+      { sector: 'sector-5', at: { x: 529.17, y: 548.09 }, areaShare: 0.061 },
+      { sector: 'sector-6', at: { x: 523.89, y: 563.35 }, areaShare: 0.05 },
+      { sector: 'sector-7', at: { x: 516.83, y: 575.91 }, areaShare: 0.04 },
+      { sector: 'sector-8', at: { x: 509.27, y: 588.22 }, areaShare: 0.053 },
+      { sector: 'sector-9', at: { x: 500.07, y: 604.39 }, areaShare: 0.072 },
+      { sector: 'sector-10', at: { x: 483.27, y: 609.33 }, areaShare: 0.078 },
+      { sector: 'sector-11', at: { x: 468.11, y: 600.85 }, areaShare: 0.062 },
+      { sector: 'sector-12', at: { x: 452.01, y: 592.93 }, areaShare: 0.063 },
+      { sector: 'sector-13', at: { x: 436.05, y: 583 }, areaShare: 0.087 },
+      { sector: 'sector-14', at: { x: 428.43, y: 566.89 }, areaShare: 0.089 },
+      { sector: 'sector-15', at: { x: 435.57, y: 548.62 }, areaShare: 0.066 },
+      { sector: 'sector-16', at: { x: 447.68, y: 536.25 }, areaShare: 0.051 },
+      { sector: 'sector-17', at: { x: 460.4, y: 529.54 }, areaShare: 0.033 },
+      { sector: 'sector-18', at: { x: 472.77, y: 527.39 }, areaShare: 0.028 },
+    ],
   },
   {
     id: 'territory-04',
@@ -97,10 +141,17 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-13', 'sector-14', 'sector-15', 'sector-16'],
     centroid: { x: 375.07, y: 577.95 },
     terrain: 'sand',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-13', at: { x: 354.46, y: 635.05 }, areaShare: 0.317 },
+      { sector: 'sector-14', at: { x: 370.37, y: 577.16 }, areaShare: 0.314 },
+      { sector: 'sector-15', at: { x: 388.25, y: 540.48 }, areaShare: 0.193 },
+      { sector: 'sector-16', at: { x: 407.15, y: 514.27 }, areaShare: 0.171 },
+    ],
   },
   {
     id: 'territory-05',
@@ -108,10 +159,16 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-1', 'sector-2', 'sector-3'],
     centroid: { x: 547.87, y: 340.25 },
     terrain: 'sand',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-1', at: { x: 517.51, y: 305.89 }, areaShare: 0.219 },
+      { sector: 'sector-2', at: { x: 554.29, y: 337.27 }, areaShare: 0.671 },
+      { sector: 'sector-3', at: { x: 570.48, y: 422.65 }, areaShare: 0.11 },
+    ],
   },
   {
     id: 'territory-06',
@@ -119,10 +176,15 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-3', 'sector-4'],
     centroid: { x: 664.98, y: 398.26 },
     terrain: 'rock',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-3', at: { x: 656.65, y: 389.67 }, areaShare: 0.607 },
+      { sector: 'sector-4', at: { x: 677.46, y: 411.35 }, areaShare: 0.393 },
+    ],
   },
   {
     id: 'territory-07',
@@ -130,10 +192,17 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-4', 'sector-5', 'sector-6', 'sector-7'],
     centroid: { x: 636.05, y: 549.99 },
     terrain: 'sand',
+    spiceSector: 'sector-4',
     stronghold: false,
     spiceBlow: 8,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-4', at: { x: 633.76, y: 483.43 }, areaShare: 0.229 },
+      { sector: 'sector-5', at: { x: 643.41, y: 529.22 }, areaShare: 0.343 },
+      { sector: 'sector-6', at: { x: 631.22, y: 583.45 }, areaShare: 0.267 },
+      { sector: 'sector-7', at: { x: 631.51, y: 632.77 }, areaShare: 0.16 },
+    ],
   },
   {
     id: 'territory-08',
@@ -141,10 +210,16 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-9', 'sector-10', 'sector-11'],
     centroid: { x: 482.11, y: 718.68 },
     terrain: 'sand',
+    spiceSector: 'sector-9',
     stronghold: false,
     spiceBlow: 8,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-9', at: { x: 537.04, y: 715.78 }, areaShare: 0.323 },
+      { sector: 'sector-10', at: { x: 485.37, y: 726.96 }, areaShare: 0.332 },
+      { sector: 'sector-11', at: { x: 426.99, y: 713.81 }, areaShare: 0.344 },
+    ],
   },
   {
     id: 'territory-09',
@@ -152,10 +227,15 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-12', 'sector-13'],
     centroid: { x: 396.8, y: 651.86 },
     terrain: 'sand',
+    spiceSector: 'sector-13',
     stronghold: false,
     spiceBlow: 6,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-12', at: { x: 398.42, y: 663.48 }, areaShare: 0.75 },
+      { sector: 'sector-13', at: { x: 391.96, y: 616.95 }, areaShare: 0.25 },
+    ],
   },
   {
     id: 'territory-10',
@@ -163,10 +243,16 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-12', 'sector-13', 'sector-14'],
     centroid: { x: 295.45, y: 693.73 },
     terrain: 'rock',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-12', at: { x: 288.51, y: 759.59 }, areaShare: 0.345 },
+      { sector: 'sector-13', at: { x: 294.51, y: 675.42 }, areaShare: 0.508 },
+      { sector: 'sector-14', at: { x: 313.93, y: 602.56 }, areaShare: 0.147 },
+    ],
   },
   {
     id: 'territory-11',
@@ -174,10 +260,15 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-17', 'sector-18'],
     centroid: { x: 386.3, y: 385.37 },
     terrain: 'sand',
+    spiceSector: 'sector-17',
     stronghold: false,
     spiceBlow: 6,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-17', at: { x: 368.34, y: 414.37 }, areaShare: 0.515 },
+      { sector: 'sector-18', at: { x: 406.14, y: 352.65 }, areaShare: 0.475 },
+    ],
   },
   {
     id: 'territory-12',
@@ -185,21 +276,30 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-1', 'sector-18'],
     centroid: { x: 467.81, y: 417.8 },
     terrain: 'sand',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-1', at: { x: 475.2, y: 404.59 }, areaShare: 0.665 },
+      { sector: 'sector-18', at: { x: 452.42, y: 443.99 }, areaShare: 0.329 },
+    ],
   },
   {
     id: 'territory-13',
     displayName: 'Arrakeen',
     sectors: ['sector-2'],
     centroid: { x: 620.17, y: 247.26 },
-    terrain: null,
+    terrain: 'stronghold',
+    spiceSector: null,
     stronghold: true,
     spiceBlow: null,
     spiceIncome: 2,
     ornithopters: true,
+    cells: [
+      { sector: 'sector-2', at: { x: 620.09, y: 246.94 }, areaShare: 0.997 },
+    ],
   },
   {
     id: 'territory-14',
@@ -207,10 +307,14 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-3'],
     centroid: { x: 652.52, y: 292.54 },
     terrain: 'rock',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-3', at: { x: 652.52, y: 292.51 }, areaShare: 1 },
+    ],
   },
   {
     id: 'territory-15',
@@ -218,10 +322,14 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-3'],
     centroid: { x: 673.22, y: 331.86 },
     terrain: 'sand',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-3', at: { x: 673.37, y: 331.76 }, areaShare: 1 },
+    ],
   },
   {
     id: 'territory-16',
@@ -229,10 +337,17 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-4', 'sector-5', 'sector-6', 'sector-7'],
     centroid: { x: 775.89, y: 532.71 },
     terrain: 'rock',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-4', at: { x: 770.25, y: 419.48 }, areaShare: 0.236 },
+      { sector: 'sector-5', at: { x: 787.81, y: 501.76 }, areaShare: 0.342 },
+      { sector: 'sector-6', at: { x: 778.17, y: 611.94 }, areaShare: 0.343 },
+      { sector: 'sector-7', at: { x: 729.82, y: 663.78 }, areaShare: 0.078 },
+    ],
   },
   {
     id: 'territory-17',
@@ -240,10 +355,15 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-7', 'sector-8'],
     centroid: { x: 674.97, y: 742.14 },
     terrain: 'rock',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-7', at: { x: 696.14, y: 703.84 }, areaShare: 0.327 },
+      { sector: 'sector-8', at: { x: 665.4, y: 761.08 }, areaShare: 0.671 },
+    ],
   },
   {
     id: 'territory-18',
@@ -251,10 +371,16 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-9', 'sector-10', 'sector-11'],
     centroid: { x: 465.45, y: 827.43 },
     terrain: 'sand',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-9', at: { x: 557.75, y: 825.57 }, areaShare: 0.179 },
+      { sector: 'sector-10', at: { x: 480.86, y: 831.65 }, areaShare: 0.458 },
+      { sector: 'sector-11', at: { x: 401, y: 822.8 }, areaShare: 0.363 },
+    ],
   },
   {
     id: 'territory-19',
@@ -262,10 +388,15 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-11', 'sector-12'],
     centroid: { x: 338.35, y: 776.52 },
     terrain: 'sand',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-11', at: { x: 346.23, y: 823.25 }, areaShare: 0.287 },
+      { sector: 'sector-12', at: { x: 335.27, y: 757.5 }, areaShare: 0.713 },
+    ],
   },
   {
     id: 'territory-20',
@@ -273,10 +404,15 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-13', 'sector-14'],
     centroid: { x: 167.54, y: 656.35 },
     terrain: 'sand',
+    spiceSector: 'sector-14',
     stronghold: false,
     spiceBlow: 8,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-13', at: { x: 231.84, y: 667.31 }, areaShare: 0.264 },
+      { sector: 'sector-14', at: { x: 144.1, y: 652.52 }, areaShare: 0.736 },
+    ],
   },
   {
     id: 'territory-21',
@@ -284,10 +420,14 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-14'],
     centroid: { x: 180.27, y: 590.39 },
     terrain: 'sand',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-14', at: { x: 180.4, y: 590.68 }, areaShare: 1 },
+    ],
   },
   {
     id: 'territory-22',
@@ -295,10 +435,15 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-14', 'sector-15'],
     centroid: { x: 205.75, y: 530.61 },
     terrain: 'sand',
+    spiceSector: 'sector-15',
     stronghold: false,
     spiceBlow: 8,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-14', at: { x: 202.03, y: 557.74 }, areaShare: 0.021 },
+      { sector: 'sector-15', at: { x: 206.25, y: 529.65 }, areaShare: 0.979 },
+    ],
   },
   {
     id: 'territory-23',
@@ -306,10 +451,14 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-15'],
     centroid: { x: 166.8, y: 481.35 },
     terrain: 'sand',
+    spiceSector: 'sector-15',
     stronghold: false,
     spiceBlow: 6,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-15', at: { x: 166.59, y: 481.28 }, areaShare: 1 },
+    ],
   },
   {
     id: 'territory-24',
@@ -317,10 +466,16 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-16', 'sector-17', 'sector-18'],
     centroid: { x: 283.98, y: 356.33 },
     terrain: 'rock',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-16', at: { x: 281.81, y: 434.87 }, areaShare: 0.475 },
+      { sector: 'sector-17', at: { x: 269.52, y: 301.54 }, areaShare: 0.394 },
+      { sector: 'sector-18', at: { x: 334.31, y: 229.28 }, areaShare: 0.125 },
+    ],
   },
   {
     id: 'territory-25',
@@ -328,21 +483,31 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-1', 'sector-17', 'sector-18'],
     centroid: { x: 427.66, y: 227.71 },
     terrain: 'sand',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-1', at: { x: 478.01, y: 199.14 }, areaShare: 0.492 },
+      { sector: 'sector-17', at: { x: 322.97, y: 314.04 }, areaShare: 0.064 },
+      { sector: 'sector-18', at: { x: 387.29, y: 246.69 }, areaShare: 0.444 },
+    ],
   },
   {
     id: 'territory-26',
     displayName: 'Carthag',
     sectors: ['sector-1'],
     centroid: { x: 474.38, y: 279.9 },
-    terrain: null,
+    terrain: 'stronghold',
+    spiceSector: null,
     stronghold: true,
     spiceBlow: null,
     spiceIncome: 2,
     ornithopters: true,
+    cells: [
+      { sector: 'sector-1', at: { x: 474.73, y: 279.87 }, areaShare: 0.987 },
+    ],
   },
   {
     id: 'territory-27',
@@ -350,10 +515,16 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-1', 'sector-2', 'sector-3'],
     centroid: { x: 627.51, y: 177.51 },
     terrain: 'sand',
+    spiceSector: 'sector-2',
     stronghold: false,
     spiceBlow: 6,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-1', at: { x: 540.28, y: 144.55 }, areaShare: 0.125 },
+      { sector: 'sector-2', at: { x: 627.68, y: 175.53 }, areaShare: 0.722 },
+      { sector: 'sector-3', at: { x: 697.74, y: 213.08 }, areaShare: 0.153 },
+    ],
   },
   {
     id: 'territory-28',
@@ -361,10 +532,14 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-3'],
     centroid: { x: 719.35, y: 248.64 },
     terrain: 'sand',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-3', at: { x: 719.39, y: 248.7 }, areaShare: 1 },
+    ],
   },
   {
     id: 'territory-29',
@@ -372,10 +547,14 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-3'],
     centroid: { x: 773.45, y: 275.15 },
     terrain: 'sand',
+    spiceSector: 'sector-3',
     stronghold: false,
     spiceBlow: 6,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-3', at: { x: 773.5, y: 275.15 }, areaShare: 1 },
+    ],
   },
   {
     id: 'territory-30',
@@ -383,10 +562,14 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-4'],
     centroid: { x: 812.5, y: 343.18 },
     terrain: 'sand',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-4', at: { x: 812.44, y: 343.5 }, areaShare: 0.994 },
+    ],
   },
   {
     id: 'territory-31',
@@ -394,10 +577,14 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-5'],
     centroid: { x: 886.48, y: 506.11 },
     terrain: 'sand',
+    spiceSector: 'sector-5',
     stronghold: false,
     spiceBlow: 8,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-5', at: { x: 886.36, y: 505.64 }, areaShare: 1 },
+    ],
   },
   {
     id: 'territory-32',
@@ -405,21 +592,31 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-6', 'sector-7', 'sector-8'],
     centroid: { x: 842.73, y: 729.7 },
     terrain: 'sand',
+    spiceSector: 'sector-7',
     stronghold: false,
     spiceBlow: 10,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-6', at: { x: 886.55, y: 630.6 }, areaShare: 0.404 },
+      { sector: 'sector-7', at: { x: 840.09, y: 763.81 }, areaShare: 0.349 },
+      { sector: 'sector-8', at: { x: 770.71, y: 853.84 }, areaShare: 0.234 },
+    ],
   },
   {
     id: 'territory-33',
     displayName: 'Tuek\'s Sietch',
     sectors: ['sector-7'],
     centroid: { x: 797.21, y: 736.06 },
-    terrain: null,
+    terrain: 'stronghold',
+    spiceSector: null,
     stronghold: true,
     spiceBlow: null,
     spiceIncome: 1,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-7', at: { x: 797.13, y: 736.04 }, areaShare: 1 },
+    ],
   },
   {
     id: 'territory-34',
@@ -427,10 +624,15 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-8', 'sector-9'],
     centroid: { x: 639.71, y: 867.73 },
     terrain: 'sand',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-8', at: { x: 679.97, y: 858.54 }, areaShare: 0.296 },
+      { sector: 'sector-9', at: { x: 622.83, y: 871.97 }, areaShare: 0.704 },
+    ],
   },
   {
     id: 'territory-35',
@@ -438,10 +640,15 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-9', 'sector-10'],
     centroid: { x: 522.78, y: 925.31 },
     terrain: 'sand',
+    spiceSector: 'sector-10',
     stronghold: false,
     spiceBlow: 12,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-9', at: { x: 570.51, y: 913.04 }, areaShare: 0.323 },
+      { sector: 'sector-10', at: { x: 500.05, y: 930.67 }, areaShare: 0.677 },
+    ],
   },
   {
     id: 'territory-36',
@@ -449,10 +656,15 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-10', 'sector-11'],
     centroid: { x: 373.2, y: 920.14 },
     terrain: 'sand',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-10', at: { x: 433.83, y: 934.76 }, areaShare: 0.2 },
+      { sector: 'sector-11', at: { x: 358.21, y: 916.57 }, areaShare: 0.799 },
+    ],
   },
   {
     id: 'territory-37',
@@ -460,21 +672,30 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-12', 'sector-13'],
     centroid: { x: 200.02, y: 789.41 },
     terrain: 'sand',
+    spiceSector: 'sector-12',
     stronghold: false,
     spiceBlow: 10,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-12', at: { x: 238.64, y: 846.65 }, areaShare: 0.451 },
+      { sector: 'sector-13', at: { x: 168.39, y: 742.75 }, areaShare: 0.549 },
+    ],
   },
   {
     id: 'territory-38',
     displayName: 'Habbanya Sietch',
     sectors: ['sector-13'],
     centroid: { x: 186.38, y: 752.53 },
-    terrain: null,
+    terrain: 'stronghold',
+    spiceSector: null,
     stronghold: true,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-13', at: { x: 185.96, y: 751.89 }, areaShare: 0.983 },
+    ],
   },
   {
     id: 'territory-39',
@@ -482,21 +703,30 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-15', 'sector-16'],
     centroid: { x: 129.04, y: 414.59 },
     terrain: 'sand',
+    spiceSector: null,
     stronghold: false,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-15', at: { x: 119.3, y: 439.94 }, areaShare: 0.374 },
+      { sector: 'sector-16', at: { x: 130.73, y: 402.16 }, areaShare: 0.626 },
+    ],
   },
   {
     id: 'territory-40',
     displayName: 'Sietch Tabr',
     sectors: ['sector-16'],
     centroid: { x: 173.64, y: 375.15 },
-    terrain: null,
+    terrain: 'stronghold',
+    spiceSector: null,
     stronghold: true,
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-16', at: { x: 173.63, y: 375.16 }, areaShare: 1 },
+    ],
   },
   {
     id: 'territory-41',
@@ -504,10 +734,15 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-16', 'sector-17'],
     centroid: { x: 193.48, y: 272.36 },
     terrain: 'sand',
+    spiceSector: 'sector-16',
     stronghold: false,
     spiceBlow: 6,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-16', at: { x: 152.5, y: 316.09 }, areaShare: 0.319 },
+      { sector: 'sector-17', at: { x: 212.7, y: 251.91 }, areaShare: 0.681 },
+    ],
   },
   {
     id: 'territory-42',
@@ -515,10 +750,15 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     sectors: ['sector-1', 'sector-18'],
     centroid: { x: 395.01, y: 162.61 },
     terrain: 'sand',
+    spiceSector: 'sector-18',
     stronghold: false,
     spiceBlow: 8,
     spiceIncome: null,
     ornithopters: false,
+    cells: [
+      { sector: 'sector-1', at: { x: 464.8, y: 147.13 }, areaShare: 0.402 },
+      { sector: 'sector-18', at: { x: 348.02, y: 173.02 }, areaShare: 0.598 },
+    ],
   },
 ]
 

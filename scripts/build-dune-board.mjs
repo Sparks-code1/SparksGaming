@@ -66,7 +66,7 @@ const CX = 483.097, CY = 556.456, RIM = 432.5
  *                which is NOT a blow — none of them has a marker
  */
 const TERRITORY_DATA = {
-  'territory-01': { name: 'False Walls East',    terrain: 'rock' },
+  'territory-01': { name: 'False Wall East',     terrain: 'rock' },
   'territory-02': { name: 'Harg Pass',           terrain: 'sand' },
   'territory-03': { name: 'Polar Sink',          terrain: 'polar-sink' },
   'territory-04': { name: 'Wind Pass',           terrain: 'sand' },
@@ -78,7 +78,7 @@ const TERRITORY_DATA = {
   'territory-10': { name: 'False Wall West',     terrain: 'rock' },
   'territory-11': { name: 'Hagga Basin',         terrain: 'sand', spiceBlow: 6 },
   'territory-12': { name: 'Arsunt',              terrain: 'sand' },
-  'territory-13': { name: 'Arrakeen',            terrain: null, stronghold: true, spiceIncome: 2, ornithopters: true },
+  'territory-13': { name: 'Arrakeen',            terrain: 'stronghold', stronghold: true, spiceIncome: 2, ornithopters: true },
   'territory-14': { name: 'Rim Wall West',       terrain: 'rock' },
   'territory-15': { name: 'Hole In The Rock',    terrain: 'sand' },
   'territory-16': { name: 'Pasty Mesa',          terrain: 'rock' },
@@ -91,21 +91,21 @@ const TERRITORY_DATA = {
   'territory-23': { name: 'Funeral Plain',       terrain: 'sand', spiceBlow: 6 },
   'territory-24': { name: 'Plastic Basin',       terrain: 'rock' },
   'territory-25': { name: 'Tsimpo',              terrain: 'sand' },
-  'territory-26': { name: 'Carthag',             terrain: null, stronghold: true, spiceIncome: 2, ornithopters: true },
+  'territory-26': { name: 'Carthag',             terrain: 'stronghold', stronghold: true, spiceIncome: 2, ornithopters: true },
   'territory-27': { name: 'Old Gap',             terrain: 'sand', spiceBlow: 6 },
   'territory-28': { name: 'Basin',               terrain: 'sand' },
   'territory-29': { name: 'Sihaya Ridge',        terrain: 'sand', spiceBlow: 6 },
   'territory-30': { name: 'Gara Kulon',          terrain: 'sand' },
   'territory-31': { name: 'Red Chasm',           terrain: 'sand', spiceBlow: 8 },
   'territory-32': { name: 'South Mesa',          terrain: 'sand', spiceBlow: 10 },
-  'territory-33': { name: "Tuek's Sietch",       terrain: null, stronghold: true, spiceIncome: 1 },
+  'territory-33': { name: "Tuek's Sietch",       terrain: 'stronghold', stronghold: true, spiceIncome: 1 },
   'territory-34': { name: 'Cielago East',        terrain: 'sand' },
   'territory-35': { name: 'Cielago South',       terrain: 'sand', spiceBlow: 12 },
   'territory-36': { name: 'Meridian',            terrain: 'sand' },
   'territory-37': { name: 'Habbanya Ridge Flat', terrain: 'sand', spiceBlow: 10 },
-  'territory-38': { name: 'Habbanya Sietch',     terrain: null, stronghold: true },
+  'territory-38': { name: 'Habbanya Sietch',     terrain: 'stronghold', stronghold: true },
   'territory-39': { name: 'Bight Of The Cliff',  terrain: 'sand' },
-  'territory-40': { name: 'Sietch Tabr',         terrain: null, stronghold: true },
+  'territory-40': { name: 'Sietch Tabr',         terrain: 'stronghold', stronghold: true },
   'territory-41': { name: 'Rock Outcroppings',   terrain: 'sand', spiceBlow: 6 },
   'territory-42': { name: 'Broken Land',         terrain: 'sand', spiceBlow: 8 },
 }
@@ -337,20 +337,49 @@ const borderline = []
 for (const t of territories) {
   const [x0, y0, x1, y1] = bbox(t.poly)
   const N = 60
-  const hits = new Map()
+  const hits = new Map(), bucket = new Map()
   let total = 0
   for (let i = 0; i <= N; i++) for (let j = 0; j <= N; j++) {
     const p = [x0 + (x1-x0)*i/N, y0 + (y1-y0)*j/N]
     if (!inside(p, t.poly)) continue
     total++
     const s = sectorAt(bearing(p[0], p[1]))
-    if (s) hits.set(s.number, (hits.get(s.number) ?? 0) + 1)
+    if (!s) continue
+    hits.set(s.number, (hits.get(s.number) ?? 0) + 1)
+    if (!bucket.has(s.number)) bucket.set(s.number, [])
+    bucket.get(s.number).push(p)
   }
   t.samples = total
   t.sectors = [...hits.entries()]
     .map(([n, c]) => ({ n, share: c / (total || 1) }))
     .filter(s => s.share >= OVERLAP_MIN)
     .sort((a, b) => a.n - b.n)
+
+  // Troops occupy a SECTOR of a territory, not the territory as a whole: a
+  // stack in Broken Land sector 18 dies to a storm in 18 and survives one in 1.
+  // So every (territory, sector) pair needs its own point to draw on. Taken as
+  // the mean of that sector's samples, pulled back to the nearest real sample
+  // when the mean lands outside the shape or drifts into the neighbouring
+  // sector — which it will, on the crescent-shaped regions.
+  t.cells = []
+  for (const s of t.sectors) {
+    const pts = bucket.get(s.n) ?? []
+    if (!pts.length) continue
+    const mean = [pts.reduce((a, p) => a + p[0], 0) / pts.length,
+                  pts.reduce((a, p) => a + p[1], 0) / pts.length]
+    const good = p => inside(p, t.poly) && sectorAt(bearing(p[0], p[1]))?.number === s.n
+    let pick = mean
+    if (!good(mean)) {
+      let best = null, bestD = Infinity
+      for (const p of pts) {
+        if (!good(p)) continue
+        const d = Math.hypot(p[0] - mean[0], p[1] - mean[1])
+        if (d < bestD) { bestD = d; best = p }
+      }
+      pick = best ?? pts[0]
+    }
+    t.cells.push({ n: s.n, share: s.share, at: pick })
+  }
   for (const s of t.sectors) {
     if (s.share < OVERLAP_REVIEW) borderline.push({ id: t.id, sector: s.n, share: s.share })
   }
@@ -454,6 +483,33 @@ if (noMarker.length || noAmount.length) {
 }
 if (homeless) throw new Error(`${homeless} spice marker(s) fall outside every territory`)
 
+// A blow lands in one SECTOR of its territory, and the marker's position is
+// what says which — Broken Land spans 1 and 18, and the spice is in 18. Hang
+// that off the territory so a mining rule does not have to re-derive it.
+for (const t of territories) {
+  const m = spiceMarkers.find(s => s.territoryId === t.id)
+  t.spiceSector = m?.sectorNumber ?? null
+  if (t.spiceSector != null && !t.sectors.some(s => s.n === t.spiceSector)) {
+    throw new Error(`${t.id} carries its spice in sector-${t.spiceSector}, which is not among the `
+      + `sectors it overlaps (${t.sectors.map(s => s.n).join(', ')})`)
+  }
+}
+
+// Every placement cell must be inside its own territory AND in the sector it
+// claims, or troops render in the wrong sector and the storm reads them wrong.
+for (const t of territories) {
+  for (const c of t.cells) {
+    const inShape = inside(c.at, t.poly)
+    const inSector = sectorAt(bearing(c.at[0], c.at[1]))?.number === c.n
+    if (!inShape || !inSector) {
+      throw new Error(`${t.id} cell for sector-${c.n} is ${!inShape ? 'outside the territory' : 'in the wrong sector'}`)
+    }
+  }
+  if (t.cells.length !== t.sectors.length) {
+    throw new Error(`${t.id} overlaps ${t.sectors.length} sectors but produced ${t.cells.length} placement cells`)
+  }
+}
+
 // ─── Report ───────────────────────────────────────────────────────────────────
 const round = (n, d = 2) => Number(n.toFixed(d))
 
@@ -527,7 +583,7 @@ lines.push(`// terrain and stronghold status are NOT in the SVG: fill TERRITORY_
 lines.push(`// the script and the placeholder fields here, then re-run so the SVG ids and`)
 lines.push(`// this module stay in step.`)
 lines.push(``)
-lines.push(`export type DuneTerrain = 'sand' | 'rock' | 'polar-sink' | null`)
+lines.push(`export type DuneTerrain = 'sand' | 'rock' | 'polar-sink' | 'stronghold'`)
 lines.push(``)
 lines.push(`export interface DuneTerritory {`)
 lines.push(`  id: string`)
@@ -536,8 +592,14 @@ lines.push(`  /** Storm sectors this territory overlaps, computed from the geome
 lines.push(`  sectors: string[]`)
 lines.push(`  /** Where a troop marker sits. Inside the shape even when it is concave. */`)
 lines.push(`  centroid: { x: number; y: number }`)
-lines.push(`  /** null on the five strongholds, whose terrain is not yet recorded. */`)
 lines.push(`  terrain: DuneTerrain`)
+lines.push(`  /** The sector a blow puts spice in — one sector, not the whole`)
+lines.push(`   *  territory. Broken Land spans 1 and 18; its spice is in 18. */`)
+lines.push(`  spiceSector: string | null`)
+lines.push(`  /** One per sector this territory overlaps. Troops occupy a CELL, not a`)
+lines.push(`   *  territory: a stack in Broken Land sector-18 dies to a storm in 18 and`)
+lines.push(`   *  survives one in sector-1. */`)
+lines.push(`  cells: DuneCell[]`)
 lines.push(`  stronghold: boolean`)
 lines.push(`  /** Spice a blow places here (6–12). Exactly the fifteen territories`)
 lines.push(`   *  carrying a marker on the board — the build asserts the two agree. */`)
@@ -548,6 +610,10 @@ lines.push(`  spiceIncome: number | null`)
 lines.push(`  /** Arrakeen and Carthag. */`)
 lines.push(`  ornithopters: boolean`)
 lines.push(`}`)
+lines.push(``)
+lines.push(`/** A (territory, sector) pair — the actual unit of occupancy. 'at' is where`)
+lines.push(` *  to draw the stack; areaShare is how much of the territory this cell is. */`)
+lines.push(`export interface DuneCell { sector: string; at: { x: number; y: number }; areaShare: number }`)
 lines.push(``)
 lines.push(`export interface DuneSector { id: string; number: number; fromBearing: number; toBearing: number }`)
 lines.push(`export interface DuneMarker { id: string; x: number; y: number }`)
@@ -571,11 +637,17 @@ for (const t of territories) {
   lines.push(`    displayName: ${q(d.name)},`)
   lines.push(`    sectors: [${t.sectors.map(s => q(`sector-${s.n}`)).join(', ')}],`)
   lines.push(`    centroid: { x: ${round(t.marker[0])}, y: ${round(t.marker[1])} },`)
-  lines.push(`    terrain: ${d.terrain ? q(d.terrain) : 'null'},`)
+  lines.push(`    terrain: ${q(d.terrain)},`)
+  lines.push(`    spiceSector: ${t.spiceSector ? q(`sector-${t.spiceSector}`) : 'null'},`)
   lines.push(`    stronghold: ${d.stronghold ? 'true' : 'false'},`)
   lines.push(`    spiceBlow: ${d.spiceBlow ?? 'null'},`)
   lines.push(`    spiceIncome: ${d.spiceIncome ?? 'null'},`)
   lines.push(`    ornithopters: ${d.ornithopters ? 'true' : 'false'},`)
+  lines.push(`    cells: [`)
+  for (const c of t.cells) {
+    lines.push(`      { sector: ${q(`sector-${c.n}`)}, at: { x: ${round(c.at[0])}, y: ${round(c.at[1])} }, areaShare: ${round(c.share, 3)} },`)
+  }
+  lines.push(`    ],`)
   lines.push(`  },`)
 }
 lines.push(`]`)
