@@ -1130,7 +1130,7 @@ const HAND_PATHS = [
   "M256 193 c-6 -14 -5 -15 5 -6 7 7 10 15 7 18 -3 3 -9 -2 -12 -12z",
   "M200 96 c0 -2 7 -7 16 -10 8 -3 12 -2 9 4 -6 10 -25 14 -25 6z",
 ]
-const HAND_SIZE = 19        // spans the lower half of the ring without escaping it
+const HAND_SIZE = 30        // the hand has the whole ring to itself
 
 /** An open hand seen edge-on, palm up — CHOAM charity, something given. */
 function openHandSymbol(x, y, ink = DECOR.ink, rot = 0) {
@@ -1200,8 +1200,7 @@ const phaseInk = DECOR.board
 const PHASE_SYMBOLS = {
   1: (x, y) => windSymbol(x, y, phaseInk),                            // storm
   2: (x, y) => spiceSpiral(x, y, 1.5, 1.7, phaseInk),                 // spice
-  3: (x, y) => spiceSpiral(x, y - 7, 0.95, 1.5, phaseInk)             // CHOAM charity:
-             + openHandSymbol(x, y + 6, phaseInk, 90),                    // spice over an open hand
+  3: (x, y) => openHandSymbol(x, y, phaseInk, 0),                   // CHOAM charity
   4: (x, y) => gavelSymbol(x, y, phaseInk),                           // bidding
   5: (x, y) => figureSymbol(x, y, phaseInk),                          // revival
 }
