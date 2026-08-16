@@ -128,6 +128,12 @@
 <line x1="70.18" y1="708.45" x2="45.78" y2="717.43" stroke="#3f2c1a" stroke-width="1.4"/>
 <line x1="147.67" y1="841.22" x2="127.85" y2="858.04" stroke="#3f2c1a" stroke-width="1.4"/>
 <line x1="265.53" y1="938.9" x2="252.67" y2="961.5" stroke="#3f2c1a" stroke-width="1.4"/>
+<circle cx="484.1" cy="83.46" r="27" fill="#111a30"/>
+<circle cx="895.1" cy="321.46" r="27" fill="#111a30"/>
+<circle cx="896.1" cy="795.46" r="27" fill="#111a30"/>
+<circle cx="484.1" cy="1032.46" r="27" fill="#111a30"/>
+<circle cx="73.1" cy="795.46" r="27" fill="#111a30"/>
+<circle cx="72.1" cy="320.46" r="27" fill="#111a30"/>
 <path d="M340.613 1097.47L11.5157 1097.94C5.43443 1097.95 0.5 1093.02 0.5 1086.94V893.956C0.5 887.88 5.42487 882.956 11.5 882.956H100.291C103.355 882.956 106.247 884.198 108.355 886.422C121.037 899.805 168.269 948.612 206.097 973.956C249.026 1002.72 320.856 1028.74 344.097 1036.77C348.593 1038.33 351.597 1042.53 351.597 1047.29V1086.47C351.597 1092.54 346.682 1097.46 340.613 1097.47Z" fill="#c2bd9e"/>
 <path d="M628.581 1097.47L957.581 1097.94C963.662 1097.95 968.597 1093.02 968.597 1086.94V893.956C968.597 887.88 963.672 882.956 957.597 882.956H868.836C865.771 882.956 862.878 884.199 860.77 886.424C848.091 899.808 800.873 948.613 763.057 973.955C720.14 1002.72 648.331 1028.73 625.096 1036.77C620.6 1038.32 617.597 1042.53 617.597 1047.29V1086.47C617.597 1092.54 622.512 1097.46 628.581 1097.47Z" fill="#c2bd9e"/>
 <clipPath id="clip-moon"><circle cx="879.11" cy="108.51" r="82.7253"/></clipPath>
@@ -262,12 +268,12 @@
 <circle id="track-9" fill="#f0e2bb" cx="729.82" cy="88.8269" r="25.5559" stroke="black"/>
 <path d="M340.613 1097.47L11.5157 1097.94C5.43443 1097.95 0.5 1093.02 0.5 1086.94V893.956C0.5 887.88 5.42487 882.956 11.5 882.956H100.291C103.355 882.956 106.247 884.198 108.355 886.422C121.037 899.805 168.269 948.612 206.097 973.956C249.026 1002.72 320.856 1028.74 344.097 1036.77C348.593 1038.33 351.597 1042.53 351.597 1047.29V1086.47C351.597 1092.54 346.682 1097.46 340.613 1097.47Z" stroke="black"/>
 <path d="M628.581 1097.47L957.581 1097.94C963.662 1097.95 968.597 1093.02 968.597 1086.94V893.956C968.597 887.88 963.672 882.956 957.597 882.956H868.836C865.771 882.956 862.878 884.199 860.77 886.424C848.091 899.808 800.873 948.613 763.057 973.955C720.14 1002.72 648.331 1028.73 625.096 1036.77C620.6 1038.32 617.597 1042.53 617.597 1047.29V1086.47C617.597 1092.54 622.512 1097.46 628.581 1097.47Z" stroke="black"/>
-<circle id="player-position-4" cx="484.097" cy="1032.46" r="20" stroke="black"/>
-<circle id="player-position-3" cx="896.097" cy="795.456" r="20" stroke="black"/>
-<circle id="player-position-2" cx="895.097" cy="321.456" r="20" stroke="black"/>
-<circle id="player-position-1" cx="484.097" cy="83.4556" r="20" stroke="black"/>
-<circle id="player-position-6" cx="72.0967" cy="320.456" r="20" stroke="black"/>
-<circle id="player-position-5" cx="73.0967" cy="795.456" r="20" stroke="black"/>
+<circle id="player-position-4" fill="#c2bd9e" cx="484.097" cy="1032.46" r="20" stroke="black"/>
+<circle id="player-position-3" fill="#c2bd9e" cx="896.097" cy="795.456" r="20" stroke="black"/>
+<circle id="player-position-2" fill="#c2bd9e" cx="895.097" cy="321.456" r="20" stroke="black"/>
+<circle id="player-position-1" fill="#c2bd9e" cx="484.097" cy="83.4556" r="20" stroke="black"/>
+<circle id="player-position-6" fill="#c2bd9e" cx="72.0967" cy="320.456" r="20" stroke="black"/>
+<circle id="player-position-5" fill="#c2bd9e" cx="73.0967" cy="795.456" r="20" stroke="black"/>
 <g id="dune-labels">
 <text x="566.1" y="543.79" font-size="9.7" fill="#3f2c1a" text-anchor="middle" dominant-baseline="middle" font-family="Georgia, 'Times New Roman', serif" letter-spacing="0.5" paint-order="stroke" stroke="#c9905f" stroke-width="2.72" stroke-linejoin="round" data-territory="territory-01" data-bx="561.1" data-by="585.65" data-bs="9.7" transform="rotate(-78 566.1 549.41)">FALSE</text>
 <text x="566.1" y="554.94" font-size="9.7" fill="#3f2c1a" text-anchor="middle" dominant-baseline="middle" font-family="Georgia, 'Times New Roman', serif" letter-spacing="0.5" paint-order="stroke" stroke="#c9905f" stroke-width="2.72" stroke-linejoin="round" data-territory="territory-01" data-bx="561.1" data-by="585.65" data-bs="9.7" transform="rotate(-78 566.1 549.41)">WALL EAST</text>

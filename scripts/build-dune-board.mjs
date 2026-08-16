@@ -755,6 +755,7 @@ const dialCircle = uniqCircles.find(e => {
 if (!dialCircle) throw new Error('turn dial circle not found — it is the only large circle that is not the board rim')
 const fills = new Map([[dialCircle, DECOR.sand.fill]])
 for (const s of trackStops) fills.set(s.el, DECOR.sand.fill)
+for (const p of playerPositions) fills.set(p.el, DECOR.boxFill)
 for (const s of spiceMarkers) idFor.set(s.el, s.id)
 
 // Duplicate circles, plus the fifteen spice markers — those are replaced by the
@@ -1023,6 +1024,16 @@ for (const s of ordered) {
   labels.push(`<text x="${round(CX + rr * Math.cos(mid))}" y="${round(CY + rr * Math.sin(mid))}" `
     + `font-size="10" fill="${DECOR.ink}" text-anchor="middle" dominant-baseline="central" `
     + `font-family="Georgia, 'Times New Roman', serif">${s.number}</text>`)
+}
+
+// ── Player seats ──────────────────────────────────────────────────────────────
+// The six seats straddle the storm ring, so the track's circles and ticks run
+// straight through them. A disc of the board's own navy, pushed just wider than
+// the seat, cuts the track back and leaves a clean gap around each one. Drawn
+// after the ring so it erases it, and before the seat circles themselves, which
+// are filled through the fills map and so land later in document order.
+for (const p of playerPositions) {
+  terrain.push(`<circle cx="${round(p.x)}" cy="${round(p.y)}" r="27" fill="${DECOR.board}"/>`)
 }
 
 // ── Spice Bank and Tleilaxu Tanks ─────────────────────────────────────────────
