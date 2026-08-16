@@ -1,7 +1,7 @@
 <svg width="970" height="1099" viewBox="0 0 970 1099" fill="none" xmlns="http://www.w3.org/2000/svg">
 <g id="dune-terrain">
 <rect x="0" y="0" width="970" height="1099" fill="#111a30"/>
-<circle cx="483.097" cy="556.456" r="466" fill="#efe4c4"/>
+<circle cx="483.097" cy="556.456" r="466" fill="#111a30"/>
 <path d="M537.097 512.456L524.597 511.456L522.597 501.456L539.097 488.456L548.597 470.956L570.097 484.956L577.597 494.956L595.597 518.456V557.956L589.097 561.956L592.097 575.956L579.597 604.456L554.097 615.956L527.597 596.456L537.097 577.456L550.597 556.956L554.097 530.956L537.097 512.456Z" fill="#c9905f"/>
 <path d="M521.597 604.956L527.597 596.456L554.097 615.956L579.597 604.456L599.597 614.456L591.097 645.956L574.097 645.456L563.597 641.956V661.456L555.76 682.956L519.597 619.456L521.597 604.956Z" fill="#f0e2bb"/>
 <path d="M437.097 519.456L460.097 514.956L483.097 505.956L494.597 504.956L501.097 515.456L516.097 514.956L524.597 511.456L537.097 512.456L554.097 530.956L550.597 556.956L537.097 577.456L527.597 596.456L521.597 604.956L519.597 619.456L500.597 634.956L471.597 636.456L451.81 611.638L440.597 613.456L426.597 607.956L415.097 596.956L406.597 596.456L400.314 587.956L398.097 584.956L403.597 559.456L417.597 534.956L437.097 519.456Z" fill="#f8f6ee"/>
@@ -108,26 +108,27 @@
 <path d="M195.597 414.956L211.097 418.456L219.097 388.456L211.097 382.956L213.597 373.956L207.597 370.956L208.097 360.956L197.597 342.456L194.097 324.956L178.097 318.456L142.097 351.456L141.597 358.456L134.597 373.456L124.597 374.956L123.597 391.956L138.597 409.956L149.597 411.456L159.597 406.956L182.597 415.956L195.597 414.956Z" fill="none" stroke="#3f2c1a" stroke-width="1.8" stroke-linejoin="round"/>
 <path d="M278.597 201.456L268.097 182.096C205.336 218.122 152.47 269.435 114.577 330.956L129.597 344.456L139.097 345.956L142.097 351.456L178.097 318.456L194.097 324.956L211.097 306.456L226.097 265.956L230.597 251.956L244.097 231.956L262.097 221.956L278.597 201.456Z" fill="none" stroke="#3f2c1a" stroke-width="2" stroke-linejoin="round"/>
 <path d="M483.097 124.956C404.835 124.956 331.428 145.742 268.097 182.096L278.597 201.456L297.597 208.456H336.097L354.097 193.456L380.097 190.456L417.097 175.956L458.597 167.456L491.597 169.456L502.097 160.456L515.597 157.456L523.597 143.956L525.097 126.969C511.276 125.637 497.266 124.956 483.097 124.956Z" fill="none" stroke="#3f2c1a" stroke-width="2" stroke-linejoin="round"/>
-<circle cx="483.097" cy="556.456" r="466" fill="none" stroke="#3f2c1a" stroke-width="1.6"/>
-<circle cx="483.097" cy="556.456" r="440" fill="none" stroke="#3f2c1a" stroke-width="1.6"/>
-<line x1="408.74" y1="990.13" x2="404.34" y2="1015.75" stroke="#3f2c1a" stroke-width="1.4"/>
-<line x1="560.7" y1="989.56" x2="565.29" y2="1015.15" stroke="#3f2c1a" stroke-width="1.4"/>
-<line x1="703.42" y1="937.32" x2="716.44" y2="959.83" stroke="#3f2c1a" stroke-width="1.4"/>
-<line x1="819.5" y1="840.07" x2="839.38" y2="856.82" stroke="#3f2c1a" stroke-width="1.4"/>
-<line x1="895.49" y1="709.86" x2="919.86" y2="718.92" stroke="#3f2c1a" stroke-width="1.4"/>
-<line x1="923.08" y1="560.63" x2="949.08" y2="560.87" stroke="#3f2c1a" stroke-width="1.4"/>
-<line x1="897.78" y1="409.35" x2="922.28" y2="400.66" stroke="#3f2c1a" stroke-width="1.4"/>
-<line x1="822.08" y1="275.93" x2="842.11" y2="259.36" stroke="#3f2c1a" stroke-width="1.4"/>
-<line x1="705.72" y1="176.93" x2="718.88" y2="154.51" stroke="#3f2c1a" stroke-width="1.4"/>
-<line x1="562.12" y1="123.61" x2="566.79" y2="98.03" stroke="#3f2c1a" stroke-width="1.4"/>
-<line x1="408.29" y1="122.86" x2="403.87" y2="97.24" stroke="#3f2c1a" stroke-width="1.4"/>
-<line x1="263.66" y1="175.08" x2="250.7" y2="152.54" stroke="#3f2c1a" stroke-width="1.4"/>
-<line x1="146.27" y1="273.36" x2="126.36" y2="256.63" stroke="#3f2c1a" stroke-width="1.4"/>
-<line x1="69.65" y1="405.92" x2="45.22" y2="397.02" stroke="#3f2c1a" stroke-width="1.4"/>
-<line x1="43.1" y1="557.26" x2="17.1" y2="557.31" stroke="#3f2c1a" stroke-width="1.4"/>
-<line x1="70.18" y1="708.45" x2="45.78" y2="717.43" stroke="#3f2c1a" stroke-width="1.4"/>
-<line x1="147.67" y1="841.22" x2="127.85" y2="858.04" stroke="#3f2c1a" stroke-width="1.4"/>
-<line x1="265.53" y1="938.9" x2="252.67" y2="961.5" stroke="#3f2c1a" stroke-width="1.4"/>
+<circle cx="483.097" cy="556.456" r="471" fill="none" stroke="#f0e2bb" stroke-width="1.6"/>
+<circle cx="483.097" cy="556.456" r="466" fill="none" stroke="#f0e2bb" stroke-width="1.6"/>
+<circle cx="483.097" cy="556.456" r="440" fill="none" stroke="#f0e2bb" stroke-width="1.6"/>
+<line x1="408.74" y1="990.13" x2="404.34" y2="1015.75" stroke="#f0e2bb" stroke-width="1.4"/>
+<line x1="560.7" y1="989.56" x2="565.29" y2="1015.15" stroke="#f0e2bb" stroke-width="1.4"/>
+<line x1="703.42" y1="937.32" x2="716.44" y2="959.83" stroke="#f0e2bb" stroke-width="1.4"/>
+<line x1="819.5" y1="840.07" x2="839.38" y2="856.82" stroke="#f0e2bb" stroke-width="1.4"/>
+<line x1="895.49" y1="709.86" x2="919.86" y2="718.92" stroke="#f0e2bb" stroke-width="1.4"/>
+<line x1="923.08" y1="560.63" x2="949.08" y2="560.87" stroke="#f0e2bb" stroke-width="1.4"/>
+<line x1="897.78" y1="409.35" x2="922.28" y2="400.66" stroke="#f0e2bb" stroke-width="1.4"/>
+<line x1="822.08" y1="275.93" x2="842.11" y2="259.36" stroke="#f0e2bb" stroke-width="1.4"/>
+<line x1="705.72" y1="176.93" x2="718.88" y2="154.51" stroke="#f0e2bb" stroke-width="1.4"/>
+<line x1="562.12" y1="123.61" x2="566.79" y2="98.03" stroke="#f0e2bb" stroke-width="1.4"/>
+<line x1="408.29" y1="122.86" x2="403.87" y2="97.24" stroke="#f0e2bb" stroke-width="1.4"/>
+<line x1="263.66" y1="175.08" x2="250.7" y2="152.54" stroke="#f0e2bb" stroke-width="1.4"/>
+<line x1="146.27" y1="273.36" x2="126.36" y2="256.63" stroke="#f0e2bb" stroke-width="1.4"/>
+<line x1="69.65" y1="405.92" x2="45.22" y2="397.02" stroke="#f0e2bb" stroke-width="1.4"/>
+<line x1="43.1" y1="557.26" x2="17.1" y2="557.31" stroke="#f0e2bb" stroke-width="1.4"/>
+<line x1="70.18" y1="708.45" x2="45.78" y2="717.43" stroke="#f0e2bb" stroke-width="1.4"/>
+<line x1="147.67" y1="841.22" x2="127.85" y2="858.04" stroke="#f0e2bb" stroke-width="1.4"/>
+<line x1="265.53" y1="938.9" x2="252.67" y2="961.5" stroke="#f0e2bb" stroke-width="1.4"/>
 <circle cx="484.1" cy="83.46" r="27" fill="#111a30"/>
 <circle cx="895.1" cy="321.46" r="27" fill="#111a30"/>
 <circle cx="896.1" cy="795.46" r="27" fill="#111a30"/>
@@ -381,24 +382,24 @@
 <circle cx="314.6" cy="171.96" r="9.5" fill="#f6ecd2" stroke="#3f2c1a" stroke-width="1.4" data-spice="spice-15" transform="translate(-1 8)"/>
 <polyline points="315.4,171.96 315.55,172.21 315.61,172.54 315.55,172.91 315.36,173.28 315.04,173.61 314.6,173.86 314.06,173.97 313.46,173.92 312.87,173.69 312.32,173.27 311.88,172.68 311.6,171.96 311.52,171.13 311.68,170.27 312.09,169.45 312.73,168.72 313.58,168.17 314.6,167.86 315.71,167.82 316.83,168.09 317.88,168.67 318.78,169.54 319.44,170.66 319.8,171.96 319.8,173.35 319.42,174.74 318.66,176.02 317.56,177.09 316.18,177.86 314.6,178.25" fill="none" stroke="#3f2c1a" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" data-spice="spice-15" transform="translate(-1 8)"/>
 <text x="337.6" y="171.96" font-size="13" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" data-spice="spice-15" transform="translate(-1 8)" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">8</text>
-<text x="330.52" y="982.99" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">1</text>
-<text x="484.79" y="1009.45" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">2</text>
-<text x="638.8" y="981.86" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">3</text>
-<text x="774.02" y="903.69" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">4</text>
-<text x="874.34" y="784.79" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">5</text>
-<text x="928.55" y="638.8" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">6</text>
-<text x="929.89" y="481.73" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">7</text>
-<text x="877.09" y="332.9" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">8</text>
-<text x="776.65" y="211.44" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">9</text>
-<text x="640.78" y="131.79" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">10</text>
-<text x="485.3" y="103.46" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">11</text>
-<text x="329.26" y="130.38" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">12</text>
-<text x="192.31" y="209.1" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">13</text>
-<text x="90.89" y="329.78" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">14</text>
-<text x="36.91" y="478.18" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">15</text>
-<text x="37.2" y="636.34" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">16</text>
-<text x="91.86" y="784.8" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">17</text>
-<text x="194.02" y="905.23" font-size="10" fill="#3f2c1a" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">18</text>
+<text x="330.52" y="982.99" font-size="10" fill="#f0e2bb" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">1</text>
+<text x="484.79" y="1009.45" font-size="10" fill="#f0e2bb" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">2</text>
+<text x="638.8" y="981.86" font-size="10" fill="#f0e2bb" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">3</text>
+<text x="774.02" y="903.69" font-size="10" fill="#f0e2bb" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">4</text>
+<text x="874.34" y="784.79" font-size="10" fill="#f0e2bb" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">5</text>
+<text x="928.55" y="638.8" font-size="10" fill="#f0e2bb" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">6</text>
+<text x="929.89" y="481.73" font-size="10" fill="#f0e2bb" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">7</text>
+<text x="877.09" y="332.9" font-size="10" fill="#f0e2bb" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">8</text>
+<text x="776.65" y="211.44" font-size="10" fill="#f0e2bb" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">9</text>
+<text x="640.78" y="131.79" font-size="10" fill="#f0e2bb" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">10</text>
+<text x="485.3" y="103.46" font-size="10" fill="#f0e2bb" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">11</text>
+<text x="329.26" y="130.38" font-size="10" fill="#f0e2bb" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">12</text>
+<text x="192.31" y="209.1" font-size="10" fill="#f0e2bb" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">13</text>
+<text x="90.89" y="329.78" font-size="10" fill="#f0e2bb" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">14</text>
+<text x="36.91" y="478.18" font-size="10" fill="#f0e2bb" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">15</text>
+<text x="37.2" y="636.34" font-size="10" fill="#f0e2bb" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">16</text>
+<text x="91.86" y="784.8" font-size="10" fill="#f0e2bb" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">17</text>
+<text x="194.02" y="905.23" font-size="10" fill="#f0e2bb" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif">18</text>
 <text x="59.5" y="1071.94" font-size="13" fill="#3f2c1a" text-anchor="start" dominant-baseline="central" letter-spacing="1.2" font-family="Georgia, 'Times New Roman', serif">TLEILAXU TANKS</text>
 <circle cx="37.5" cy="1071.94" r="11" fill="none" stroke="#3f2c1a" stroke-width="1.4"/><rect x="32.5" y="1064.94" width="10" height="14" rx="1.5" fill="none" stroke="#3f2c1a" stroke-width="1.2"/><circle cx="37.5" cy="1068.54" r="1.9" fill="#3f2c1a"/><path d="M37.5 1070.34 v4 M35.1 1072.34 h4.8 M37.5 1074.34 l-2 3 M37.5 1074.34 l2 3" fill="none" stroke="#3f2c1a" stroke-width="1.1" stroke-linecap="round"/>
 <text x="909.6" y="1071.94" font-size="13" fill="#3f2c1a" text-anchor="end" dominant-baseline="central" letter-spacing="1.2" font-family="Georgia, 'Times New Roman', serif">SPICE BANK</text>

@@ -858,7 +858,7 @@ const terrain = []
 // and the ring becomes the band the track is printed on — which is what makes
 // dark ticks legible where before they were dark-on-nothing.
 terrain.push(`<rect x="0" y="0" width="970" height="1099" fill="${DECOR.board}"/>`)
-terrain.push(`<circle cx="${CX}" cy="${CY}" r="${DECOR.stormRing.outer}" fill="${DECOR.ringBand}"/>`)
+terrain.push(`<circle cx="${CX}" cy="${CY}" r="${DECOR.stormRing.outer}" fill="${DECOR.board}"/>`)
 for (const t of territories) {
   terrain.push(`<path d="${t.el.attrs.d}" fill="${styleFor(t).fill}"/>`)
 }
@@ -1008,21 +1008,27 @@ for (const m of spiceMarkers) {
 // at every boundary. Boundaries come from the sector spans themselves, so the
 // ticks line up with the dashed wedges rather than being evenly spaced by
 // assumption.
+// The track is a navy band, not a pale one, so everything printed on it — the
+// boundary lines, the ticks and the sector numbers — is sand. The outer edge is
+// doubled, which is what separates the board's rim from the surround now that
+// both are the same colour.
 const ringOuter = DECOR.stormRing.outer, ringInner = DECOR.stormRing.inner
-terrain.push(`<circle cx="${CX}" cy="${CY}" r="${ringOuter}" fill="none" stroke="${DECOR.ink}" stroke-width="1.6"/>`)
-terrain.push(`<circle cx="${CX}" cy="${CY}" r="${ringInner}" fill="none" stroke="${DECOR.ink}" stroke-width="1.6"/>`)
+const ringInk = DECOR.sand.fill
+terrain.push(`<circle cx="${CX}" cy="${CY}" r="${ringOuter + 5}" fill="none" stroke="${ringInk}" stroke-width="1.6"/>`)
+terrain.push(`<circle cx="${CX}" cy="${CY}" r="${ringOuter}" fill="none" stroke="${ringInk}" stroke-width="1.6"/>`)
+terrain.push(`<circle cx="${CX}" cy="${CY}" r="${ringInner}" fill="none" stroke="${ringInk}" stroke-width="1.6"/>`)
 for (const s of ordered) {
   const a = (norm(s.from) - 90) * Math.PI / 180
   terrain.push(`<line x1="${round(CX + ringInner * Math.cos(a))}" y1="${round(CY + ringInner * Math.sin(a))}" `
     + `x2="${round(CX + ringOuter * Math.cos(a))}" y2="${round(CY + ringOuter * Math.sin(a))}" `
-    + `stroke="${DECOR.ink}" stroke-width="1.4"/>`)
+    + `stroke="${ringInk}" stroke-width="1.4"/>`)
   // Sector number, centred in its arc of the ring.
   let span = norm(s.to) - norm(s.from)
   if (span < 0) span += 360
   const mid = (norm(s.from) + span / 2 - 90) * Math.PI / 180
   const rr = (ringInner + ringOuter) / 2
   labels.push(`<text x="${round(CX + rr * Math.cos(mid))}" y="${round(CY + rr * Math.sin(mid))}" `
-    + `font-size="10" fill="${DECOR.ink}" text-anchor="middle" dominant-baseline="central" `
+    + `font-size="10" fill="${ringInk}" text-anchor="middle" dominant-baseline="central" `
     + `font-family="Georgia, 'Times New Roman', serif">${s.number}</text>`)
 }
 
