@@ -916,16 +916,21 @@ for (const m of spiceMarkers) {
   const v = blowOf.get(m.territoryId)
   if (v == null) continue
   // An Archimedean spiral, the board's mark for spice, sitting left of the value.
+  // The symbol sits in its own disc, which also gives the spiral a clean ground
+  // where a territory border happens to run underneath it.
+  const sx = m.x - 11
+  labels.push(`<circle cx="${round(sx)}" cy="${round(m.y)}" r="9.5" fill="${DECOR.badge.fill}" `
+    + `stroke="${DECOR.ink}" stroke-width="1.4"/>`)
   // Kept open — few turns, fast growth — because a tight spiral closes up into
   // something that reads as a digit, and "spiral 8" then looks like "68".
   const arm = []
   for (let k = 0; k <= 30; k++) {
-    const th = k / 30 * 2.5 * Math.PI, rr = 1.1 + th * 0.85
-    arm.push(`${round(m.x - 10 + rr * Math.cos(th))},${round(m.y + rr * Math.sin(th))}`)
+    const th = k / 30 * 2.5 * Math.PI, rr = 0.8 + th * 0.7
+    arm.push(`${round(sx + rr * Math.cos(th))},${round(m.y + rr * Math.sin(th))}`)
   }
   labels.push(`<polyline points="${arm.join(' ')}" fill="none" stroke="${DECOR.ink}" `
-    + `stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`)
-  labels.push(`<text x="${round(m.x + 11)}" y="${round(m.y)}" font-size="13" fill="${DECOR.ink}" `
+    + `stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>`)
+  labels.push(`<text x="${round(m.x + 12)}" y="${round(m.y)}" font-size="13" fill="${DECOR.ink}" `
     + `text-anchor="middle" dominant-baseline="central" data-spice="${m.id}" `
     + `font-family="Georgia, 'Times New Roman', serif" font-weight="bold">${v}</text>`)
 }
