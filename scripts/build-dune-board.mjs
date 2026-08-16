@@ -29,6 +29,26 @@ const OUT_TS = join(root, 'src', 'data', 'dune', 'boardData.ts')
 
 const reportOnly = process.argv.includes('--report')
 
+/**
+ * Decoration palette, matched to the printed board.
+ *
+ * Borders are drawn as stacked strokes rather than as offset outlines: a wide
+ * dark stroke with a narrower fill-coloured stroke on top leaves the two edges
+ * of the wide one showing, which reads as a double line. Adding a third,
+ * narrow dark stroke gives a triple. It is the only way to get parallel
+ * borders out of a single path without offsetting the geometry.
+ */
+const DECOR = {
+  ink: '#3f2c1a',            // territory borders and label text
+  sand: { fill: '#f0e2bb', borders: 1 },
+  rock: { fill: '#c9905f', borders: 2 },
+  'polar-sink': { fill: '#f8f6ee', borders: 1 },
+  stronghold: { fill: '#93373a', borders: 3, text: '#f6ead4' },
+  badge: { fill: '#f6ecd2', ring: '#3f2c1a', text: '#3f2c1a' },
+  badgeRadius: 452,          // just outside the rim, clear of the seat circles
+  label: 10,                 // territory name size
+}
+
 // ─── Board frame ──────────────────────────────────────────────────────────────
 // Taken from the one full-board circle in the export, not guessed.
 const CX = 483.097, CY = 556.456, RIM = 432.5
@@ -225,27 +245,50 @@ function bbox(p) {
 const bearing = (x, y) => { const b = Math.atan2(x - CX, -(y - CY)) * 180 / Math.PI; return b < 0 ? b + 360 : b }
 const radius = (x, y) => Math.hypot(x - CX, y - CY)
 
-/** A marker point guaranteed to sit inside the polygon — the centroid when it
- *  lands inside, otherwise the interior sample furthest from any edge. Concave
- *  territories (and the ring-shaped Polar Sink) need this or troop counters
- *  render outside their own borders. */
+/** Distance from a point to the nearest edge of a polygon. */
+function edgeDistance(p, poly) {
+  let d = Infinity
+  for (let k = 0, l = poly.length - 1; k < poly.length; l = k++) {
+    const [ax, ay] = poly[l], [bx, by] = poly[k]
+    const vx = bx-ax, vy = by-ay, wx = p[0]-ax, wy = p[1]-ay
+    const t = Math.max(0, Math.min(1, (wx*vx + wy*vy) / (vx*vx + vy*vy || 1)))
+    d = Math.min(d, Math.hypot(wx - t*vx, wy - t*vy))
+  }
+  return d
+}
+
+/**
+ * The most interior point of the shape — furthest from any edge — not the area
+ * centroid.
+ *
+ * The difference matters on the crescents. A centroid sits at the balance point,
+ * which on a curved band is near the pinch, so a troop counter or a name anchored
+ * there crowds the border and lands on the neighbour. The pole of inaccessibility
+ * sits in the middle of the widest part, which is where the printed board puts
+ * its labels.
+ *
+ * Coarse grid, then a shrinking local search, because a grid fine enough to be
+ * accurate everywhere would be far slower than this over 42 shapes.
+ */
 function markerPoint(poly) {
-  const c = centroid(poly)
-  if (inside(c, poly)) return c
   const [x0, y0, x1, y1] = bbox(poly)
-  let best = c, bestD = -1
-  const N = 40
+  let best = centroid(poly), bestD = inside(best, poly) ? edgeDistance(best, poly) : -1
+  const N = 32
   for (let i = 1; i < N; i++) for (let j = 1; j < N; j++) {
     const p = [x0 + (x1-x0)*i/N, y0 + (y1-y0)*j/N]
     if (!inside(p, poly)) continue
-    let d = Infinity
-    for (let k = 0, l = poly.length - 1; k < poly.length; l = k++) {
-      const [ax, ay] = poly[l], [bx, by] = poly[k]
-      const vx = bx-ax, vy = by-ay, wx = p[0]-ax, wy = p[1]-ay
-      const t = Math.max(0, Math.min(1, (wx*vx + wy*vy) / (vx*vx + vy*vy || 1)))
-      d = Math.min(d, Math.hypot(wx - t*vx, wy - t*vy))
-    }
+    const d = edgeDistance(p, poly)
     if (d > bestD) { bestD = d; best = p }
+  }
+  let step = Math.max((x1-x0), (y1-y0)) / N
+  for (let pass = 0; pass < 4; pass++) {
+    for (let i = -2; i <= 2; i++) for (let j = -2; j <= 2; j++) {
+      const p = [best[0] + i*step/2, best[1] + j*step/2]
+      if (!inside(p, poly)) continue
+      const d = edgeDistance(p, poly)
+      if (d > bestD) { bestD = d; best = p }
+    }
+    step /= 2
   }
   return best
 }
@@ -260,7 +303,12 @@ if (resolve(SRC) === resolve(OUT_SVG)) {
 // assigns before parsing, or a second run appends a duplicate id to every
 // shape. Figma's own mask ids are left alone — the masks reference them.
 const MY_IDS = / (?:id="(?:sector|territory|player-position|spice|track)-\d+"|data-name="[^"]*")/g
-const svg = readFileSync(SRC, 'utf8').replace(MY_IDS, '')
+// The decoration layers carry <path> elements of their own. Left in place on a
+// re-read they would be classified as territories and sectors, so they come out
+// before anything is parsed. Both layers are flat, which is what lets a
+// non-greedy match to the first </g> take exactly one layer.
+const MY_LAYERS = /<g id="dune-(?:terrain|labels)">[\s\S]*?<\/g>\s*/g
+const svg = readFileSync(SRC, 'utf8').replace(MY_LAYERS, '').replace(MY_IDS, '')
 const els = parseElements(svg)
 
 const paths = els.filter(e => e.tag === 'path' && e.attrs.d)
@@ -591,6 +639,174 @@ for (const e of els) {
 }
 edits.sort((a, b) => b.at - a.at)
 for (const e of edits) out = out.slice(0, e.at) + e.text + out.slice(e.at + e.len)
+
+// ─── Decoration ───────────────────────────────────────────────────────────────
+// Terrain fills, borders, names and spice badges, all derived from the same
+// territory records the data module is written from. Two flat layers, no
+// nesting: the strip regex that keeps this build idempotent matches to the
+// first </g>, so a nested group would leave half a layer behind on a re-read.
+
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+const styleFor = t => DECOR[dataFor(t).terrain] ?? DECOR.sand
+
+/** Split at the space nearest the middle, as the printed board does. */
+function wrap(name) {
+  if (!name.includes(' ')) return [name]
+  const mid = name.length / 2
+  let best = -1
+  for (let i = 0; i < name.length; i++) {
+    if (name[i] === ' ' && (best < 0 || Math.abs(i - mid) < Math.abs(best - mid))) best = i
+  }
+  return best < 0 ? [name] : [name.slice(0, best), name.slice(best + 1)]
+}
+
+/** How wide the territory actually is on the line the label sits on. Using the
+ *  bounding box instead would badly over-estimate the crescents, which is how
+ *  a name ends up written across its neighbour. */
+function widthAt(poly, y) {
+  const xs = []
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [x1, y1] = poly[j], [x2, y2] = poly[i]
+    if ((y1 > y) === (y2 > y)) continue
+    xs.push(x1 + (y - y1) / (y2 - y1) * (x2 - x1))
+  }
+  return xs.length < 2 ? 0 : Math.max(...xs) - Math.min(...xs)
+}
+
+/** Pick the wrapping and size that fit the space the shape actually offers. */
+const CHAR_W = 0.58          // caps serif, as a fraction of font size
+function fitLabel(t, name) {
+  const avail = Math.max(widthAt(t.poly, t.marker[1]), 24) * 0.92
+  let best = null
+  for (const lines of [[name], wrap(name)]) {
+    const longest = Math.max(...lines.map(l => l.length))
+    const size = Math.min(DECOR.label, avail / (CHAR_W * longest))
+    if (!best || size > best.size) best = { lines, size }
+  }
+  return { lines: best.lines, size: Math.max(5.5, round(best.size, 1)) }
+}
+
+const terrain = []
+// Fills first, then every border pass, so no fill can paint over a neighbour's
+// border. The original black strokes stay on top of all of it.
+for (const t of territories) {
+  terrain.push(`<path d="${t.el.attrs.d}" fill="${styleFor(t).fill}"/>`)
+}
+// The Polar Sink is mottled rather than flat: a few faint blobs clipped to its
+// own outline. Clip paths are declared inline so the layer stays self-contained.
+const sinkT = territories.find(t => dataFor(t).terrain === 'polar-sink')
+if (sinkT) {
+  terrain.push(`<clipPath id="clip-${sinkT.id}"><path d="${sinkT.el.attrs.d}"/></clipPath>`)
+  const [mx, my] = sinkT.marker
+  for (const [dx, dy, r, o] of [[-18, -12, 26, 0.05], [14, 8, 20, 0.07], [-4, 22, 16, 0.04], [22, -18, 13, 0.06]]) {
+    terrain.push(`<ellipse cx="${round(mx + dx)}" cy="${round(my + dy)}" rx="${r}" ry="${round(r * 0.72)}" `
+      + `fill="#8d7f63" opacity="${o}" clip-path="url(#clip-${sinkT.id})"/>`)
+  }
+}
+for (const t of territories) {
+  const s = styleFor(t)
+  // pass 0 is the widest dark stroke; odd passes paint the fill back over its
+  // middle, leaving parallel dark edges showing.
+  const widths = { 1: [2], 2: [5, 2.2], 3: [7.5, 5, 1.8] }[s.borders] ?? [2]
+  widths.forEach((w, i) => {
+    terrain.push(`<path d="${t.el.attrs.d}" fill="none" stroke="${i % 2 ? s.fill : DECOR.ink}" `
+      + `stroke-width="${w}" stroke-linejoin="round"/>`)
+  })
+}
+
+// Label anchors start at the territory's marker point and are then pushed
+// apart where the TEXT BOXES overlap — which happens even though the shapes do
+// not, most visibly where a sietch sits in the middle of the flat it is named
+// after. Nudging is cosmetic and applies to the labels only: the centroids in
+// the data module stay purely geometric, because troop placement should not
+// drift to make room for a caption.
+const placed = territories.map(t => {
+  const { lines, size } = fitLabel(t, dataFor(t).name)
+  return {
+    t, lines, size,
+    at: t.marker.slice(),
+    w: Math.max(...lines.map(l => l.length)) * CHAR_W * size,
+    h: lines.length * size * 1.15,
+  }
+})
+for (let pass = 0; pass < 6; pass++) {
+  for (let i = 0; i < placed.length; i++) {
+    for (let j = i + 1; j < placed.length; j++) {
+      const a = placed[i], b = placed[j]
+      const ox = (a.w + b.w) / 2 - Math.abs(a.at[0] - b.at[0])
+      const oy = (a.h + b.h) / 2 - Math.abs(a.at[1] - b.at[1])
+      if (ox <= 0 || oy <= 0) continue          // boxes clear of each other
+      // Separate along the shallower axis, and only keep a move that leaves
+      // the anchor inside its own territory.
+      const dy = Math.sign(a.at[1] - b.at[1]) || 1
+      const shift = Math.min(oy / 2 + 0.5, 6)
+      for (const [g, dir] of [[a, dy], [b, -dy]]) {
+        const next = [g.at[0], g.at[1] + dir * shift]
+        if (inside(next, g.t.poly)) g.at = next
+      }
+    }
+  }
+}
+const anchorOf = new Map(placed.map(p => [p.t, p]))
+
+const labels = []
+for (const t of territories) {
+  const d = dataFor(t)
+  const s = styleFor(t)
+  const p = anchorOf.get(t)
+  const [x, y] = p.at
+  const { lines, size } = p
+  const top = y - ((lines.length - 1) * size * 0.58)
+  lines.forEach((line, i) => {
+    // paint-order puts the stroke behind the glyphs, so a fill-coloured halo
+    // keeps the name legible where it crosses its own border without showing
+    // as an outline on flat ground.
+    labels.push(`<text x="${round(x)}" y="${round(top + i * size * 1.15)}" font-size="${size}" `
+      + `fill="${s.text ?? DECOR.ink}" text-anchor="middle" dominant-baseline="middle" `
+      + `font-family="Georgia, 'Times New Roman', serif" letter-spacing="0.5" `
+      + `paint-order="stroke" stroke="${s.fill}" stroke-width="${round(size * 0.28, 2)}" stroke-linejoin="round"`
+      + `${d.stronghold ? ' font-weight="bold"' : ''}>${esc(line.toUpperCase())}</text>`)
+  })
+}
+
+// Spice badges sit outside the rim, on the bearing of the sector the blow
+// actually lands in — so a two-sector territory's badge points at the half
+// that can be mined, not at the middle of the whole shape.
+// Two territories can draw their spice from the same sector — The Great Flat
+// and Funeral Plain both mine sector-15 — and their badges would land on the
+// same bearing. Fan those apart within the wedge instead of stacking them.
+const badgeGroups = new Map()
+for (const t of territories) {
+  if (dataFor(t).spiceBlow == null || t.spiceSector == null) continue
+  if (!badgeGroups.has(t.spiceSector)) badgeGroups.set(t.spiceSector, [])
+  badgeGroups.get(t.spiceSector).push(t)
+}
+for (const t of territories) {
+  const d = dataFor(t)
+  if (d.spiceBlow == null || t.spiceSector == null) continue
+  const sec = ordered.find(s => s.number === t.spiceSector)
+  let span = norm(sec.to) - norm(sec.from)
+  if (span < 0) span += 360
+  const group = badgeGroups.get(t.spiceSector)
+  const slot = group.indexOf(t) - (group.length - 1) / 2
+  const a = (norm(sec.from) + span / 2 + slot * span * 0.42 - 90) * Math.PI / 180
+  const bx = CX + DECOR.badgeRadius * Math.cos(a), by = CY + DECOR.badgeRadius * Math.sin(a)
+  labels.push(`<circle cx="${round(bx)}" cy="${round(by)}" r="15" fill="${DECOR.badge.fill}" `
+    + `stroke="${DECOR.badge.ring}" stroke-width="1.6"/>`)
+  // A small Archimedean spiral, the board's mark for spice.
+  const arm = []
+  for (let k = 0; k <= 26; k++) {
+    const th = k / 26 * 3.4 * Math.PI, rr = 0.9 + th * 0.72
+    arm.push(`${round(bx - 6 + rr * Math.cos(th))},${round(by - 5.5 + rr * Math.sin(th))}`)
+  }
+  labels.push(`<polyline points="${arm.join(' ')}" fill="none" stroke="${DECOR.badge.ring}" `
+    + `stroke-width="1.1" stroke-linecap="round" opacity="0.85"/>`)
+  labels.push(`<text x="${round(bx + 4)}" y="${round(by + 5)}" font-size="12" fill="${DECOR.badge.text}" `
+    + `text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold">${d.spiceBlow}</text>`)
+}
+
+out = out.replace(/(<svg[^>]*>)/, `$1\n<g id="dune-terrain">\n${terrain.join('\n')}\n</g>`)
+out = out.replace('</svg>', `<g id="dune-labels">\n${labels.join('\n')}\n</g>\n</svg>`)
 out = out.replace(/\n{2,}/g, '\n')
 writeFileSync(OUT_SVG, out)
 
