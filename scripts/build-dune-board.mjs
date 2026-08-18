@@ -1542,3 +1542,66 @@ if (checkOnly) {
   }
   console.log('\nboard and data module are up to date')
 }
+
+// ─── Shai-Hulud cards ─────────────────────────────────────────────────────────
+// Six identical cards, same frame and type as the territory cards so the deck
+// reads as one set.
+//
+// The artwork is REFERENCED, not embedded. Shai-Hulud.png is 2.3MB; base64 in
+// six cards would be an 18MB deck. The relative href resolves both from the dev
+// server (/dune-cards/x.svg -> /Shai-Hulud.png) and straight off disk, because
+// the cards sit one directory under the image.
+const SHAI_COUNT = 6
+const SHAI_ART = '../Shai-Hulud.png'
+
+/** Break text to a width, in characters, and return one tspan per line. */
+function wrapText(text, perLine) {
+  const out = []
+  let line = ''
+  for (const word of text.split(' ')) {
+    if (line && (line + ' ' + word).length > perLine) { out.push(line); line = word }
+    else line = line ? line + ' ' + word : word
+  }
+  if (line) out.push(line)
+  return out
+}
+
+const SHAI_RULES = [
+  'Discard all spice and forces in the territory now showing in the Spice Deck discard pile.',
+  'Then draw cards (discarding any more Shai-Hulud Cards) until another Territory Card is revealed and place spice there.',
+  'Now the Nexus occurs. Players can form or break Alliances.',
+]
+
+for (let n = 1; n <= SHAI_COUNT; n++) {
+  const body = []
+  let y = 452
+  for (const para of SHAI_RULES) {
+    for (const line of wrapText(para, 62)) {
+      body.push(`<text x="${CARD.w / 2}" y="${y}" font-size="13.5" fill="${DECOR.sand.fill}" `
+        + `text-anchor="middle" font-family="Georgia, 'Times New Roman', serif">${esc(line)}</text>`)
+      y += 19
+    }
+    y += 10                                   // a blank line between paragraphs
+  }
+  writeFileSync(join(cardsDir, `shai-hulud-${n}.svg`), [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD.w}" height="${CARD.h}" viewBox="0 0 ${CARD.w} ${CARD.h}">`,
+    `<rect width="${CARD.w}" height="${CARD.h}" rx="18" fill="${DECOR.board}"/>`,
+    `<rect x="8" y="8" width="${CARD.w - 16}" height="${CARD.h - 16}" rx="12" fill="none" `
+      + `stroke="${DECOR.sand.fill}" stroke-width="1.5"/>`,
+    `<text x="${CARD.w / 2}" y="62" font-size="34" fill="${DECOR.sand.fill}" text-anchor="middle" `
+      + `letter-spacing="2" font-family="Georgia, 'Times New Roman', serif">SHAI-HULUD</text>`,
+    `<text x="${CARD.w / 2}" y="92" font-size="17" fill="${DECOR.sand.fill}" text-anchor="middle" `
+      + `letter-spacing="1" font-style="italic" opacity="0.85" `
+      + `font-family="Georgia, 'Times New Roman', serif">Sandworm Alert</text>`,
+    // 1402x1122 is 1.25:1; 380 wide keeps that ratio without distorting the worm.
+    `<image href="${SHAI_ART}" x="${(CARD.w - 380) / 2}" y="112" width="380" height="304" `
+      + `preserveAspectRatio="xMidYMid slice"/>`,
+    `<rect x="${(CARD.w - 380) / 2}" y="112" width="380" height="304" fill="none" `
+      + `stroke="${DECOR.sand.fill}" stroke-width="1.2" opacity="0.7"/>`,
+    ...body,
+    `</svg>`,
+  ].join('\n'))
+}
+
+console.log(`             ${SHAI_COUNT} Shai-Hulud cards`)
+console.log(`   deck total: ${spiceCards.length + SHAI_COUNT} cards`)
