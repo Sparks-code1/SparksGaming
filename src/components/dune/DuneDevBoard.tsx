@@ -16,6 +16,7 @@ import type { Occupied } from '@/lib/dune/storm'
 import { buildSpiceDeck, shuffle, resolveSpiceBlow } from '@/lib/dune/spiceBlow'
 import type { SpiceCard } from '@/lib/dune/spiceBlow'
 import type { SectorId, TerritoryId } from '@/types/Dune/Game'
+import CharityPanel from './CharityPanel'
 
 const { cx, cy } = DUNE_BOARD
 
@@ -221,6 +222,8 @@ export default function DuneDevBoard() {
           <legend>Spice blow</legend>
           <button onClick={drawSpice}>Draw a spice card</button>
         </fieldset>
+
+        <CharityPanel say={say} />
 
         <fieldset style={panel}>
           <legend>Turn</legend>
