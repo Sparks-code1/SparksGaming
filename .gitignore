@@ -17,3 +17,9 @@ supabase/.temp/
 
 # Test runner build output
 node_modules/.test-build/
+
+# Dune spice deck — fifteen cards, each embedding a full copy of the board, so
+# a single change to the map rewrites all of them and >1MB of diff with it.
+# Regenerated exactly by scripts/build-dune-board.mjs; the board SVG and the
+# data module ARE committed, because those are what the app loads.
+public/dune-cards/
