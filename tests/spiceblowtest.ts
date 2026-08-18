@@ -94,6 +94,19 @@ check('the worms go back into the deck', first.deck.filter(c => c.kind === 'shai
 check('...so nothing is lost from it', first.deck.length, 3)
 check('and no worm reaches the discard', first.discard.filter(c => c.kind === 'shai-hulud').length, 0)
 
+// All six worms in a row on turn one must be survivable: they are set aside,
+// not resolved, so there is no territory to devour and nothing to refuse.
+const sixWorms = resolveSpiceBlow({
+  ...base,
+  firstTurn: true,
+  deck: [worm, worm, worm, worm, worm, worm, terr('a', 8, 3)],
+  discard: [],
+})
+check('six worms on turn one do not throw', sixWorms.ignored, 6)
+check('...and the blow still lands', sixWorms.placed?.territoryId, 'a')
+check('...with every worm back in the deck', sixWorms.deck.filter(c => c.kind === 'shai-hulud').length, 6)
+check('...and none on the discard', sixWorms.discard.filter(c => c.kind === 'shai-hulud').length, 0)
+
 // ── the deck running dry ─────────────────────────────────────────────────────
 // Twenty-one cards over ten turns cannot exhaust the deck, so an empty one is a
 // bug. No reshuffle: that is an advanced-game rule, and quietly placing no spice

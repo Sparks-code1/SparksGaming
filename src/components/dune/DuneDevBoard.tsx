@@ -108,7 +108,10 @@ export default function DuneDevBoard() {
       for (const id of out.spiceCleared) delete next[id]
       return next
     })
-    setTurn(t => t + 1)
+    // NOT setTurn here. The storm is phase 1 OF a turn, not the end of one —
+    // advancing the counter here made every later phase in turn 1 believe it was
+    // turn 2, so the spice blow stopped setting worms aside and refused the first
+    // worm it drew against an empty discard. The turn ends when End turn says so.
     say(
       `Storm ${out.from} to ${out.to}, sweeping ${out.swept.length} sector(s). ` +
       `${out.killed.length} force(s) to the tanks` +
@@ -216,7 +219,16 @@ export default function DuneDevBoard() {
 
         <fieldset style={panel}>
           <legend>Spice blow</legend>
-          <button onClick={drawSpice}>Draw a spice card</button>{' '}
+          <button onClick={drawSpice}>Draw a spice card</button>
+        </fieldset>
+
+        <fieldset style={panel}>
+          <legend>Turn</legend>
+          {/* Explicit, because a turn is nine phases and two of them exist. The
+              counter only matters to the blow, which ignores worms on turn 1. */}
+          <button onClick={() => { setTurn(t => t + 1); say(`— end of turn ${turn} —`) }}>
+            End turn
+          </button>{' '}
           <button onClick={reset}>Reset</button>
         </fieldset>
 
