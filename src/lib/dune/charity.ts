@@ -1,0 +1,126 @@
+/**
+ * CHOAM Charity: phase 3.
+ *
+ * A player holding 2 or fewer spice may claim charity, which brings them up to
+ * 2. The window is open for a fixed time and closes on the clock.
+ *
+ * WHAT IS SECRET AND WHAT IS NOT. Spice is hidden, so eligibility is decided
+ * here — on the server, against a seat's secrets — and never travels to clients.
+ * The claim itself is public: everyone sees who claimed. That means a claim
+ * publishes a fact about the claimant, namely that they held 2 or fewer. That is
+ * the rule working as intended, not a leak, but anything reasoning about what
+ * players can infer should treat a claim as published information.
+ *
+ * Nothing here reads a clock. The deadline is stamped by the caller that opens
+ * the window, for the same reason dice are rolled by the server: a phase whose
+ * length each client decided for itself would end at a different moment on every
+ * screen.
+ */
+import type { Secrets } from '../secretsSync'
+
+/** What a Dune seat keeps hidden. One number, for now. */
+export interface DuneSecrets extends Secrets {
+  spice: number
+}
+
+/** Claiming brings a player UP TO this, it does not add it. */
+export const CHARITY_TOPS_UP_TO = 2
+
+/** How long the window stands open. */
+export const CHARITY_WINDOW_MS = 15_000
+
+export const readSpice = (s: Secrets | null | undefined): number => {
+  const v = (s as DuneSecrets | null | undefined)?.spice
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0
+}
+
+/** Server-side only: never send the result of this to a client. */
+export function isEligibleForCharity(secrets: Secrets | null | undefined): boolean {
+  return readSpice(secrets) <= CHARITY_TOPS_UP_TO
+}
+
+/**
+ * What a claim is worth. Zero for anyone at or above the threshold, which is
+ * also how an ineligible claim is refused: the grant is the check.
+ */
+export function charityGrant(secrets: Secrets | null | undefined): number {
+  const spice = readSpice(secrets)
+  return spice <= CHARITY_TOPS_UP_TO ? CHARITY_TOPS_UP_TO - spice : 0
+}
+
+/** A seat's secrets after claiming. Untouched when the claim is worth nothing. */
+export function applyCharity(secrets: Secrets | null | undefined): DuneSecrets {
+  const spice = readSpice(secrets)
+  return { ...(secrets ?? {}), spice: spice + charityGrant(secrets) } as DuneSecrets
+}
+
+/**
+ * The public half of the phase. No spice appears here — only who claimed, and
+ * when the window shuts.
+ */
+export interface CharityWindow {
+  /** Stamped by the server when the window opens. Clients count toward it. */
+  expiresAt: number
+  /** Seats that have claimed, in the order they did. Public by rule. */
+  claims: string[]
+}
+
+export function openCharityWindow(now: number): CharityWindow {
+  return { expiresAt: now + CHARITY_WINDOW_MS, claims: [] }
+}
+
+export const charityWindowIsOpen = (w: CharityWindow | null | undefined, now: number): boolean =>
+  !!w && now < w.expiresAt
+
+export type CharityRefusal =
+  | 'no-window'          // the phase is not open
+  | 'window-closed'      // the deadline has passed
+  | 'already-claimed'    // one claim each
+  | 'not-eligible'       // holds more than the threshold
+
+/**
+ * Whether a claim stands, decided entirely on the server.
+ *
+ * Eligibility is checked HERE rather than trusted from the client. A client
+ * knows its own spice and can grey out its own button, but that is a courtesy;
+ * a seat holding ten could still post a claim, and only this sees the number
+ * that refuses it.
+ */
+export function refuseCharityClaim(
+  window: CharityWindow | null | undefined,
+  secrets: Secrets | null | undefined,
+  playerId: string,
+  now: number,
+): CharityRefusal | null {
+  if (!window) return 'no-window'
+  if (now >= window.expiresAt) return 'window-closed'
+  if (window.claims.includes(playerId)) return 'already-claimed'
+  if (!isEligibleForCharity(secrets)) return 'not-eligible'
+  return null
+}
+
+export interface CharityClaimResult {
+  window: CharityWindow
+  /** The claimant's new secrets, to be written in the same transaction. */
+  secrets: DuneSecrets
+  granted: number
+}
+
+/**
+ * Apply a claim that has already been found acceptable.
+ *
+ * Split from the refusal so a caller cannot accidentally apply an unchecked
+ * claim: this takes the grant on trust, and `refuseCharityClaim` is what earns
+ * that trust.
+ */
+export function applyCharityClaim(
+  window: CharityWindow,
+  secrets: Secrets | null | undefined,
+  playerId: string,
+): CharityClaimResult {
+  return {
+    window: { ...window, claims: [...window.claims, playerId] },
+    secrets: applyCharity(secrets),
+    granted: charityGrant(secrets),
+  }
+}
