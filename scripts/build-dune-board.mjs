@@ -1452,3 +1452,60 @@ writeFileSync(OUT_TS, lines.join('\n'))
 
 console.log(`\nwrote  public/dune-board.svg`)
 console.log(`wrote  src/data/dune/boardData.ts`)
+
+// ─── Spice deck: one territory card per blow ──────────────────────────────────
+// Emitted from this same pass, off the same records that wrote the board and the
+// data module, so a card cannot name a territory the board has moved or print a
+// spice value the data disagrees with.
+//
+// The background is the board itself with its LABEL layer stripped: at card
+// scale the names are illegible anyway, and dropping them takes about a third
+// off each file — fifteen copies of the board is the real cost here.
+const CARD = { w: 500, h: 700, pad: 30, boardTop: 54 }
+const cardScale = round((CARD.w - CARD.pad * 2) / 970, 5)
+const boardInner = out
+  .replace(/^[\s\S]*?<svg[^>]*>/, '')
+  .replace(/<\/svg>\s*$/, '')
+  .replace(/<g id="dune-labels">[\s\S]*?<\/g>\s*/g, '')
+
+const slug = name => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+const cardsDir = join(root, 'public', 'dune-cards')
+mkdirSync(cardsDir, { recursive: true })
+
+const spiceCards = territories
+  .filter(t => dataFor(t).spiceBlow != null)
+  .sort((a, b) => dataFor(a).name.localeCompare(dataFor(b).name))
+
+for (const t of spiceCards) {
+  const d = dataFor(t)
+  const g = `translate(${CARD.pad} ${CARD.boardTop}) scale(${cardScale})`
+  writeFileSync(join(cardsDir, `spice-${slug(d.name)}.svg`), [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD.w}" height="${CARD.h}" viewBox="0 0 ${CARD.w} ${CARD.h}">`,
+    `<defs><filter id="drain"><feColorMatrix type="saturate" values="0.18"/></filter></defs>`,
+    `<rect width="${CARD.w}" height="${CARD.h}" rx="18" fill="${DECOR.board}"/>`,
+    `<rect x="8" y="8" width="${CARD.w - 16}" height="${CARD.h - 16}" rx="12" fill="none" `
+      + `stroke="${DECOR.sand.fill}" stroke-width="1.5"/>`,
+    // The board, drained of colour so the highlight is the only thing holding any.
+    `<g transform="${g}" fill="none" filter="url(#drain)" opacity="0.95">`, boardInner, `</g>`,
+    // The territory, same coordinate space, outside the filter.
+    `<g transform="${g}">`,
+    `<path d="${t.el.attrs.d}" fill="#b3202a" fill-opacity="0.85" stroke="#f2d9a0" `
+      + `stroke-width="${round(3 / cardScale, 1)}" stroke-linejoin="round"/>`,
+    `</g>`,
+    `<text x="${CARD.w / 2}" y="${CARD.h - 92}" font-size="30" fill="${DECOR.sand.fill}" `
+      + `text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" letter-spacing="1">`
+      + `${esc(d.name.toUpperCase())}</text>`,
+    spiceSymbol(CARD.w / 2 - 34, CARD.h - 48),
+    `<text x="${CARD.w / 2 + 16}" y="${CARD.h - 48}" font-size="34" fill="${DECOR.sand.fill}" `
+      + `text-anchor="middle" dominant-baseline="central" font-weight="bold" `
+      + `font-family="Georgia, 'Times New Roman', serif">${d.spiceBlow}</text>`,
+    `</svg>`,
+  ].join('\n'))
+}
+
+console.log(`\nspice deck   ${spiceCards.length} territory cards -> public/dune-cards/`)
+for (const t of spiceCards) {
+  const d = dataFor(t)
+  console.log(`   ${d.name.padEnd(22)} ${String(d.spiceBlow).padStart(2)}  ${t.spiceSector ? 'sector-' + t.spiceSector : '?'}`)
+}
+console.log(`   total spice: ${spiceCards.reduce((n, t) => n + dataFor(t).spiceBlow, 0)}`)
