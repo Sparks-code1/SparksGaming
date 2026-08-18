@@ -6,17 +6,18 @@
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "npm run build:board && tsc && vite build",
     "preview": "vite preview",
     "lint": "eslint src --ext ts,tsx",
     "electron:dev": "concurrently -k \"npm:dev\" \"wait-on tcp:127.0.0.1:5173 && cross-env ELECTRON_DEV=1 electron .\"",
-    "electron:preview": "vite build && electron .",
-    "dist": "vite build && electron-builder --win",
-    "release": "vite build && electron-builder --win --publish always",
-    "dist:dir": "vite build && electron-builder --win --dir",
+    "electron:preview": "npm run build && electron .",
+    "dist": "npm run build && electron-builder --win",
+    "release": "npm run build && electron-builder --win --publish always",
+    "dist:dir": "npm run build && electron-builder --win --dir",
     "build:edge": "node scripts/build-edge-shared.mjs",
     "verify:edge": "node scripts/build-edge-shared.mjs --check",
-    "test": "node scripts/run-tests.mjs"
+    "test": "node scripts/run-tests.mjs",
+    "build:board": "node scripts/build-dune-board.mjs"
   },
   "dependencies": {
     "@pixi/react": "^7.1.2",
