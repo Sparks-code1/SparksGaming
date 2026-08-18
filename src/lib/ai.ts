@@ -549,7 +549,7 @@ export function aiMissionFocus(
       return focus(enemy.filter(t => ISLAND_TERRITORY_IDS.has(t.id)), 7 - held)
     }
     case 'pm-guerrilla-warfare': {
-      const marked = all.filter(t => (t.scars ?? []).some(s => s.type === 'fortified' || s.type === 'mercenary'))
+      const marked = all.filter(t => (t.scars ?? []).some(s => s.type === 'bunker' || s.type === 'mercenary'))
       if (marked.length === 0) return null
       const missing = marked.filter(t => t.occupyingPlayerId !== playerId)
       return focus(missing, missing.length)

@@ -9,7 +9,7 @@ export type ContinentId =
 
 export type ScarType =
   | 'nuclear-fallout'    // +1 loss to BOTH sides on every combat round fought here
-  | 'fortified'          // +1 to defender's highest die (Bunker)
+  | 'bunker'          // +1 to defender's highest die (Bunker)
   | 'fortification'      // +1 to defender's highest AND lowest die; one charge
                          //   spent per combat round, destroyed at 10
   | 'wasteland'          // −1 to defender's highest die (Ammo Shortage)

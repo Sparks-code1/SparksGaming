@@ -27,7 +27,7 @@ const legacy = {
     { id: 'city-1785359865310', targetId: 'northwest-territory', description: 'city:major', placement: 'territory', appliedInGame: 1, placedByPlayerId: 'p1' },
   ],
   scars: [
-    { territoryId: 'brazil', type: 'fortified' },   // the World Capital is ALSO scarred
+    { territoryId: 'brazil', type: 'bunker' },   // the World Capital is ALSO scarred
     { territoryId: 'egypt', type: 'wasteland' },
     { territoryId: 'peru', type: 'mercenary' },
   ],

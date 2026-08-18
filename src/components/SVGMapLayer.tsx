@@ -112,7 +112,7 @@ function WorldCapitalChevrons({ cx, cy, name }: { cx: number; cy: number; name?:
 // ─── Scar icon row (below the troop bubble) ───────────────────────────────────
 
 const SCAR_ICON: Record<string, string> = {
-  'fortified':     '🏰',
+  'bunker':     '🏰',
   'wasteland':     '💀',
   'biological':    '☣',
   'nuclear-fallout': '☢',
@@ -130,7 +130,7 @@ function ScarIcons({ cx, cy, scars }: { cx: number; cy: number; scars: Territory
     <>
       {visibleScars.map((scar, i) => {
         const x = startX + i * spacing
-        const isBunker = scar.type === 'fortified'
+        const isBunker = scar.type === 'bunker'
         const isAmmo = scar.type === 'wasteland'
 
         if (isAmmo) {

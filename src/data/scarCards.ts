@@ -17,19 +17,19 @@ export interface ScarCard {
 export const SCAR_CARDS: ScarCard[] = [
   // ── Game 1 pool (Bunker × 3, Ammo Shortage × 3) ─────────────────────────
   {
-    id: 'bunker-1', type: 'fortified', name: 'Bunker',
+    id: 'bunker-1', type: 'bunker', name: 'Bunker',
     trigger: 'immediate',
     triggerDescription: 'Place on any territory you control. Play at the start of any of your turns.',
     availableFromGame: 1,
   },
   {
-    id: 'bunker-2', type: 'fortified', name: 'Bunker',
+    id: 'bunker-2', type: 'bunker', name: 'Bunker',
     trigger: 'immediate',
     triggerDescription: 'Place on any territory you control. Play at the start of any of your turns.',
     availableFromGame: 1,
   },
   {
-    id: 'bunker-3', type: 'fortified', name: 'Bunker',
+    id: 'bunker-3', type: 'bunker', name: 'Bunker',
     trigger: 'immediate',
     triggerDescription: 'Place on any territory you control. Play at the start of any of your turns.',
     availableFromGame: 1,

@@ -141,7 +141,7 @@ export function checkMission(
       // Every Bunker (fortified) and Mercenary territory on the board is yours.
       // Vacuously true if none exist, so require at least one to be on the map.
       const marked = Object.values(territories).filter(t =>
-        (t.scars ?? []).some(s => s.type === 'fortified' || s.type === 'mercenary'),
+        (t.scars ?? []).some(s => s.type === 'bunker' || s.type === 'mercenary'),
       )
       if (marked.length === 0) return false
       return marked.every(t => t.occupyingPlayerId === playerId)

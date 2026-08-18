@@ -41,7 +41,7 @@ Territory
     └── stickerId?            — one legacy sticker per territory
 ```
 
-**ScarTypes:** `nuclear-fallout | fortified | rich-land | wasteland | biological`
+**ScarTypes:** `fallout zone | bunker | mercenary | ammo shortage | biological`
 
 ---
 

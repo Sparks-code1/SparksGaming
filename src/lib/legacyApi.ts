@@ -202,6 +202,22 @@ async function fetchCampaignRow(campaignId: string) {
   return { data: res.data as unknown as CampaignRow | null, error: res.error }
 }
 
+/**
+ * Scars written before 'fortified' was renamed to 'bunker'.
+ *
+ * The old id sat one letter from 'fortification' — a DIFFERENT scar, with
+ * different dice — which is why it was renamed. Healed on read, in place, so a
+ * campaign already holding Bunkers keeps them working rather than silently
+ * losing the effect: an unrecognised scar type is not an error anywhere, it
+ * just stops matching.
+ */
+export function healRenamedScarTypes(ls: LegacyState): LegacyState {
+  for (const sc of ls?.scars ?? []) {
+    if ((sc.type as string) === 'fortified') sc.type = 'bunker'
+  }
+  return ls
+}
+
 export async function loadLegacyState(campaignId: string): Promise<LegacyState | null> {
   if (!campaignId) return null
   try {
@@ -233,6 +249,7 @@ export async function loadLegacyState(campaignId: string): Promise<LegacyState |
       const deduped = [...new Set(ls.scarDeck)]
       if (deduped.length !== ls.scarDeck.length) ls.scarDeck = deduped
     }
+    healRenamedScarTypes(ls)
     // The COLUMN is authoritative — a code left behind in old saved JSON must
     // never be shown as if it were the real one.
     if (!joinCodeColumnMissing) ls.joinCode = row.join_code ?? null
@@ -1031,7 +1048,7 @@ export interface ScarMeta {
 
 export const SCAR_META: ScarMeta[] = [
   {
-    type: 'fortified',
+    type: 'bunker',
     label: 'Bunker',
     icon: '🏰',
     color: '#3498DB',

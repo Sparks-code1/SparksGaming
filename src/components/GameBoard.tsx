@@ -106,7 +106,7 @@ function drawIndicators(g: PIXI.Graphics, t: Territory, lx: number, ly: number) 
     const sx = lx + 10 + i * 11, sy = ly - 11
     switch (scar.type) {
       case 'nuclear-fallout': g.beginFill(0xFFFF00, 0.9); g.drawCircle(sx, sy, 4); g.endFill(); break
-      case 'fortified':       break
+      case 'bunker':       break
       case 'fortification':  break  // rendered as SVG ring in SVGMapLayer
       case 'biological':      break  // rendered as ☣ icon in SVGMapLayer
       case 'wasteland':       break  // rendered as 💀 icon in SVGMapLayer — no canvas dot
@@ -1729,7 +1729,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
               return
             }
             // Bunker and Ammo Shortage cannot be placed on territories that have already had combat this turn
-            if ((card.type === 'fortified' || card.type === 'wasteland') && gameStateRef.current.turn.attackedTerritoryIds.includes(def.id)) {
+            if ((card.type === 'bunker' || card.type === 'wasteland') && gameStateRef.current.turn.attackedTerritoryIds.includes(def.id)) {
               showWeaknessNotice(`⚠ ${card.name} can't be placed on a territory that had combat this turn`)
               return
             }
@@ -7403,7 +7403,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         const defFactionId = gameState.players.find(p => p.id === c.defenderId)?.factionId ?? ''
         const defResilient = (legacyState.comebackPowers ?? {})[defFactionId] === 'resilient'
         const tgtScars = tgtT?.scars ?? []
-        const hasFortifiedScar = tgtScars.some(s => s.type === 'fortified')
+        const hasFortifiedScar = tgtScars.some(s => s.type === 'bunker')
         const hasFortificationScar = tgtScars.some(s => s.type === 'fortification')
         const hasWastelandScar = tgtScars.some(s => s.type === 'wasteland') && !defResilient
         const hasFortSticker = legacyState.stickers.some(s =>
@@ -7692,9 +7692,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         const entries: ScarEntry[] = []
 
         // Bunker — always shown
-        const bunkerMeta = SCAR_META.find(m => m.type === 'fortified')
+        const bunkerMeta = SCAR_META.find(m => m.type === 'bunker')
         if (bunkerMeta) entries.push({
-          kind: 'scar', type: 'fortified', name: 'Bunker',
+          kind: 'scar', type: 'bunker', name: 'Bunker',
           color: bunkerMeta.color, icon: <span style={{ fontSize: 13 }}>{bunkerMeta.icon}</span>,
           trigger: 'immediate', effect: bunkerMeta.effect,
         })
@@ -8785,7 +8785,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
 
         // Scar effects on the defender's territory
         const tgtScars    = attackTgtTerritory.scars ?? []
-        const hasFortifiedScar      = tgtScars.some(s => s.type === 'fortified')
+        const hasFortifiedScar      = tgtScars.some(s => s.type === 'bunker')
         const hasFortificationScar  = tgtScars.some(s => s.type === 'fortification')
         const hasWastelandScar  = tgtScars.some(s => s.type === 'wasteland') && !defResilient
         const hasNuclearFallout = tgtScars.some(s => s.type === 'nuclear-fallout')
@@ -9268,7 +9268,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
               const isActive = activeCardId === cardId
               const isImmediate = card.trigger === 'immediate'
               // Bunker (fortified) and Ammo Shortage (wasteland) must be played before any dice roll on the target territory
-              const isPreRollOnly = card.type === 'fortified' || card.type === 'wasteland'
+              const isPreRollOnly = card.type === 'bunker' || card.type === 'wasteland'
               const blockedByCombat = isPreRollOnly && showCombat
               return (
                 <div key={cardId} style={{
