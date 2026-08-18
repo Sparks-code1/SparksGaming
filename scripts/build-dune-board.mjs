@@ -1547,12 +1547,19 @@ if (checkOnly) {
 // Six identical cards, same frame and type as the territory cards so the deck
 // reads as one set.
 //
-// The artwork is REFERENCED, not embedded. Shai-Hulud.png is 2.3MB; base64 in
-// six cards would be an 18MB deck. The relative href resolves both from the dev
-// server (/dune-cards/x.svg -> /Shai-Hulud.png) and straight off disk, because
-// the cards sit one directory under the image.
+// The artwork is EMBEDDED, so a card is one self-contained file that can be
+// opened, sent or printed on its own — matching the territory cards, which
+// inline their board.
+//
+// This only became reasonable after the source was downscaled AND re-encoded as
+// JPEG. PNG is the wrong format for a photograph: at 887px it was still 676KB and
+// six copies made a 5.3MB deck, where the same pixels as JPEG are 141KB. Read per
+// run rather than cached,
+// because the whole point of this generator is that replacing the source file
+// and re-running is the entire update procedure.
 const SHAI_COUNT = 6
-const SHAI_ART = '../Shai-Hulud.png'
+const SHAI_ART = 'data:image/jpeg;base64,'
+  + readFileSync(join(root, 'public', 'Shai-Hulud.jpg')).toString('base64')
 
 /** Break text to a width, in characters, and return one tspan per line. */
 function wrapText(text, perLine) {
