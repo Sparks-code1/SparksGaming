@@ -45,7 +45,12 @@ export interface DuneSpiceMarker extends DuneMarker { territoryId: string | null
 /** The board circle, from the export's own rim circle. */
 export const DUNE_BOARD = { cx: 483.097, cy: 556.456, radius: 432.5, viewBox: '0 0 970 1099' } as const
 
-/** 18 storm sectors. sector-1 contains due north; numbering runs clockwise. */
+/** The band the storm walks, so anything drawing a storm marker sits exactly
+ *  on the ring the board draws rather than on a second copy of the numbers. */
+export const DUNE_STORM_RING = { inner: 440, outer: 466 } as const
+
+/** 18 storm sectors. sector-1 is the south-southwest wedge and numbering runs
+ *  COUNTER-clockwise, which is also the direction the storm travels. */
 export const DUNE_SECTORS: DuneSector[] = [
   { id: 'sector-1', number: 1, fromBearing: 189.7, toBearing: 209.6 },
   { id: 'sector-2', number: 2, fromBearing: 169.8, toBearing: 189.7 },

@@ -1412,7 +1412,12 @@ lines.push(``)
 lines.push(`/** The board circle, from the export's own rim circle. */`)
 lines.push(`export const DUNE_BOARD = { cx: ${CX}, cy: ${CY}, radius: ${RIM}, viewBox: '0 0 970 1099' } as const`)
 lines.push(``)
-lines.push(`/** 18 storm sectors. sector-1 contains due north; numbering runs clockwise. */`)
+lines.push(`/** The band the storm walks, so anything drawing a storm marker sits exactly`)
+lines.push(` *  on the ring the board draws rather than on a second copy of the numbers. */`)
+lines.push(`export const DUNE_STORM_RING = { inner: ${DECOR.stormRing.inner}, outer: ${DECOR.stormRing.outer} } as const`)
+lines.push(``)
+lines.push(`/** 18 storm sectors. sector-1 is the south-southwest wedge and numbering runs
+ *  COUNTER-clockwise, which is also the direction the storm travels. */`)
 lines.push(`export const DUNE_SECTORS: DuneSector[] = [`)
 for (const s of ordered) {
   lines.push(`  { id: ${q(s.id)}, number: ${s.number}, fromBearing: ${round(norm(s.from), 1)}, toBearing: ${round(norm(s.to), 1)} },`)
