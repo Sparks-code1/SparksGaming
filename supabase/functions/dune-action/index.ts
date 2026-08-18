@@ -174,6 +174,53 @@ Deno.serve(async req => {
       return json({ closed: true, claims: window.claims, version: data[0].version })
     }
 
+    // ── DEV SCAFFOLDING — NOT how spice is handed out ────────────────────────
+    // In the real game each faction begins with a specific amount as part of
+    // setup, decided by who they are. This sets arbitrary numbers so the hidden
+    // path can be exercised: without it every seat holds nothing, everyone is
+    // eligible for charity, and "another seat's spice never reaches my client"
+    // is a claim that cannot fail because there is no spice to withhold.
+    //
+    // Gated on an environment flag rather than a comment, deliberately. A note
+    // saying "do not use in production" is advice; an endpoint that refuses
+    // unless DUNE_DEV_SEEDING is on cannot quietly become the mechanism. When
+    // faction setup exists it will write these rows from the faction, and this
+    // case should be deleted rather than repurposed.
+    case 'SEED_SPICE': {
+      if (Deno.env.get('DUNE_DEV_SEEDING') !== 'on') {
+        return json({
+          error: 'seeding is disabled — this is development scaffolding, not setup',
+          code: 'seeding-disabled',
+        }, 403)
+      }
+      // { p1: 0, p5: 7 } — whatever the caller wants to arrange.
+      const amounts = action.spice as Record<string, number> | undefined
+      if (!amounts || typeof amounts !== 'object') {
+        return json({ error: 'spice map required', code: 'bad-request' }, 400)
+      }
+
+      const secrets: Record<string, unknown> = {}
+      for (const [seatId, amount] of Object.entries(amounts)) {
+        if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0) {
+          return json({ error: `bad amount for ${seatId}`, code: 'bad-request' }, 400)
+        }
+        secrets[seatId] = { spice: Math.floor(amount) }
+      }
+
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: state,                       // public state untouched
+        p_secrets: secrets,
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      // Seats seeded, amounts NOT echoed: this endpoint is the one place that
+      // sees several seats' spice at once, and it should not be the place that
+      // hands them all back in one response.
+      return json({ seeded: Object.keys(secrets), version: data[0].version })
+    }
+
     default:
       return json({ error: `unknown action ${action.type}`, code: 'unknown-action' }, 400)
   }
