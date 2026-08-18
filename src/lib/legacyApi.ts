@@ -742,27 +742,39 @@ export interface JoinLookup {
  * Returns null for "no such campaign" and throws for "could not ask", so the
  * UI can tell a wrong code apart from a dead connection.
  */
+/** One row of `join_campaign_by_code`. Declared because rpc results are not
+ *  derived from a select string the way table reads are. */
+interface JoinCodeRow {
+  id: string
+  world_name: string
+  legacy_state: LegacyState
+  join_code: string | null
+}
+
 export async function findCampaignByJoinCode(rawCode: string): Promise<JoinLookup | null> {
   const code = normalizeJoinCode(rawCode)
   if (!isValidJoinCode(code)) return null
 
   if (!joinCodeColumnMissing) {
-    // ilike with no wildcards is a case-insensitive equality test.
+    // Through the rpc rather than the table. A joiner is not on the roster yet,
+    // so once campaigns are scoped to their roster a direct select returns
+    // nothing and the join fails as "wrong code". The function is SECURITY
+    // DEFINER and treats the code itself as the credential.
+    //
+    // No member id here: this is the lookup half, which exists so the joiner can
+    // SEE the roster and choose who they are. Claiming is a second call.
     const { data, error } = await supabase
-      .from('campaigns')
-      .select('id, world_name, legacy_state, join_code')
-      .ilike('join_code', code)
-      .limit(1)
+      .rpc('join_campaign_by_code', { p_code: code, p_member_id: null })
     if (isMissingJoinCodeColumn(error)) {
       noteMissingColumn()
     } else if (error) {
       throw new Error(`Could not look up that code: ${error.message}`)
     } else {
-      const row = (data ?? [])[0]
+      const row = (data as JoinCodeRow[] | null ?? [])[0]
       if (!row) return null
       const ls = row.legacy_state as LegacyState
-      ls.joinCode = (row.join_code as string) ?? code
-      return { campaignId: row.id as string, worldName: ls.worldName || (row.world_name as string), legacy: ls }
+      ls.joinCode = row.join_code ?? code
+      return { campaignId: row.id, worldName: ls.worldName || row.world_name, legacy: ls }
     }
   }
 

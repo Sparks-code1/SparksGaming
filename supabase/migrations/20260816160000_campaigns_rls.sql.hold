@@ -1,0 +1,169 @@
+-- Scope campaigns to their roster.
+--
+-- The five placeholder policies this replaces predate accounts: anon read,
+-- public read, public write, anon insert, anon update. Together they mean
+-- anyone holding the anon key — which ships in the client bundle — can read and
+-- rewrite every campaign in the database. The blob they reach includes the
+-- roster, the whole campaign record, and (today) every player's card hand.
+--
+-- DO NOT APPLY BLIND. This changes who can read existing rows; see the
+-- breakage notes at the foot of this file.
+
+-- ── The rule ─────────────────────────────────────────────────────────────────
+-- The roster lives inside legacy_state as an array of members, each with an
+-- optional `userId` — accounts are optional by design and an unclaimed member
+-- plays exactly as before. There is no campaign_members table to join against,
+-- so membership is read out of the blob.
+--
+-- A campaign is CLAIMED once any member has claimed a seat with an account.
+--
+--   unclaimed -> reachable by anyone who knows the UUID
+--   claimed   -> reachable only by the accounts on its roster
+--
+-- Unclaimed campaigns keep the current posture deliberately, because that is
+-- what keeps guests working: a campaign played entirely without accounts has no
+-- auth.uid() to match, and scoping it to accounts would lock its own players
+-- out of it. The protection there is the unguessability of a v4 UUID, which is
+-- also all that protects a join code today. It is strictly tighter than the
+-- status quo, and it is not the same thing as private.
+--
+-- The moment ONE person claims a seat, the campaign locks to its roster.
+
+create or replace function campaign_is_claimed(ls jsonb)
+returns boolean
+language sql
+immutable
+as $$
+  select exists (
+    select 1
+    from jsonb_array_elements(coalesce(ls -> 'roster', '[]'::jsonb)) as m
+    where nullif(m ->> 'userId', '') is not null
+  );
+$$;
+
+create or replace function campaign_has_member(ls jsonb, uid uuid)
+returns boolean
+language sql
+immutable
+as $$
+  select uid is not null and exists (
+    select 1
+    from jsonb_array_elements(coalesce(ls -> 'roster', '[]'::jsonb)) as m
+    where nullif(m ->> 'userId', '') = uid::text
+  );
+$$;
+
+-- ── Out with the placeholders ────────────────────────────────────────────────
+-- Named individually rather than dropped in a loop: if one has been renamed
+-- since, the verify block at the foot catches the survivor rather than this
+-- silently doing nothing.
+alter table campaigns enable row level security;
+
+drop policy if exists "anon read campaigns"    on campaigns;
+drop policy if exists "public read campaigns"  on campaigns;
+drop policy if exists "public write campaigns" on campaigns;
+drop policy if exists "anon insert campaigns"  on campaigns;
+drop policy if exists "anon update campaigns"  on campaigns;
+
+-- ── In with the scoped set ───────────────────────────────────────────────────
+
+drop policy if exists "read own campaigns" on campaigns;
+create policy "read own campaigns"
+  on campaigns for select
+  using (
+    not campaign_is_claimed(legacy_state)
+    or campaign_has_member(legacy_state, auth.uid())
+  );
+
+-- Creation. A campaign is born with no roster, so it is unclaimed and this
+-- allows it. It does NOT allow inserting a row already claimed by somebody
+-- else, which would otherwise let a caller manufacture a campaign attributed to
+-- another account.
+drop policy if exists "create campaigns" on campaigns;
+create policy "create campaigns"
+  on campaigns for insert
+  with check (
+    not campaign_is_claimed(legacy_state)
+    or campaign_has_member(legacy_state, auth.uid())
+  );
+
+-- Writes are the same test on both sides: you must be able to reach the row as
+-- it stands, and you must still be on it afterwards. The `with check` half is
+-- what stops a member rewriting the roster to evict everyone including
+-- themselves, or handing the campaign to an account that is not theirs.
+drop policy if exists "write own campaigns" on campaigns;
+create policy "write own campaigns"
+  on campaigns for update
+  using (
+    not campaign_is_claimed(legacy_state)
+    or campaign_has_member(legacy_state, auth.uid())
+  )
+  with check (
+    not campaign_is_claimed(legacy_state)
+    or campaign_has_member(legacy_state, auth.uid())
+  );
+
+-- No delete policy: nothing in the app deletes a campaign, and a legacy
+-- campaign is the one thing in this game that must not be destroyable by a
+-- client. Its absence refuses every delete.
+
+-- ── Verify ───────────────────────────────────────────────────────────────────
+do $$
+declare
+  leftover text;
+  missing  text;
+begin
+  if not exists (select 1 from pg_tables
+                 where tablename = 'campaigns' and rowsecurity = true) then
+    raise exception 'campaigns has RLS disabled — every policy below is decorative';
+  end if;
+
+  -- The point of the migration: the permissive five must be gone.
+  select string_agg(policyname, ', ') into leftover
+    from pg_policies
+   where tablename = 'campaigns'
+     and policyname not in ('read own campaigns', 'create campaigns', 'write own campaigns');
+  if leftover is not null then
+    raise exception 'unexpected campaigns policies still present: %', leftover;
+  end if;
+
+  select string_agg(c.expected, ', ') into missing
+    from (values ('read own campaigns'), ('create campaigns'), ('write own campaigns')) as c(expected)
+   where not exists (select 1 from pg_policies p
+                     where p.tablename = 'campaigns' and p.policyname = c.expected);
+  if missing is not null then
+    raise exception 'campaigns policies missing: %', missing;
+  end if;
+
+  if exists (select 1 from pg_policies where tablename = 'campaigns' and cmd = 'DELETE') then
+    raise exception 'campaigns has a delete policy — a client could destroy a legacy campaign';
+  end if;
+end $$;
+
+-- ── What this breaks, and what has to land with it ───────────────────────────
+--
+-- 1. JOIN BY CODE STOPS WORKING. legacyApi.ts:754 looks a campaign up by
+--    join_code, and at that moment the joiner is not yet on the roster. On a
+--    claimed campaign the select policy refuses the row and the join fails with
+--    "not found" — indistinguishable from a wrong code.
+--
+--    This needs a SECURITY DEFINER rpc — join_campaign_by_code(code, member_id)
+--    — that looks the row up with the definer's reach, adds the caller's
+--    auth.uid() to the named roster member, and returns the campaign. That is
+--    also the right place for it: joining is precisely the operation that must
+--    cross the membership boundary, so it should be one audited function rather
+--    than a hole in the policy.
+--
+-- 2. A player who never claimed a seat loses access once anyone else claims
+--    one. Mixed campaigns — some accounts, some not — are the common case in
+--    this project, and they become readable only by the account holders. The
+--    unclaimed players are not locked out of PLAY (the match row is scoped by
+--    match_players, untouched here) but they cannot read the campaign blob,
+--    which is where scars, stickers and history live.
+--
+-- 3. Anything reading a campaign outside a member session breaks. Worth
+--    grepping for admin or tooling paths before applying.
+--
+-- Nothing here is reversible by a second migration alone: once the permissive
+-- policies are gone, a client that relied on them fails immediately. Apply it
+-- with the join rpc, not before.
