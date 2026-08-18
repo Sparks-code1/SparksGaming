@@ -17,7 +17,8 @@
     "build:edge": "node scripts/build-edge-shared.mjs",
     "verify:edge": "node scripts/build-edge-shared.mjs --check",
     "test": "node scripts/run-tests.mjs",
-    "build:board": "node scripts/build-dune-board.mjs"
+    "build:board": "node scripts/build-dune-board.mjs",
+    "verify:board": "node scripts/build-dune-board.mjs --check"
   },
   "dependencies": {
     "@pixi/react": "^7.1.2",
