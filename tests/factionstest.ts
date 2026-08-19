@@ -1,0 +1,86 @@
+// Faction data. Two of six are filled in; this suite is written so the other
+// four are checked the moment they are added rather than needing new assertions.
+import { FACTIONS, FACTION_IDS, factionById, ATREIDES, EMPEROR } from '@/data/dune/factions'
+import { DUNE_TERRITORIES } from '@/data/dune/boardData'
+import type { Faction } from '@/types/Dune/Faction'
+
+let pass = true
+const check = (label: string, actual: unknown, expected: unknown) => {
+  const ok = JSON.stringify(actual) === JSON.stringify(expected)
+  if (!ok) pass = false
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}\n        got=${JSON.stringify(actual)} want=${JSON.stringify(expected)}`)
+}
+
+const written = Object.values(FACTIONS).filter(Boolean) as Faction[]
+
+// ── the roster ───────────────────────────────────────────────────────────────
+check('six factions in the game', FACTION_IDS.length, 6)
+check('ids are unique', new Set(FACTION_IDS).size, 6)
+check('two written so far', written.length, 2)
+check('every written faction is one of the six',
+  written.every(f => FACTION_IDS.includes(f.id)), true)
+check('the key agrees with the id inside',
+  Object.entries(FACTIONS).every(([k, f]) => f?.id === k), true)
+check('an unwritten faction reads as absent, not as an empty faction',
+  factionById('fremen'), null)
+
+// ── whatever is written must be complete ─────────────────────────────────────
+// Applies to the four still to come without needing a line each.
+for (const f of written) {
+  check(`${f.id}: has a name`, f.name.length > 0, true)
+  check(`${f.id}: spice is a number`, typeof f.startingSpice, 'number')
+  check(`${f.id}: five leaders`, f.leaders.length, 5)
+  check(`${f.id}: every leader strength is a number`,
+    f.leaders.every(l => typeof l.strength === 'number' && l.strength > 0), true)
+  check(`${f.id}: leader names are unique`,
+    new Set(f.leaders.map(l => l.name)).size, f.leaders.length)
+  check(`${f.id}: has at least one ability`, Object.keys(f.abilities).length > 0, true)
+
+  // Forces: a count and a place that agree with each other.
+  const { onPlanet, territoryId, reserves, starred } = f.forces
+  check(`${f.id}: force counts are numbers`,
+    [onPlanet, reserves, starred].every(n => typeof n === 'number' && n >= 0), true)
+  check(`${f.id}: starting on planet implies somewhere to start`,
+    onPlanet > 0 ? territoryId !== null : territoryId === null, true)
+
+  // The link that would otherwise rot: a faction cannot begin in a territory the
+  // board does not have.
+  if (territoryId) {
+    check(`${f.id}: starts in a territory the board actually has`,
+      DUNE_TERRITORIES.some(t => t.id === territoryId), true)
+  }
+
+  // Starred are a SUBSET of the forces, not extra. If that reading is wrong this
+  // is where it shows up, rather than in a setup that deals the wrong pieces.
+  check(`${f.id}: starred forces fit inside the total`,
+    starred <= onPlanet + reserves, true)
+}
+
+// ── the two written, specifically ────────────────────────────────────────────
+check('Atreides start in Arrakeen', ATREIDES.forces.territoryId, 'territory-13')
+check('...and that id really is Arrakeen',
+  DUNE_TERRITORIES.find(t => t.id === ATREIDES.forces.territoryId)?.displayName, 'Arrakeen')
+check('Atreides revive two free', ATREIDES.freeRevivals, 2)
+check('Atreides have powers in three phases',
+  Object.keys(ATREIDES.abilities).sort(), ['battle', 'bidding', 'movement'])
+
+check('the Emperor starts entirely in reserve',
+  [EMPEROR.forces.onPlanet, EMPEROR.forces.territoryId], [0, null])
+check('the Emperor has five Sardaukar', EMPEROR.forces.starred, 5)
+check('...within twenty forces', EMPEROR.forces.reserves, 20)
+
+// ── the draft's editor accidents are gone ────────────────────────────────────
+// dealScarCards is a real function in src/data/scarCards.ts that autocomplete
+// pasted into the rules text. It is the kind of thing that survives a proofread
+// because it looks like code rather than a misspelling.
+const allText = written.flatMap(f => [f.alliance, f.advanced, ...Object.values(f.abilities)]).join(' ')
+check('no code tokens left in the prose', /dealScarCards|turnKey/.test(allText), false)
+check('no known misspellings left',
+  /strenght|oppent|focing|cammpt|Kwiastaz|anoy |paided|Sardukar/.test(allText), false)
+check('the rules text survived — it was not just emptied',
+  allText.length > 1500, true)
+
+console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
+
+// Not optional: without an exit code the runner counts a failing suite green.
+process.exit(pass ? 0 : 1)
