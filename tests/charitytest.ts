@@ -3,7 +3,7 @@
 // seat's secrets and never sent anywhere. The claim is public by rule.
 import {
   isEligibleForCharity, charityGrant, applyCharity, openCharityWindow,
-  charityWindowIsOpen, refuseCharityClaim, applyCharityClaim,
+  charityWindowIsOpen, refuseCharityClaim, applyCharityClaim, refuseCharityOpen,
   CHARITY_TOPS_UP_TO, CHARITY_WINDOW_MS,
 } from '@/lib/dune/charity'
 import type { CharityWindow } from '@/lib/dune/charity'
@@ -84,7 +84,11 @@ check('claims accumulate in order', second.window.claims, ['p1', 'p2'])
 // The whole point: the window is the only thing that goes into shared state, and
 // it carries no spice — not an amount, not a total, not even a flag saying who
 // was eligible. Only who claimed.
-check('the public window has exactly two keys', Object.keys(out.window).sort(), ['claims', 'expiresAt'])
+// Three keys now: the turn joined them so a second opening within a turn can be
+// refused. It is not a secret — everyone knows what turn it is — and the check
+// below still holds the line that matters, which is that no spice appears here.
+check('the public window has exactly three keys',
+  Object.keys(out.window).sort(), ['claims', 'expiresAt', 'turn'])
 check('...and no spice anywhere in it',
   JSON.stringify(out.window).toLowerCase().includes('spice'), false)
 
@@ -107,6 +111,24 @@ check('...and no spice anywhere in it',
     constIn(edge, 'CHARITY_TOPS_UP_TO'), CHARITY_TOPS_UP_TO)
   check('the window length agrees across the boundary',
     constIn(edge, 'CHARITY_WINDOW_MS'), CHARITY_WINDOW_MS)
+}
+
+// ── opening the window is guarded ──────────────────────────────────────────
+// It was not. Any seat could open it, repeatedly, and each call replaced the
+// window with a fresh one — new deadline, empty claims. The spice cost was nil,
+// because a repeat claim by someone already at 2 grants 0; what it cost was the
+// rule and the public record of who had claimed.
+{
+  const opened = openCharityWindow(1_000, 4)
+  check('a window knows its turn', opened.turn, 4)
+  check('the phase must be charity', refuseCharityOpen(null, 'Storm', 4), 'wrong-phase')
+  check('...and it opens once there', refuseCharityOpen(null, 'CHOAM Charity', 4), null)
+  check('a second opening in the same turn is refused',
+    refuseCharityOpen(opened, 'CHOAM Charity', 4), 'already-opened')
+  check('...but the next turn gets its own',
+    refuseCharityOpen(opened, 'CHOAM Charity', 5), null)
+  check('an expired window still blocks a reopen in its own turn',
+    refuseCharityOpen({ ...opened, expiresAt: 0 }, 'CHOAM Charity', 4), 'already-opened')
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

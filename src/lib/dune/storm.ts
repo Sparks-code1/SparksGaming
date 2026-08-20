@@ -14,8 +14,10 @@
 import {
   DUNE_PLAYER_POSITIONS, DUNE_SECTORS, DUNE_TERRITORIES, TERRITORIES_BY_SECTOR,
 } from '@/data/dune/boardData'
-import type { Force, GameMode, SectorId, TerritoryId } from '@/types/Dune/Game'
+import type { Force, GameMode, SectorId, ShieldWall, TerritoryId } from '@/types/Dune/Game'
 import type { FactionId } from '@/types/Dune/Faction'
+import { offering } from './phase'
+import type { Step } from './phase'
 
 export const SECTOR_COUNT = 18
 
@@ -37,10 +39,25 @@ export const stormRollRange = (mode: GameMode) =>
 /** Where the first storm sets out from. */
 export const STORM_START: SectorId = 'sector-1'
 
-/** The Imperial Basin is sand but is sheltered, so the storm does not kill in
- *  it. Held by id because it is a named exception to a terrain rule, not a
- *  terrain of its own. */
-export const STORM_SHELTERED: readonly TerritoryId[] = ['territory-05']
+/**
+ * The three the Shield Wall stands over.
+ *
+ * NOT a terrain rule and not a property of these territories. The wall shelters
+ * them, and a treachery card takes the wall down for the rest of the game, so
+ * the protection is a fact about THIS match and has to be read from game state.
+ *
+ * The Imperial Basin is sand and would burn without it. Arrakeen and Carthag are
+ * strongholds and would be sheltered by that alone — which is exactly the trap.
+ * While the wall stands the two rules agree and nothing distinguishes them; once
+ * it falls they disagree, and the answer is that all three burn. So the wall
+ * does not merely add protection to these three, it REPLACES whatever they would
+ * otherwise have had, and losing it takes the stronghold shelter with it.
+ */
+export const SHIELD_WALL_PROTECTS: readonly TerritoryId[] = [
+  'territory-05',   // Imperial Basin — sand
+  'territory-13',   // Arrakeen — stronghold
+  'territory-26',   // Carthag — stronghold
+]
 
 const num = (id: SectorId): number => Number(id.slice('sector-'.length))
 const sectorId = (n: number): SectorId => `sector-${((n - 1) % SECTOR_COUNT) + 1}`
@@ -84,15 +101,28 @@ export interface Cell {
 /**
  * Is this cell exposed to a storm sweeping `swept`?
  *
- * Sand only. Rock, the strongholds and the Polar Sink shelter what stands on
- * them, and the Imperial Basin is a named exception despite being sand.
+ * Two rules, and the order between them is the whole point:
+ *
+ *   The three territories the Shield Wall covers are decided BY THE WALL, and by
+ *   nothing else. Standing, they are safe whatever they are made of. Fallen,
+ *   they are exposed whatever they are made of — Arrakeen and Carthag included,
+ *   though they are strongholds.
+ *
+ *   Everywhere else it is terrain. Sand burns; rock, strongholds and the Polar
+ *   Sink shelter what stands on them.
+ *
+ * `shieldWall` is required rather than defaulted for the same reason `mode` is:
+ * a default would let a caller resolve a storm without saying what the board
+ * looks like and get the wrong answer silently in the one case that matters.
  *
  * Exposure is about the GROUND. How many die once exposed is about the faction,
  * and is decided separately — see stormLosses.
  */
-export function isExposedToStorm(cell: Cell, swept: readonly SectorId[]): boolean {
+export function isExposedToStorm(
+  cell: Cell, swept: readonly SectorId[], shieldWall: ShieldWall,
+): boolean {
   if (!swept.includes(cell.sector)) return false
-  if (STORM_SHELTERED.includes(cell.territoryId)) return false
+  if (SHIELD_WALL_PROTECTS.includes(cell.territoryId)) return shieldWall === 'destroyed'
   const t = DUNE_TERRITORIES.find(x => x.id === cell.territoryId)
   return t?.terrain === 'sand'
 }
@@ -133,14 +163,111 @@ export interface StormOutcome {
   killed: Force[]
   /** The forces as they stand afterwards, survivors included, empties dropped. */
   forcesAfter: Force[]
-  /** Territories whose spice is swept away, to the Spice Bank. Spice is removed
-   *  wherever the storm passes, with no terrain exemption: sheltering forces and
-   *  sheltering spice are different rules. */
-  spiceCleared: TerritoryId[]
+  /**
+   * Spice swept away, to the Spice Bank, with the amount each territory lost.
+   *
+   * No terrain exemption, and none needed. The three the Shield Wall covers
+   * never hold spice on the board at all — the Imperial Basin, Arrakeen and
+   * Carthag have no blow marker, and what their occupants earn in advanced play
+   * goes straight to the player rather than sitting on the map. So storm
+   * protection only ever decides about forces, and the question of whether the
+   * wall shelters spice does not arise. Asserted in the storm suite, since it is
+   * a fact about the board that this reasoning leans on.
+   */
+  spiceCleared: { territoryId: TerritoryId; amount: number }[]
+  /** The board's spice afterwards. Returned rather than left to the caller for
+   *  the same reason the spice blow returns it: doing it by hand is where the
+   *  mistakes live. */
+  spiceOnBoard: Record<string, number>
+}
+
+/**
+ * What the storm is about to do, once the roll is known.
+ *
+ * Handed round before anything moves, because a card can be played against it.
+ */
+export interface StormAsk {
+  kind: 'before-the-storm-moves'
+  from: SectorId
+  to: SectorId
+  /** Everything it will pass over, so a player can see what is at risk. */
+  swept: SectorId[]
+}
+
+/** The continuation: plain data, so it survives a round trip to the database. */
+export interface StormCarry {
+  from: SectorId
+  roll: number
+  to: SectorId
+  swept: SectorId[]
+  forces: Force[]
+  spiceOnBoard: Record<string, number>
+  mode: GameMode
+}
+
+export type StormStep = Step<StormAsk, StormCarry, StormOutcome>
+
+/**
+ * Roll the storm, and stop before it moves.
+ *
+ * The gap is not decoration. Family Atomics is played "after storm movement is
+ * calculated but before the storm moves" — so the sweep is known, everyone can
+ * see what is about to burn, and only then does the wall come down. Resolve it
+ * in one call and there is nowhere for the card to go.
+ *
+ * The window is OFFERED, not required: any player holding the card may use it
+ * and almost nobody ever does, so the phase must be able to proceed with no
+ * answer at all. `closesAt` is the caller's to stamp — nothing here reads a
+ * clock.
+ */
+export function beginStorm(input: {
+  from: SectorId
+  roll: number
+  forces: readonly Force[]
+  mode: GameMode
+  spiceOnBoard?: Readonly<Record<string, number>>
+  /** Who may interrupt. Everyone at the table, since anyone could hold the card. */
+  mayInterrupt?: FactionId[]
+  closesAt?: number
+}): StormStep {
+  const swept = sweptSectors(input.from, input.roll)
+  const to = stormDestination(input.from, input.roll)
+  const carry: StormCarry = {
+    from: input.from,
+    roll: input.roll,
+    to,
+    swept,
+    forces: [...input.forces],
+    spiceOnBoard: { ...(input.spiceOnBoard ?? {}) },
+    mode: input.mode,
+  }
+  return offering(
+    input.mayInterrupt ?? [],
+    { kind: 'before-the-storm-moves', from: input.from, to, swept },
+    carry,
+    input.closesAt,
+  )
+}
+
+/**
+ * Move the storm, now that the window has shut.
+ *
+ * `shieldWall` is read HERE, not when the roll was made, and that ordering is
+ * the rule: the card lands in between, and a storm resolved against the wall as
+ * it stood at the start of the phase would spare three territories it should
+ * have burned.
+ */
+export function resolveStormMove(carry: StormCarry, shieldWall: ShieldWall): StormOutcome {
+  return resolveStorm(carry.from, carry.roll, carry.forces, carry.mode, shieldWall, carry.spiceOnBoard)
 }
 
 /**
  * Resolve a storm move against the forces on the board.
+ *
+ * The whole-phase shortcut, for callers with nobody to offer the window to: a
+ * test, a replay, a game with no treachery deck yet. A game where Family Atomics
+ * could be played must use `beginStorm` and resolve the window, or it plays that
+ * card's timing for the table.
  *
  * `mode` is required rather than defaulted. A default would let a caller resolve
  * a storm without saying which game it is, and get the basic rules silently —
@@ -152,18 +279,34 @@ export function resolveStorm(
   roll: number,
   forces: readonly Force[],
   mode: GameMode,
-  spiceOnBoard: readonly Cell[] = [],
+  shieldWall: ShieldWall,
+  spiceOnBoard: Readonly<Record<string, number>> = {},
 ): StormOutcome {
   const swept = sweptSectors(from, roll)
 
   const casualties: StormCasualty[] = []
   const forcesAfter: Force[] = []
   for (const force of forces) {
-    if (!isExposedToStorm(force, swept)) { forcesAfter.push(force); continue }
+    if (!isExposedToStorm(force, swept, shieldWall)) { forcesAfter.push(force); continue }
     const lost = Math.min(force.count, stormLosses(force, mode))
     const survived = force.count - lost
     casualties.push({ force, lost, survived })
     if (survived > 0) forcesAfter.push({ ...force, count: survived })
+  }
+
+  // Spice is keyed by territory, the same shape the spice blow uses, and its
+  // SECTOR comes from the board rather than being carried alongside: a blow
+  // lands on the territory's marker, and the marker is in one known sector.
+  // Two shapes for the same thing meant every caller converted between them.
+  const spiceCleared: StormOutcome['spiceCleared'] = []
+  const spiceAfter: Record<string, number> = { ...spiceOnBoard }
+  for (const [territoryId, amount] of Object.entries(spiceOnBoard)) {
+    if (!(amount > 0)) continue
+    const sector = DUNE_TERRITORIES.find(t => t.id === territoryId)?.spiceSector
+    if (sector && swept.includes(sector as SectorId)) {
+      spiceCleared.push({ territoryId: territoryId as TerritoryId, amount })
+      delete spiceAfter[territoryId]
+    }
   }
 
   return {
@@ -175,7 +318,8 @@ export function resolveStorm(
       .filter(c => c.lost > 0)
       .map(c => ({ ...c.force, count: c.lost })),
     forcesAfter,
-    spiceCleared: spiceOnBoard.filter(s => swept.includes(s.sector)).map(s => s.territoryId),
+    spiceCleared,
+    spiceOnBoard: spiceAfter,
   }
 }
 

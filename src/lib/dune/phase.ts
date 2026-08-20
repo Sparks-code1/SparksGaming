@@ -39,9 +39,36 @@
  */
 import type { FactionId } from '@/types/Dune/Faction'
 
-/** The phase has stopped and cannot go on until someone answers. */
+/**
+ * The phase has stopped.
+ *
+ * Two kinds of stop, and the difference is who is holding it up:
+ *
+ *   'required' — the phase is BLOCKED. Everyone in `from` must answer before it
+ *   goes on. The Fremen placing worms is this: the next card cannot be turned
+ *   until they have.
+ *
+ *   'optional' — the phase is OFFERING. Anyone in `from` may act, nobody has
+ *   to, and it proceeds when the window shuts whether or not anyone did. Family
+ *   Atomics is this: the card may be played between the storm's roll and its
+ *   move, by whoever holds it, and usually nobody does.
+ *
+ * Collapsing them loses the distinction that matters to a caller — whether it is
+ * waiting FOR someone or merely giving them the chance.
+ */
 export interface Awaiting<TAsk, TCarry> {
   status: 'awaiting'
+  /** Whether the phase is blocked on an answer or merely offering one. */
+  need: 'required' | 'optional'
+  /**
+   * When an optional window shuts. Stamped by whoever opened it, never read
+   * from a clock here — the same rule the charity window follows, and for the
+   * same reason: a window each client timed for itself would shut at six
+   * different moments.
+   *
+   * Absent on a required stop, which has no deadline: it ends when answered.
+   */
+  closesAt?: number
   /**
    * Who must answer. More than one when the phase asks them simultaneously —
    * a battle's two sides commit at the same time and neither may see the other
@@ -63,12 +90,38 @@ export interface Settled<TResult> {
 
 export type Step<TAsk, TCarry, TResult> = Awaiting<TAsk, TCarry> | Settled<TResult>
 
+/** A stop the phase is BLOCKED on: everyone in `from` must answer. */
 export const awaiting = <TAsk, TCarry>(
   from: FactionId[], ask: TAsk, carry: TCarry,
-): Awaiting<TAsk, TCarry> => ({ status: 'awaiting', from, ask, carry })
+): Awaiting<TAsk, TCarry> => ({ status: 'awaiting', need: 'required', from, ask, carry })
+
+/**
+ * A window the phase is OFFERING: anyone in `from` may act, nobody must.
+ *
+ * `closesAt` is when it shuts, and is the caller's to stamp. Passing nothing
+ * makes a window that closes only when the caller says so, which is what a
+ * hot-seat game or a test wants.
+ */
+export const offering = <TAsk, TCarry>(
+  from: FactionId[], ask: TAsk, carry: TCarry, closesAt?: number,
+): Awaiting<TAsk, TCarry> => ({ status: 'awaiting', need: 'optional', from, ask, carry, closesAt })
 
 export const settled = <TResult>(result: TResult): Settled<TResult> =>
   ({ status: 'settled', result })
+
+/** True when the phase cannot proceed until someone answers. */
+export function blocksOn<TAsk, TCarry, TResult>(
+  step: Step<TAsk, TCarry, TResult>,
+): step is Awaiting<TAsk, TCarry> {
+  return step.status === 'awaiting' && step.need === 'required'
+}
+
+/** True when an offered window has run out. Never asks the clock itself. */
+export function windowHasClosed<TAsk, TCarry>(
+  step: Awaiting<TAsk, TCarry>, now: number,
+): boolean {
+  return step.need === 'optional' && step.closesAt != null && now >= step.closesAt
+}
 
 /** Narrowing helper, so callers can branch without repeating the string. */
 export function isAwaiting<TAsk, TCarry, TResult>(

@@ -45,7 +45,7 @@ const CHARITY_TOPS_UP_TO = 2
 const CHARITY_WINDOW_MS = 15_000
 
 interface DuneSecrets { spice?: number }
-interface CharityWindow { expiresAt: number; claims: string[] }
+interface CharityWindow { expiresAt: number; claims: string[]; turn: number }
 
 const readSpice = (s: DuneSecrets | null | undefined): number =>
   typeof s?.spice === 'number' && Number.isFinite(s.spice) ? s.spice : 0
@@ -97,7 +97,23 @@ Deno.serve(async req => {
     // toward it; nobody runs their own clock, so the phase ends at one moment
     // rather than at six slightly different ones.
     case 'OPEN_CHARITY': {
-      const window: CharityWindow = { expiresAt: now + CHARITY_WINDOW_MS, claims: [] }
+      // Charity is once a turn, and at the charity phase. Unguarded, this
+      // replaced the window with a fresh one on every call — new deadline, empty
+      // claims — which let anyone reopen it and wiped the public record of who
+      // had already claimed. Mirrors refuseCharityOpen in lib/dune/charity.ts.
+      //
+      // Which SEAT may drive a phase transition is a separate question with no
+      // answer in the match state yet: there is no host or turn owner. Any
+      // seated player can still open this, just not twice and not early.
+      const open = state.charity as CharityWindow | undefined
+      const turn = typeof state.turn === 'number' ? state.turn : 0
+      if (state.phase !== 'CHOAM Charity') {
+        return json({ error: 'the turn is not at charity', code: 'wrong-phase' }, 409)
+      }
+      if (open && open.turn === turn) {
+        return json({ error: 'charity has already opened this turn', code: 'already-opened' }, 409)
+      }
+      const window: CharityWindow = { expiresAt: now + CHARITY_WINDOW_MS, claims: [], turn }
       const { data, error } = await admin.rpc('apply_match_write', {
         p_match_id: matchId,
         p_expected_version: match.version,

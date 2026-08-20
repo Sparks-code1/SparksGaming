@@ -85,6 +85,15 @@ export const PHASES: readonly GamePhase[] = [
   'Mentat Pause',
 ] as const
 
+/**
+ * The Shield Wall, which either stands or does not.
+ *
+ * Public: a treachery card destroys it in front of everybody, and it stays
+ * destroyed for the rest of the game. Not a property of the board — the board is
+ * generated once and is the same in every match, and this changes mid-game.
+ */
+export type ShieldWall = 'intact' | 'destroyed'
+
 export interface DuneGameState {
   /**
    * Where the storm sits now. `number`, not `18` — a bare literal in a type
@@ -95,6 +104,15 @@ export interface DuneGameState {
   /** 1–10. A game is ten turns. */
   turn: number
   phase: GamePhase
+  /**
+   * Whether the Shield Wall still stands.
+   *
+   * Storm exposure reads this, not the board: while it stands it shelters the
+   * Imperial Basin, Arrakeen and Carthag, and once Family Atomics brings it down
+   * all three burn — including the two that are strongholds. See
+   * SHIELD_WALL_PROTECTS in lib/dune/storm.ts.
+   */
+  shieldWall: ShieldWall
 }
 
 // ── Not here yet, and the reason ─────────────────────────────────────────────

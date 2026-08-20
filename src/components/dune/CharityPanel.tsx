@@ -81,8 +81,10 @@ export default function CharityPanel({ say }: { say: (line: string) => void }) {
         <span style={{ opacity: 0.85 }}>holds <b>{readSpice(secrets[seat])}</b> spice</span>
       </div>
 
+      {/* Turn 1: this panel exercises one turn, and the window is tagged with the
+          turn so the endpoint can refuse a second opening within it. */}
       {!window_ && (
-        <button onClick={() => { setNow(Date.now()); setWindow(openCharityWindow(Date.now())) }}>
+        <button onClick={() => { setNow(Date.now()); setWindow(openCharityWindow(Date.now(), 1)) }}>
           Open charity window ({CHARITY_WINDOW_MS / 1000}s)
         </button>
       )}

@@ -27,7 +27,10 @@ const at = (t: string, s: number, faction = 'harkonnen', count = 1): Force => ({
   count,
 })
 const rng = () => 0.5
-const base = { forces: [], spiceOnBoard: {}, firstTurn: false, rng, mode: 'basic' as const }
+// Somewhere none of the test cards blow, so the storm is out of the way unless a
+// test deliberately parks it on a card's sector.
+const STORM_AWAY = 'sector-18' as SectorId
+const base = { forces: [], spiceOnBoard: {}, storm: STORM_AWAY, firstTurn: false, rng, mode: 'basic' as const }
 
 // ── the deck as printed ──────────────────────────────────────────────────────
 const deck = buildSpiceDeck()
@@ -88,7 +91,7 @@ check('a worm on an empty discard is refused, not tolerated',
 // ── turn one ─────────────────────────────────────────────────────────────────
 const first = resolveSpiceBlow({
   ...base,
-  firstTurn: true,
+  storm: STORM_AWAY, firstTurn: true,
   deck: [worm, worm, terr('a', 8, 3), terr('b', 6, 5)],
   discard: [terr('z', 6, 1)],
   forces: [at('z', 1)],
@@ -106,7 +109,7 @@ check('and no worm reaches the discard', first.discard.filter(c => c.kind === 's
 // not resolved, so there is no territory to devour and nothing to refuse.
 const sixWorms = resolveSpiceBlow({
   ...base,
-  firstTurn: true,
+  storm: STORM_AWAY, firstTurn: true,
   deck: [worm, worm, worm, worm, worm, worm, terr('a', 8, 3)],
   discard: [],
 })
@@ -226,7 +229,7 @@ for (const mode of ['basic', 'advanced'] as const) {
 // Not two decks. Each pile is resolved independently by the same rules, and a
 // worm eats whatever its OWN pile is showing.
 {
-  const dbl = { forces: [] as Force[], spiceOnBoard: {}, firstTurn: false, rng }
+  const dbl = { forces: [] as Force[], spiceOnBoard: {}, storm: STORM_AWAY, firstTurn: false, rng }
 
   const clean = resolveDoubleSpiceBlow({
     ...dbl,
@@ -294,7 +297,7 @@ for (const mode of ['basic', 'advanced'] as const) {
   const fremen = {
     forces: [at('a', 3), at('b', 5)],
     spiceOnBoard: { a: 8, b: 6 },
-    firstTurn: false, rng, fremenInPlay: true,
+    storm: STORM_AWAY, firstTurn: false, rng, fremenInPlay: true,
     discardA: [terr('a', 8, 3)],
     discardB: [terr('b', 6, 5)],
   }
@@ -341,7 +344,7 @@ for (const mode of ['basic', 'advanced'] as const) {
   // land on top of pile B's deck and be drawn again. Held, it cannot be.
   const rng0 = () => 0
   const one = resolveDoubleSpiceBlow({
-    forces: [], spiceOnBoard: {}, firstTurn: true, rng: rng0,
+    forces: [], spiceOnBoard: {}, storm: STORM_AWAY, firstTurn: true, rng: rng0,
     deck: [worm, terr('x', 8, 3), terr('y', 6, 5)],
     discardA: [], discardB: [],
   })
@@ -358,7 +361,7 @@ for (const mode of ['basic', 'advanced'] as const) {
 
   // All six at once, split across the piles: still six, never more.
   const all = resolveDoubleSpiceBlow({
-    forces: [], spiceOnBoard: {}, firstTurn: true, rng: rng0,
+    forces: [], spiceOnBoard: {}, storm: STORM_AWAY, firstTurn: true, rng: rng0,
     deck: [worm, worm, worm, terr('x', 8, 3), worm, worm, worm, terr('y', 6, 5)],
     discardA: [], discardB: [],
   })
@@ -384,7 +387,7 @@ const ERG = 'territory-07' as TerritoryId
     discardB: [terr(HARG, 6, 5)],
     forces: [at('a', 3), at(HARG, 5)],
     spiceOnBoard: { a: 8, [HARG]: 6 },
-    firstTurn: false, rng, fremenInPlay: true,
+    storm: STORM_AWAY, firstTurn: false, rng, fremenInPlay: true,
     // A: worm eats 'a', second worm is the Fremen's, then x lands.
     // B: worm eats whatever pile B shows, then y lands.
     deck: [worm, worm, terr('x', 8, 3), worm, terr('y', 6, 5)],
@@ -458,7 +461,7 @@ const ERG = 'territory-07' as TerritoryId
   const board = {
     discardA: [terr('a', 8, 3)], discardB: [terr(HARG, 6, 5)],
     forces: [at('a', 3), at(HARG, 5)], spiceOnBoard: { a: 8, [HARG]: 6 },
-    firstTurn: false, rng, fremenInPlay: true,
+    storm: STORM_AWAY, firstTurn: false, rng, fremenInPlay: true,
     deck: [worm, worm, terr('x', 8, 3), worm, terr('y', 6, 5)],
   }
   const declined = resolveDoubleSpiceBlow(board)
@@ -474,7 +477,7 @@ const ERG = 'territory-07' as TerritoryId
   const board = {
     discardA: [terr('a', 8, 3)], discardB: [terr('b', 6, 5)],
     forces: [at('a', 3)], spiceOnBoard: { a: 8 },
-    firstTurn: false, rng, fremenInPlay: true,
+    storm: STORM_AWAY, firstTurn: false, rng, fremenInPlay: true,
     deck: [worm, worm, terr('x', 8, 3), terr('y', 6, 5)],
   }
   const stopped = beginDoubleSpiceBlow(board)
@@ -502,7 +505,7 @@ function awaitingAgain(carry: Parameters<typeof placeFremenWorms>[0]) {
     discardA: [terr('a', 8, 3)], discardB: [terr('b', 6, 5)],
     forces: [at('a', 3), at(ERG, 7, 'fremen', 4), at(ERG, 7, 'harkonnen', 3)],
     spiceOnBoard: { a: 8, [ERG]: 10 },
-    firstTurn: false, rng, fremenInPlay: true,
+    storm: STORM_AWAY, firstTurn: false, rng, fremenInPlay: true,
     deck: [worm, worm, terr('x', 8, 3), terr('y', 6, 5)],
   }
   const stopped = beginDoubleSpiceBlow(board)
@@ -515,6 +518,53 @@ function awaitingAgain(carry: Parameters<typeof placeFremenWorms>[0]) {
     done.devouredByFremen[0].forcesKilled.map(f => f.faction), ['harkonnen'])
   check('...and spares them', done.devouredByFremen[0].forcesSpared.map(f => f.faction), ['fremen'])
   check('...and clears the spice they were sitting on', done.spiceOnBoard[ERG], undefined)
+}
+
+// ── a blow into the storm puts nothing down ─────────────────────────────────
+// The card is still turned, still discarded, still the one showing. Only the
+// spice is refused — it would be swept the instant it landed.
+{
+  const UNDER = 'sector-3' as SectorId          // where terr('a', 8, 3) blows
+  const blocked = resolveSpiceBlow({
+    ...base, storm: UNDER,
+    deck: [terr('a', 8, 3), terr('b', 6, 5)], discard: [],
+  })
+  check('nothing is placed', blocked.placed, null)
+  check('...and the blow that was refused is reported',
+    blocked.blockedByStorm, { territoryId: 'a', sector: UNDER, amount: 8 })
+  check('the card is still discarded', blocked.discard.length, 1)
+  check('...and is the one showing', (showing(blocked.discard) as { name: string }).name, 'a')
+  check('the blow still ends there — the next card is not turned', blocked.deck.length, 1)
+
+  // A worm that follows eats the territory, and finds forces but no spice.
+  const eaten = resolveSpiceBlow({
+    ...base, storm: UNDER,
+    deck: [worm, terr('b', 6, 5)],
+    discard: [terr('a', 8, 3)],
+    forces: [at('a', 3)],
+    spiceOnBoard: {},                            // because the blow put none down
+  })
+  check('a worm on a storm-refused territory still devours it',
+    eaten.devoured.map(d => d.territoryId), ['a'])
+  check('...taking the forces', eaten.devoured[0].forcesKilled.length, 1)
+  check('...but there is no spice for it to take', eaten.devoured[0].spiceRemoved, 0)
+
+  // Move the storm one sector over and the same draw places normally.
+  const allowed = resolveSpiceBlow({
+    ...base, storm: 'sector-4' as SectorId,
+    deck: [terr('a', 8, 3), terr('b', 6, 5)], discard: [],
+  })
+  check('one sector away and the spice lands',
+    allowed.placed, { territoryId: 'a', sector: UNDER, amount: 8 })
+  check('...with nothing refused', allowed.blockedByStorm, null)
+
+  // Either pile can blow into it, and the turn reports both.
+  const both = resolveDoubleSpiceBlow({
+    forces: [], spiceOnBoard: {}, storm: UNDER, firstTurn: false, rng,
+    deck: [terr('x', 8, 3), terr('y', 6, 3)], discardA: [], discardB: [],
+  })
+  check('both piles refused', both.blockedByStorm.map(b => b.territoryId), ['x', 'y'])
+  check('...so the board is left bare', both.spiceOnBoard, {})
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

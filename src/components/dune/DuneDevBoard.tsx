@@ -29,7 +29,7 @@ import {
 import type { SpiceCard, SpiceBlowAsk, SpiceBlowCarry, SpiceBlowStep } from '@/lib/dune/spiceBlow'
 import { isAwaiting } from '@/lib/dune/phase'
 import type { Awaiting } from '@/lib/dune/phase'
-import type { Force, GameMode, SectorId, TerritoryId } from '@/types/Dune/Game'
+import type { Force, GameMode, SectorId, ShieldWall, TerritoryId } from '@/types/Dune/Game'
 import CharityPanel from './CharityPanel'
 
 const { cx, cy } = DUNE_BOARD
@@ -98,6 +98,10 @@ export default function DuneDevBoard() {
   const [roll, setRoll] = useState(3)
   const [forces, setForces] = useState<Force[]>(seedForces)
   const [mode, setMode] = useState<GameMode>('basic')
+  // The Shield Wall shelters the Imperial Basin, Arrakeen and Carthag until a
+  // treachery card brings it down. Public state, and the storm reads it at the
+  // moment it moves rather than when it was rolled.
+  const [shieldWall, setShieldWall] = useState<ShieldWall>('intact')
   // Who is at the table. Dune seats two to six around six fixed positions, so
   // most games leave some of these empty — which is the case worth being able
   // to look at, not an edge one.
@@ -141,20 +145,13 @@ export default function DuneDevBoard() {
   const name = (id: string) => DUNE_TERRITORIES.find(t => t.id === id)?.displayName ?? id
 
   function advanceStorm() {
-    const onBoard = Object.entries(spice).flatMap(([id, n]) => {
-      const t = DUNE_TERRITORIES.find(x => x.id === id)
-      return n > 0 && t?.spiceSector
-        ? [{ territoryId: id as TerritoryId, sector: t.spiceSector as SectorId }]
-        : []
-    })
-    const out = resolveStorm(storm, roll, forces, mode, onBoard)
+    // Spice goes in as the same map the spice blow uses; the storm works out
+    // which sector each lot sits in from the board. There used to be a
+    // conversion here, which is what the two shapes cost.
+    const out = resolveStorm(storm, roll, forces, mode, shieldWall, spice)
     setStorm(out.to)
     setForces(out.forcesAfter)
-    setSpice(s => {
-      const next = { ...s }
-      for (const id of out.spiceCleared) delete next[id]
-      return next
-    })
+    setSpice(out.spiceOnBoard)
     // NOT setTurn here. The storm is phase 1 OF a turn, not the end of one —
     // advancing the counter here made every later phase in turn 1 believe it was
     // turn 2, so the spice blow stopped setting worms aside and refused the first
@@ -165,7 +162,9 @@ export default function DuneDevBoard() {
       (out.casualties.some(c => c.survived > 0)
         ? ` (${out.casualties.filter(c => c.survived > 0).map(c => `${c.force.faction} kept ${c.survived}`).join(', ')})`
         : '') +
-      (out.spiceCleared.length ? `, spice swept from ${out.spiceCleared.map(name).join(', ')}` : '') + '.',
+      (out.spiceCleared.length
+        ? `, spice swept from ${out.spiceCleared.map(c => `${name(c.territoryId)} (${c.amount})`).join(', ')}`
+        : '') + '.',
     )
   }
 
@@ -209,6 +208,9 @@ export default function DuneDevBoard() {
         ? `Fremen worms took ${out.devouredByFremen.map(d => name(d.territoryId)).join(', ')}`
         : '',
       out.reshuffled ? 'deck reshuffled' : '',
+      out.blockedByStorm.length
+        ? `storm refused ${out.blockedByStorm.map(b => `${b.amount} on ${name(b.territoryId)}`).join(' and ')}`
+        : '',
     ].filter(Boolean).join(' · '))
   }
 
@@ -230,13 +232,13 @@ export default function DuneDevBoard() {
     try {
       if (mode === 'advanced') {
         handleStep(beginDoubleSpiceBlow({
-          deck, discardA, discardB, forces, fremenInPlay: true,
+          deck, discardA, discardB, forces, fremenInPlay: true, storm,
           spiceOnBoard: spice, firstTurn: turn === 1, rng: Math.random,
         }))
         return
       }
       const out = resolveSpiceBlow({
-        deck, discard: discardA, forces, mode, fremenInPlay: true,
+        deck, discard: discardA, forces, mode, fremenInPlay: true, storm,
         spiceOnBoard: spice, firstTurn: turn === 1, rng: Math.random,
       })
       setDeck(out.deck)
@@ -249,6 +251,9 @@ export default function DuneDevBoard() {
       // doing it by hand is where the add-vs-set bug lived.
       setSpice(s => applyBlowToBoard(s, out))
       setWorms(out.devoured.map(d => d.territoryId as TerritoryId))
+      if (out.blockedByStorm) {
+        say(`the storm refused ${out.blockedByStorm.amount} on ${name(out.blockedByStorm.territoryId)}`)
+      }
       say([
         out.ignored ? `${out.ignored} worm(s) ignored (turn 1)` : '',
         out.devoured.map(d =>
@@ -370,6 +375,17 @@ export default function DuneDevBoard() {
             <input type="checkbox" checked={mode === 'advanced'}
               onChange={e => setMode(e.target.checked ? 'advanced' : 'basic')} />
             {' '}advanced game
+          </label>
+          <br />
+          <label>
+            <input type="checkbox" checked={shieldWall === 'destroyed'}
+              onChange={e => {
+                setShieldWall(e.target.checked ? 'destroyed' : 'intact')
+                say(e.target.checked
+                  ? 'Family Atomics: the Shield Wall is down — Imperial Basin, Arrakeen and Carthag now burn'
+                  : 'Shield Wall restored (not a rule — it never comes back)')
+              }} />
+            {' '}Shield Wall destroyed
           </label>
         </fieldset>
 

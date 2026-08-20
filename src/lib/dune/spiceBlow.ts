@@ -114,6 +114,19 @@ export interface SpiceBlowInput {
   fremenInPlay?: boolean
   /** Spice already lying on the board, by territory. */
   spiceOnBoard: Readonly<Record<string, number>>
+  /**
+   * Where the storm is sitting.
+   *
+   * A blow into the sector the storm occupies puts NO spice down — it would be
+   * swept the instant it landed. The card is still turned, still discarded, and
+   * still the one showing, so a worm that follows devours that territory and
+   * takes the forces standing in it; there is simply no spice for it to take.
+   *
+   * Required rather than defaulted: the storm is always somewhere, and a phase
+   * that resolved without knowing where would place spice the board should have
+   * refused, silently and only sometimes.
+   */
+  storm: SectorId
   /** Turn 1 ignores worms and shuffles them back afterwards. In the advanced
    *  game this applies ACROSS both piles: a worm set aside resolving pile A is
    *  still set aside, not redrawn, when pile B is resolved. */
@@ -143,8 +156,17 @@ export interface SpiceBlowInput {
 export interface SpiceBlowOutcome {
   deck: SpiceCard[]
   discard: SpiceCard[]
-  /** Where the blow landed. Null only if the deck ran out. */
+  /** Where the blow landed, or null when nothing was placed — which now means
+   *  the storm was sitting on it. See `blockedByStorm`. */
   placed: { territoryId: TerritoryId; sector: SectorId; amount: number } | null
+  /**
+   * The blow the storm refused, if it refused one.
+   *
+   * Reported rather than swallowed: "no spice appeared this turn" and "the blow
+   * fell under the storm" look identical on the board and are entirely different
+   * to a player deciding where to ship.
+   */
+  blockedByStorm: { territoryId: TerritoryId; sector: SectorId; amount: number } | null
   /** One entry per worm that actually ate something, in the order they came. */
   devoured: Devoured[]
   /** Worms drawn and set aside on turn 1, shuffled back in at the end. */
@@ -223,6 +245,7 @@ export function resolveSpiceBlow(input: SpiceBlowInput): SpiceBlowOutcome {
   let wormsToPlace = 0
   let nexus = false
   let reshuffled = false
+  let blockedByStorm: SpiceBlowOutcome['blockedByStorm'] = null
   const setAside: SpiceCard[] = []
   let placed: SpiceBlowOutcome['placed'] = null
 
@@ -253,7 +276,11 @@ export function resolveSpiceBlow(input: SpiceBlowInput): SpiceBlowOutcome {
     const card = deck.shift() as SpiceCard
 
     if (card.kind === 'territory') {
-      placed = { territoryId: card.territoryId, sector: card.sector, amount: card.spice }
+      const landing = { territoryId: card.territoryId, sector: card.sector, amount: card.spice }
+      // The storm is standing on it, so nothing is put down. The card still
+      // discards and still shows — this ends the blow either way.
+      if (card.sector === input.storm) blockedByStorm = landing
+      else placed = landing
       discard.push(card)
       break
     }
@@ -314,6 +341,7 @@ export function resolveSpiceBlow(input: SpiceBlowInput): SpiceBlowOutcome {
     devoured,
     ignored: setAside.length,
     setAside,
+    blockedByStorm,
     nexus,
     reshuffled,
     toTanks: devoured.flatMap(d => d.forcesKilled),
@@ -343,6 +371,8 @@ export interface DoubleBlowInput {
   discardB: readonly SpiceCard[]
   forces: readonly Force[]
   spiceOnBoard: Readonly<Record<string, number>>
+  /** Where the storm sits. Either pile can blow into it. */
+  storm: SectorId
   firstTurn: boolean
   fremenInPlay?: boolean
   rng: () => number
@@ -358,6 +388,8 @@ export interface DoubleBlowOutcome {
   nexus: boolean
   /** True when an exhausted deck was rebuilt mid-turn, in either pile. */
   reshuffled: boolean
+  /** Blows the storm refused, from either pile. Usually empty. */
+  blockedByStorm: NonNullable<SpiceBlowOutcome['blockedByStorm']>[]
   /** Worms set aside across the whole turn — never more than the six that exist,
    *  because a worm held out of pile A cannot be drawn again by pile B. */
   ignored: number
@@ -408,6 +440,7 @@ export interface SpiceBlowCarry {
   spiceOnBoard: Record<string, number>
   firstTurn: boolean
   fremenInPlay: boolean
+  storm: SectorId
   a: SpiceBlowOutcome
   b: SpiceBlowOutcome | null
   devouredByFremen: Devoured[]
@@ -447,6 +480,7 @@ function revealPileB(carry: SpiceBlowCarry, rng: () => number): SpiceBlowStep {
     mode: 'advanced',
     fremenInPlay: carry.fremenInPlay,
     spiceOnBoard: carry.spiceOnBoard,
+    storm: carry.storm,
     firstTurn: carry.firstTurn,
     nexusAlreadyTriggered: carry.a.nexus,
     deferSetAside: true,
@@ -475,6 +509,7 @@ function finish(carry: SpiceBlowCarry, rng: () => number): SpiceBlowStep {
     a, b,
     nexus: a.nexus || b.nexus,
     reshuffled: a.reshuffled || b.reshuffled,
+    blockedByStorm: [a.blockedByStorm, b.blockedByStorm].filter(x => x != null),
     ignored: a.ignored + b.ignored,
     wormsForFremenToPlace: a.wormsForFremenToPlace + b.wormsForFremenToPlace,
     devouredByFremen: carry.devouredByFremen,
@@ -502,6 +537,7 @@ export function beginDoubleSpiceBlow(input: DoubleBlowInput): SpiceBlowStep {
     mode: 'advanced',
     fremenInPlay: input.fremenInPlay,
     spiceOnBoard: input.spiceOnBoard,
+    storm: input.storm,
     firstTurn: input.firstTurn,
     deferSetAside: true,
     rng: input.rng,
@@ -515,6 +551,7 @@ export function beginDoubleSpiceBlow(input: DoubleBlowInput): SpiceBlowStep {
     spiceOnBoard: applyBlowToBoard(input.spiceOnBoard, a),
     firstTurn: input.firstTurn,
     fremenInPlay: input.fremenInPlay ?? false,
+    storm: input.storm,
     a,
     b: null,
     devouredByFremen: [],

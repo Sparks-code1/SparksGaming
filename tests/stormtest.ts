@@ -4,9 +4,11 @@
 import {
   sweptSectors, stormDestination, resolveStorm, isExposedToStorm, stormLosses,
   firstPlayerAfterStorm, seatsFromPositions, sectorIdsAreValid, territoriesInStorm, stormRollRange,
+  beginStorm, resolveStormMove, SHIELD_WALL_PROTECTS,
   STORM_START, SECTOR_COUNT, FIRST_STORM_ROLL, STORM_ROLL, STORM_ROLL_ADVANCED,
 } from '@/lib/dune/storm'
 import { DUNE_PLAYER_POSITIONS, DUNE_TERRITORIES } from '@/data/dune/boardData'
+import { isAwaiting } from '@/lib/dune/phase'
 import type { FactionId } from '@/types/Dune/Faction'
 import type { Force, SectorId, TerritoryId } from '@/types/Dune/Game'
 
@@ -17,6 +19,11 @@ const check = (label: string, actual: unknown, expected: unknown) => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}\n        got=${JSON.stringify(actual)} want=${JSON.stringify(expected)}`)
 }
 const s = (n: number) => `sector-${n}` as SectorId
+// The Shield Wall stands unless a test says otherwise, which is the state
+// every game starts in.
+const num = (id: SectorId) => Number(id.slice('sector-'.length))
+const INTACT = 'intact' as const
+const DOWN = 'destroyed' as const
 const stack = (faction: string, t: string, sec: number, count = 3): Force => ({
   faction: faction as Force['faction'],
   territoryId: t as TerritoryId,
@@ -57,19 +64,19 @@ const sink = DUNE_TERRITORIES.find(t => t.terrain === 'polar-sink')!
 const swept = [s(7)]
 
 check('sand in a swept sector is exposed',
-  isExposedToStorm({ territoryId: sand.id as TerritoryId, sector: s(7) }, swept), true)
+  isExposedToStorm({ territoryId: sand.id as TerritoryId, sector: s(7) }, swept, INTACT), true)
 check('rock shelters what stands on it',
-  isExposedToStorm({ territoryId: rock.id as TerritoryId, sector: s(7) }, swept), false)
+  isExposedToStorm({ territoryId: rock.id as TerritoryId, sector: s(7) }, swept, INTACT), false)
 check('a stronghold shelters too',
-  isExposedToStorm({ territoryId: hold.id as TerritoryId, sector: s(7) }, swept), false)
+  isExposedToStorm({ territoryId: hold.id as TerritoryId, sector: s(7) }, swept, INTACT), false)
 check('the Polar Sink is never touched',
-  isExposedToStorm({ territoryId: sink.id as TerritoryId, sector: s(7) }, swept), false)
+  isExposedToStorm({ territoryId: sink.id as TerritoryId, sector: s(7) }, swept, INTACT), false)
 check('the Imperial Basin is sand but sheltered by name',
-  isExposedToStorm({ territoryId: 'territory-05', sector: s(7) }, swept), false)
+  isExposedToStorm({ territoryId: 'territory-05', sector: s(7) }, swept, INTACT), false)
 check('...and the exception is really needed — it IS sand',
   DUNE_TERRITORIES.find(t => t.id === 'territory-05')?.terrain, 'sand')
 check('sand in a sector the storm missed survives',
-  isExposedToStorm({ territoryId: sand.id as TerritoryId, sector: s(12) }, swept), false)
+  isExposedToStorm({ territoryId: sand.id as TerritoryId, sector: s(12) }, swept, INTACT), false)
 
 // The distinction the whole cell model exists for: one territory, two sectors,
 // only one of them stormed.
@@ -77,19 +84,33 @@ const split = DUNE_TERRITORIES.find(t => t.terrain === 'sand' && t.sectors.lengt
 const [a, b] = split.sectors as SectorId[]
 check(`${split.displayName} spans ${split.sectors.length} sectors`, split.sectors.length > 1, true)
 check('a storm in one of its sectors kills there',
-  isExposedToStorm({ territoryId: split.id as TerritoryId, sector: a }, [a]), true)
+  isExposedToStorm({ territoryId: split.id as TerritoryId, sector: a }, [a], INTACT), true)
 check('...and spares the same territory in the other sector',
-  isExposedToStorm({ territoryId: split.id as TerritoryId, sector: b }, [a]), false)
+  isExposedToStorm({ territoryId: split.id as TerritoryId, sector: b }, [a], INTACT), false)
 
 // ── spice ────────────────────────────────────────────────────────────────────
-// No terrain exemption: sheltering forces and sheltering spice are different
-// rules, and only forces get shelter.
-const out = resolveStorm(s(6), 1, [], 'basic', [
-  { territoryId: rock.id as TerritoryId, sector: s(7) },
-  { territoryId: sand.id as TerritoryId, sector: s(12) },
-])
-check('spice is swept away even on rock', out.spiceCleared, [rock.id])
-check('spice outside the sweep stays', out.spiceCleared.includes(sand.id as TerritoryId), false)
+// This used to assert that spice is swept "even on rock", constructed by putting
+// spice on a rock territory. Unifying the shape made that unrepresentable, and
+// it turned out to be a state the board can never produce: all fifteen blow
+// markers are on sand. The old shape let a caller place spice anywhere, so the
+// test proved a rule against a position that cannot occur.
+//
+// What is actually true, and checkable: spice sits where its marker is, and the
+// storm takes it when it sweeps that sector.
+{
+  const blowers = DUNE_TERRITORIES.filter(t => t.spiceSector != null)
+  check('every spice marker on the board is on sand',
+    blowers.filter(t => t.terrain !== 'sand').map(t => t.displayName), [])
+
+  const here = blowers[0], elsewhere = blowers.find(t => t.spiceSector !== here.spiceSector)!
+  const sweptSector = here.spiceSector as SectorId
+  const out = resolveStorm(s(num(sweptSector) - 1), 1, [], 'basic', INTACT,
+    { [here.id]: 6, [elsewhere.id]: 8 })
+  check('spice in the swept sector goes to the bank',
+    out.spiceCleared.map(c => c.territoryId), [here.id])
+  check('...with the amount it lost', out.spiceCleared[0].amount, 6)
+  check('spice outside the sweep stays', out.spiceOnBoard, { [elsewhere.id]: 8 })
+}
 
 // ── who owns the losses ─────────────────────────────────────
 // The rule that was previously unsayable: Fremen lose HALF, rounded up, and only
@@ -112,11 +133,11 @@ check('everyone else loses the lot even in the advanced game',
   const forces = [stack('fremen', sandT, sec, 4), stack('harkonnen', sandT, sec, 4)]
   const from = s(((sec + 16) % 18) + 1)          // one short, so the sweep lands on it
 
-  const basic = resolveStorm(from, 1, forces, 'basic')
+  const basic = resolveStorm(from, 1, forces, 'basic', INTACT)
   check('basic: both stacks wiped', basic.killed.reduce((n, k) => n + k.count, 0), 8)
   check('...and nothing is left standing there', basic.forcesAfter.length, 0)
 
-  const adv = resolveStorm(from, 1, forces, 'advanced')
+  const adv = resolveStorm(from, 1, forces, 'advanced', INTACT)
   check('advanced: six lost, not eight', adv.killed.reduce((n, k) => n + k.count, 0), 6)
   check('...and the Fremen keep two',
     adv.forcesAfter.filter(f => f.faction === 'fremen').map(f => f.count), [2])
@@ -243,6 +264,95 @@ check('a storm in no real sector is refused',
 // ── the roll ranges are the documented ones ──────────────────────────────────
 check('first storm rolls 0–20', [FIRST_STORM_ROLL.min, FIRST_STORM_ROLL.max], [0, 20])
 check('later storms roll 2–6', [STORM_ROLL.min, STORM_ROLL.max], [2, 6])
+
+// ── the Shield Wall, and the two strongholds that hide behind it ────────────
+// The trap this rule sets: while the wall stands, "protected by the wall" and
+// "protected for being a stronghold" give the same answer for Arrakeen and
+// Carthag, so nothing distinguishes them. They only come apart once it falls.
+{
+  const BASIN = 'territory-05' as TerritoryId    // sand
+  const ARRAKEEN = 'territory-13' as TerritoryId // stronghold
+  const CARTHAG = 'territory-26' as TerritoryId  // stronghold
+  const OPEN_SAND = 'territory-07' as TerritoryId
+
+  check('the wall covers exactly three territories',
+    [...SHIELD_WALL_PROTECTS], [BASIN, ARRAKEEN, CARTHAG])
+
+  // Standing: all three safe, whatever they are made of.
+  for (const [name, id] of [['Imperial Basin', BASIN], ['Arrakeen', ARRAKEEN], ['Carthag', CARTHAG]] as const) {
+    check(`wall intact: ${name} is sheltered`,
+      isExposedToStorm({ territoryId: id, sector: s(4) }, [s(4)], INTACT), false)
+  }
+
+  // Fallen: all three burn — including the two that are strongholds, which is
+  // the assertion that would pass for the wrong reason under the old terrain
+  // rule and is the whole point of the change.
+  for (const [name, id] of [['Imperial Basin', BASIN], ['Arrakeen', ARRAKEEN], ['Carthag', CARTHAG]] as const) {
+    check(`wall down: ${name} is exposed`,
+      isExposedToStorm({ territoryId: id, sector: s(4) }, [s(4)], DOWN), true)
+  }
+
+  // And the wall changes nothing anywhere else.
+  check('a stronghold the wall does not cover stays sheltered either way',
+    [INTACT, DOWN].map(w => isExposedToStorm({ territoryId: 'territory-33' as TerritoryId, sector: s(4) }, [s(4)], w)),
+    [false, false])
+  check('open sand burns either way',
+    [INTACT, DOWN].map(w => isExposedToStorm({ territoryId: OPEN_SAND, sector: s(8) }, [s(8)], w)),
+    [true, true])
+  check('a sector the storm never reached is safe with the wall down',
+    isExposedToStorm({ territoryId: OPEN_SAND, sector: s(8) }, [s(9)], DOWN), false)
+
+  // The reasoning in StormOutcome.spiceCleared leans on this: the three the
+  // wall covers hold no spice, so the wall never has to decide about spice.
+  check('none of the three ever holds spice on the board',
+    SHIELD_WALL_PROTECTS.filter(id => {
+      const t = DUNE_TERRITORIES.find(x => x.id === id)
+      return t?.spiceBlow != null || t?.spiceSector != null
+    }), [])
+}
+
+// ── the seam between the roll and the move ─────────────────────────────────
+// Family Atomics is played after the storm's movement is calculated and before
+// it moves, so the wall has to be read at the END of that gap, not the start.
+{
+  // Arrakeen really is in sector 10, and the other stack is parked outside the
+  // sweep so the only thing that can change between the two resolutions is the
+  // wall.
+  const forces = [stack('harkonnen', 'territory-13', 10), stack('harkonnen', 'territory-07', 8)]
+  const step = beginStorm({ from: s(9), roll: 1, forces, mode: 'basic', mayInterrupt: ['harkonnen'] })
+  check('the storm stops before it moves', step.status, 'awaiting')
+  if (!isAwaiting(step)) throw new Error('unreachable')
+  check('...and the window is offered, not demanded', step.need, 'optional')
+  check('...naming what is about to happen',
+    [step.ask.kind, step.ask.from, step.ask.to], ['before-the-storm-moves', s(9), s(10)])
+  check('...with the sweep already known', step.ask.swept, [s(10)])
+  check('nothing has moved yet', step.carry.forces.length, 2)
+
+  // The same carry, resolved against two different walls. This is the rule:
+  // the answer depends on the state AFTER the window, not before it.
+  const spared = resolveStormMove(step.carry, INTACT)
+  const burned = resolveStormMove(step.carry, DOWN)
+  check('wall standing: Arrakeen keeps its forces',
+    spared.killed.map(k => k.territoryId), [])
+  check('wall brought down in the window: Arrakeen burns',
+    burned.killed.map(k => k.territoryId), ['territory-13'])
+  check('both storms still stop in the same place', [spared.to, burned.to], [s(10), s(10)])
+  check('the stack outside the sweep is untouched either way',
+    [spared.forcesAfter.length, burned.forcesAfter.length], [2, 1])
+}
+
+// ── spice: one shape, and amounts ──────────────────────────────────────────
+{
+  const spice = { 'territory-07': 6, 'territory-09': 8 }
+  const t7 = DUNE_TERRITORIES.find(t => t.id === 'territory-07')
+  const swept = [t7?.spiceSector as SectorId]
+  const out = resolveStorm(s(num(swept[0]) - 1), 1, [], 'basic', INTACT, spice)
+  check('spice is keyed by territory, as the spice blow keys it',
+    out.spiceCleared.map(c => c.territoryId), ['territory-07'])
+  check('...and the amount comes back with it', out.spiceCleared[0].amount, 6)
+  check('...the storm returns the board rather than a list to apply by hand',
+    out.spiceOnBoard, { 'territory-09': 8 })
+}
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 

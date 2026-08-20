@@ -17,6 +17,7 @@
  * screen.
  */
 import type { Secrets } from '../secretsSync'
+import type { GamePhase } from '@/types/Dune/Game'
 
 /** What a Dune seat keeps hidden. One number, for now. */
 export interface DuneSecrets extends Secrets {
@@ -63,10 +64,50 @@ export interface CharityWindow {
   expiresAt: number
   /** Seats that have claimed, in the order they did. Public by rule. */
   claims: string[]
+  /**
+   * The turn this window belongs to.
+   *
+   * Charity is once a turn, and without this there is nothing to compare a
+   * second OPEN against — the window carried no way to tell "we are still in
+   * this turn's window" from "a new turn has begun".
+   */
+  turn: number
 }
 
-export function openCharityWindow(now: number): CharityWindow {
-  return { expiresAt: now + CHARITY_WINDOW_MS, claims: [] }
+export function openCharityWindow(now: number, turn: number): CharityWindow {
+  return { expiresAt: now + CHARITY_WINDOW_MS, claims: [], turn }
+}
+
+export type CharityOpenRefusal =
+  | 'wrong-phase'     // the turn has not reached charity
+  | 'already-opened'  // this turn has had its window
+
+/**
+ * Whether the window may be opened.
+ *
+ * Opening was unguarded: any seat could call it, any number of times, and each
+ * call replaced the window with a fresh one — empty claims, new deadline. The
+ * spice cost of that is nil, because a repeat claim by someone already topped up
+ * to 2 grants 0. What it actually cost was the rule and the record: a player who
+ * had spent in between could claim a second time, and the public list of who
+ * claimed was wiped each time.
+ *
+ * Two conditions, and they are what the state can honestly answer. The game must
+ * be AT the charity phase, and this turn must not already have had its window.
+ *
+ * A third — which SEAT is entitled to drive a phase transition — is not
+ * expressible yet: there is no host, turn-owner or phase-driver anywhere in the
+ * match state. Every seated player can still trigger this; they simply cannot
+ * trigger it twice, or early. That gap belongs with turn structure, not here.
+ */
+export function refuseCharityOpen(
+  window: CharityWindow | null | undefined,
+  phase: GamePhase,
+  turn: number,
+): CharityOpenRefusal | null {
+  if (phase !== 'CHOAM Charity') return 'wrong-phase'
+  if (window && window.turn === turn) return 'already-opened'
+  return null
 }
 
 export const charityWindowIsOpen = (w: CharityWindow | null | undefined, now: number): boolean =>
