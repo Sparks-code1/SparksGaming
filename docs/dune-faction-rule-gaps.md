@@ -181,3 +181,118 @@ The check that caught it encodes no number from the rulebook — only that the s
 totals agree with each other. That is why it worked without anyone having to be
 right about Dune first, and it is the shape worth reaching for when a rule is
 uncertain but a symmetry is not.
+
+---
+
+# What the advanced rules imply
+
+Read against `docs/dune-advance-rules.md` after the storm, spice blow and charity
+were built. Three things break or bend; one changes a type that does not exist
+yet, which is the cheapest moment to know.
+
+## 1. The spice deck runs dry — a shipped assertion becomes false
+
+`spiceBlow.ts` refuses an empty deck and says why:
+
+> "it cannot run dry in ten turns, so this is a bug, not a rule"
+
+That is true of the basic game and **false of the advanced one**. Two territory
+cards are revealed per turn, so ten turns need twenty; the deck holds fifteen.
+Exhaustion arrives around **turn 7**, sooner once worms are drawn, since a worm
+consumes a card without placing spice.
+
+So the reshuffle deferred as "advanced settings, later" is not optional there —
+it is load-bearing from the middle of every advanced game. The guard should
+become mode-aware: still a bug in the basic game, still refused; a reshuffle in
+the advanced one.
+
+## 2. Two discard piles, and FEWER Nexuses than expected
+
+Two piles, A and B, each with its own top card. That part is a smaller change
+than it looks: `resolveSpiceBlow` already resolves exactly one reveal-until-a-
+territory sequence against one pile. The advanced game calls it twice with a
+different pile, rather than needing a rewritten function. `discard` becomes two
+arrays and the caller runs the phase per pile.
+
+**But a Nexus is not guaranteed twice a turn.** In the rulebook text the Nexus
+sits *inside* the Shai-Hulud branch: reveal a territory card and spice is placed
+with no Nexus at all. So a turn produces **nought, one or two** Nexuses depending
+on how many piles turned up a worm — not two.
+
+Two ambiguities in the same passage:
+
+- "The Shai-Hulud card is placed on the spice discard pile" — which one? Pile A
+  is implied by context but not stated, and it matters, because the top of a pile
+  is what the next worm devours.
+- Turn one ignores worms and reshuffles them afterwards. With two piles, is that
+  once per turn or once per pile?
+
+## 3. Advanced combat: strength is not a property of a force
+
+This is the answer to "what can the current state shape not express", and it is
+more than a missing field.
+
+A force is worth **full strength if one spice is spent on it, half if not**. The
+same physical force is worth 1 or ½ depending on how it was used *in that
+battle*. So strength cannot live on `Force` — it is a property of a commitment,
+not of a piece.
+
+The rulebook's own example makes the consequence plain. One Sardaukar (worth 2)
+and five ordinary forces, dialled 3, one spice spent. The winner may lose:
+
+- 1 Sardaukar at full (2) + 2 ordinary at half (½+½) — **three** forces, or
+- 1 ordinary at full (1) + 4 ordinary at half (2) — **five** forces
+
+Both satisfy the dial. So taking losses is a **constraint satisfaction** — find
+an allocation whose strengths sum to what was dialled — not a subtraction. That
+is the shape to build toward, and it is much easier to get right before a battle
+function exists than after.
+
+Three concrete implications:
+
+**`Force` needs an elite count.** Sardaukar and Fedaykin are worth two. `starred`
+currently exists only on a faction's *starting* forces, not on the stacks
+standing on the board, so a stack cannot say how many of it are elite. This was
+noted as deferrable earlier; advanced combat is what makes it required.
+
+**Strength should be counted in HALF UNITS as integers.** Dials come in half
+increments, and the winning condition is an exact equality between a dialled
+number and a sum of halves. Floating point makes `0.5 + 0.5 + 0.5` a poor thing
+to compare for equality. Store `dialledHalves: 6` rather than `dialled: 3` and
+the comparison is exact.
+
+**A battle plan carries spice.** Spent win or lose, and to the Spice Bank —
+except when a traitor is revealed, in which case the winner pays nothing. So the
+plan must record the intended spend before the reveal, and the payment resolves
+after it.
+
+## 4. Spice collection is now faction- and stronghold-sensitive
+
+Carthag and Arrakeen pay 2, Tuek's Sietch pays 1, to whoever occupies them **at
+the time of collection**, and a player holding two collects for both. The
+territory ids already exist (`territory-26`, `territory-13`, `territory-33`), so
+this needs occupancy rather than new board data.
+
+## 5. Karama cards need the treachery deck first
+
+Five of the six factions gain a one-time power; the Bene Gesserit do not. Two of
+them reach into phases already built:
+
+- **Fremen**: place a sandworm in any sand territory, treated as a normal worm —
+  so the spice blow needs a way to accept a worm from outside the deck.
+- **Harkonnen**: take cards blindly from another player's hand and give cards
+  back — which needs hidden hands, the same machinery as spice.
+
+## 6. The closing line confirms the direction
+
+> "Each Faction has a unique set of rules that changes Storm, Spice Blow and
+> Nexus phase, CHOAM, Bidding, Revival, Shipment and movement, Battle phase, and
+> Spice Harvest"
+
+Every phase, not some. The faction-aware hook added to the storm and the spice
+blow is the pattern for all nine, rather than an exception made for the Fremen.
+
+## Typos, if this text is ever shown to players
+
+territtory, Tleiaxu, palced, dicard, manne, Saedaukar, orinary, plaing, Karana,
+"ir they may use it" (or), and NEXUS/Nexus inconsistently capitalised.
