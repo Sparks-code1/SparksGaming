@@ -11,8 +11,11 @@
  * sector number, wrapping 18 -> 1. That is why the chevrons on the storm track
  * point the way they do, and it means no bearing arithmetic belongs in here.
  */
-import { DUNE_SECTORS, DUNE_TERRITORIES, TERRITORIES_BY_SECTOR } from '@/data/dune/boardData'
+import {
+  DUNE_PLAYER_POSITIONS, DUNE_SECTORS, DUNE_TERRITORIES, TERRITORIES_BY_SECTOR,
+} from '@/data/dune/boardData'
 import type { Force, GameMode, SectorId, TerritoryId } from '@/types/Dune/Game'
+import type { FactionId } from '@/types/Dune/Faction'
 
 export const SECTOR_COUNT = 18
 
@@ -207,14 +210,71 @@ export function firstPlayerAfterStorm<T extends { sector: SectorId }>(
   seats: readonly T[],
 ): T | null {
   if (seats.length === 0) return null
+
+  // Every seat must name a sector the board actually has, and so must the storm.
+  //
+  // This replaces a fallback that returned seats[0] when the walk found nobody.
+  // That looked like defensive tidiness and was a trap: a seat carrying no
+  // sector — the shape you get building seats straight from DUNE_PLAYER_POSITIONS
+  // before this data existed — matches nothing, the walk falls through, and the
+  // fallback hands back "whoever is first in the array" as though it were a
+  // ruling. Silent, plausible, and wrong every time. Failing here is louder and
+  // points at the actual mistake.
+  const known = new Set<string>(DUNE_SECTORS.map(s => s.id))
+  if (!known.has(storm)) {
+    throw new Error(`the storm is in no sector this board has: ${String(storm)}`)
+  }
+  const stray = seats.find(s => !known.has(s.sector))
+  if (stray) {
+    throw new Error(`a seat sits beside no sector this board has: ${String(stray.sector)}`)
+  }
+
+  // Empty seats need no handling of their own, and that is the point: a position
+  // nobody took is simply not in `seats`, so the walk steps over its sector like
+  // any other empty sector. See seatsFromPositions.
   const start = num(storm)
   for (let i = 1; i <= SECTOR_COUNT; i++) {
     const id = sectorId(start + i)
     const seat = seats.find(s => s.sector === id)
     if (seat) return seat
   }
-  // Every seat sits in the storm's own sector — possible only with one seat.
-  return seats[0] ?? null
+  // Unreachable: eighteen steps cover every sector, including the storm's own at
+  // the last step, and every seat was just checked to sit in one of them.
+  throw new Error('the storm walked all eighteen sectors without reaching a seat')
+}
+
+/** A seat at the table: who is sitting there, and where. */
+export interface Seat {
+  faction: FactionId
+  positionId: string
+  sector: SectorId
+}
+
+/**
+ * Turn a seating plan into seats the storm can walk.
+ *
+ * `seating` maps a player position's id to the faction sitting there. Positions
+ * nobody took are left out of the result entirely — which is the whole of how
+ * empty seats are handled. Dune seats two to six around six fixed positions, so
+ * up to four of them are empty in most games; nothing downstream should have to
+ * know that, and with this nothing does.
+ *
+ * Order follows the board data, so seats come back in seat-number order. That is
+ * NOT turn order: seat numbers run clockwise and the storm runs counter-
+ * clockwise, so the storm visits them in descending seat number.
+ */
+export function seatsFromPositions(
+  seating: Readonly<Record<string, FactionId | null | undefined>>,
+): Seat[] {
+  const seats = DUNE_PLAYER_POSITIONS.flatMap(p => {
+    const faction = seating[p.id]
+    return faction ? [{ faction, positionId: p.id, sector: p.sectorId as SectorId }] : []
+  })
+  const twice = seats.find((s, i) => seats.findIndex(o => o.faction === s.faction) !== i)
+  if (twice) {
+    throw new Error(`${twice.faction} is seated in more than one position`)
+  }
+  return seats
 }
 
 /** Sanity: the ids this module manufactures must exist in the board data. */

@@ -754,7 +754,40 @@ const playerPositions = uniqCircles
   .filter(e => Math.abs(num(e.attrs.r) - 20) < 1 && radius(num(e.attrs.cx), num(e.attrs.cy)) > RIM)
   .map(e => ({ el: e, x: num(e.attrs.cx), y: num(e.attrs.cy) }))
   .sort((a, b) => bearing(a.x, a.y) - bearing(b.x, b.y))
-playerPositions.forEach((p, i) => { p.id = `player-position-${i + 1}` })
+playerPositions.forEach((p, i) => {
+  p.id = `player-position-${i + 1}`
+  // Which sector a seat sits beside is what decides turn order — the storm hands
+  // the turn to the seat it reaches NEXT. Derived here from the marker's own
+  // bearing, the same way a spice marker learns its sector, rather than being
+  // typed out: a hand-written table would be six numbers nobody could check.
+  p.sectorNumber = sectorAt(bearing(p.x, p.y))?.number ?? null
+})
+
+// Two seats in one sector would make "who does the storm reach next" ambiguous,
+// and a seat in no sector cannot be reached at all. Eighteen sectors over six
+// evenly spaced seats should land them three apart; anything else means the
+// markers were not found where the board actually prints them.
+{
+  const homeless = playerPositions.filter(p => p.sectorNumber == null)
+  if (homeless.length) {
+    throw new Error(`${homeless.length} player position(s) fall outside every sector`)
+  }
+  const seen = new Map()
+  for (const p of playerPositions) {
+    if (seen.has(p.sectorNumber)) {
+      throw new Error(`${p.id} and ${seen.get(p.sectorNumber)} both sit beside sector-${p.sectorNumber}, `
+        + 'so turn order between them would be undefined')
+    }
+    seen.set(p.sectorNumber, p.id)
+  }
+  const gaps = playerPositions.map((p, i) => {
+    const next = playerPositions[(i + 1) % playerPositions.length]
+    return ((next.sectorNumber - p.sectorNumber) + 18) % 18
+  })
+  if (gaps.some(g => g !== gaps[0])) {
+    throw new Error(`seats are not evenly spaced around the rim: gaps ${gaps.join(', ')}`)
+  }
+}
 
 const trackStops = uniqCircles
   .filter(e => Math.abs(num(e.attrs.r) - 25.5559) < 0.5)
@@ -1617,6 +1650,9 @@ lines.push(``)
 lines.push(`export interface DuneSector { id: string; number: number; fromBearing: number; toBearing: number }`)
 lines.push(`export interface DuneMarker { id: string; x: number; y: number }`)
 lines.push(`export interface DuneSpiceMarker extends DuneMarker { territoryId: string | null; sectorId: string | null }`)
+lines.push(`/** A seat. Its sectorId is never null — the generator refuses a board whose`)
+lines.push(` *  seats do not each land in their own sector. */`)
+lines.push(`export interface DunePlayerPosition extends DuneMarker { sectorId: string }`)
 lines.push(``)
 lines.push(`/** The board circle, from the export's own rim circle. */`)
 lines.push(`export const DUNE_BOARD = { cx: ${CX}, cy: ${CY}, radius: ${RIM}, viewBox: '0 0 970 1099' } as const`)
@@ -1657,9 +1693,18 @@ for (const t of territories) {
 }
 lines.push(`]`)
 lines.push(``)
-lines.push(`/** Six seats around the rim, clockwise from due north. */`)
-lines.push(`export const DUNE_PLAYER_POSITIONS: DuneMarker[] = [`)
-for (const p of playerPositions) lines.push(`  { id: ${q(p.id)}, x: ${round(p.x)}, y: ${round(p.y)} },`)
+lines.push(`/**`)
+lines.push(` * Six seats around the rim, clockwise from due north.`)
+lines.push(` *`)
+lines.push(` * Each carries the sector it sits beside, which is what turn order is decided`)
+lines.push(` * from — the storm hands the turn to the seat it reaches next, and the storm`)
+lines.push(` * runs counter-clockwise. Seat NUMBERS therefore run the opposite way round`)
+lines.push(` * from the order the storm visits them.`)
+lines.push(` */`)
+lines.push(`export const DUNE_PLAYER_POSITIONS: DunePlayerPosition[] = [`)
+for (const p of playerPositions) {
+  lines.push(`  { id: ${q(p.id)}, x: ${round(p.x)}, y: ${round(p.y)}, sectorId: ${q(`sector-${p.sectorNumber}`)} },`)
+}
 lines.push(`]`)
 lines.push(``)
 lines.push(`/** Spice blow markers, with the territory and sector each one sits in. */`)

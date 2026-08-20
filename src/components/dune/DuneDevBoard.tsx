@@ -10,8 +10,15 @@
  * boardData already holds, not at numbers measured off a picture.
  */
 import { useEffect, useMemo, useState } from 'react'
-import { DUNE_BOARD, DUNE_STORM_RING, DUNE_SECTORS, DUNE_TERRITORIES } from '@/data/dune/boardData'
-import { resolveStorm, STORM_START, FIRST_STORM_ROLL, stormRollRange } from '@/lib/dune/storm'
+import {
+  DUNE_BOARD, DUNE_PLAYER_POSITIONS, DUNE_STORM_RING, DUNE_SECTORS, DUNE_TERRITORIES,
+} from '@/data/dune/boardData'
+import {
+  resolveStorm, seatsFromPositions, firstPlayerAfterStorm,
+  STORM_START, FIRST_STORM_ROLL, stormRollRange,
+} from '@/lib/dune/storm'
+import type { FactionId } from '@/types/Dune/Faction'
+import { SeatLayer, FACTION_LOOK } from './SeatLayer'
 
 import {
   buildSpiceDeck, shuffle, resolveSpiceBlow, applyBlowToBoard,
@@ -89,6 +96,17 @@ export default function DuneDevBoard() {
   const [roll, setRoll] = useState(3)
   const [forces, setForces] = useState<Force[]>(seedForces)
   const [mode, setMode] = useState<GameMode>('basic')
+  // Who is at the table. Dune seats two to six around six fixed positions, so
+  // most games leave some of these empty — which is the case worth being able
+  // to look at, not an edge one.
+  const [seating, setSeating] = useState<Record<string, FactionId | null>>(() => ({
+    'player-position-1': 'atreides',
+    'player-position-2': 'harkonnen',
+    'player-position-3': 'emperor',
+    'player-position-4': 'fremen',
+    'player-position-5': 'spacing-guild',
+    'player-position-6': 'bene-gesserit',
+  }))
   const [spice, setSpice] = useState<Record<string, number>>({})
   const [deck, setDeck] = useState<SpiceCard[]>(() => shuffle(buildSpiceDeck(), Math.random))
   // Two piles, because the advanced game reveals two cards against two piles.
@@ -302,6 +320,10 @@ export default function DuneDevBoard() {
               </g>
             )
           })}
+          {/* Who is sitting where. An overlay, not part of the board: the
+              seating changes every game and the printed circles do not. */}
+          <SeatLayer seating={seating} />
+
           {/* A worm surfaced here this turn. */}
           {worms.map(id => {
             const t = DUNE_TERRITORIES.find(x => x.id === id)
@@ -347,6 +369,43 @@ export default function DuneDevBoard() {
               onChange={e => setMode(e.target.checked ? 'advanced' : 'basic')} />
             {' '}advanced game
           </label>
+        </fieldset>
+
+        <fieldset style={panel}>
+          <legend>Seating</legend>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 10px' }}>
+            {DUNE_PLAYER_POSITIONS.map((p, i) => (
+              <label key={p.id} style={{ fontSize: 12, display: 'flex', gap: 5, alignItems: 'center' }}>
+                <span style={{ opacity: 0.6, width: 58 }}>seat {i + 1}</span>
+                <select
+                  value={seating[p.id] ?? ''}
+                  onChange={e => setSeating(m => ({
+                    ...m, [p.id]: (e.target.value || null) as FactionId | null,
+                  }))}
+                  style={{ flex: 1, fontSize: 12 }}>
+                  <option value="">— empty —</option>
+                  {(Object.keys(FACTION_LOOK) as FactionId[]).map(id => (
+                    <option key={id} value={id}>{FACTION_LOOK[id].name}</option>
+                  ))}
+                </select>
+              </label>
+            ))}
+          </div>
+          {/* Turn order is the reason the seating matters, so it is shown here
+              rather than left to be inferred from the board. */}
+          <p style={{ margin: '9px 0 0', opacity: 0.75 }}>
+            {(() => {
+              try {
+                const seats = seatsFromPositions(seating)
+                if (seats.length === 0) return 'nobody seated'
+                const first = firstPlayerAfterStorm(storm, seats)
+                return `${seats.length} seated · storm at ${storm} · first player: `
+                  + (first ? FACTION_LOOK[first.faction].name : '—')
+              } catch (e) {
+                return `REFUSED: ${(e as Error).message}`
+              }
+            })()}
+          </p>
         </fieldset>
 
         <fieldset style={panel}>

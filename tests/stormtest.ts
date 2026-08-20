@@ -3,10 +3,11 @@
 // 18 -> 1 is the case most likely to be got wrong, and it is tested hardest.
 import {
   sweptSectors, stormDestination, resolveStorm, isExposedToStorm, stormLosses,
-  firstPlayerAfterStorm, sectorIdsAreValid, territoriesInStorm, stormRollRange,
+  firstPlayerAfterStorm, seatsFromPositions, sectorIdsAreValid, territoriesInStorm, stormRollRange,
   STORM_START, SECTOR_COUNT, FIRST_STORM_ROLL, STORM_ROLL, STORM_ROLL_ADVANCED,
 } from '@/lib/dune/storm'
-import { DUNE_TERRITORIES } from '@/data/dune/boardData'
+import { DUNE_PLAYER_POSITIONS, DUNE_TERRITORIES } from '@/data/dune/boardData'
+import type { FactionId } from '@/types/Dune/Faction'
 import type { Force, SectorId, TerritoryId } from '@/types/Dune/Game'
 
 let pass = true
@@ -150,6 +151,94 @@ check('the search wraps past 18',
 check('a seat IN the storm counts as reached; the next one goes first',
   firstPlayerAfterStorm(s(4), seats)?.id, 'harkonnen')
 check('no seats -> nobody', firstPlayerAfterStorm(s(1), []), null)
+
+// ── the six seats, and the four that are usually empty ───────────────────────
+// Dune seats two to six players around six fixed positions, so most games leave
+// positions empty. Turn order is decided by which sector the storm reaches next,
+// so an empty position must be stepped over exactly like any other empty sector.
+const threw = (fn: () => unknown) => { try { fn(); return false } catch { return true } }
+const P = (n: number) => `player-position-${n}`
+
+check('the board gives every seat a sector',
+  DUNE_PLAYER_POSITIONS.filter(p => !p.sectorId).map(p => p.id), [])
+check('six seats, each in its own sector',
+  new Set(DUNE_PLAYER_POSITIONS.map(p => p.sectorId)).size, 6)
+// Seat numbers run clockwise; the storm runs counter-clockwise. Worth pinning,
+// because reading them as the same direction reverses the whole turn order.
+check('seat numbers ascend as sector numbers DESCEND by three',
+  DUNE_PLAYER_POSITIONS.map(p => p.sectorId),
+  ['sector-11', 'sector-8', 'sector-5', 'sector-2', 'sector-17', 'sector-14'])
+
+// A seating plan is position -> faction. Empty positions are simply absent.
+const seatAll: Record<string, FactionId> = {
+  [P(1)]: 'atreides', [P(2)]: 'harkonnen', [P(3)]: 'emperor',
+  [P(4)]: 'fremen', [P(5)]: 'spacing-guild', [P(6)]: 'bene-gesserit',
+}
+check('six players fill every position', seatsFromPositions(seatAll).length, 6)
+check('an empty position is left out rather than seated as nobody',
+  seatsFromPositions({ [P(1)]: 'atreides', [P(4)]: 'fremen' }).map(x => x.positionId),
+  [P(1), P(4)])
+check('a position explicitly set to null is empty too',
+  seatsFromPositions({ [P(1)]: 'atreides', [P(2)]: null }).map(x => x.positionId), [P(1)])
+check('nobody seated at all', seatsFromPositions({}), [])
+check('the same faction in two chairs is refused',
+  threw(() => seatsFromPositions({ [P(1)]: 'atreides', [P(3)]: 'atreides' })), true)
+
+// ── two players, four empty positions ────────────────────────────────────────
+// Positions 1 (sector-11) and 4 (sector-2) sit opposite each other.
+{
+  const two = seatsFromPositions({ [P(1)]: 'atreides', [P(4)]: 'fremen' })
+  // Counter-clockwise from 11: 12..18, then 1, then 2. Fremen at 2 is reached
+  // first even though four empty positions lie between.
+  check('the storm steps over four empty positions to reach the next player',
+    firstPlayerAfterStorm(s(11), two)?.faction, 'fremen')
+  check('...and from the far side it comes back to the other one',
+    firstPlayerAfterStorm(s(2), two)?.faction, 'atreides')
+  // The storm sitting ON an empty position's sector must not seat anyone there.
+  check('the storm resting on an EMPTY position seats nobody there',
+    firstPlayerAfterStorm(s(14), two)?.faction, 'fremen')
+  // Sector 5 is position 3's sector, also empty. Walking up from 5 the first
+  // seat reached is Atreides at 11, not Fremen at 2 — the walk goes one way only.
+  check('...and from an empty position on the other side', firstPlayerAfterStorm(s(5), two)?.faction, 'atreides')
+}
+
+// ── the empty seats are genuinely invisible ──────────────────────────────────
+// The strongest form: for every storm sector, who goes first must not change
+// when an unoccupied position is added to or removed from the board's seating.
+{
+  const occupied = { [P(2)]: 'harkonnen' as FactionId, [P(5)]: 'emperor' as FactionId }
+  const same: string[] = []
+  for (let i = 1; i <= 18; i++) {
+    const withEmpties = seatsFromPositions({
+      ...occupied, [P(1)]: null, [P(3)]: undefined, [P(4)]: null, [P(6)]: null,
+    })
+    const a = firstPlayerAfterStorm(s(i), seatsFromPositions(occupied))?.faction
+    const b = firstPlayerAfterStorm(s(i), withEmpties)?.faction
+    if (a !== b) same.push(`sector-${i}: ${a} vs ${b}`)
+  }
+  check('naming the empty positions changes nothing, in all 18 storm sectors', same, [])
+}
+
+// ── a seat with no sector is refused, not guessed at ─────────────────────────
+// This is the shape you get building seats straight from the position markers
+// before they carried a sector. The old code answered it with seats[0].
+check('a seat carrying no sector is refused',
+  threw(() => firstPlayerAfterStorm(s(1), [{ sector: undefined as unknown as SectorId }])), true)
+check('a seat in a sector the board does not have is refused',
+  threw(() => firstPlayerAfterStorm(s(1), [{ sector: 'sector-99' as SectorId }])), true)
+check('a storm in no real sector is refused',
+  threw(() => firstPlayerAfterStorm('sector-0' as SectorId, [{ sector: s(4) }])), true)
+
+// ── one player is still answerable ───────────────────────────────────────────
+{
+  const solo = seatsFromPositions({ [P(3)]: 'emperor' })
+  check('one seat goes first wherever the storm is',
+    [1, 5, 6, 18].map(i => firstPlayerAfterStorm(s(i), solo)?.faction),
+    ['emperor', 'emperor', 'emperor', 'emperor'])
+  // Including when the storm sits in that seat's own sector: it waits a full
+  // circle, which with one player is the same seat again.
+  check('...even standing in the storm', firstPlayerAfterStorm(s(5), solo)?.faction, 'emperor')
+}
 
 // ── the roll ranges are the documented ones ──────────────────────────────────
 check('first storm rolls 0–20', [FIRST_STORM_ROLL.min, FIRST_STORM_ROLL.max], [0, 20])

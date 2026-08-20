@@ -44,6 +44,9 @@ export interface DuneCell { sector: string; at: { x: number; y: number }; areaSh
 export interface DuneSector { id: string; number: number; fromBearing: number; toBearing: number }
 export interface DuneMarker { id: string; x: number; y: number }
 export interface DuneSpiceMarker extends DuneMarker { territoryId: string | null; sectorId: string | null }
+/** A seat. Its sectorId is never null — the generator refuses a board whose
+ *  seats do not each land in their own sector. */
+export interface DunePlayerPosition extends DuneMarker { sectorId: string }
 
 /** The board circle, from the export's own rim circle. */
 export const DUNE_BOARD = { cx: 483.097, cy: 556.456, radius: 432.5, viewBox: '0 0 970 1099' } as const
@@ -812,14 +815,21 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
   },
 ]
 
-/** Six seats around the rim, clockwise from due north. */
-export const DUNE_PLAYER_POSITIONS: DuneMarker[] = [
-  { id: 'player-position-1', x: 484.1, y: 83.46 },
-  { id: 'player-position-2', x: 895.1, y: 321.46 },
-  { id: 'player-position-3', x: 896.1, y: 795.46 },
-  { id: 'player-position-4', x: 484.1, y: 1032.46 },
-  { id: 'player-position-5', x: 73.1, y: 795.46 },
-  { id: 'player-position-6', x: 72.1, y: 320.46 },
+/**
+ * Six seats around the rim, clockwise from due north.
+ *
+ * Each carries the sector it sits beside, which is what turn order is decided
+ * from — the storm hands the turn to the seat it reaches next, and the storm
+ * runs counter-clockwise. Seat NUMBERS therefore run the opposite way round
+ * from the order the storm visits them.
+ */
+export const DUNE_PLAYER_POSITIONS: DunePlayerPosition[] = [
+  { id: 'player-position-1', x: 484.1, y: 83.46, sectorId: 'sector-11' },
+  { id: 'player-position-2', x: 895.1, y: 321.46, sectorId: 'sector-8' },
+  { id: 'player-position-3', x: 896.1, y: 795.46, sectorId: 'sector-5' },
+  { id: 'player-position-4', x: 484.1, y: 1032.46, sectorId: 'sector-2' },
+  { id: 'player-position-5', x: 73.1, y: 795.46, sectorId: 'sector-17' },
+  { id: 'player-position-6', x: 72.1, y: 320.46, sectorId: 'sector-14' },
 ]
 
 /** Spice blow markers, with the territory and sector each one sits in. */
