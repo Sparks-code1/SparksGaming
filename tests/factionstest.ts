@@ -99,6 +99,41 @@ check('the Emperor starts entirely in reserve',
 check('the Emperor has five Sardaukar', EMPEROR.forces.starred, 5)
 check('...within twenty forces', EMPEROR.forces.reserves, 20)
 
+// ── where the reserves are, and the two rules that hang off it ──────────────
+// The shipment phase does not exist yet. These checks are here so that when it
+// is written the rule is already stated, already true, and already impossible to
+// contradict quietly.
+check('every faction says where its reserves are',
+  written.filter(f => f.reservesHeld !== 'off-planet' && f.reservesHeld !== 'on-planet').map(f => f.id), [])
+
+// The whole rule in one line: exactly one faction is already on Arrakis.
+check('exactly one faction holds its reserves on planet',
+  written.filter(f => f.reservesHeld === 'on-planet').map(f => f.id), ['fremen'])
+check('...so the other five ship from off planet',
+  written.filter(f => f.reservesHeld === 'off-planet').length, 5)
+
+// The consequence the Guild cares about, derived rather than restated: whoever
+// ships from off planet is whoever pays them. If a seventh faction ever appears,
+// or the Fremen are edited to off-planet, this list changes and the failure
+// names the faction responsible.
+check('the Guild is paid by everyone except the Fremen',
+  written.filter(f => f.reservesHeld === 'off-planet').map(f => f.id).sort(),
+  ['atreides', 'bene-gesserit', 'emperor', 'harkonnen', 'spacing-guild'])
+
+// The prose and the field have to keep agreeing. Either can be edited alone,
+// and the field is the one the phase will read — so a change to the wording that
+// contradicts it should fail here rather than diverge silently.
+// Matched on "from THEIR off-planet reserves", the income clause, not on the
+// bare phrase: the Guild text says "off planet reserves" a second time about its
+// own shipping, so a loose match stays green while the income rule is deleted.
+// It did exactly that the first time this was written.
+check("the Guild's text still ties its income to off-planet reserves",
+  /from their off.planet reserves/i.test(FACTIONS['spacing-guild']?.abilities.shipment ?? ''), true)
+check("the Fremen's text still says their reserves come in free",
+  /for free/i.test(FACTIONS.fremen?.abilities.shipment ?? ''), true)
+check('...and the Fremen are the faction that pays nothing to ship',
+  FACTIONS.fremen?.reservesHeld, 'on-planet')
+
 // ── the draft's editor accidents are gone ────────────────────────────────────
 // dealScarCards is a real function in src/data/scarCards.ts that autocomplete
 // pasted into the rules text. It is the kind of thing that survives a proofread

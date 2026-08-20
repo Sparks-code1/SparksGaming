@@ -39,6 +39,15 @@ touch which. Blocked on it:
 - Fremen shipment: "within two territories of the Great Flat"
 - All ordinary movement, for every faction
 
+**Settled while waiting for it:** whether a faction's reserves are off planet or
+on is now data — `Faction.reservesHeld` — rather than something to be read out
+of the ability prose. The Fremen are the only ones already on Arrakis, and that
+one bit drives two separate rules: their shipment costs nothing, and the Guild is
+paid only by factions shipping "from their off-planet reserves", so the Guild's
+income is smaller in any game the Fremen are in. Both are asserted in
+`tests/factionstest.ts`, including a check that the prose still agrees with the
+field, since either can be edited without the other.
+
 This is the single biggest hole. It is derivable from the SVG the same way
 sector spans were — shared borders between territory paths — so it belongs in the
 generator rather than hand-written.

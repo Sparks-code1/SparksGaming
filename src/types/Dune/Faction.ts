@@ -106,6 +106,28 @@ export interface AdvancedRules extends FactionAbilities {
   capturedLeaders?: string
 }
 
+/**
+ * Where a faction's reserves sit when they are not on the board.
+ *
+ * Five factions keep theirs off planet and ship them in. The Fremen's are
+ * already on Arrakis, and that single difference drives two separate rules in
+ * the shipment phase:
+ *
+ *   Cost. Shipping from off planet is paid for; the Fremen are not shipping, so
+ *   they pay nothing. Their ability text carries the restriction that comes with
+ *   it — the Great Flat, or within two territories of it — which is a limit on
+ *   WHERE, not a discount on what it costs.
+ *
+ *   Income. The Guild is paid by factions shipping "from their off-planet
+ *   reserves", in the rulebook's own words. The Fremen therefore never pay the
+ *   Guild, and the Guild's income is smaller in any game they are in.
+ *
+ * Held as data rather than read out of the ability prose because the shipment
+ * phase has to branch on it twice, and inferring it from wording is the kind of
+ * thing that works until someone rephrases a sentence.
+ */
+export type ReserveLocation = 'off-planet' | 'on-planet'
+
 export interface Faction {
   id: FactionId
   /** As shown to players. */
@@ -113,6 +135,14 @@ export interface Faction {
   /** Spice held at setup. Hidden from other players once the game starts. */
   startingSpice: number
   forces: StartingForces
+  /**
+   * Where the reserves are held. See ReserveLocation — it decides both what
+   * shipment costs this faction and whether the Guild is paid for it.
+   *
+   * Not optional. A faction added without it should fail to compile rather than
+   * default to the common case and quietly ship the Fremen for money.
+   */
+  reservesHeld: ReserveLocation
   /** Forces revived free each Revival phase, before paying for more. */
   freeRevivals: number
   abilities: FactionAbilities

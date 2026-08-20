@@ -33,6 +33,7 @@ export const ATREIDES: Faction = {
     reserves: 10,
     starred: 0,
   },
+  reservesHeld: 'off-planet',
   freeRevivals: 2,
   abilities: {
     bidding:
@@ -76,6 +77,7 @@ export const EMPEROR: Faction = {
     reserves: 20,
     starred: 5,                        // Sardaukar — see StartingForces.starred
   },
+  reservesHeld: 'off-planet',
   freeRevivals: 1,
   abilities: {
     bidding:
@@ -120,6 +122,10 @@ export const FREMEN: Faction = {
     reserves: 10,
     starred: 3,                        // Fedaykin — see StartingForces.starred
   },
+  // The one faction whose reserves are already on Arrakis. This is what makes
+  // their shipment free and keeps them out of the Guild's income — see
+  // ReserveLocation.
+  reservesHeld: 'on-planet',
   freeRevivals: 3,
   abilities: {
     shipment:
@@ -176,6 +182,7 @@ export const SPACING_GUILD: Faction = {
     reserves: 15,
     starred: 0,
   },
+  reservesHeld: 'off-planet',
   freeRevivals: 1,
   abilities: {
     shipment:
@@ -218,6 +225,7 @@ export const BENE_GESSERIT: Faction = {
     reserves: 19,
     starred: 0,
     },
+    reservesHeld: 'off-planet',
     freeRevivals: 1,
     abilities: {
       beforeGame:
@@ -279,6 +287,7 @@ export const HARKONNEN: Faction = {
     reserves: 10,
     starred: 0,
     },
+    reservesHeld: 'off-planet',
     freeRevivals: 2,
     abilities: {
       traitors:
