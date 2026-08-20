@@ -19,6 +19,9 @@ export interface DuneTerritory {
   /** The sector a blow puts spice in — one sector, not the whole
    *  territory. Broken Land spans 1 and 18; its spice is in 18. */
   spiceSector: string | null
+  /** Territories sharing a border with this one. Derived from the outlines,
+ *  not hand-listed, and mutual by construction. */
+  adjacent: string[]
   /** One per sector this territory overlaps. Troops occupy a CELL, not a
    *  territory: a stack in Broken Land sector-18 dies to a storm in 18 and
    *  survives one in sector-1. */
@@ -84,6 +87,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-02', 'territory-03', 'territory-05', 'territory-06', 'territory-07'],
     cells: [
       { sector: 'sector-5', at: { x: 554.93, y: 596.53 }, areaShare: 0.192 },
       { sector: 'sector-6', at: { x: 568.73, y: 572.28 }, areaShare: 0.226 },
@@ -103,6 +107,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-01', 'territory-03', 'territory-07', 'territory-08', 'territory-17'],
     cells: [
       { sector: 'sector-4', at: { x: 547.62, y: 635.05 }, areaShare: 0.692 },
       { sector: 'sector-5', at: { x: 580.41, y: 622.41 }, areaShare: 0.303 },
@@ -119,6 +124,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-01', 'territory-02', 'territory-04', 'territory-05', 'territory-08', 'territory-09', 'territory-11', 'territory-12'],
     cells: [
       { sector: 'sector-1', at: { x: 468.11, y: 600.85 }, areaShare: 0.062 },
       { sector: 'sector-2', at: { x: 483.27, y: 609.33 }, areaShare: 0.078 },
@@ -151,6 +157,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-03', 'territory-09', 'territory-10', 'territory-11', 'territory-19', 'territory-21', 'territory-22', 'territory-24'],
     cells: [
       { sector: 'sector-14', at: { x: 407.15, y: 514.27 }, areaShare: 0.171 },
       { sector: 'sector-15', at: { x: 388.25, y: 540.48 }, areaShare: 0.193 },
@@ -169,6 +176,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-01', 'territory-03', 'territory-06', 'territory-12', 'territory-13', 'territory-14', 'territory-15', 'territory-25', 'territory-26', 'territory-27'],
     cells: [
       { sector: 'sector-9', at: { x: 570.48, y: 422.65 }, areaShare: 0.11 },
       { sector: 'sector-10', at: { x: 554.29, y: 337.27 }, areaShare: 0.671 },
@@ -186,6 +194,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-01', 'territory-05', 'territory-07', 'territory-15', 'territory-16', 'territory-29', 'territory-30'],
     cells: [
       { sector: 'sector-8', at: { x: 677.46, y: 411.35 }, areaShare: 0.393 },
       { sector: 'sector-9', at: { x: 656.65, y: 389.67 }, areaShare: 0.607 },
@@ -202,6 +211,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: 8,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-01', 'territory-02', 'territory-06', 'territory-16', 'territory-17'],
     cells: [
       { sector: 'sector-5', at: { x: 631.51, y: 632.77 }, areaShare: 0.16 },
       { sector: 'sector-6', at: { x: 631.22, y: 583.45 }, areaShare: 0.267 },
@@ -220,6 +230,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: 8,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-02', 'territory-03', 'territory-09', 'territory-17', 'territory-18', 'territory-19', 'territory-34'],
     cells: [
       { sector: 'sector-1', at: { x: 426.99, y: 713.81 }, areaShare: 0.344 },
       { sector: 'sector-2', at: { x: 485.37, y: 726.96 }, areaShare: 0.332 },
@@ -237,6 +248,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: 6,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-03', 'territory-04', 'territory-08', 'territory-19'],
     cells: [
       { sector: 'sector-17', at: { x: 391.96, y: 616.95 }, areaShare: 0.25 },
       { sector: 'sector-18', at: { x: 398.42, y: 663.48 }, areaShare: 0.75 },
@@ -253,6 +265,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-04', 'territory-19', 'territory-20', 'territory-21', 'territory-37'],
     cells: [
       { sector: 'sector-16', at: { x: 313.93, y: 602.56 }, areaShare: 0.147 },
       { sector: 'sector-17', at: { x: 294.51, y: 675.42 }, areaShare: 0.508 },
@@ -270,6 +283,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: 6,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-03', 'territory-04', 'territory-12', 'territory-24', 'territory-25', 'territory-26'],
     cells: [
       { sector: 'sector-12', at: { x: 406.14, y: 352.65 }, areaShare: 0.475 },
       { sector: 'sector-13', at: { x: 368.34, y: 414.37 }, areaShare: 0.515 },
@@ -286,6 +300,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-03', 'territory-05', 'territory-11', 'territory-26'],
     cells: [
       { sector: 'sector-11', at: { x: 475.2, y: 404.59 }, areaShare: 0.665 },
       { sector: 'sector-12', at: { x: 452.42, y: 443.99 }, areaShare: 0.329 },
@@ -302,6 +317,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: 2,
     ornithopters: true,
+    adjacent: ['territory-05', 'territory-14', 'territory-27'],
     cells: [
       { sector: 'sector-10', at: { x: 620.09, y: 246.94 }, areaShare: 0.997 },
     ],
@@ -317,6 +333,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-05', 'territory-13', 'territory-15', 'territory-27', 'territory-28'],
     cells: [
       { sector: 'sector-9', at: { x: 652.52, y: 292.51 }, areaShare: 1 },
     ],
@@ -332,6 +349,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-05', 'territory-06', 'territory-14', 'territory-28', 'territory-29'],
     cells: [
       { sector: 'sector-9', at: { x: 673.37, y: 331.76 }, areaShare: 1 },
     ],
@@ -347,6 +365,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-06', 'territory-07', 'territory-17', 'territory-30', 'territory-31', 'territory-32', 'territory-33'],
     cells: [
       { sector: 'sector-5', at: { x: 729.82, y: 663.78 }, areaShare: 0.078 },
       { sector: 'sector-6', at: { x: 778.17, y: 611.94 }, areaShare: 0.343 },
@@ -365,6 +384,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-02', 'territory-07', 'territory-08', 'territory-16', 'territory-32', 'territory-33', 'territory-34'],
     cells: [
       { sector: 'sector-4', at: { x: 665.4, y: 761.08 }, areaShare: 0.671 },
       { sector: 'sector-5', at: { x: 696.14, y: 703.84 }, areaShare: 0.327 },
@@ -381,6 +401,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-08', 'territory-19', 'territory-34', 'territory-35', 'territory-36'],
     cells: [
       { sector: 'sector-1', at: { x: 401, y: 822.8 }, areaShare: 0.363 },
       { sector: 'sector-2', at: { x: 480.86, y: 831.65 }, areaShare: 0.458 },
@@ -398,6 +419,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-04', 'territory-08', 'territory-09', 'territory-10', 'territory-18', 'territory-36', 'territory-37'],
     cells: [
       { sector: 'sector-1', at: { x: 346.23, y: 823.25 }, areaShare: 0.287 },
       { sector: 'sector-18', at: { x: 335.27, y: 757.5 }, areaShare: 0.713 },
@@ -414,6 +436,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: 8,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-10', 'territory-21', 'territory-37'],
     cells: [
       { sector: 'sector-16', at: { x: 144.1, y: 652.52 }, areaShare: 0.736 },
       { sector: 'sector-17', at: { x: 231.84, y: 667.31 }, areaShare: 0.264 },
@@ -430,6 +453,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-04', 'territory-10', 'territory-20', 'territory-22'],
     cells: [
       { sector: 'sector-16', at: { x: 180.4, y: 590.68 }, areaShare: 1 },
     ],
@@ -445,6 +469,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: 8,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-04', 'territory-21', 'territory-23', 'territory-24'],
     cells: [
       { sector: 'sector-15', at: { x: 206.25, y: 529.65 }, areaShare: 0.979 },
       { sector: 'sector-16', at: { x: 202.03, y: 557.74 }, areaShare: 0.021 },
@@ -461,6 +486,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: 6,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-22', 'territory-24', 'territory-39'],
     cells: [
       { sector: 'sector-15', at: { x: 166.59, y: 481.28 }, areaShare: 1 },
     ],
@@ -476,6 +502,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-04', 'territory-11', 'territory-22', 'territory-23', 'territory-25', 'territory-39', 'territory-40', 'territory-41', 'territory-42'],
     cells: [
       { sector: 'sector-12', at: { x: 334.31, y: 229.28 }, areaShare: 0.125 },
       { sector: 'sector-13', at: { x: 269.52, y: 301.54 }, areaShare: 0.394 },
@@ -493,6 +520,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-05', 'territory-11', 'territory-24', 'territory-26', 'territory-27', 'territory-42'],
     cells: [
       { sector: 'sector-11', at: { x: 478.01, y: 199.14 }, areaShare: 0.492 },
       { sector: 'sector-12', at: { x: 387.29, y: 246.69 }, areaShare: 0.444 },
@@ -510,6 +538,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: 2,
     ornithopters: true,
+    adjacent: ['territory-05', 'territory-11', 'territory-12', 'territory-25'],
     cells: [
       { sector: 'sector-11', at: { x: 474.73, y: 279.87 }, areaShare: 0.987 },
     ],
@@ -525,6 +554,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: 6,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-05', 'territory-13', 'territory-14', 'territory-25', 'territory-28', 'territory-42'],
     cells: [
       { sector: 'sector-9', at: { x: 697.74, y: 213.08 }, areaShare: 0.153 },
       { sector: 'sector-10', at: { x: 627.68, y: 175.53 }, areaShare: 0.722 },
@@ -542,6 +572,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-14', 'territory-15', 'territory-27', 'territory-29'],
     cells: [
       { sector: 'sector-9', at: { x: 719.39, y: 248.7 }, areaShare: 1 },
     ],
@@ -557,6 +588,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: 6,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-06', 'territory-15', 'territory-28', 'territory-30'],
     cells: [
       { sector: 'sector-9', at: { x: 773.5, y: 275.15 }, areaShare: 1 },
     ],
@@ -572,6 +604,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-06', 'territory-16', 'territory-29'],
     cells: [
       { sector: 'sector-8', at: { x: 812.44, y: 343.5 }, areaShare: 0.994 },
     ],
@@ -587,6 +620,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: 8,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-16', 'territory-32'],
     cells: [
       { sector: 'sector-7', at: { x: 886.36, y: 505.64 }, areaShare: 1 },
     ],
@@ -602,6 +636,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: 10,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-16', 'territory-17', 'territory-31', 'territory-33', 'territory-34'],
     cells: [
       { sector: 'sector-4', at: { x: 770.71, y: 853.84 }, areaShare: 0.234 },
       { sector: 'sector-5', at: { x: 840.09, y: 763.81 }, areaShare: 0.349 },
@@ -619,6 +654,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: 1,
     ornithopters: false,
+    adjacent: ['territory-16', 'territory-17', 'territory-32'],
     cells: [
       { sector: 'sector-5', at: { x: 797.13, y: 736.04 }, areaShare: 1 },
     ],
@@ -634,6 +670,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-08', 'territory-17', 'territory-18', 'territory-32', 'territory-35'],
     cells: [
       { sector: 'sector-3', at: { x: 622.83, y: 871.97 }, areaShare: 0.704 },
       { sector: 'sector-4', at: { x: 679.97, y: 858.54 }, areaShare: 0.296 },
@@ -650,6 +687,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: 12,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-18', 'territory-34', 'territory-36'],
     cells: [
       { sector: 'sector-2', at: { x: 500.05, y: 930.67 }, areaShare: 0.677 },
       { sector: 'sector-3', at: { x: 570.51, y: 913.04 }, areaShare: 0.323 },
@@ -666,6 +704,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-18', 'territory-19', 'territory-35', 'territory-37'],
     cells: [
       { sector: 'sector-1', at: { x: 358.21, y: 916.57 }, areaShare: 0.799 },
       { sector: 'sector-2', at: { x: 433.83, y: 934.76 }, areaShare: 0.2 },
@@ -682,6 +721,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: 10,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-10', 'territory-19', 'territory-20', 'territory-36', 'territory-38'],
     cells: [
       { sector: 'sector-17', at: { x: 168.39, y: 742.75 }, areaShare: 0.549 },
       { sector: 'sector-18', at: { x: 238.64, y: 846.65 }, areaShare: 0.451 },
@@ -698,6 +738,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-37'],
     cells: [
       { sector: 'sector-17', at: { x: 185.96, y: 751.89 }, areaShare: 0.983 },
     ],
@@ -713,6 +754,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-23', 'territory-24', 'territory-40', 'territory-41'],
     cells: [
       { sector: 'sector-14', at: { x: 130.73, y: 402.16 }, areaShare: 0.626 },
       { sector: 'sector-15', at: { x: 119.3, y: 439.94 }, areaShare: 0.374 },
@@ -729,6 +771,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: null,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-24', 'territory-39', 'territory-41'],
     cells: [
       { sector: 'sector-14', at: { x: 173.63, y: 375.16 }, areaShare: 1 },
     ],
@@ -744,6 +787,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: 6,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-24', 'territory-39', 'territory-40', 'territory-42'],
     cells: [
       { sector: 'sector-13', at: { x: 212.7, y: 251.91 }, areaShare: 0.681 },
       { sector: 'sector-14', at: { x: 152.5, y: 316.09 }, areaShare: 0.319 },
@@ -760,6 +804,7 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     spiceBlow: 8,
     spiceIncome: null,
     ornithopters: false,
+    adjacent: ['territory-24', 'territory-25', 'territory-27', 'territory-41'],
     cells: [
       { sector: 'sector-11', at: { x: 464.8, y: 147.13 }, areaShare: 0.402 },
       { sector: 'sector-12', at: { x: 348.02, y: 173.02 }, areaShare: 0.598 },
