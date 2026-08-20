@@ -138,8 +138,11 @@ export interface SpiceBlowOutcome {
    * Worms the Fremen may place where they like, in the advanced game.
    *
    * Surfaced as a COUNT rather than resolved, because it is a player decision
-   * and this function decides nothing a player is entitled to decide. The first
-   * worm of a blow behaves normally; only the additional ones are theirs.
+   * and this function decides nothing a player is entitled to decide.
+   *
+   * THIS PILE'S count. The first worm of a blow behaves normally and only the
+   * additional ones are theirs, and a discard pile is one blow — so in the
+   * advanced game each pile's first worm resolves normally, not just the turn's.
    */
   wormsForFremenToPlace: number
 }
@@ -228,8 +231,14 @@ export function resolveSpiceBlow(input: SpiceBlowInput): SpiceBlowOutcome {
     }
     // A worm showing is legal: the second of two is discarded immediately and
     // eats nothing. Only a territory can be devoured.
+    //
     // Advanced game: after the first worm of a blow, the Fremen place the rest
     // themselves. Counted here and handed back unresolved.
+    //
+    // 'wormsSeen' is per CALL, which is per PILE, and that is the ruling: each
+    // discard pile is a separate spice blow, so each pile's first worm resolves
+    // normally. Counting from the turn instead would hand the Fremen pile B's
+    // first worm as well — one more worm every turn both piles blow one.
     const fremenPlacesIt =
       input.mode === 'advanced' && input.fremenInPlay && wormsSeen > 1
     if (fremenPlacesIt) {
@@ -293,6 +302,15 @@ export interface DoubleBlowOutcome {
   /** Worms set aside across the whole turn — never more than the six that exist,
    *  because a worm held out of pile A cannot be drawn again by pile B. */
   ignored: number
+  /**
+   * Worms for the Fremen to place, summed across both piles.
+   *
+   * Counted PER PILE, not per turn, because each discard pile is treated as a
+   * separate spice blow: each pile's first worm resolves normally and only the
+   * ones after it are the Fremen's. Five worms split three and two across the
+   * piles hand over THREE — not the four a per-turn reading gives.
+   */
+  wormsForFremenToPlace: number
   /** Both piles' devoured forces, for the tanks. */
   toTanks: Force[]
 }
@@ -334,6 +352,7 @@ export function resolveDoubleSpiceBlow(input: {
     a, b,
     nexus: a.nexus || b.nexus,
     ignored: a.ignored + b.ignored,
+    wormsForFremenToPlace: a.wormsForFremenToPlace + b.wormsForFremenToPlace,
     toTanks: [...a.toTanks, ...b.toTanks],
   }
 }

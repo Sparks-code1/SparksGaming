@@ -285,6 +285,51 @@ for (const mode of ['basic', 'advanced'] as const) {
     chain.b.devoured[0].spiceRemoved, 8)
 }
 
+// ── the Fremen's additional worms are counted PER PILE ───────────────────────
+// Each discard pile is treated as a separate spice blow, so each pile's FIRST
+// worm resolves normally and only the ones after it are the Fremen's to place.
+{
+  const fremen = {
+    forces: [at('a', 3), at('b', 5)],
+    spiceOnBoard: { a: 8, b: 6 },
+    firstTurn: false, rng, fremenInPlay: true,
+    discardA: [terr('a', 8, 3)],
+    discardB: [terr('b', 6, 5)],
+  }
+
+  // Three worms in pile A, two in pile B. The example that settled it.
+  const split = resolveDoubleSpiceBlow({
+    ...fremen,
+    deck: [worm, worm, worm, terr('x', 8, 3), worm, worm, terr('y', 6, 5)],
+  })
+  check('pile A hands over the worms after its first', split.a.wormsForFremenToPlace, 2)
+  check('pile B counts from ITS first worm, not the turn\'s', split.b.wormsForFremenToPlace, 1)
+  check('five worms across the turn are THREE for the Fremen, not four',
+    split.wormsForFremenToPlace, 3)
+  check('each pile\'s first worm still devoured its own showing card',
+    [split.a.devoured.map(d => d.territoryId), split.b.devoured.map(d => d.territoryId)],
+    [['a'], ['b']])
+
+  // Four in pile A, one in pile B. The lone worm in B is a FIRST worm — it
+  // resolves normally, and the Fremen get nothing at all from that pile.
+  const lopsided = resolveDoubleSpiceBlow({
+    ...fremen,
+    deck: [worm, worm, worm, worm, terr('x', 8, 3), worm, terr('y', 6, 5)],
+  })
+  check('a lone worm in pile B is a first worm, not an additional one',
+    lopsided.b.wormsForFremenToPlace, 0)
+  check('...so it devours instead of being handed over',
+    lopsided.b.devoured.map(d => d.territoryId), ['b'])
+  check('...and the turn still hands over three', lopsided.wormsForFremenToPlace, 3)
+
+  // However the worms fall, with no Fremen seated the phase behaves as it did.
+  const none = resolveDoubleSpiceBlow({
+    ...fremen, fremenInPlay: false,
+    deck: [worm, worm, worm, terr('x', 8, 3), worm, worm, terr('y', 6, 5)],
+  })
+  check('no Fremen seated, nothing to hand over', none.wormsForFremenToPlace, 0)
+}
+
 // ── turn one sets worms aside ACROSS BOTH PILES ──────────────────────────────
 // A worm ignored while pile A resolves stays out of the deck while pile B
 // resolves. Returned between the piles it could be drawn twice in one turn, and

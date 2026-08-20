@@ -256,6 +256,18 @@ implementation is wrong: returning them at the end of pile A lets the same
 physical worm be drawn again by pile B and counted twice as ignored, so six worms
 can report as seven. `deferSetAside` hands them back to the caller instead.
 
+**The Fremen's additional worms are counted per pile**, which followed from the
+same ruling: a discard pile *is* a spice blow, so each pile's first worm resolves
+normally and only the ones after it are the Fremen's to place. Five worms split
+three and two across the piles hand over **three**, not the four you get counting
+from the turn. A lone worm in pile B is a first worm — it devours, and the Fremen
+get nothing from that pile.
+
+Worth keeping the number: the per-turn reading differs only when *both* piles
+blow a worm, so it is right most turns and wrong on exactly the turns that
+matter. `resolveDoubleSpiceBlow` sums the two piles into one
+`wormsForFremenToPlace` so no caller has to know that.
+
 One more rule that arrived with this, and is the reason `applySpicePlacement`
 exists rather than each caller doing it inline: **a blow SETS a territory's spice
 to the card's printed value, it does not add to it.** A territory harvested down
