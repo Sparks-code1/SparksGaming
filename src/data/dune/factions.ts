@@ -215,7 +215,7 @@ export const BENE_GESSERIT: Faction = {
     forces: {
     onPlanet: 1,
     placement: { kind: 'fixed', territoryId: 'territory-03' },   // Polar Sink
-    reserves: 15,
+    reserves: 19,
     starred: 0,
     },
     freeRevivals: 1,
@@ -274,7 +274,7 @@ export const HARKONNEN: Faction = {
   name: 'Harkonnen',
   startingSpice: 10,
     forces: {
-    onPlanet: 1,
+    onPlanet: 10,
     placement: { kind: 'fixed', territoryId: 'territory-26' },   // Carthag
     reserves: 10,
     starred: 0,

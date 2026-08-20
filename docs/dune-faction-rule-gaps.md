@@ -159,20 +159,25 @@ Recorded in `factions.ts` beside the data. Summarised here:
 
 ---
 
-## Force totals
+## Force totals — resolved
 
 Dune is symmetric: every faction fields the same number of forces, split
-differently between the board and reserves. Four agree at 20. Two do not:
+differently between the board and reserves. All six now agree at 20.
 
-| Faction | On planet | Reserves | Total |
-|---|---:|---:|---:|
-| Bene Gesserit | 1 | 15 | **16** |
-| Harkonnen | 1 | 10 | **11** |
+| Faction | On planet | Where | Reserves |
+|---|---:|---|---:|
+| Atreides | 10 | Arrakeen | 10 |
+| Emperor | 0 | — | 20 |
+| Fremen | 10 | distributed across three | 10 |
+| Spacing Guild | 5 | Tuek's Sietch | 15 |
+| Bene Gesserit | 1 | Polar Sink | 19 |
+| Harkonnen | 10 | Carthag | 10 |
 
-The Guild was 5 + 19 in the Polar Sink and is now 5 + 15 in Tuek's Sietch, which
-suggests values crossed between the Guild and the Bene Gesserit: the 19 and the
-Polar Sink both look like the Bene Gesserit's. If so, Bene Gesserit is 1 + 19 and
-Harkonnen is 10 + 10 in Carthag.
+Three values had crossed between factions: the Guild had been holding the Bene
+Gesserit's 19 reserves and its Polar Sink start, and the Harkonnen had 1 on
+planet rather than 10.
 
-Not changed without confirmation. `factionstest` asserts the totals agree and is
-**red on these two** — deliberately, so they are not forgotten.
+The check that caught it encodes no number from the rulebook — only that the six
+totals agree with each other. That is why it worked without anyone having to be
+right about Dune first, and it is the shape worth reaching for when a rule is
+uncertain but a symmetry is not.
