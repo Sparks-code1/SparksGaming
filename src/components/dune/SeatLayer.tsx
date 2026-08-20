@@ -22,6 +22,75 @@ import { DUNE_PLAYER_POSITIONS } from '@/data/dune/boardData'
 
 /** Pale sand, the same ink the board uses for marks on dark ground. */
 const PALE = '#f0e2bb'
+/** PALE as 0..1 components, for the colour matrices below. */
+const CREAM = [0xf0 / 255, 0xe2 / 255, 0xbb / 255] as const
+/** Rec.709 luminance weights. */
+const LUMA = [0.2126, 0.7152, 0.0722] as const
+
+/**
+ * Three of the marks are supplied artwork rather than drawn here, and they
+ * arrive in their own colours — a red hawk, a rust emblem, a blue crest. They
+ * are recoloured to cream at render time by an SVG filter instead of the files
+ * being edited, so the originals stay untouched and swapping one out is a path
+ * change rather than an image edit.
+ *
+ * TWO filters, because one is not enough, and the reason is worth keeping.
+ *
+ * A flat fill — force every channel to cream, keep the alpha — is right for art
+ * whose shape is carried by its ALPHA: a single-colour silhouette stays exactly
+ * itself. That is the hawk and the Fremen emblem.
+ *
+ * It destroys art whose shape is carried by its COLOUR. The Harkonnen crest is
+ * blue over black line work, all of it opaque, so flattening merges every part
+ * into one shape and it renders as static — I flattened it, looked at the
+ * pixels, and it was unreadable. Keeping luminance and tinting it cream instead
+ * lets the black stay dark against the near-black disc, which is what holds the
+ * drawing together.
+ *
+ * The gain is why the second filter is not simply darker overall: a saturated
+ * source colour has low luminance (that blue is 121 of 255), so without
+ * amplification the whole mark comes out at half strength.
+ */
+const flatMatrix = () =>
+  CREAM.map(c => `0 0 0 0 ${c.toFixed(4)}`).join('  ') + '  0 0 0 1 0'
+
+const shadedMatrix = (gain: number) =>
+  CREAM.map(c => LUMA.map(l => (l * gain * c).toFixed(4)).join(' ') + ' 0 0').join('  ')
+  + '  0 0 0 1 0'
+
+const FLAT_FILTER = 'dune-seat-flat'
+const SHADED_FILTER = 'dune-seat-shaded'
+
+/**
+ * The supplied art, and how each one has to be recoloured.
+ *
+ * A faction listed here uses its image; anything absent falls through to the
+ * drawn glyph below.
+ */
+const IMAGE_MARKS: Partial<Record<FactionId, { src: string; filter: string }>> = {
+  atreides: { src: '/icons/Atreides.webp', filter: FLAT_FILTER },
+  fremen: { src: '/icons/Fremen.webp', filter: FLAT_FILTER },
+  harkonnen: { src: '/icons/Harkonnen.webp', filter: SHADED_FILTER },
+}
+
+/**
+ * The filters themselves, rendered once per layer.
+ *
+ * Inside the layer's own <g> rather than a page-level <defs> so the component
+ * stays self-contained — drop it into any SVG and the marks come out right.
+ */
+function SeatFilters() {
+  return (
+    <defs>
+      <filter id={FLAT_FILTER} colorInterpolationFilters="sRGB">
+        <feColorMatrix type="matrix" values={flatMatrix()} />
+      </filter>
+      <filter id={SHADED_FILTER} colorInterpolationFilters="sRGB">
+        <feColorMatrix type="matrix" values={shadedMatrix(2.1)} />
+      </filter>
+    </defs>
+  )
+}
 
 export const FACTION_LOOK: Record<FactionId, { colour: string; name: string }> = {
   atreides: { colour: '#2f8f4e', name: 'Atreides' },
@@ -41,7 +110,7 @@ export const FACTION_LOOK: Record<FactionId, { colour: string; name: string }> =
  * what tells them apart in one colour, or for anyone who cannot separate the
  * green from the red.
  */
-function glyph(faction: FactionId): JSX.Element {
+function glyph(faction: FactionId): JSX.Element | null {
   switch (faction) {
     // A hawk, wings out. The Atreides banner.
     case 'atreides':
@@ -56,11 +125,15 @@ function glyph(faction: FactionId): JSX.Element {
     // A crown, for the Padishah Emperor.
     case 'emperor':
       return <path d="M-9 5 L-9 -5 L-4.5 -1 L0 -6.5 L4.5 -1 L9 -5 L9 5 Z" fill={PALE} />
-    // A heighliner seen side-on, nose to the right.
+    // Three rings in a row, joined by a short link between each pair.
+    // Rings rather than discs: a chain reads as a chain because you can see
+    // through it, and three filled dots would read as a full stop.
     case 'spacing-guild':
-      return <g fill={PALE}>
-        <path d="M-9 -2.6 L4 -2.6 L10 0 L4 2.6 L-9 2.6 Z" />
-        <circle cx="-5.5" cy="0" r="1.5" fill="#00000055" />
+      return <g fill="none" stroke={PALE} strokeWidth="1.9" strokeLinecap="round">
+        <circle cx="-8" cy="0" r="3.2" />
+        <circle cx="0" cy="0" r="3.2" />
+        <circle cx="8" cy="0" r="3.2" />
+        <path d="M-4.8 0 H-3.2 M3.2 0 H4.8" />
       </g>
     // Shai-Hulud, rising out of the sand and back into it.
     case 'fremen':
@@ -74,6 +147,9 @@ function glyph(faction: FactionId): JSX.Element {
         <path d="M-9.5 0 C-5 -6 5 -6 9.5 0 C5 6 -5 6 -9.5 0 Z" fill={PALE} />
         <circle cx="0" cy="0" r="2.9" fill="#00000099" />
       </g>
+    // The three that use supplied art never reach here.
+    default:
+      return null
   }
 }
 
@@ -82,13 +158,20 @@ export function SeatMark(
   { faction, x, y, r = 19 }: { faction: FactionId; x: number; y: number; r?: number },
 ) {
   const look = FACTION_LOOK[faction]
+  const art = IMAGE_MARKS[faction]
   // The glyphs are drawn in a 24-wide box, so this is what fits one inside r.
   const k = (r * 0.78) / 12
+  // A square this wide sits inside the ring with its corners clear: the largest
+  // square inscribed in r is r*1.414 across, and this leaves room for the ring.
+  const box = r * 1.26
   return (
     <g>
       <title>{look.name}</title>
       <circle cx={x} cy={y} r={r} fill={look.colour} stroke={PALE} strokeWidth="2" />
-      <g transform={`translate(${x} ${y}) scale(${k.toFixed(3)})`}>{glyph(faction)}</g>
+      {art
+        ? <image href={art.src} x={x - box / 2} y={y - box / 2} width={box} height={box}
+            preserveAspectRatio="xMidYMid meet" filter={`url(#${art.filter})`} />
+        : <g transform={`translate(${x} ${y}) scale(${k.toFixed(3)})`}>{glyph(faction)}</g>}
     </g>
   )
 }
@@ -123,6 +206,7 @@ export function SeatLayer(
 ) {
   return (
     <g data-layer="seats">
+      <SeatFilters />
       {DUNE_PLAYER_POSITIONS.map(p => {
         const faction = seating[p.id]
         return faction
