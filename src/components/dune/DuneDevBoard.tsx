@@ -13,7 +13,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { DUNE_BOARD, DUNE_STORM_RING, DUNE_SECTORS, DUNE_TERRITORIES } from '@/data/dune/boardData'
 import { resolveStorm, STORM_START, FIRST_STORM_ROLL, stormRollRange } from '@/lib/dune/storm'
 
-import { buildSpiceDeck, shuffle, resolveSpiceBlow } from '@/lib/dune/spiceBlow'
+import { buildSpiceDeck, shuffle, resolveSpiceBlow, applySpicePlacement } from '@/lib/dune/spiceBlow'
 import type { SpiceCard } from '@/lib/dune/spiceBlow'
 import type { Force, GameMode, SectorId, TerritoryId } from '@/types/Dune/Game'
 import CharityPanel from './CharityPanel'
@@ -150,8 +150,8 @@ export default function DuneDevBoard() {
       setSpice(s => {
         const next = { ...s }
         for (const d of out.devoured) delete next[d.territoryId]
-        if (out.placed) next[out.placed.territoryId] = (next[out.placed.territoryId] ?? 0) + out.placed.amount
-        return next
+        // SET, not add. A territory harvested from 12 down to 4 blows back to 12.
+        return applySpicePlacement(next, out.placed)
       })
       say([
         out.ignored ? `${out.ignored} worm(s) ignored (turn 1)` : '',

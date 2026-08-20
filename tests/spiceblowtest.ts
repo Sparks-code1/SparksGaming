@@ -2,7 +2,8 @@
 // rock is no shelter — which is the opposite of how the storm works, so the
 // two are contrasted directly below.
 import {
-  buildSpiceDeck, resolveSpiceBlow, shuffle, showing, SHAI_HULUD_COUNT,
+  buildSpiceDeck, resolveSpiceBlow, resolveDoubleSpiceBlow, applySpicePlacement,
+  shuffle, showing, SHAI_HULUD_COUNT,
 } from '@/lib/dune/spiceBlow'
 import type { SpiceCard } from '@/lib/dune/spiceBlow'
 import type { Force, SectorId, TerritoryId } from '@/types/Dune/Game'
@@ -112,12 +113,56 @@ check('...and the blow still lands', sixWorms.placed?.territoryId, 'a')
 check('...with every worm back in the deck', sixWorms.deck.filter(c => c.kind === 'shai-hulud').length, 6)
 check('...and none on the discard', sixWorms.discard.filter(c => c.kind === 'shai-hulud').length, 0)
 
-// ── the deck running dry ─────────────────────────────────────────────────────
-// Twenty-one cards over ten turns cannot exhaust the deck, so an empty one is a
-// bug. No reshuffle: that is an advanced-game rule, and quietly placing no spice
-// would look like a legal turn where the blow simply did nothing.
-check('an exhausted deck is refused',
-  threw(() => resolveSpiceBlow({ ...base, deck: [], discard: [terr('a', 8, 3)] })), true)
+// ── the deck running dry means different things in the two games ─────────────
+// Basic: one territory card a turn over ten turns needs ten and the deck holds
+// fifteen, so an empty deck is a bug. Quietly placing no spice would look like a
+// legal turn where the blow simply did nothing.
+//
+// The discard is deliberately DEEP here. Against a one-card pile the call throws
+// either way — with the mode guard, because basic refuses exhaustion; without
+// it, because a pile of one is all showing card and has nothing to reshuffle.
+// The check would pass with the rule deleted, which is no check at all.
+check('basic: an exhausted deck is refused',
+  threw(() => resolveSpiceBlow({
+    ...base, deck: [], discard: [terr('a', 8, 3), terr('b', 6, 5), terr('c', 10, 7)],
+  })), true)
+
+// Advanced: TWO territory cards a turn needs twenty. The deck runs dry around
+// turn seven by arithmetic, so the reshuffle is a rule rather than a rescue.
+{
+  const dry = resolveSpiceBlow({
+    ...base, mode: 'advanced',
+    deck: [],
+    discard: [terr('a', 8, 3), terr('b', 6, 5), terr('c', 10, 7)],
+  })
+  check('advanced: an exhausted deck reshuffles instead', dry.reshuffled, true)
+  check('...and the blow lands', dry.placed !== null, true)
+
+  // The card SHOWING stays put. It is what the next worm devours, so burying it
+  // in the deck would silently disarm every worm that followed.
+  check('the showing card is not swept into the deck', dry.discard[0], terr('c', 10, 7))
+  check('...only the cards beneath it are', dry.deck.length, 1)
+  check('no card is created or lost', dry.deck.length + dry.discard.length, 3)
+
+  check('basic never reshuffles',
+    resolveSpiceBlow({ ...base, deck: [terr('a', 8, 3)], discard: [] }).reshuffled, false)
+
+  // A pile of one is all showing card. Nothing to reshuffle is still a bug.
+  check('advanced: nothing buried to reshuffle is refused',
+    threw(() => resolveSpiceBlow({ ...base, mode: 'advanced', deck: [], discard: [terr('a', 8, 3)] })), true)
+}
+
+// ── a blow SETS the spice, it does not add to it ─────────────────────────────
+// A territory harvested down from twelve to four blows back to twelve, not to
+// sixteen. Lives in the rules module rather than each caller because "+= amount"
+// is the natural thing to write and it is wrong.
+check('a blow overwrites what is already lying there',
+  applySpicePlacement({ x: 4 }, { territoryId: 'x' as TerritoryId, sector: 'sector-3' as SectorId, amount: 12 }),
+  { x: 12 })
+check('...and leaves every other territory alone',
+  applySpicePlacement({ x: 4, y: 6 }, { territoryId: 'x' as TerritoryId, sector: 'sector-3' as SectorId, amount: 12 }),
+  { x: 12, y: 6 })
+check('no placement leaves the board untouched', applySpicePlacement({ x: 4 }, null), { x: 4 })
 
 // ── shuffle is injected, not random ──────────────────────────────────────────
 const seq = [0.1, 0.9, 0.3, 0.7, 0.2]
@@ -173,6 +218,106 @@ for (const mode of ['basic', 'advanced'] as const) {
   })
   check('advanced with no Fremen seated: the phase behaves as it always did',
     noFremen.wormsForFremenToPlace, 0)
+}
+
+// ── the advanced double blow: ONE deck, TWO discard piles ────────────────────
+// Not two decks. Each pile is resolved independently by the same rules, and a
+// worm eats whatever its OWN pile is showing.
+{
+  const dbl = { forces: [] as Force[], spiceOnBoard: {}, firstTurn: false, rng }
+
+  const clean = resolveDoubleSpiceBlow({
+    ...dbl,
+    deck: [terr('x', 8, 3), terr('y', 6, 5), terr('z', 10, 7)],
+    discardA: [], discardB: [],
+  })
+  check('both piles blow, from the one deck',
+    [clean.a.placed?.territoryId, clean.b.placed?.territoryId], ['x', 'y'])
+  check('one deck, so it is two cards shorter', clean.deck.length, 1)
+  check('each pile keeps its own top card',
+    [showing(clean.discardA)?.kind, showing(clean.discardB)?.kind], ['territory', 'territory'])
+  check('...and they are different cards',
+    [(showing(clean.discardA) as { name: string }).name, (showing(clean.discardB) as { name: string }).name],
+    ['x', 'y'])
+  check('no worms, no Nexus', clean.nexus, false)
+
+  // A worm in each pile. The one in B still devours — it simply triggers nothing.
+  const both = resolveDoubleSpiceBlow({
+    ...dbl,
+    deck: [worm, terr('x', 8, 3), worm, terr('y', 6, 5)],
+    discardA: [terr('a', 8, 3)],
+    discardB: [terr('b', 6, 5)],
+    forces: [at('a', 3), at('b', 5)],
+    spiceOnBoard: { a: 8, b: 6 },
+  })
+  check('pile A\'s worm eats pile A\'s showing card', both.a.devoured.map(d => d.territoryId), ['a'])
+  check('pile B\'s worm eats pile B\'s, not pile A\'s', both.b.devoured.map(d => d.territoryId), ['b'])
+  check('both piles send forces to the tanks', both.toTanks.length, 2)
+
+  // ── at most ONE Nexus a turn, triggered by the first worm in either pile ────
+  check('the first worm triggers it', both.a.nexus, true)
+  check('the second does NOT trigger a second', both.b.nexus, false)
+  check('...and the turn reports exactly one', both.nexus, true)
+
+  const onlyB = resolveDoubleSpiceBlow({
+    ...dbl,
+    deck: [terr('x', 8, 3), worm, terr('y', 6, 5)],
+    discardA: [terr('a', 8, 3)],
+    discardB: [terr('b', 6, 5)],
+    forces: [at('b', 5)],
+    spiceOnBoard: { b: 6 },
+  })
+  check('a worm in pile B alone still triggers the Nexus', [onlyB.a.nexus, onlyB.b.nexus], [false, true])
+  check('...so the turn has one', onlyB.nexus, true)
+  check('...and pile A, which drew no worm, ate nothing', onlyB.a.devoured, [])
+
+  // ── pile B sees what pile A placed, SET not added ──────────────────────────
+  // x is harvested down to 4, pile A blows 8 on it, pile B's worm eats it. Had
+  // the blow added rather than set, the worm would take 12 to the bank.
+  const chain = resolveDoubleSpiceBlow({
+    ...dbl,
+    deck: [terr('x', 8, 3), worm, terr('y', 6, 5)],
+    discardA: [],
+    discardB: [terr('x', 8, 3)],
+    spiceOnBoard: { x: 4 },
+  })
+  check('pile B sees pile A\'s blow as a replacement, not a top-up',
+    chain.b.devoured[0].spiceRemoved, 8)
+}
+
+// ── turn one sets worms aside ACROSS BOTH PILES ──────────────────────────────
+// A worm ignored while pile A resolves stays out of the deck while pile B
+// resolves. Returned between the piles it could be drawn twice in one turn, and
+// one physical worm would be counted as two ignored.
+{
+  // rng 0 makes the shuffle actually move things, so a worm returned early would
+  // land on top of pile B's deck and be drawn again. Held, it cannot be.
+  const rng0 = () => 0
+  const one = resolveDoubleSpiceBlow({
+    forces: [], spiceOnBoard: {}, firstTurn: true, rng: rng0,
+    deck: [worm, terr('x', 8, 3), terr('y', 6, 5)],
+    discardA: [], discardB: [],
+  })
+  check('the one worm in the deck is ignored exactly once', one.ignored, 1)
+  check('...counted in the pile that drew it', [one.a.ignored, one.b.ignored], [1, 0])
+  check('...and both piles still blow',
+    [one.a.placed?.territoryId, one.b.placed?.territoryId], ['x', 'y'])
+  check('the worm is back in the deck once the turn is over',
+    one.deck.filter(c => c.kind === 'shai-hulud').length, 1)
+  check('...and reached neither discard',
+    [...one.discardA, ...one.discardB].filter(c => c.kind === 'shai-hulud').length, 0)
+  check('turn one devours nothing, in either pile',
+    [...one.a.devoured, ...one.b.devoured], [])
+
+  // All six at once, split across the piles: still six, never more.
+  const all = resolveDoubleSpiceBlow({
+    forces: [], spiceOnBoard: {}, firstTurn: true, rng: rng0,
+    deck: [worm, worm, worm, terr('x', 8, 3), worm, worm, worm, terr('y', 6, 5)],
+    discardA: [], discardB: [],
+  })
+  check('six worms across two piles are six ignored, not more', all.ignored, SHAI_HULUD_COUNT)
+  check('...all six back in the deck', all.deck.filter(c => c.kind === 'shai-hulud').length, SHAI_HULUD_COUNT)
+  check('...and nothing was lost from it', all.deck.length, SHAI_HULUD_COUNT)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

@@ -89,8 +89,29 @@ export interface SpiceBlowInput {
   fremenInPlay?: boolean
   /** Spice already lying on the board, by territory. */
   spiceOnBoard: Readonly<Record<string, number>>
-  /** Turn 1 ignores worms and shuffles them back afterwards. */
+  /** Turn 1 ignores worms and shuffles them back afterwards. In the advanced
+   *  game this applies ACROSS both piles: a worm set aside resolving pile A is
+   *  still set aside, not redrawn, when pile B is resolved. */
   firstTurn: boolean
+  /**
+   * Whether a Nexus has already fired this turn.
+   *
+   * At most one Nexus happens per turn, triggered by the FIRST worm in either
+   * pile. A worm in the second pile still devours — it simply triggers nothing.
+   * Passed in rather than inferred because only the caller resolving both piles
+   * knows what the first one did.
+   */
+  nexusAlreadyTriggered?: boolean
+  /**
+   * Hold turn one's set-aside worms instead of shuffling them back.
+   *
+   * The advanced game's two piles are one TURN, so a worm ignored while pile A
+   * resolves has to stay out of the deck while pile B resolves. Shuffling it back
+   * between the piles lets the same physical worm be drawn twice in one turn and
+   * counted twice as ignored — six worms could then report as more than six. The
+   * caller holding both piles returns them once, at the end.
+   */
+  deferSetAside?: boolean
   rng: () => number
 }
 
@@ -103,6 +124,14 @@ export interface SpiceBlowOutcome {
   devoured: Devoured[]
   /** Worms drawn and set aside on turn 1, shuffled back in at the end. */
   ignored: number
+  /** The set-aside worms themselves. Already back in `deck` unless
+   *  `deferSetAside` was set, in which case they are the caller's to return. */
+  setAside: SpiceCard[]
+  /** True when a worm appeared here AND no Nexus had fired yet this turn. */
+  nexus: boolean
+  /** True when an exhausted deck was rebuilt from the discards mid-phase.
+   *  Advanced only; in the basic game exhaustion is refused instead. */
+  reshuffled: boolean
   /** Forces bound for the Tleilaxu Tanks, flattened for the caller. */
   toTanks: Force[]
   /**
@@ -113,6 +142,22 @@ export interface SpiceBlowOutcome {
    * worm of a blow behaves normally; only the additional ones are theirs.
    */
   wormsForFremenToPlace: number
+}
+
+/**
+ * Apply a blow to the spice already lying on the board.
+ *
+ * A blow SETS the territory to the card's printed value; it does not add to it.
+ * A territory harvested down from twelve to four goes back to twelve, not to
+ * sixteen. Written here rather than left to each caller, because "+= amount" is
+ * the natural thing to write and it is wrong — the dev view had exactly that bug.
+ */
+export function applySpicePlacement(
+  spiceOnBoard: Readonly<Record<string, number>>,
+  placed: SpiceBlowOutcome['placed'],
+): Record<string, number> {
+  if (!placed) return { ...spiceOnBoard }
+  return { ...spiceOnBoard, [placed.territoryId]: placed.amount }
 }
 
 /**
@@ -127,16 +172,34 @@ export function resolveSpiceBlow(input: SpiceBlowInput): SpiceBlowOutcome {
   const devoured: Devoured[] = []
   let wormsSeen = 0
   let wormsToPlace = 0
+  let nexus = false
+  let reshuffled = false
   const setAside: SpiceCard[] = []
   let placed: SpiceBlowOutcome['placed'] = null
 
-  // Ten turns, twenty-one cards: the deck cannot run dry in a standard game, so
-  // an empty one means something upstream is wrong. Reshuffling the discard is an
-  // advanced-game rule and is deliberately NOT done here — silently continuing
-  // with no card would hide the bug and produce a turn where no spice appeared.
+  // Exhaustion means different things in the two games.
+  //
+  // Basic: one territory card a turn over ten turns needs ten, and the deck
+  // holds fifteen. It cannot run dry, so an empty one is a bug and is refused.
+  //
+  // Advanced: TWO territory cards a turn needs twenty, and there are fifteen.
+  // The deck runs dry around turn seven by arithmetic, so a reshuffle is a rule
+  // rather than a rescue.
   while (true) {
     if (deck.length === 0) {
-      throw new Error('spice deck exhausted — it cannot run dry in ten turns, so this is a bug, not a rule')
+      if (input.mode !== 'advanced') {
+        throw new Error('spice deck exhausted — it cannot run dry in ten turns of the basic game, so this is a bug, not a rule')
+      }
+      // The top of each pile stays where it is: it is the card SHOWING, and the
+      // next worm devours whatever it names. Only the cards beneath it return to
+      // the deck.
+      const buried = discard.slice(0, -1)
+      if (buried.length === 0) {
+        throw new Error('spice deck exhausted with nothing buried to reshuffle')
+      }
+      deck.push(...shuffle(buried, input.rng))
+      discard.splice(0, discard.length - 1)
+      reshuffled = true
     }
     const card = deck.shift() as SpiceCard
 
@@ -154,6 +217,8 @@ export function resolveSpiceBlow(input: SpiceBlowInput): SpiceBlowOutcome {
     }
 
     wormsSeen++
+    // The first worm of the TURN triggers the Nexus, whichever pile it lands in.
+    if (!input.nexusAlreadyTriggered && !nexus) nexus = true
     const top = showing(discard)
     if (!top) {
       // Turn 1 is required to place a territory card, so by the time a worm can
@@ -189,7 +254,10 @@ export function resolveSpiceBlow(input: SpiceBlowInput): SpiceBlowOutcome {
 
   // Turn 1: the ignored worms go back into the deck, shuffled, once the phase
   // is over — not before, or one could be drawn again during the same phase.
-  const finalDeck = setAside.length ? shuffle([...deck, ...setAside], input.rng) : deck
+  // With two piles "the phase" is both of them, so the caller may hold them.
+  const finalDeck = setAside.length && !input.deferSetAside
+    ? shuffle([...deck, ...setAside], input.rng)
+    : deck
 
   return {
     deck: finalDeck,
@@ -197,7 +265,75 @@ export function resolveSpiceBlow(input: SpiceBlowInput): SpiceBlowOutcome {
     placed,
     devoured,
     ignored: setAside.length,
+    setAside,
+    nexus,
+    reshuffled,
     toTanks: devoured.flatMap(d => d.forcesKilled),
     wormsForFremenToPlace: wormsToPlace,
+  }
+}
+
+
+/**
+ * The advanced game's double blow: two reveals, two discard piles, ONE deck.
+ *
+ * Each pile is resolved independently by the same rules, which is why this is a
+ * wrapper rather than a second implementation — the single-pile function already
+ * does the work, and the only things crossing between them are the deck, the
+ * Nexus and turn one's set-aside worms.
+ */
+export interface DoubleBlowOutcome {
+  deck: SpiceCard[]
+  discardA: SpiceCard[]
+  discardB: SpiceCard[]
+  a: SpiceBlowOutcome
+  b: SpiceBlowOutcome
+  /** At most one per turn, whichever pile produced the first worm. */
+  nexus: boolean
+  /** Worms set aside across the whole turn — never more than the six that exist,
+   *  because a worm held out of pile A cannot be drawn again by pile B. */
+  ignored: number
+  /** Both piles' devoured forces, for the tanks. */
+  toTanks: Force[]
+}
+
+export function resolveDoubleSpiceBlow(input: {
+  deck: readonly SpiceCard[]
+  discardA: readonly SpiceCard[]
+  discardB: readonly SpiceCard[]
+  forces: readonly Force[]
+  spiceOnBoard: Readonly<Record<string, number>>
+  firstTurn: boolean
+  fremenInPlay?: boolean
+  rng: () => number
+}): DoubleBlowOutcome {
+  const a = resolveSpiceBlow({
+    ...input, mode: 'advanced', discard: input.discardA, deferSetAside: true,
+  })
+
+  // Pile B draws from what pile A left, sees the spice pile A placed, and knows
+  // whether the Nexus has already fired. It does NOT see pile A's ignored worms:
+  // those are held out until the turn is over, which is what "across both piles"
+  // means. A worm ignored once is ignored once.
+  const b = resolveSpiceBlow({
+    ...input,
+    mode: 'advanced',
+    deck: a.deck,
+    discard: input.discardB,
+    deferSetAside: true,
+    spiceOnBoard: applySpicePlacement(input.spiceOnBoard, a.placed),
+    forces: input.forces.filter(f => !a.toTanks.includes(f)),
+    nexusAlreadyTriggered: a.nexus,
+  })
+
+  const held = [...a.setAside, ...b.setAside]
+  return {
+    deck: held.length ? shuffle([...b.deck, ...held], input.rng) : b.deck,
+    discardA: a.discard,
+    discardB: b.discard,
+    a, b,
+    nexus: a.nexus || b.nexus,
+    ignored: a.ignored + b.ignored,
+    toTanks: [...a.toTanks, ...b.toTanks],
   }
 }

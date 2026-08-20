@@ -206,6 +206,17 @@ it is load-bearing from the middle of every advanced game. The guard should
 become mode-aware: still a bug in the basic game, still refused; a reshuffle in
 the advanced one.
 
+**Built.** The guard now branches on `mode`. The reshuffle takes the cards
+*beneath* each pile's top card only — the top is what is SHOWING, and the next
+worm devours whatever it names, so burying it would silently disarm every worm
+that followed.
+
+A note for anyone writing a similar check: the first version of the basic-game
+assertion passed with the rule deleted. It exhausted a one-card discard, which
+throws either way — with the guard because basic refuses exhaustion, without it
+because a pile of one has nothing buried to reshuffle. The pile has to be deep
+enough that only the mode can explain the throw.
+
 ## 2. Two discard piles, and FEWER Nexuses than expected
 
 Two piles, A and B, each with its own top card. That part is a smaller change
@@ -226,6 +237,30 @@ Two ambiguities in the same passage:
   is what the next worm devours.
 - Turn one ignores worms and reshuffles them afterwards. With two piles, is that
   once per turn or once per pile?
+
+**Both answered, and built.** One deck, two discard piles — not two decks. Each
+pile is resolved independently by the same rules and a worm goes on, and eats
+from, its own pile. `resolveDoubleSpiceBlow` is a wrapper that calls the
+single-pile function twice; only three things cross between the piles.
+
+**The deck.** Pile B draws from what pile A left.
+
+**The Nexus.** At most one a turn, triggered by the first worm in *either* pile.
+A worm in the second pile still devours — it simply triggers nothing. Passed in
+as `nexusAlreadyTriggered` rather than inferred, because only the caller
+resolving both piles knows what the first one did.
+
+**Turn one's set-aside worms**, which are held across *both* piles rather than
+returned between them. This one is worth stating plainly because the obvious
+implementation is wrong: returning them at the end of pile A lets the same
+physical worm be drawn again by pile B and counted twice as ignored, so six worms
+can report as seven. `deferSetAside` hands them back to the caller instead.
+
+One more rule that arrived with this, and is the reason `applySpicePlacement`
+exists rather than each caller doing it inline: **a blow SETS a territory's spice
+to the card's printed value, it does not add to it.** A territory harvested down
+from twelve to four goes back to twelve, not to sixteen. `+= amount` is the
+natural thing to write and it is wrong — the dev view had exactly that bug.
 
 ## 3. Advanced combat: strength is not a property of a force
 
