@@ -374,13 +374,17 @@ export default function DuneDevBoard() {
         </fieldset>
 
 <fieldset style={panel}>
-          <legend>Leader disc</legend>
-          {/* One, to look at. The rest follow once this one is right. */}
-          <svg viewBox="-70 -70 140 140" width="140" height="140" style={{ display: 'block' }}>
-            <LeaderDisc leader={FREMEN.leaders[0]} faction="fremen" />
+          <legend>Leader discs — Fremen</legend>
+          {/* The one complete set: all five have portraits. */}
+          <svg viewBox="0 0 620 130" width="100%" style={{ display: 'block' }}>
+            {FREMEN.leaders.map((l, i) => (
+              <g key={l.name} transform={`translate(${62 + i * 124} 65)`}>
+                <LeaderDisc leader={l} faction="fremen" r={58} />
+              </g>
+            ))}
           </svg>
           <p style={{ opacity: 0.6, margin: '6px 0 0', fontSize: 12 }}>
-            {FREMEN.leaders[0].name} · strength {FREMEN.leaders[0].strength} · Fremen
+            strengths {FREMEN.leaders.map(l => l.strength).join(' · ')}
           </p>
         </fieldset>
 

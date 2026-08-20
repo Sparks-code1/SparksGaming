@@ -67,11 +67,18 @@ export interface Portrait {
  * at the other end and needs no knob here at all.
  */
 export const LEADER_PORTRAITS: Record<string, Portrait> = {
+  // Taller than it is wide, so it has height to spare and can be pushed up to
+  // keep the face out of the bottom of the circle.
   Stilgar: { src: '/dune-leaders/Stilgar.png', w: 400, h: 500, focusY: 0.40 },
-  Chani: { src: '/dune-leaders/Chani.png', w: 400, h: 400 },
-  Otheym: { src: '/dune-leaders/Otheym.png', w: 400, h: 400 },
-  'Shadout Mapes': { src: '/dune-leaders/Shadout_mapes.png', w: 400, h: 400 },
-  Jamis: { src: '/dune-leaders/Jamis.png', w: 400, h: 400 },
+  // Square, so at zoom 1 the picture is exactly the portrait circle's bounding
+  // box: dead centre shows all of it and only the corners are clipped. Their
+  // detail sits within a few percent of the middle in every case — measured off
+  // row-by-row edge energy, since faces carry far more local contrast than the
+  // ground behind them — so there is nothing to gain by shifting any of them.
+  Chani: { src: '/dune-leaders/Chani.png', w: 400, h: 400, focusY: 0.5 },
+  Otheym: { src: '/dune-leaders/Otheym.png', w: 400, h: 400, focusY: 0.5 },
+  'Shadout Mapes': { src: '/dune-leaders/Shadout_mapes.png', w: 400, h: 400, focusY: 0.5 },
+  Jamis: { src: '/dune-leaders/Jamis.png', w: 400, h: 400, focusY: 0.5 },
 }
 
 export function LeaderDisc({
@@ -126,10 +133,28 @@ export function LeaderDisc({
         // nine fixed alignments and none of them is "put the face here". zoom is
         // measured against the PORTRAIT circle now, not the disc, so zoom 1 fills
         // that circle exactly and a square source needs no adjustment at all.
-        const zoom = portrait.zoom ?? 1
         const focusX = portrait.focusX ?? 0.5
-        const focusY = portrait.focusY ?? 0.45
-        const scale = (2 * pr * zoom) / Math.min(portrait.w, portrait.h)
+        const focusY = portrait.focusY ?? 0.5
+
+        // Zoom in far enough that the picture still covers the circle once it
+        // has been shifted to put the focus in the middle.
+        //
+        // Moving the focus off centre slides the picture, and a picture only
+        // just big enough to cover the circle slides a bare patch in behind it —
+        // faction colour showing through the portrait, which looks like a
+        // rendering fault rather than a crop. The default focus used to be 0.45,
+        // which did exactly that to every square portrait: 400x400 at zoom 1 is
+        // precisely the circle's bounding box, so ANY shift uncovered it.
+        //
+        // Derived rather than guarded against: the picture must reach the
+        // circle's edge on the far side of the focus, in both axes.
+        const short = Math.min(portrait.w, portrait.h)
+        const cover = Math.max(
+          short / (2 * portrait.w * Math.min(focusX, 1 - focusX)),
+          short / (2 * portrait.h * Math.min(focusY, 1 - focusY)),
+        )
+        const zoom = Math.max(portrait.zoom ?? 1, cover)
+        const scale = (2 * pr * zoom) / short
         const dw = portrait.w * scale
         const dh = portrait.h * scale
         return (
