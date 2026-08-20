@@ -13,8 +13,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { DUNE_BOARD, DUNE_STORM_RING, DUNE_SECTORS, DUNE_TERRITORIES } from '@/data/dune/boardData'
 import { resolveStorm, STORM_START, FIRST_STORM_ROLL, stormRollRange } from '@/lib/dune/storm'
 
-import { buildSpiceDeck, shuffle, resolveSpiceBlow, applySpicePlacement } from '@/lib/dune/spiceBlow'
-import type { SpiceCard } from '@/lib/dune/spiceBlow'
+import {
+  buildSpiceDeck, shuffle, resolveSpiceBlow, applyBlowToBoard,
+  beginDoubleSpiceBlow, placeFremenWorms,
+} from '@/lib/dune/spiceBlow'
+import type { SpiceCard, SpiceBlowAsk, SpiceBlowCarry, SpiceBlowStep } from '@/lib/dune/spiceBlow'
+import { isAwaiting } from '@/lib/dune/phase'
+import type { Awaiting } from '@/lib/dune/phase'
 import type { Force, GameMode, SectorId, TerritoryId } from '@/types/Dune/Game'
 import CharityPanel from './CharityPanel'
 
@@ -86,7 +91,16 @@ export default function DuneDevBoard() {
   const [mode, setMode] = useState<GameMode>('basic')
   const [spice, setSpice] = useState<Record<string, number>>({})
   const [deck, setDeck] = useState<SpiceCard[]>(() => shuffle(buildSpiceDeck(), Math.random))
-  const [discard, setDiscard] = useState<SpiceCard[]>([])
+  // Two piles, because the advanced game reveals two cards against two piles.
+  // The basic game uses pile A alone, which is what it always did.
+  const [discardA, setDiscardA] = useState<SpiceCard[]>([])
+  const [discardB, setDiscardB] = useState<SpiceCard[]>([])
+  // The phase, stopped mid-way, waiting for the Fremen. Null when nothing is
+  // owed. While this is set the board is a picker and pile B is face down.
+  const [pending, setPending] = useState<Awaiting<SpiceBlowAsk, SpiceBlowCarry> | null>(null)
+  const [picks, setPicks] = useState<TerritoryId[]>([])
+  // Where a worm surfaced this turn, so the board can show one.
+  const [worms, setWorms] = useState<TerritoryId[]>([])
   const [log, setLog] = useState<string[]>(['Ready. Storm at sector-1.'])
 
   useEffect(() => {
@@ -135,24 +149,86 @@ export default function DuneDevBoard() {
     )
   }
 
-  function drawSpice() {
+  /**
+   * Take a stopped-or-finished phase and put it on screen.
+   *
+   * The two halves of the seam meet here: a phase that stopped becomes a picker
+   * on the board, and a phase that finished becomes state. Nothing else in this
+   * component needs to know which of the two it is holding.
+   */
+  function handleStep(step: SpiceBlowStep) {
+    if (isAwaiting(step)) {
+      setPending(step)
+      setPicks([])
+      say(
+        `pile ${step.ask.pile} handed back ${step.ask.worms} worm(s) — `
+        + (step.ask.pile === 'A'
+          ? 'pile B stays face down until the Fremen have placed them'
+          : 'the turn ends once they are placed'),
+      )
+      return
+    }
+    const out = step.result
+    setPending(null)
+    setPicks([])
+    setDeck(out.deck)
+    setDiscardA(out.discardA)
+    setDiscardB(out.discardB)
+    // The phase returns the board rather than the caller rebuilding it: getting
+    // here by hand means two placements and any number of devours, in order.
+    setSpice(out.spiceOnBoard)
+    setForces(f => f.filter(x => !out.toTanks.includes(x)))
+    setWorms([...out.a.devoured, ...out.b.devoured, ...out.devouredByFremen]
+      .map(d => d.territoryId as TerritoryId))
+    say([
+      out.ignored ? `${out.ignored} worm(s) set aside (turn 1)` : '',
+      out.nexus ? 'NEXUS' : '',
+      `A: ${out.a.placed ? `${out.a.placed.amount} on ${name(out.a.placed.territoryId)}` : '—'}`,
+      `B: ${out.b.placed ? `${out.b.placed.amount} on ${name(out.b.placed.territoryId)}` : '—'}`,
+      out.devouredByFremen.length
+        ? `Fremen worms took ${out.devouredByFremen.map(d => name(d.territoryId)).join(', ')}`
+        : '',
+      out.reshuffled ? 'deck reshuffled' : '',
+    ].filter(Boolean).join(' · '))
+  }
+
+  /** The Fremen answer, and the phase carries on from where it stopped. */
+  function submitWorms(at: TerritoryId[]) {
+    if (!pending) return
     try {
+      handleStep(placeFremenWorms(pending.carry, at, Math.random))
+    } catch (e) {
+      say(`REFUSED: ${(e as Error).message}`)
+    }
+  }
+
+  function drawSpice() {
+    if (pending) {
+      say('the phase is waiting on the Fremen — place or decline the worms first')
+      return
+    }
+    try {
+      if (mode === 'advanced') {
+        handleStep(beginDoubleSpiceBlow({
+          deck, discardA, discardB, forces, fremenInPlay: true,
+          spiceOnBoard: spice, firstTurn: turn === 1, rng: Math.random,
+        }))
+        return
+      }
       const out = resolveSpiceBlow({
-        deck, discard, forces, mode, fremenInPlay: true,
+        deck, discard: discardA, forces, mode, fremenInPlay: true,
         spiceOnBoard: spice, firstTurn: turn === 1, rng: Math.random,
       })
       setDeck(out.deck)
-      setDiscard(out.discard)
+      setDiscardA(out.discard)
       setForces(f => f.filter(x => !out.toTanks.includes(x)))
       if (out.wormsForFremenToPlace) {
         say(`${out.wormsForFremenToPlace} worm(s) for the Fremen to place — not resolved here`)
       }
-      setSpice(s => {
-        const next = { ...s }
-        for (const d of out.devoured) delete next[d.territoryId]
-        // SET, not add. A territory harvested from 12 down to 4 blows back to 12.
-        return applySpicePlacement(next, out.placed)
-      })
+      // SET, not add, and the devoured lose theirs first. One call, because
+      // doing it by hand is where the add-vs-set bug lived.
+      setSpice(s => applyBlowToBoard(s, out))
+      setWorms(out.devoured.map(d => d.territoryId as TerritoryId))
       say([
         out.ignored ? `${out.ignored} worm(s) ignored (turn 1)` : '',
         out.devoured.map(d =>
@@ -170,7 +246,11 @@ export default function DuneDevBoard() {
 
   function reset() {
     setDeck(shuffle(buildSpiceDeck(), Math.random))
-    setDiscard([])
+    setDiscardA([])
+    setDiscardB([])
+    setPending(null)
+    setPicks([])
+    setWorms([])
     setSpice({})
     setForces(seedForces())
     setStorm(STORM_START)
@@ -197,7 +277,11 @@ export default function DuneDevBoard() {
         {svg
           ? <div dangerouslySetInnerHTML={{ __html: svg }} />
           : <p>loading /dune-board.svg…</p>}
-        <svg viewBox={DUNE_BOARD.viewBox} style={{ position: 'absolute', inset: 0, width: '100%', pointerEvents: 'none' }}>
+        <svg viewBox={DUNE_BOARD.viewBox} style={{
+          position: 'absolute', inset: 0, width: '100%',
+          // The board only takes clicks while the phase is stopped and waiting.
+          pointerEvents: pending ? 'auto' : 'none',
+        }}>
           {wedge && <path d={wedge} fill="#c9542a" fillOpacity="0.55" stroke="#f2d9a0" strokeWidth="2" />}
           {stacks.map(([key, s]) => (
             <g key={key}>
@@ -218,13 +302,40 @@ export default function DuneDevBoard() {
               </g>
             )
           })}
+          {/* A worm surfaced here this turn. */}
+          {worms.map(id => {
+            const t = DUNE_TERRITORIES.find(x => x.id === id)
+            const at = t ? cellAt(id, t.spiceSector ?? '') ?? t.centroid : null
+            if (!at) return null
+            return (
+              <image key={id} href="/icons/sandworm.svg"
+                x={at.x - 20} y={at.y - 20} width="40" height="40" />
+            )
+          })}
+
+          {/* While the phase waits, every territory is a target. */}
+          {pending && DUNE_TERRITORIES.map(t => {
+            const chosen = picks.includes(t.id as TerritoryId)
+            return (
+              <circle key={t.id} cx={t.centroid.x} cy={t.centroid.y} r={chosen ? 12 : 7}
+                fill={chosen ? '#c9542a' : '#ffffff26'} stroke="#f0e2bb"
+                strokeWidth={chosen ? 2 : 1} style={{ cursor: 'pointer' }}
+                onClick={() => setPicks(p => p.includes(t.id as TerritoryId)
+                  ? p.filter(x => x !== t.id)
+                  : p.length < pending.ask.worms ? [...p, t.id as TerritoryId] : p)}>
+                <title>{t.displayName}</title>
+              </circle>
+            )
+          })}
         </svg>
       </div>
 
       <div style={{ flex: 1, fontFamily: 'system-ui', fontSize: 14, maxWidth: 420 }}>
         <h1 style={{ fontSize: 18, margin: '0 0 4px' }}>Dune — development view</h1>
         <p style={{ opacity: 0.7, margin: '0 0 14px' }}>
-          storm <b>{storm}</b> · turn <b>{turn}</b> · deck <b>{deck.length}</b> · discard <b>{discard.length}</b>
+          storm <b>{storm}</b> · turn <b>{turn}</b> · deck <b>{deck.length}</b>
+          {' '}· pile A <b>{discardA.length}</b>
+          {mode === 'advanced' && <> · pile B <b>{discardB.length}</b></>}
         </p>
 
         <fieldset style={panel}>
@@ -254,8 +365,39 @@ export default function DuneDevBoard() {
 
         <fieldset style={panel}>
           <legend>Spice blow</legend>
-          <button onClick={drawSpice}>Draw a spice card</button>
+          <button onClick={drawSpice} disabled={pending !== null}>
+            {mode === 'advanced' ? 'Reveal both piles' : 'Draw a spice card'}
+          </button>
+          {mode === 'advanced' && !pending && (
+            <p style={{ opacity: 0.6, margin: '8px 0 0' }}>
+              Two piles off one deck. The phase stops between them if the Fremen
+              have worms to place.
+            </p>
+          )}
         </fieldset>
+
+        {/* The seam, made visible. The phase is stopped here — nothing else can
+            proceed until the Fremen answer, which is the point. */}
+        {pending && (
+          <fieldset style={{ ...panel, borderColor: '#c9542a' }}>
+            <legend>Fremen — place worms</legend>
+            <p style={{ margin: '0 0 8px' }}>
+              Pile {pending.ask.pile} handed back <b>{pending.ask.worms}</b> worm(s).{' '}
+              {pending.ask.pile === 'A'
+                ? 'Pile B is still face down.'
+                : 'The turn ends once these are down.'}
+            </p>
+            <p style={{ margin: '0 0 8px', opacity: 0.75 }}>
+              Click territories on the board — {picks.length}/{pending.ask.worms} chosen
+              {picks.length ? ': ' + picks.map(name).join(', ') : ''}
+            </p>
+            <button onClick={() => submitWorms(picks)}>
+              Place {picks.length} worm{picks.length === 1 ? '' : 's'}
+            </button>{' '}
+            {/* Legal: the rule says the worms CAN be placed, not must. */}
+            <button onClick={() => submitWorms([])}>Decline</button>
+          </fieldset>
+        )}
 
         <CharityPanel say={say} />
 

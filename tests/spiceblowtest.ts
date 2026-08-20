@@ -6,6 +6,8 @@ import {
   shuffle, showing, SHAI_HULUD_COUNT,
 } from '@/lib/dune/spiceBlow'
 import type { SpiceCard } from '@/lib/dune/spiceBlow'
+import { beginDoubleSpiceBlow, placeFremenWorms } from '@/lib/dune/spiceBlow'
+import { isAwaiting, runToSettled } from '@/lib/dune/phase'
 import type { Force, SectorId, TerritoryId } from '@/types/Dune/Game'
 
 let pass = true
@@ -363,6 +365,156 @@ for (const mode of ['basic', 'advanced'] as const) {
   check('six worms across two piles are six ignored, not more', all.ignored, SHAI_HULUD_COUNT)
   check('...all six back in the deck', all.deck.filter(c => c.kind === 'shai-hulud').length, SHAI_HULUD_COUNT)
   check('...and nothing was lost from it', all.deck.length, SHAI_HULUD_COUNT)
+}
+
+// Real ids, unlike the made-up ones above: placing a worm is validated against
+// the board, because "the Fremen put a worm in Xanadu" is a bug and should read
+// like one. Harg Pass, Wind Pass, The Minor Erg.
+const HARG = 'territory-02' as TerritoryId
+const WIND = 'territory-04' as TerritoryId
+const ERG = 'territory-07' as TerritoryId
+
+// ── the seam: the Fremen place their worms BEFORE pile B is revealed ─────────
+// The ordering is not a formality. A worm placed from pile A can empty a
+// territory that pile B is about to reveal, and the whole point of pausing is
+// that the second reveal sees the consequences of the first.
+{
+  const board = {
+    discardA: [terr('a', 8, 3)],
+    discardB: [terr(HARG, 6, 5)],
+    forces: [at('a', 3), at(HARG, 5)],
+    spiceOnBoard: { a: 8, [HARG]: 6 },
+    firstTurn: false, rng, fremenInPlay: true,
+    // A: worm eats 'a', second worm is the Fremen's, then x lands.
+    // B: worm eats whatever pile B shows, then y lands.
+    deck: [worm, worm, terr('x', 8, 3), worm, terr('y', 6, 5)],
+  }
+
+  const stopped = beginDoubleSpiceBlow(board)
+  check('the phase stops rather than running straight through', stopped.status, 'awaiting')
+  if (!isAwaiting(stopped)) throw new Error('unreachable — the check above failed')
+
+  check('it says who has to answer', stopped.from, ['fremen'])
+  check('...and what it is asking for', stopped.ask, { kind: 'place-worms', pile: 'A', worms: 1 })
+
+  // The load-bearing assertion: pile B has NOT been touched yet.
+  check('pile B is still face down', stopped.carry.b, null)
+  check('...and its cards are still in the deck', stopped.carry.deck.length, 2)
+
+  // The continuation is data. If this ever stops being true the phase cannot be
+  // stored between two clients, which is the whole reason it is shaped this way.
+  //
+  // Inspected directly rather than compared before and after JSON: 'check'
+  // stringifies BOTH sides, so a round trip compared against its own source
+  // drops the closure from the expected value too and passes no matter what is
+  // in there. That version of this check was green with a function in the carry.
+  const nonData = (v: unknown, path = 'carry'): string[] => {
+    if (v === null) return []
+    const t = typeof v
+    if (t === 'function' || t === 'symbol' || t === 'bigint' || t === 'undefined') {
+      return [path + ': ' + t]
+    }
+    if (t !== 'object') return []
+    if (Array.isArray(v)) return v.flatMap((x, i) => nonData(x, path + '[' + i + ']'))
+    if (Object.getPrototypeOf(v) !== Object.prototype) return [path + ': not a plain object']
+    return Object.entries(v as Record<string, unknown>).flatMap(([k, x]) => nonData(x, path + '.' + k))
+  }
+  check('the continuation is plain data — nothing a database would lose',
+    nonData(stopped.carry), [])
+
+  // And it genuinely resumes from the stored copy, not just from the live one.
+  const roundTripped = JSON.parse(JSON.stringify(stopped.carry))
+  const viaMemory = runToSettled(
+    placeFremenWorms(stopped.carry, [HARG], rng), c => placeFremenWorms(c, [], rng))
+  const viaStorage = runToSettled(
+    placeFremenWorms(roundTripped, [HARG], rng), c => placeFremenWorms(c, [], rng))
+  check('resuming from the stored copy reaches the same outcome', viaStorage, viaMemory)
+
+  // Place the worm on 'b' — the very territory pile B is showing.
+  const done = runToSettled(
+    placeFremenWorms(roundTripped, [HARG], rng),
+    c => placeFremenWorms(c, [], rng))
+
+  check('the Fremen worm ate where they put it',
+    done.devouredByFremen.map(d => d.territoryId), [HARG])
+  check('...taking the forces standing there',
+    done.devouredByFremen[0].forcesKilled.length, 1)
+  check('...and the spice with them', done.devouredByFremen[0].spiceRemoved, 6)
+
+  // Proof of order: pile B's own worm then finds 'b' already stripped. Had pile
+  // B been revealed first, it would have taken these forces itself.
+  check('pile B revealed afterwards, so its worm found nothing left to eat',
+    done.b.devoured[0].forcesKilled, [])
+  check('...and no spice either', done.b.devoured[0].spiceRemoved, 0)
+  check('the forces reach the tanks once, not twice', done.toTanks.length, 2)
+
+  // Devoured spice leaves the board; the blow that follows puts its own down.
+  check('the board is left with only what was blown onto it',
+    done.spiceOnBoard, { x: 8, y: 6 })
+}
+
+// ── the same phase, driven by a caller with nobody to ask ────────────────────
+{
+  const board = {
+    discardA: [terr('a', 8, 3)], discardB: [terr(HARG, 6, 5)],
+    forces: [at('a', 3), at(HARG, 5)], spiceOnBoard: { a: 8, [HARG]: 6 },
+    firstTurn: false, rng, fremenInPlay: true,
+    deck: [worm, worm, terr('x', 8, 3), worm, terr('y', 6, 5)],
+  }
+  const declined = resolveDoubleSpiceBlow(board)
+  check('declining every worm is legal — the rule says CAN, not must',
+    declined.devouredByFremen, [])
+  check('...and the offer is still reported', declined.wormsForFremenToPlace, 1)
+  check('...so pile B keeps the forces the Fremen chose not to take',
+    declined.b.devoured[0].forcesKilled.length, 1)
+}
+
+// ── the seam refuses what the rules cannot produce ───────────────────────────
+{
+  const board = {
+    discardA: [terr('a', 8, 3)], discardB: [terr('b', 6, 5)],
+    forces: [at('a', 3)], spiceOnBoard: { a: 8 },
+    firstTurn: false, rng, fremenInPlay: true,
+    deck: [worm, worm, terr('x', 8, 3), terr('y', 6, 5)],
+  }
+  const stopped = beginDoubleSpiceBlow(board)
+  if (!isAwaiting(stopped)) throw new Error('expected a pause')
+
+  check('placing more worms than were offered is refused',
+    threw(() => placeFremenWorms(stopped.carry, [HARG, WIND], rng)), true)
+  check('placing one in a territory that does not exist is refused',
+    threw(() => placeFremenWorms(stopped.carry, ['nowhere' as TerritoryId], rng)), true)
+
+  // A resume that hands back the pause it was given is a hang, not a failure,
+  // unless something counts. This is that something.
+  check('a resume function that never advances is caught, not looped forever',
+    threw(() => runToSettled(stopped, c => awaitingAgain(c))), true)
+}
+
+// A deliberately broken resume, for the check above.
+function awaitingAgain(carry: Parameters<typeof placeFremenWorms>[0]) {
+  return { status: 'awaiting' as const, from: ['fremen' as Force['faction']], ask: { kind: 'place-worms' as const, pile: 'A' as const, worms: 1 }, carry }
+}
+
+// ── a Fremen worm spares the Fremen, same as one off the deck ────────────────
+{
+  const board = {
+    discardA: [terr('a', 8, 3)], discardB: [terr('b', 6, 5)],
+    forces: [at('a', 3), at(ERG, 7, 'fremen', 4), at(ERG, 7, 'harkonnen', 3)],
+    spiceOnBoard: { a: 8, [ERG]: 10 },
+    firstTurn: false, rng, fremenInPlay: true,
+    deck: [worm, worm, terr('x', 8, 3), terr('y', 6, 5)],
+  }
+  const stopped = beginDoubleSpiceBlow(board)
+  if (!isAwaiting(stopped)) throw new Error('expected a pause')
+  const done = runToSettled(
+    placeFremenWorms(stopped.carry, [ERG], rng),
+    c => placeFremenWorms(c, [], rng))
+
+  check('their own worm eats the Harkonnen',
+    done.devouredByFremen[0].forcesKilled.map(f => f.faction), ['harkonnen'])
+  check('...and spares them', done.devouredByFremen[0].forcesSpared.map(f => f.faction), ['fremen'])
+  check('...and clears the spice they were sitting on', done.spiceOnBoard[ERG], undefined)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

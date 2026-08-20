@@ -1262,7 +1262,9 @@ function windSymbol(x0, y, ink = DECOR.ink) {
  * strip that keeps this build re-readable.
  */
 function loadIcon(file) {
-  const src = readFileSync(join(root, 'public', file), 'utf8')
+  // public/icons/, not public/ — the icons were gathered into their own folder
+  // and this line is the only thing that knew where they used to be.
+  const src = readFileSync(join(root, 'public', 'icons', file), 'utf8')
   const g = src.match(/transform="translate\(([-\d.]+),([-\d.]+)\) scale\(([-\d.]+),([-\d.]+)\)"/)
   if (!g) throw new Error(`${file}: no potrace transform — is it a real traced SVG?`)
   const paths = [...src.matchAll(/<path d="([^"]+)"/g)].map(m => m[1]).filter(d => d.trim())
@@ -1292,10 +1294,51 @@ function iconSymbol(icon, x, y, size, ink, rot = 0, weight = 0) {
   return icon.paths.map(d => `<path d="${d}" fill="${ink}"${pen} transform="${tf}"/>`).join('')
 }
 
-const ICON_HAND = loadIcon('8iYuG01.svg')
+/**
+ * Load a plain viewBox icon — paths in their own coordinate space, no potrace
+ * transform.
+ *
+ * Separate from loadIcon rather than folded into it: a traced SVG carries its
+ * own translate/scale and is sized from that, while a download from an icon
+ * library carries a viewBox and nothing else. One loader trying to serve both
+ * has to guess which it is holding, and guesses wrong silently — the icon simply
+ * lands somewhere unexpected at some unexpected size.
+ */
+function loadPlainIcon(file) {
+  const src = readFileSync(join(root, 'public', 'icons', file), 'utf8')
+  const vb = src.match(/viewBox="([-\d.]+)[,\s]+([-\d.]+)[,\s]+([-\d.]+)[,\s]+([-\d.]+)"/)
+  if (!vb) throw new Error(`${file}: no viewBox — a plain icon cannot be sized without one`)
+  const paths = [...src.matchAll(/<path d="([^"]+)"/g)].map(m => m[1]).filter(d => d.trim())
+  if (!paths.length) throw new Error(`${file}: no path data — the download is a stub`)
+  const [, minX, minY, w, h] = vb.map(Number)
+  return { paths, minX, minY, w, h }
+}
+
+/** Place a plain icon centred on (x,y), its longer side scaled to `size`. */
+function plainIconSymbol(icon, x, y, size, ink, rot = 0) {
+  const k = size / Math.max(icon.w, icon.h)
+  const tf = `translate(${round(x)} ${round(y)}) rotate(${rot}) scale(${round(k, 4)}) `
+    + `translate(${round(-icon.minX - icon.w / 2)} ${round(-icon.minY - icon.h / 2)})`
+  return icon.paths.map(d => `<path d="${d}" fill="${ink}" transform="${tf}"/>`).join('')
+}
+
+const ICON_HAND = loadIcon('hand.svg')
 const ICON_TROOPS = loadIcon('TroopsSVG.svg')
 const ICON_BATTLE = loadIcon('Battle.svg')
 const ICON_MENTAT = loadIcon('Mentat.svg')
+const ICON_DRAGONFLY = loadPlainIcon('dragonfly-svgrepo-com.svg')
+
+/**
+ * The ornithopter mark: a dragonfly, for the two cities that hold them.
+ *
+ * Solid black by request, which is a deliberate departure — every other mark in
+ * a stronghold box is drawn in the pale stronghold ink. Against the box's dark
+ * red that is a quiet mark rather than a loud one; swap the ink here if it wants
+ * to carry further.
+ */
+function ornithopterSymbol(x, y, size = 20) {
+  return plainIconSymbol(ICON_DRAGONFLY, x, y, size, '#000000')
+}
 
 /** The supplied hand icon, placed. */
 function openHandSymbol(x, y, ink = DECOR.ink, rot = 0) {
@@ -1439,6 +1482,7 @@ labels.push(`<text x="${round(moonX - moonTrack / 2)}" y="${round(moonY)}" `
 // A city for the two that hold ornithopters, a town for the three sietches, and
 // a spice symbol for each point of income — which is where the 2 / 2 / 1 comes
 // from, so the icons cannot disagree with the data.
+/** @deprecated superseded by the dragonfly; kept so the skyline can be compared. */
 function citySilhouette(x, y, fill) {
   return `<path d="M${round(x-11)} ${round(y+6)} v-7 h4 v-4 h4 v-5 h5 v9 h4 v-6 h5 v13 z" `
     + `fill="${fill}" opacity="0.9"/>`
@@ -1457,7 +1501,10 @@ for (const t of territories) {
   const ink = DECOR.stronghold.text
   const [x, y] = p.at
   const iconY = y - p.size * (p.lines.length * 0.6 + 0.9)
-  labels.push(d.ornithopters ? citySilhouette(x, iconY, ink) : townSilhouette(x, iconY, ink))
+  // The dragonfly IS the ornithopter mark, and only these two hold ornithopters,
+  // so it replaces the skyline rather than crowding in beside it. The three
+  // sietches keep their town.
+  labels.push(d.ornithopters ? ornithopterSymbol(x, iconY) : townSilhouette(x, iconY, ink))
   const n = d.spiceIncome ?? 0
   for (let i = 0; i < n; i++) {
     labels.push(spiceDot(x + (i - (n - 1) / 2) * 8, y + p.size * (p.lines.length * 0.6 + 0.7), ink))
