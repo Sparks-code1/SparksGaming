@@ -64,7 +64,7 @@ const DECOR = {
   sand: { fill: '#f0e2bb', borders: 1 },
   rock: { fill: '#c9905f', borders: 2 },
   'polar-sink': { fill: '#f8f6ee', borders: 1 },
-  stronghold: { fill: '#93373a', borders: 3, text: '#f6ead4' },
+  stronghold: { fill: '#93373a', borders: 3, text: '#000000' },
   badge: { fill: '#f6ecd2', ring: '#3f2c1a', text: '#3f2c1a' },
   board: '#111a30',          // the navy the printed board is mounted on
   ringBand: '#efe4c4',
@@ -1231,6 +1231,18 @@ function spiceSpiral(x, y, scale = 1, width = 1.4, ink = DECOR.ink) {
     + `stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round"/>`
 }
 
+/**
+  * A small spice token, for the income a stronghold pays.
+  *
+  * The same disc-and-spiral as the board's blow markers, just smaller — a plain
+  * dot said "two of something", and in the advanced game these are literally
+  * spice, so they should look like the spice everywhere else does.
+  */
+function spiceToken(x, y, r = 5.6) {
+  return `<circle cx="${round(x)}" cy="${round(y)}" r="${r}" fill="${DECOR.badge.fill}" `
+    + `stroke="${DECOR.ink}" stroke-width="1"/>` + spiceSpiral(x, y, r / 10.5, 0.9)
+}
+
 /** The spice mark, the same disc-and-spiral used on the board's blow markers. */
 function spiceSymbol(x, y) {
   return `<circle cx="${round(x)}" cy="${round(y)}" r="10.5" fill="${DECOR.badge.fill}" `
@@ -1482,7 +1494,8 @@ labels.push(`<text x="${round(moonX - moonTrack / 2)}" y="${round(moonY)}" `
 // A city for the two that hold ornithopters, a town for the three sietches, and
 // a spice symbol for each point of income — which is where the 2 / 2 / 1 comes
 // from, so the icons cannot disagree with the data.
-/** @deprecated superseded by the dragonfly; kept so the skyline can be compared. */
+/** The two ornithopter cities. Drawn above the name; the dragonfly sits below
+  *  it, beside the spice, so the box reads city / name / what it gives you. */
 function citySilhouette(x, y, fill) {
   return `<path d="M${round(x-11)} ${round(y+6)} v-7 h4 v-4 h4 v-5 h5 v9 h4 v-6 h5 v13 z" `
     + `fill="${fill}" opacity="0.9"/>`
@@ -1491,23 +1504,35 @@ function townSilhouette(x, y, fill) {
   return `<path d="M${round(x-9)} ${round(y+5)} v-6 l4-4 l4 4 h3 v-3 l3-2 l3 2 v9 z" `
     + `fill="${fill}" opacity="0.9"/>`
 }
-function spiceDot(x, y, fill) {
-  return `<circle cx="${round(x)}" cy="${round(y)}" r="2.6" fill="${fill}" opacity="0.9"/>`
-}
 for (const t of territories) {
   const d = dataFor(t)
   if (!d.stronghold) continue
   const p = anchorOf.get(t)
   const ink = DECOR.stronghold.text
   const [x, y] = p.at
+  // Above the name: what the place IS. A city for the two that hold
+  // ornithopters, a town for the three sietches.
   const iconY = y - p.size * (p.lines.length * 0.6 + 0.9)
-  // The dragonfly IS the ornithopter mark, and only these two hold ornithopters,
-  // so it replaces the skyline rather than crowding in beside it. The three
-  // sietches keep their town.
-  labels.push(d.ornithopters ? ornithopterSymbol(x, iconY) : townSilhouette(x, iconY, ink))
-  const n = d.spiceIncome ?? 0
-  for (let i = 0; i < n; i++) {
-    labels.push(spiceDot(x + (i - (n - 1) / 2) * 8, y + p.size * (p.lines.length * 0.6 + 0.7), ink))
+  labels.push(d.ornithopters ? citySilhouette(x, iconY, ink) : townSilhouette(x, iconY, ink))
+
+  // Below the name: what it GIVES you — a spice token per point of income, and
+  // the dragonfly for the two that lend ornithopters, laid out as one centred
+  // row so the marks stay side by side however many there are. Widths are per
+  // item rather than a fixed step: the dragonfly is wider than a token, and a
+  // fixed step either crowds it or leaves a gap beside the spice.
+  const belowY = y + p.size * (p.lines.length * 0.6 + 1.05)
+  const row = []
+  for (let i = 0; i < (d.spiceIncome ?? 0); i++) {
+    row.push({ w: 12, at: cx => spiceToken(cx, belowY) })
+  }
+  if (d.ornithopters) row.push({ w: 19, at: cx => ornithopterSymbol(cx, belowY, 18) })
+
+  const gap = 3
+  const width = row.reduce((sum, it) => sum + it.w, 0) + gap * Math.max(0, row.length - 1)
+  let cursor = x - width / 2
+  for (const it of row) {
+    labels.push(it.at(cursor + it.w / 2))
+    cursor += it.w + gap
   }
 }
 
