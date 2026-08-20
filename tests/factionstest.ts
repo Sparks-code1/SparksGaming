@@ -16,14 +16,13 @@ const written = Object.values(FACTIONS).filter(Boolean) as Faction[]
 // ── the roster ───────────────────────────────────────────────────────────────
 check('six factions in the game', FACTION_IDS.length, 6)
 check('ids are unique', new Set(FACTION_IDS).size, 6)
-check('four written so far', written.length, 4)
+check('all six written', written.length, 6)
 check('every written faction is one of the six',
   written.every(f => FACTION_IDS.includes(f.id)), true)
 check('the key agrees with the id inside',
   Object.entries(FACTIONS).every(([k, f]) => f?.id === k), true)
-check('an unwritten faction reads as absent, not as an empty faction',
-  factionById('harkonnen'), null)
-check('...and a written one comes back', factionById('fremen')?.name, 'Fremen')
+check('every faction comes back by id',
+  FACTION_IDS.map(id => factionById(id)?.id ?? null), [...FACTION_IDS])
 
 // ── whatever is written must be complete ─────────────────────────────────────
 // Applies to the four still to come without needing a line each.
@@ -86,8 +85,14 @@ check('the Fremen distribute rather than start in one place',
 check('the Fremen have three Fedaykin', FREMEN.forces.starred, 3)
 check('only the Fremen and the Guild have a special victory',
   written.filter(x => x.specialVictory).map(x => x.id).sort(), ['fremen', 'spacing-guild'])
-check('the Guild starts five on planet of twenty',
-  [SPACING_GUILD.forces.onPlanet, SPACING_GUILD.forces.reserves], [5, 15])
+check('the Guild starts five on planet', SPACING_GUILD.forces.onPlanet, 5)
+
+// Dune is symmetric in forces: every faction fields the same number, split
+// differently. Asserted across all six rather than per faction, so the check
+// does not need the rulebook — only that they agree with each other.
+const totals = written.map(x => ({ id: x.id, total: x.forces.onPlanet + x.forces.reserves }))
+check('every faction fields the same number of forces',
+  totals.map(t => t.total), totals.map(() => 20))
 
 check('the Emperor starts entirely in reserve',
   [EMPEROR.forces.onPlanet, EMPEROR.forces.placement.kind], [0, 'reserve-only'])

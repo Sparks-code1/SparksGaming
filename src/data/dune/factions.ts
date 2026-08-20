@@ -208,12 +208,118 @@ export const SPACING_GUILD: Faction = {
   ],
 }
 
-/** Filled in as they are written. Two to go: Harkonnen and Bene Gesserit. */
+export const BENE_GESSERIT: Faction = {
+  id: 'bene-gesserit',
+  name: 'Bene Gesserit',
+  startingSpice: 5,
+    forces: {
+    onPlanet: 1,
+    placement: { kind: 'fixed', territoryId: 'territory-03' },   // Polar Sink
+    reserves: 15,
+    starred: 0,
+    },
+    freeRevivals: 1,
+    abilities: {
+      beforeGame:
+      'When selecting this faction you secretly predict when one other faction will win, choosing the turn number'
+      + 'and faction, this will remain a secret until game end. If your prediction is correct, your prediction'
+      + 'is revealed and you and your allies win the game and win alone, you cannot predict the spacing-guild'
+      + 'or Fremen will win with their special victory conditions',
+      shipment: 
+      'Whenever any other faction ships forces onto Dune from off-planet, you may ship 1 force for free from your'
+      + 'reserves into the Polar Sink. You may also ship normally, of course.',
+      battle: 
+      'You may Voice your opponent to do as you wish with respect to one of the cards they play in their battle'
+      + 'For instance, to play or not play a specific weapon (poison weapon, projectile weapon, or lasgun) or'
+      + 'defense (snooper or shield), a worthless card, or a cheap hero. If your opponent cannot comply with your'
+      + 'command, they may do as they wish'
+    },
+  alliance: 
+  'You may Voice an ally opponent',
+  advanced:{
+    beforeGame:
+    'After the fremen placement in the first turn (if that faction is in the game) you start with one peaceful'
+    + 'advisor in any territory of your choice. If you are alone in the territory flip the advisor turns into a fighter',
+    shipment: 
+    'Whenever any other faction ships forces to Dune from off-planet, you may ship for free one advisor from your'
+    + 'reserves into that same territory (instead of the Polar Sink)'
+    + 'When another faction ships or moves into a territory where you have fighters, you may flip them to advisors',
+    charity:
+    'You always receive CHOAM charity of 2 spice regardless of how many spice you already have',
+    advisors:
+      
+      'Advisors coexist peacefully with other faction forces in the same territory. Advisors have no effect'
+      + 'on the play of the other factions whatsoever and cannot collect spice, be involved in combat, prevent'
+      + 'another faction from challenging a stronghold (second force), use ornithopters, or play Family Atomics.'
+      + 'advisors are susceptible to storms, sandworms, lasgun/shield explosions, and atomics',
+    fighters:
+            'when you ship forces into an unoccupied territory, you must ship as fighters, If you move advisors'
+      + 'into an unoccupied territory they turn into fighters. If you move advisors into occupied territories'
+      + 'they remain as advisors or flip to fighters, fighters follow the same rules for battles',
+    battle: 
+    'On each turn after the Spice Blow and Nexus Phase and before any shipment occurs, in all territories in which you have'
+    + 'advisors and wish to battle, announce you are doing so and turn all those advisors to fighters'
+  },
+  leaders: [
+    { name: 'Mother Ramallo', strength: 5 },
+    { name: 'Wanna Yueh', strength: 5 },
+    { name: 'Margot Lady Fenring', strength: 5 },
+    { name: 'Princess Irulan', strength: 5 },
+    { name: 'Alia', strength: 5 },
+  ]
+}
+
+export const HARKONNEN: Faction = {
+  id: 'harkonnen',
+  name: 'Harkonnen',
+  startingSpice: 10,
+    forces: {
+    onPlanet: 1,
+    placement: { kind: 'fixed', territoryId: 'territory-26' },   // Carthag
+    reserves: 10,
+    starred: 0,
+    },
+    freeRevivals: 2,
+    abilities: {
+      traitors:
+      'At the start of the game when you draw 4 Traitor Cards, you keep them all including your own and,'
+      + 'any leader cards of other factions can be revealed in a battle as a traitor',
+      treachery:
+      'You may hold up to 8 Treachery Cards. When you have 8 cards you must pass during bidding. At the beginning of the game'
+      + 'you are dealt 2 cards instead of 1, and every time you buy a card you get an extra card for free from'
+      + 'the Treachery Deck (unless you are at 7 cards, because you can never have more than 8 in your hand'
+    },
+  alliance: 
+  'Traitor Cards that you hold may be used against your ally\'s opponent if you so choose',
+  advanced: {
+    capturedLeaders:
+    'Every time you win a battle, you can either randomly select 1 leader from the loser (including the leader'
+    + 'used in battle, if not killed, but excluding all leaders already used elsewhere that turn) and place'
+    + 'the Leader Disc face down into the Tleilaxu Tanks to gain 2 spice from the Spice Bank; or you can keep'
+    + 'the leader and use it once in a battle, after which, if it was not killed during that battle, after which'
+    + 'you must return that leader to its faction. When all of your own leaders have been killed, you must return'
+    + 'all captured leaders immediately to their factions. Killed leaders are put in the Tleilaxu Tanks from which their'
+    + 'factions can revive them (subject to revival rules). A captured leader used in battle may be claimed as a traitor',
+  },
+  leaders: [
+    { name: 'Feyd-Rautha', strength: 6 },
+    { name: 'Beast Rabban', strength: 4 },
+    { name: 'Piter De Vries', strength: 3 },
+    { name: 'Captain Iakin Nefud', strength: 2 },
+    { name: 'Umman Kudu', strength: 1 },
+  ],
+
+
+
+}
+/** All six. */
 export const FACTIONS: Partial<Record<FactionId, Faction>> = {
   atreides: ATREIDES,
   emperor: EMPEROR,
   fremen: FREMEN,
   'spacing-guild': SPACING_GUILD,
+  harkonnen: HARKONNEN,
+  'bene-gesserit': BENE_GESSERIT,
 }
 
 export const factionById = (id: FactionId): Faction | null => FACTIONS[id] ?? null

@@ -65,6 +65,9 @@ export interface StartingForces {
  * says so more plainly than an empty string.
  */
 export interface FactionAbilities {
+  /** Applies before play begins — a prediction made at faction selection, or a
+   *  placement that happens during setup rather than in a phase. */
+  beforeGame?: string
   storm?: string
   spiceBlow?: string
   /** Shai-Hulud specifically, which is part of the spice blow but reads as its
@@ -77,6 +80,10 @@ export interface FactionAbilities {
   movement?: string
   battle?: string
   spiceCollection?: string
+  /** Powers over the traitor deck, which is dealt outside the phase sequence. */
+  traitors?: string
+  /** Powers over the treachery deck and hand limits, distinct from bidding. */
+  treachery?: string
 }
 
 /**
@@ -92,6 +99,11 @@ export interface AdvancedRules extends FactionAbilities {
   general?: string
   /** Rules about the forces themselves, such as what an elite force is worth. */
   forces?: string
+  /** Bene Gesserit forces have two modes; each needs its own rules text. */
+  advisors?: string
+  fighters?: string
+  /** Harkonnen keep or sell the leaders they defeat. */
+  capturedLeaders?: string
 }
 
 export interface Faction {
