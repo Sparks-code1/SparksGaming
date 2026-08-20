@@ -52,13 +52,18 @@ export function LeaderDisc({
   const look = FACTION_LOOK[faction]
   const portrait = LEADER_PORTRAITS[leader.name]
 
-  // The band across the bottom, and the badge at its right end.
+  // The band across the bottom, and the strength at the right EDGE — hard
+  // against the rim, halfway up, rather than sharing the band with the name.
+  //
+  // 0.70 + 0.235 puts its outer edge at 0.935r, which is exactly where the rim's
+  // inner edge falls: the badge touches the rim without crossing it, so the disc
+  // stays a clean circle. Both numbers move together or it will overlap.
   const bandTop = r * 0.40
-  const badge = { cx: r * 0.58, cy: r * 0.60, r: r * 0.235 }
-  // The name gets what the badge does not: shifted left by half the badge, and
-  // shrunk once it runs long. Crude on purpose — a real fit needs text metrics,
-  // and this is a disc, not a paragraph.
-  const nameSize = r * (leader.name.length > 12 ? 0.145 : leader.name.length > 8 ? 0.17 : 0.2)
+  const badge = { cx: r * 0.70, cy: 0, r: r * 0.235 }
+  // With the badge out of the band the name has the whole width and is simply
+  // centred. It still shrinks once it runs long — crude on purpose, since a real
+  // fit needs text metrics and this is a disc, not a paragraph.
+  const nameSize = r * (leader.name.length > 12 ? 0.155 : leader.name.length > 8 ? 0.185 : 0.21)
 
   return (
     <g>
@@ -89,13 +94,15 @@ export function LeaderDisc({
       </g>
 
       <text
-        x={-badge.r * 0.9} y={r * 0.62}
+        x={0} y={r * 0.62}
         fontSize={nameSize} fill={PALE} textAnchor="middle" dominantBaseline="central"
         fontFamily="Georgia, 'Times New Roman', serif" letterSpacing={r * 0.006}
       >{leader.name.toUpperCase()}</text>
 
-      {/* Strength, at the right. Cream disc with the faction colour in it, so it
-          reads as a token in its own right rather than as part of the name. */}
+      {/* Strength, at the right edge. Cream disc with the faction colour in it,
+          so it reads as a token in its own right rather than as part of the name.
+          A faint dark ring under it keeps it off the portrait behind. */}
+      <circle cx={badge.cx} cy={badge.cy} r={badge.r + r * 0.022} fill="#00000055" />
       <circle cx={badge.cx} cy={badge.cy} r={badge.r} fill={PALE}
         stroke={look.colour} strokeWidth={r * 0.03} />
       <text
@@ -119,7 +126,11 @@ export function LeaderDisc({
 //   Harkonnen     four of five by name, plus Captain_IakinNefud.png, which is a
 //                 HARKONNEN leader despite sitting between two Emperor ones in
 //                 the folder listing. Baron.png is not a leader in the data at
-//                 all — the Baron has no disc in Dune.
+//                 all — the Baron has no disc in Dune. Kept anyway: at faction
+//                 SELECTION the plan is to show a faction's leaders, and the
+//                 Baron is the face of the Harkonnen even without a disc. That
+//                 screen does not exist yet — this note is so the file is not
+//                 mistaken for dead weight and deleted before it does.
 //   Emperor       four of five. Bashar (strength 2) has no portrait.
 //   Atreides      none of the five.
 //   Spacing Guild none.
