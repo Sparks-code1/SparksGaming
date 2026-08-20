@@ -1,24 +1,25 @@
 /**
  * A leader disc: portrait, faction colour, name, battle strength.
  *
- * The counter a player commits to a battle. Four things have to be readable at
- * once and they compete for the same round space, so the layout is deliberate
- * rather than incidental:
+ * Laid out as a medallion rather than a card. The portrait has its own circle
+ * inside the disc, sat high; the name curves along the gap beneath it; the
+ * strength is a bare numeral on the portrait's right edge. No band, no badge —
+ * the faction colour is the ground everything else sits on.
  *
- *   The portraits are opaque rectangles with no alpha, so they cannot simply sit
- *   on a coloured disc — they would cover it completely. They are clipped to the
- *   circle instead, and the faction colour lives in the rim and the name band,
- *   which is where a printed counter puts it too.
+ * Three things about it are load-bearing:
  *
- *   They are cropped to FILL rather than fitted, anchored to the TOP. A portrait
- *   fitted into a circle leaves wedges of dead space at the sides; cropped and
- *   centred it cuts the head off, because faces sit high in a portrait. Anchored
- *   top, the crop takes it off the bottom, which is where the name band goes
- *   anyway.
+ *   The portrait circle is OFF CENTRE, pushed up by a tenth of the radius. A
+ *   circle centred in a circle leaves an even ring, and an even ring has no room
+ *   at the bottom for a name. Everything the name gets comes from that shift.
  *
- *   The name band is opaque, not a translucent scrim. These portraits are dark
- *   and uneven, and cream text over an unknown image is a gamble; over a flat
- *   faction colour it is not.
+ *   The name is set on an arc struck from the PORTRAIT's centre, not the disc's,
+ *   so it stays parallel to the edge it hangs under. Text-anchor middle at
+ *   startOffset 50% centres it on that arc whatever its length, which is what
+ *   keeps a five-letter name and a thirteen-letter one both centred.
+ *
+ *   The strength has a dark halo behind it rather than a badge. It sits half on
+ *   the portrait and half on the faction colour, so it has to survive both, and
+ *   a stroke drawn behind the glyph does that without putting a shape around it.
  *
  * Sizes are all fractions of the radius, so one number scales the whole disc.
  */
@@ -66,7 +67,7 @@ export interface Portrait {
  * at the other end and needs no knob here at all.
  */
 export const LEADER_PORTRAITS: Record<string, Portrait> = {
-  Stilgar: { src: '/dune-leaders/Stilgar.png', w: 400, h: 500, zoom: 0.82, focusY: 0.44 },
+  Stilgar: { src: '/dune-leaders/Stilgar.png', w: 400, h: 500, focusY: 0.40 },
   Chani: { src: '/dune-leaders/Chani.png', w: 400, h: 400 },
   Otheym: { src: '/dune-leaders/Otheym.png', w: 400, h: 400 },
   'Shadout Mapes': { src: '/dune-leaders/Shadout_mapes.png', w: 400, h: 400 },
@@ -78,55 +79,56 @@ export function LeaderDisc({
 }: { leader: Leader; faction: FactionId; r?: number }) {
   const id = useId()
   const clip = `leader-clip-${id}`
+  const arc = `leader-arc-${id}`
   const look = FACTION_LOOK[faction]
   const portrait = LEADER_PORTRAITS[leader.name]
 
-  // The band across the bottom, and the strength at the right EDGE — hard
-  // against the rim, halfway up, rather than sharing the band with the name.
-  //
-  // 0.70 + 0.235 puts its outer edge at 0.935r, which is exactly where the rim's
-  // inner edge falls: the badge touches the rim without crossing it, so the disc
-  // stays a clean circle. Both numbers move together or it will overlap.
-  // Pulled down from 0.40: the band was taking nearly a third of the disc and
-  // every bit of it came off the bottom of the picture.
-  const bandTop = r * 0.48
-  const badge = { cx: r * 0.70, cy: 0, r: r * 0.235 }
-  // With the badge out of the band the name has the whole width and is simply
-  // centred. It still shrinks once it runs long — crude on purpose, since a real
-  // fit needs text metrics and this is a disc, not a paragraph.
-  const nameSize = r * (leader.name.length > 12 ? 0.155 : leader.name.length > 8 ? 0.185 : 0.21)
+  // The portrait's own circle: a shade over three quarters of the disc across,
+  // lifted so the space it leaves is all at the bottom where the name goes.
+  const pr = r * 0.78
+  const pcy = -r * 0.12
+
+  // The name's baseline, struck from the portrait's centre so it runs parallel
+  // to the portrait's edge. 20 degrees off horizontal at each end keeps the
+  // first and last letters clear of the rim.
+  const tr = pr + r * 0.15
+  const end = (deg: number) => {
+    const a = (deg * Math.PI) / 180
+    return `${(tr * Math.cos(a)).toFixed(2)} ${(pcy + tr * Math.sin(a)).toFixed(2)}`
+  }
+  // Sweep 0 takes the long way round the bottom, which is what puts the letters
+  // upright; sweep 1 runs them over the top and upside down.
+  const namePath = `M ${end(160)} A ${tr.toFixed(2)} ${tr.toFixed(2)} 0 0 0 ${end(20)}`
+  const nameSize = r * (leader.name.length > 12 ? 0.135 : leader.name.length > 8 ? 0.15 : 0.17)
 
   return (
     <g>
       <title>{`${leader.name} — strength ${leader.strength}`}</title>
       <defs>
         <clipPath id={clip}>
-          <circle cx="0" cy="0" r={r} />
+          <circle cx="0" cy={pcy} r={pr} />
         </clipPath>
+        <path id={arc} d={namePath} fill="none" />
       </defs>
 
-      {/* Faction colour underneath, so any gap in the portrait reads as the
-          faction rather than as a hole. */}
+      {/* The faction colour is the whole ground. */}
       <circle cx="0" cy="0" r={r} fill={look.colour} />
 
       {portrait && (() => {
         // Placed by hand rather than by preserveAspectRatio, which only offers
-        // nine fixed alignments — none of which is "put the face here".
-        //
-        // The picture is centred on the visible WINDOW, not on the disc: the
-        // band hides everything below bandTop, so centring on the disc pushes
-        // the subject down behind it.
+        // nine fixed alignments and none of them is "put the face here". zoom is
+        // measured against the PORTRAIT circle now, not the disc, so zoom 1 fills
+        // that circle exactly and a square source needs no adjustment at all.
         const zoom = portrait.zoom ?? 1
         const focusX = portrait.focusX ?? 0.5
-        const focusY = portrait.focusY ?? 0.42
-        const scale = (2 * r * zoom) / Math.min(portrait.w, portrait.h)
+        const focusY = portrait.focusY ?? 0.45
+        const scale = (2 * pr * zoom) / Math.min(portrait.w, portrait.h)
         const dw = portrait.w * scale
         const dh = portrait.h * scale
-        const windowMid = (-r + bandTop) / 2
         return (
           <image
             href={portrait.src}
-            x={-focusX * dw} y={windowMid - focusY * dh}
+            x={-focusX * dw} y={pcy - focusY * dh}
             width={dw} height={dh}
             preserveAspectRatio="none"
             clipPath={`url(#${clip})`}
@@ -134,31 +136,27 @@ export function LeaderDisc({
         )
       })()}
 
-      {/* The name band, clipped to the disc so it takes the circle's own edge. */}
-      <g clipPath={`url(#${clip})`}>
-        <rect x={-r} y={bandTop} width={r * 2} height={r - bandTop + 1} fill={look.colour} />
-        <rect x={-r} y={bandTop} width={r * 2} height={r * 0.03} fill={PALE} opacity="0.35" />
-      </g>
-
+      {/* The name, hanging under the portrait. */}
       <text
-        x={0} y={r * 0.62}
-        fontSize={nameSize} fill={PALE} textAnchor="middle" dominantBaseline="central"
-        fontFamily="Georgia, 'Times New Roman', serif" letterSpacing={r * 0.006}
-      >{leader.name.toUpperCase()}</text>
+        fontSize={nameSize} fill={PALE}
+        fontFamily="Georgia, 'Times New Roman', serif" letterSpacing={r * 0.015}
+      >
+        <textPath href={`#${arc}`} startOffset="50%" textAnchor="middle">
+          {leader.name.toUpperCase()}
+        </textPath>
+      </text>
 
-      {/* Strength, at the right edge. Cream disc with the faction colour in it,
-          so it reads as a token in its own right rather than as part of the name.
-          A faint dark ring under it keeps it off the portrait behind. */}
-      <circle cx={badge.cx} cy={badge.cy} r={badge.r + r * 0.022} fill="#00000055" />
-      <circle cx={badge.cx} cy={badge.cy} r={badge.r} fill={PALE}
-        stroke={look.colour} strokeWidth={r * 0.03} />
+      {/* Strength: bare, bold, on the portrait's right edge. paint-order puts
+          the dark stroke BEHIND the glyph, so it reads as a halo rather than as
+          an outline around the number. */}
       <text
-        x={badge.cx} y={badge.cy}
-        fontSize={r * 0.32} fill={look.colour} textAnchor="middle" dominantBaseline="central"
+        x={pr * 0.99} y={pcy}
+        fontSize={r * 0.38} fill={PALE} textAnchor="middle" dominantBaseline="central"
         fontFamily="Georgia, 'Times New Roman', serif" fontWeight="bold"
+        paintOrder="stroke" stroke="#00000099" strokeWidth={r * 0.055} strokeLinejoin="round"
       >{leader.strength}</text>
 
-      {/* The rim last, so it sits over the portrait and the band alike. */}
+      {/* The rim last, over everything. */}
       <circle cx="0" cy="0" r={r - r * 0.02} fill="none" stroke={PALE} strokeWidth={r * 0.045} />
     </g>
   )
