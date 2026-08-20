@@ -91,14 +91,21 @@ export function LeaderDisc({
   // The name's baseline, struck from the portrait's centre so it runs parallel
   // to the portrait's edge. 20 degrees off horizontal at each end keeps the
   // first and last letters clear of the rim.
-  const tr = pr + r * 0.15
+  // Dropped from 0.15 to 0.21 to sit the name lower in the gap.
+  //
+  // What limits this is NOT the bottom of the arc but its ENDS. The arc is
+  // struck from the portrait centre, which is above the disc centre, so its
+  // lowest point is the closest to the middle and its sides swing outward: at
+  // this radius the arc would leave the disc entirely if it ran to horizontal.
+  // Hence the ends stop at 38 rather than 20 degrees.
+  const tr = pr + r * 0.21
   const end = (deg: number) => {
     const a = (deg * Math.PI) / 180
     return `${(tr * Math.cos(a)).toFixed(2)} ${(pcy + tr * Math.sin(a)).toFixed(2)}`
   }
   // Sweep 0 takes the long way round the bottom, which is what puts the letters
   // upright; sweep 1 runs them over the top and upside down.
-  const namePath = `M ${end(160)} A ${tr.toFixed(2)} ${tr.toFixed(2)} 0 0 0 ${end(20)}`
+  const namePath = `M ${end(142)} A ${tr.toFixed(2)} ${tr.toFixed(2)} 0 0 0 ${end(38)}`
   const nameSize = r * (leader.name.length > 12 ? 0.135 : leader.name.length > 8 ? 0.15 : 0.17)
 
   return (
