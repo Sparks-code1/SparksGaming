@@ -1249,18 +1249,44 @@ function spiceSymbol(x, y) {
     + `stroke="${DECOR.ink}" stroke-width="1.4"/>` + spiceSpiral(x, y)
 }
 
+/**
+ * How far a phase mark may reach DOWNWARD from its track stop before it runs
+ * off the sand and becomes navy ink on the navy board.
+ *
+ * Measured off the rendered board rather than derived, because the obvious
+ * number is wrong: the medallion ring is r=18.5, but the sand band beneath only
+ * reaches about 11.5 below the stop, so the ring's own bottom arc is already
+ * invisible. Sizing a symbol to the ring loses the bottom of it. There is
+ * plenty of room upward — roughly 30 — so marks here hang high on purpose.
+ */
+const PHASE_MARK_DROP = 11
+
 /** Wind: three streams with curled tails, for the storm phase. */
-function windSymbol(x0, y, ink = DECOR.ink) {
+function windSymbol(x0, y0, ink = DECOR.ink) {
   // The strokes run from x-12 rightward and the longest tail reaches about x+9,
   // so the glyph's own centre is a shade LEFT of the coordinate it is given.
   // Nudge right to sit centred in the circle — an earlier version pushed it the
   // wrong way and made the lean worse.
   const x = x0 + 1.5
+  const y = y0
   const line = (dy, len, r) =>
     `M${round(x - 12)} ${round(y + dy)} h${len} a${r} ${r} 0 1 0 ${round(-r * 0.8)} ${round(-r)}`
-  return [[-8.5, 13, 3.6], [0, 17, 4.2], [8.5, 10, 3.2]]
+  // Spacing and curl size are ONE decision, not two. What reads as clutter is
+  // the gap between a stream and the curl of the stream above it, and the curl
+  // closes that gap from the other side — so widening the spread while leaving
+  // the curls alone buys much less air than it looks like it should. Both moved:
+  // the clear gap under the top stream goes 2.6 -> 4.6, and under the middle
+  // 3.6 -> 5.5.
+  //
+  // The bottom stream sits at +10 and not a unit lower, for a reason that is
+  // invisible in the source: see PHASE_MARK_DROP. An earlier attempt at this
+  // spread the streams to ±10.5 AND pushed the glyph down 1.6 to centre it,
+  // which put the bottom stream at +12.1 — off the sand, navy ink on navy
+  // board, silently gone. The glyph is deliberately NOT centred in the ring:
+  // it hangs high because that is where the sand is.
+  return [[-10, 13, 3.2], [0, 17, 3.8], [10, 10, 2.9]]
     .map(([dy, len, r]) => `<path d="${line(dy, len, r)}" fill="none" stroke="${ink}" `
-      + `stroke-width="1.7" stroke-linecap="round"/>`)
+      + `stroke-width="1.6" stroke-linecap="round"/>`)
     .join('')
 }
 
