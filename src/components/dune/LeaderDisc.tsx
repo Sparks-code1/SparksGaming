@@ -29,19 +29,48 @@ import { FACTION_LOOK } from './SeatLayer'
 
 const PALE = '#f0e2bb'
 
+export interface Portrait {
+  src: string
+  /**
+   * Natural size. Held here rather than measured at render time so the crop is
+   * arithmetic instead of a layout that settles after the image loads.
+   */
+  w: number
+  h: number
+  /**
+   * How much of the disc the image's shorter side covers.
+   *
+   * 1 fills the disc edge to edge and crops whatever does not fit. Below 1 the
+   * whole picture gets closer to fitting and the faction colour shows at the
+   * sides, like a cameo. A tall portrait cannot do both: 400x500 in a circle
+   * with a name band across the bottom shows about 56% of its height at zoom 1,
+   * which is what cut Stilgar's chin.
+   */
+  zoom?: number
+  /** Which point of the picture, 0..1, sits at the middle of the visible area.
+   *  focusY below 0.5 shows more of the top; above, more of the bottom. */
+  focusX?: number
+  focusY?: number
+}
+
 /**
- * Which portrait belongs to which leader.
+ * Which portrait belongs to which leader, and how it is framed.
  *
  * Keyed by the leader's name exactly as factions.ts writes it, so a rename there
  * shows up here as a missing portrait rather than as the wrong face. Only the
  * Fremen are complete so far; see the notes at the foot of this file.
+ *
+ * The framing is per leader on purpose. These are photographs of different
+ * people at different distances, and one rule for all of them will always be
+ * wrong for some — the alternative is cropping the source files, which fixes it
+ * at the other end and needs no knob here at all.
  */
-export const LEADER_PORTRAITS: Record<string, string> = {
-  Stilgar: '/dune-leaders/Stilgar.png',
-  Chani: '/dune-leaders/Chani.png',
-  Otheym: '/dune-leaders/Otheym.png',
-  'Shadout Mapes': '/dune-leaders/Shadout_mapes.png',
-  Jamis: '/dune-leaders/Jamis.png',
+export const LEADER_PORTRAITS: Record<string, Portrait> = {
+  Stilgar: { src: '/dune-leaders/Stilgar.png', w: 400, h: 500, zoom: 0.82, focusY: 0.44 },
+  Chani: { src: '/dune-leaders/Chani.png', w: 400, h: 400 },
+  Otheym: { src: '/dune-leaders/Otheym.png', w: 400, h: 400 },
+  'Shadout Mapes': { src: '/dune-leaders/Shadout_mapes.png', w: 400, h: 400 },
+  Jamis: { src: '/dune-leaders/Jamis.png', w: 400, h: 400 },
 }
 
 export function LeaderDisc({
@@ -58,7 +87,9 @@ export function LeaderDisc({
   // 0.70 + 0.235 puts its outer edge at 0.935r, which is exactly where the rim's
   // inner edge falls: the badge touches the rim without crossing it, so the disc
   // stays a clean circle. Both numbers move together or it will overlap.
-  const bandTop = r * 0.40
+  // Pulled down from 0.40: the band was taking nearly a third of the disc and
+  // every bit of it came off the bottom of the picture.
+  const bandTop = r * 0.48
   const badge = { cx: r * 0.70, cy: 0, r: r * 0.235 }
   // With the badge out of the band the name has the whole width and is simply
   // centred. It still shrinks once it runs long — crude on purpose, since a real
@@ -78,14 +109,30 @@ export function LeaderDisc({
           faction rather than as a hole. */}
       <circle cx="0" cy="0" r={r} fill={look.colour} />
 
-      {portrait && (
-        <image
-          href={portrait}
-          x={-r} y={-r} width={r * 2} height={r * 2}
-          preserveAspectRatio="xMidYMin slice"
-          clipPath={`url(#${clip})`}
-        />
-      )}
+      {portrait && (() => {
+        // Placed by hand rather than by preserveAspectRatio, which only offers
+        // nine fixed alignments — none of which is "put the face here".
+        //
+        // The picture is centred on the visible WINDOW, not on the disc: the
+        // band hides everything below bandTop, so centring on the disc pushes
+        // the subject down behind it.
+        const zoom = portrait.zoom ?? 1
+        const focusX = portrait.focusX ?? 0.5
+        const focusY = portrait.focusY ?? 0.42
+        const scale = (2 * r * zoom) / Math.min(portrait.w, portrait.h)
+        const dw = portrait.w * scale
+        const dh = portrait.h * scale
+        const windowMid = (-r + bandTop) / 2
+        return (
+          <image
+            href={portrait.src}
+            x={-focusX * dw} y={windowMid - focusY * dh}
+            width={dw} height={dh}
+            preserveAspectRatio="none"
+            clipPath={`url(#${clip})`}
+          />
+        )
+      })()}
 
       {/* The name band, clipped to the disc so it takes the circle's own edge. */}
       <g clipPath={`url(#${clip})`}>
