@@ -19,6 +19,8 @@ import {
 } from '@/lib/dune/storm'
 import type { FactionId } from '@/types/Dune/Faction'
 import { SeatLayer, FACTION_LOOK } from './SeatLayer'
+import { LeaderDisc } from './LeaderDisc'
+import { FREMEN } from '@/data/dune/factions'
 
 import {
   buildSpiceDeck, shuffle, resolveSpiceBlow, applyBlowToBoard,
@@ -369,6 +371,17 @@ export default function DuneDevBoard() {
               onChange={e => setMode(e.target.checked ? 'advanced' : 'basic')} />
             {' '}advanced game
           </label>
+        </fieldset>
+
+<fieldset style={panel}>
+          <legend>Leader disc</legend>
+          {/* One, to look at. The rest follow once this one is right. */}
+          <svg viewBox="-70 -70 140 140" width="140" height="140" style={{ display: 'block' }}>
+            <LeaderDisc leader={FREMEN.leaders[0]} faction="fremen" />
+          </svg>
+          <p style={{ opacity: 0.6, margin: '6px 0 0', fontSize: 12 }}>
+            {FREMEN.leaders[0].name} · strength {FREMEN.leaders[0].strength} · Fremen
+          </p>
         </fieldset>
 
         <fieldset style={panel}>
