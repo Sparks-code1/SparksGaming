@@ -13,10 +13,13 @@
  *
  *   Rock is no shelter. The storm spares forces on rock and in strongholds;
  *   the worm does not care what they are standing on.
+ *
+ * The Fremen are the exception to both: Shai-Hulud does not devour them. That is
+ * an ordinary ability rather than an advanced one — it sits under `abilities` in
+ * the faction data, not under `advanced` — so it holds in both games.
  */
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
-import type { SectorId, TerritoryId } from '@/types/Dune/Game'
-import type { Occupied } from './storm'
+import type { Force, GameMode, SectorId, TerritoryId } from '@/types/Dune/Game'
 
 export type SpiceCard =
   | { kind: 'territory'; territoryId: TerritoryId; name: string; spice: number; sector: SectorId }
@@ -67,8 +70,11 @@ export function showing(discard: readonly SpiceCard[]): SpiceCard | null {
 
 export interface Devoured {
   territoryId: TerritoryId
-  /** Every force in the territory, in every sector of it. */
-  forcesKilled: Occupied[]
+  /** Every force in the territory, in every sector of it — Fremen excepted. */
+  forcesKilled: Force[]
+  /** Fremen stacks the worm passed over. Recorded rather than dropped, because
+   *  "the worm came and they lived" is a thing the table should see. */
+  forcesSpared: Force[]
   /** Spice removed, to the Spice Bank. */
   spiceRemoved: number
 }
@@ -76,7 +82,11 @@ export interface Devoured {
 export interface SpiceBlowInput {
   deck: readonly SpiceCard[]
   discard: readonly SpiceCard[]
-  forces: readonly Occupied[]
+  forces: readonly Force[]
+  mode: GameMode
+  /** Whether the Fremen are in this game at all. Their worm rules are theirs
+   *  alone, so with no Fremen seated the phase behaves as it always did. */
+  fremenInPlay?: boolean
   /** Spice already lying on the board, by territory. */
   spiceOnBoard: Readonly<Record<string, number>>
   /** Turn 1 ignores worms and shuffles them back afterwards. */
@@ -94,7 +104,15 @@ export interface SpiceBlowOutcome {
   /** Worms drawn and set aside on turn 1, shuffled back in at the end. */
   ignored: number
   /** Forces bound for the Tleilaxu Tanks, flattened for the caller. */
-  toTanks: Occupied[]
+  toTanks: Force[]
+  /**
+   * Worms the Fremen may place where they like, in the advanced game.
+   *
+   * Surfaced as a COUNT rather than resolved, because it is a player decision
+   * and this function decides nothing a player is entitled to decide. The first
+   * worm of a blow behaves normally; only the additional ones are theirs.
+   */
+  wormsForFremenToPlace: number
 }
 
 /**
@@ -107,6 +125,8 @@ export function resolveSpiceBlow(input: SpiceBlowInput): SpiceBlowOutcome {
   const deck = [...input.deck]
   const discard = [...input.discard]
   const devoured: Devoured[] = []
+  let wormsSeen = 0
+  let wormsToPlace = 0
   const setAside: SpiceCard[] = []
   let placed: SpiceBlowOutcome['placed'] = null
 
@@ -133,6 +153,7 @@ export function resolveSpiceBlow(input: SpiceBlowInput): SpiceBlowOutcome {
       continue
     }
 
+    wormsSeen++
     const top = showing(discard)
     if (!top) {
       // Turn 1 is required to place a territory card, so by the time a worm can
@@ -142,10 +163,23 @@ export function resolveSpiceBlow(input: SpiceBlowInput): SpiceBlowOutcome {
     }
     // A worm showing is legal: the second of two is discarded immediately and
     // eats nothing. Only a territory can be devoured.
+    // Advanced game: after the first worm of a blow, the Fremen place the rest
+    // themselves. Counted here and handed back unresolved.
+    const fremenPlacesIt =
+      input.mode === 'advanced' && input.fremenInPlay && wormsSeen > 1
+    if (fremenPlacesIt) {
+      wormsToPlace++
+      discard.push(card)
+      continue
+    }
+
     if (top.kind === 'territory') {
+      const inTerritory = input.forces.filter(f => f.territoryId === top.territoryId)
       devoured.push({
         territoryId: top.territoryId,
-        forcesKilled: input.forces.filter(f => f.territoryId === top.territoryId),
+        // Shai-Hulud does not devour the Fremen. Both games.
+        forcesKilled: inTerritory.filter(f => f.faction !== 'fremen'),
+        forcesSpared: inTerritory.filter(f => f.faction === 'fremen'),
         spiceRemoved: input.spiceOnBoard[top.territoryId] ?? 0,
       })
     }
@@ -164,5 +198,6 @@ export function resolveSpiceBlow(input: SpiceBlowInput): SpiceBlowOutcome {
     devoured,
     ignored: setAside.length,
     toTanks: devoured.flatMap(d => d.forcesKilled),
+    wormsForFremenToPlace: wormsToPlace,
   }
 }

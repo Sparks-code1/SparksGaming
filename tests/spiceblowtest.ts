@@ -5,7 +5,7 @@ import {
   buildSpiceDeck, resolveSpiceBlow, shuffle, showing, SHAI_HULUD_COUNT,
 } from '@/lib/dune/spiceBlow'
 import type { SpiceCard } from '@/lib/dune/spiceBlow'
-import type { SectorId, TerritoryId } from '@/types/Dune/Game'
+import type { Force, SectorId, TerritoryId } from '@/types/Dune/Game'
 
 let pass = true
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -17,9 +17,14 @@ const check = (label: string, actual: unknown, expected: unknown) => {
 const terr = (id: string, spice: number, sector: number): SpiceCard =>
   ({ kind: 'territory', territoryId: id as TerritoryId, name: id, spice, sector: `sector-${sector}` as SectorId })
 const worm: SpiceCard = { kind: 'shai-hulud' }
-const at = (t: string, s: number) => ({ territoryId: t as TerritoryId, sector: `sector-${s}` as SectorId })
+const at = (t: string, s: number, faction = 'harkonnen', count = 1): Force => ({
+  faction: faction as Force['faction'],
+  territoryId: t as TerritoryId,
+  sector: `sector-${s}` as SectorId,
+  count,
+})
 const rng = () => 0.5
-const base = { forces: [], spiceOnBoard: {}, firstTurn: false, rng }
+const base = { forces: [], spiceOnBoard: {}, firstTurn: false, rng, mode: 'basic' as const }
 
 // ── the deck as printed ──────────────────────────────────────────────────────
 const deck = buildSpiceDeck()
@@ -122,6 +127,53 @@ i = 0; const s1 = shuffle([1, 2, 3, 4, 5], seeded)
 i = 0; const s2 = shuffle([1, 2, 3, 4, 5], seeded)
 check('the same seed gives the same order', s1, s2)
 check('...and it is a permutation, not a resample', [...s1].sort(), [1, 2, 3, 4, 5])
+
+// ── the worm and the Fremen ─────────────────────────────
+// Shai-Hulud does not devour the Fremen. An ordinary ability, not an advanced
+// one, so it holds in BOTH games.
+for (const mode of ['basic', 'advanced'] as const) {
+  const out = resolveSpiceBlow({
+    ...base, mode,
+    deck: [worm, terr('b', 6, 5)],
+    discard: [terr('a', 8, 3)],
+    forces: [at('a', 3, 'fremen', 4), at('a', 3, 'harkonnen', 4)],
+    spiceOnBoard: { a: 8 },
+  })
+  check(mode + ': the worm eats the Harkonnen',
+    out.devoured[0].forcesKilled.map(f => f.faction), ['harkonnen'])
+  check(mode + ': and spares the Fremen',
+    out.devoured[0].forcesSpared.map(f => f.faction), ['fremen'])
+  check(mode + ': only the eaten go to the tanks',
+    out.toTanks.reduce((n, f) => n + f.count, 0), 4)
+}
+
+// ── additional worms belong to the Fremen, in the advanced game ────────
+// Surfaced as a count rather than resolved: where they go is a player decision,
+// and this function decides nothing a player is entitled to decide.
+{
+  const deck = [worm, worm, terr('c', 6, 7)]
+  const discard = [terr('a', 8, 3)]
+  const forces = [at('a', 3, 'harkonnen', 4)]
+
+  const basic = resolveSpiceBlow({ ...base, deck, discard, forces, spiceOnBoard: { a: 8 } })
+  check('basic: nothing is handed to the Fremen', basic.wormsForFremenToPlace, 0)
+
+  const adv = resolveSpiceBlow({
+    ...base, mode: 'advanced', fremenInPlay: true,
+    deck, discard, forces, spiceOnBoard: { a: 8 },
+  })
+  check('advanced: the first worm resolves normally',
+    adv.devoured.map(d => d.territoryId), ['a'])
+  check('...and the second is theirs to place', adv.wormsForFremenToPlace, 1)
+  check('...left unresolved, so it devoured nothing extra', adv.devoured.length, 1)
+
+  const noFremen = resolveSpiceBlow({
+    ...base, mode: 'advanced', fremenInPlay: false,
+    deck, discard, forces, spiceOnBoard: { a: 8 },
+  })
+  check('advanced with no Fremen seated: the phase behaves as it always did',
+    noFremen.wormsForFremenToPlace, 0)
+}
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 

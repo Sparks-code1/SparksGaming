@@ -324,51 +324,7 @@ export const FACTIONS: Partial<Record<FactionId, Faction>> = {
 
 export const factionById = (id: FactionId): Faction | null => FACTIONS[id] ?? null
 
-// ─── Territory ids: what the draft said, and what the board says ─────────────
-//
-// The comments named the right places; the ids beside them did not. Checked
-// against boardData rather than against the comments:
-//
-//   Sietch Tabr        draft territory-14  ->  territory-40
-//                      territory-14 is Rim Wall West, a real but different place
-//   Tuek's Sietch      draft territory-5   ->  territory-33
-//                      territory-5 is not an id at all — they are zero-padded,
-//                      and territory-05 is the Imperial Basin
-//   False Wall South   territory-17, correct, but the comment beside it named
-//   False Wall West    territory-10, correct, the other one; the pair was swapped
-//
-// The zero-padding is the trap worth remembering. 'territory-5' looks perfectly
-// reasonable and matches nothing, so it fails as a MISSING territory rather than
-// as a wrong one — the better failure, but only because the ids are checked at
-// all. 'territory-14' is the dangerous kind: a real id for the wrong place, and
-// nothing but the board can tell you so.
-//
-// ─── Changes made to the draft ────────────────────────────────────────────────
-//
-// SYNTAX, in the two new factions:
-//   object values ran on without commas, and several ability blocks held two
-//     adjacent string literals with no operator between them
-//   'shai-hulud:' is not a valid key unquoted            -> shaiHulud
-//   'strenght' throughout the Guild leaders               -> strength
-//   'spacing-guild:' unquoted in the FACTIONS map         -> quoted
-//   a stub `export const bene-gesserit: faction = {}`     -> removed. The id is
-//     not a valid identifier and `faction` is not a type; it joins FACTIONS when
-//     it is written, like the others
-//   `advanced` was a bare string on two factions and an object on two others; it
-//     is an object throughout now, with the prose ones under `general`
-//   Fremen was exported as `Fremen`                       -> FREMEN
-//
-// SPELLING, corrected because these strings are shown to players:
-//   forrces -> forces, inthe -> in the, NExus -> Nexus, tunr -> turn,
-//   'Tuek Sietch' -> "Tuek's Sietch", 'they pay for spice to you' -> 'they pay
-//   the spice to you', 'Shadout-Mapes' -> 'Shadout Mapes',
-//   'Guild rep' -> 'Guild Representative' (read as an abbreviation, not a name —
-//   worth a glance, since it is the one correction that invents a word)
-//
-// ORDER:
-//   Fremen leaders had Jamis (2) above Shadout Mapes (3); every other faction is
-//   descending by strength, so the two were swapped. Cosmetic only.
-//
+
 // ─── Ambiguous, left exactly as written ──────────────────────────────────────
 //
 // 1. Fremen Shai-Hulud, last clause: 'Any forces in that territory are not

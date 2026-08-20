@@ -11,11 +11,11 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import { DUNE_BOARD, DUNE_STORM_RING, DUNE_SECTORS, DUNE_TERRITORIES } from '@/data/dune/boardData'
-import { resolveStorm, STORM_START, FIRST_STORM_ROLL, STORM_ROLL } from '@/lib/dune/storm'
-import type { Occupied } from '@/lib/dune/storm'
+import { resolveStorm, STORM_START, FIRST_STORM_ROLL, stormRollRange } from '@/lib/dune/storm'
+
 import { buildSpiceDeck, shuffle, resolveSpiceBlow } from '@/lib/dune/spiceBlow'
 import type { SpiceCard } from '@/lib/dune/spiceBlow'
-import type { SectorId, TerritoryId } from '@/types/Dune/Game'
+import type { Force, GameMode, SectorId, TerritoryId } from '@/types/Dune/Game'
 import CharityPanel from './CharityPanel'
 
 const { cx, cy } = DUNE_BOARD
@@ -53,15 +53,26 @@ function cellAt(territoryId: string, sector: string) {
 
 /** Stacks over sand, rock and strongholds, so the storm and the worm can be
  *  seen treating them differently. */
-function seedForces(): Occupied[] {
+/**
+ * Stacks over sand, rock and strongholds, owned alternately by the Fremen and
+ * the Harkonnen — so a storm sweeping sand shows the two treated differently in
+ * the advanced game and identically in the basic one.
+ */
+function seedForces(): Force[] {
   const take = (pred: (t: (typeof DUNE_TERRITORIES)[number]) => boolean, n: number) =>
     DUNE_TERRITORIES.filter(pred).slice(0, n)
-  return [
+  const chosen = [
     ...take(t => t.terrain === 'sand' && t.spiceBlow != null, 6),
     ...take(t => t.terrain === 'rock', 3),
     ...take(t => t.stronghold, 2),
-  ].flatMap(t =>
-    t.cells.map(c => ({ territoryId: t.id as TerritoryId, sector: c.sector as SectorId })))
+  ]
+  return chosen.flatMap((t, i) =>
+    t.cells.map(c => ({
+      faction: (i % 2 === 0 ? 'fremen' : 'harkonnen') as Force['faction'],
+      territoryId: t.id as TerritoryId,
+      sector: c.sector as SectorId,
+      count: 3,
+    })))
 }
 
 const panel = { border: '1px solid #ffffff22', borderRadius: 6, padding: 10, marginBottom: 10 }
@@ -71,7 +82,8 @@ export default function DuneDevBoard() {
   const [storm, setStorm] = useState<SectorId>(STORM_START)
   const [turn, setTurn] = useState(1)
   const [roll, setRoll] = useState(3)
-  const [forces, setForces] = useState<Occupied[]>(seedForces)
+  const [forces, setForces] = useState<Force[]>(seedForces)
+  const [mode, setMode] = useState<GameMode>('basic')
   const [spice, setSpice] = useState<Record<string, number>>({})
   const [deck, setDeck] = useState<SpiceCard[]>(() => shuffle(buildSpiceDeck(), Math.random))
   const [discard, setDiscard] = useState<SpiceCard[]>([])
@@ -101,9 +113,9 @@ export default function DuneDevBoard() {
         ? [{ territoryId: id as TerritoryId, sector: t.spiceSector as SectorId }]
         : []
     })
-    const out = resolveStorm(storm, roll, forces, onBoard)
+    const out = resolveStorm(storm, roll, forces, mode, onBoard)
     setStorm(out.to)
-    setForces(f => f.filter(x => !out.killed.includes(x)))
+    setForces(out.forcesAfter)
     setSpice(s => {
       const next = { ...s }
       for (const id of out.spiceCleared) delete next[id]
@@ -115,7 +127,10 @@ export default function DuneDevBoard() {
     // worm it drew against an empty discard. The turn ends when End turn says so.
     say(
       `Storm ${out.from} to ${out.to}, sweeping ${out.swept.length} sector(s). ` +
-      `${out.killed.length} force(s) to the tanks` +
+      `${out.killed.reduce((n, k) => n + k.count, 0)} force(s) to the tanks` +
+      (out.casualties.some(c => c.survived > 0)
+        ? ` (${out.casualties.filter(c => c.survived > 0).map(c => `${c.force.faction} kept ${c.survived}`).join(', ')})`
+        : '') +
       (out.spiceCleared.length ? `, spice swept from ${out.spiceCleared.map(name).join(', ')}` : '') + '.',
     )
   }
@@ -123,11 +138,15 @@ export default function DuneDevBoard() {
   function drawSpice() {
     try {
       const out = resolveSpiceBlow({
-        deck, discard, forces, spiceOnBoard: spice, firstTurn: turn === 1, rng: Math.random,
+        deck, discard, forces, mode, fremenInPlay: true,
+        spiceOnBoard: spice, firstTurn: turn === 1, rng: Math.random,
       })
       setDeck(out.deck)
       setDiscard(out.discard)
       setForces(f => f.filter(x => !out.toTanks.includes(x)))
+      if (out.wormsForFremenToPlace) {
+        say(`${out.wormsForFremenToPlace} worm(s) for the Fremen to place — not resolved here`)
+      }
       setSpice(s => {
         const next = { ...s }
         for (const d of out.devoured) delete next[d.territoryId]
@@ -136,7 +155,10 @@ export default function DuneDevBoard() {
       })
       say([
         out.ignored ? `${out.ignored} worm(s) ignored (turn 1)` : '',
-        out.devoured.map(d => `${name(d.territoryId)} devoured (${d.forcesKilled.length} to the tanks)`).join('; '),
+        out.devoured.map(d =>
+          `${name(d.territoryId)} devoured (${d.forcesKilled.reduce((n, k) => n + k.count, 0)} to the tanks`
+          + (d.forcesSpared.length ? `, ${d.forcesSpared.reduce((n, k) => n + k.count, 0)} Fremen spared` : '')
+          + ')').join('; '),
         out.placed ? `${out.placed.amount} spice on ${name(out.placed.territoryId)} in ${out.placed.sector}` : '',
       ].filter(Boolean).join(' — ') || 'nothing happened')
     } catch (e) {
@@ -162,7 +184,7 @@ export default function DuneDevBoard() {
       const at = cellAt(f.territoryId, f.sector)
       if (!at) continue
       const key = `${f.territoryId}|${f.sector}`
-      byCell.set(key, { x: at.x, y: at.y, n: (byCell.get(key)?.n ?? 0) + 1 })
+      byCell.set(key, { x: at.x, y: at.y, n: (byCell.get(key)?.n ?? 0) + f.count })
     }
     return [...byCell.entries()]
   }, [forces])
@@ -206,6 +228,17 @@ export default function DuneDevBoard() {
         </p>
 
         <fieldset style={panel}>
+          <legend>Game</legend>
+          {/* Not a cosmetic toggle: the advanced game changes the storm's own
+              range and what the Fremen lose to it. */}
+          <label>
+            <input type="checkbox" checked={mode === 'advanced'}
+              onChange={e => setMode(e.target.checked ? 'advanced' : 'basic')} />
+            {' '}advanced game
+          </label>
+        </fieldset>
+
+        <fieldset style={panel}>
           <legend>Storm</legend>
           <label>
             roll{' '}
@@ -214,7 +247,8 @@ export default function DuneDevBoard() {
           </label>{' '}
           <button onClick={advanceStorm}>Advance storm</button>
           <p style={{ opacity: 0.6, margin: '8px 0 0' }}>
-            turn 1 rolls {FIRST_STORM_ROLL.min}–{FIRST_STORM_ROLL.max}; later turns {STORM_ROLL.min}–{STORM_ROLL.max}
+            turn 1 rolls {FIRST_STORM_ROLL.min}–{FIRST_STORM_ROLL.max}; later turns{' '}
+            {stormRollRange(mode).min}–{stormRollRange(mode).max}
           </p>
         </fieldset>
 

@@ -1,3 +1,5 @@
+import type { FactionId } from './Faction'
+
 /**
  * Dune game state — the beginnings of it.
  *
@@ -19,6 +21,34 @@ export type SectorId = `sector-${number}`
 
 /** A territory, as `DUNE_TERRITORIES` exports it. */
 export type TerritoryId = `territory-${string}`
+
+/**
+ * Which game is being played.
+ *
+ * NOT a set of extras bolted onto the basic game. The advanced game changes core
+ * rules — spice flow, combat, the storm's own range — so a phase cannot resolve
+ * correctly without knowing which it is in. That is why mode is a parameter to
+ * the phase functions rather than a filter applied to their output: by the time
+ * you have an outcome, the wrong rules have already run.
+ */
+export type GameMode = 'basic' | 'advanced'
+
+/**
+ * A stack of forces: whose they are, where they stand, how many.
+ *
+ * The count is not decoration. Fremen lose HALF their forces to a storm, rounded
+ * up, and half of an anonymous list is not a thing you can take — the rule needs
+ * a number to halve. Forces were previously `{ territoryId, sector }` with one
+ * entry per unit and no owner, which made that rule, worm immunity and worm
+ * placement all unsayable rather than merely unimplemented.
+ */
+export interface Force {
+  faction: FactionId
+  territoryId: TerritoryId
+  /** The sector of that territory — the actual unit of occupancy. */
+  sector: SectorId
+  count: number
+}
 
 /**
  * The nine phases of a turn, in order.

@@ -12,15 +12,24 @@
  * point the way they do, and it means no bearing arithmetic belongs in here.
  */
 import { DUNE_SECTORS, DUNE_TERRITORIES, TERRITORIES_BY_SECTOR } from '@/data/dune/boardData'
-import type { SectorId, TerritoryId } from '@/types/Dune/Game'
+import type { Force, GameMode, SectorId, TerritoryId } from '@/types/Dune/Game'
 
 export const SECTOR_COUNT = 18
 
 /** First storm of the game: 0–20 from the storm start, so it can overshoot a
  *  whole circle, and can also not move at all. */
 export const FIRST_STORM_ROLL = { min: 0, max: 20 } as const
-/** Every storm after that: 2–6 from wherever it stands. */
+/**
+ * Every storm after the first.
+ *
+ * The RANGE ITSELF depends on the game: 2–6 in the basic game, 1–6 in the
+ * advanced one. This is the plainest example of why mode has to reach the phase
+ * functions — it is not a faction power layered on top, it is a different die.
+ */
 export const STORM_ROLL = { min: 2, max: 6 } as const
+export const STORM_ROLL_ADVANCED = { min: 1, max: 6 } as const
+export const stormRollRange = (mode: GameMode) =>
+  mode === 'advanced' ? STORM_ROLL_ADVANCED : STORM_ROLL
 
 /** Where the first storm sets out from. */
 export const STORM_START: SectorId = 'sector-1'
@@ -63,50 +72,106 @@ export function stormDestination(from: SectorId, count: number): SectorId {
   return sectorId(num(from) + Math.max(0, count))
 }
 
-/** A stack of forces, identified by the cell it occupies. */
-export interface Occupied {
+/** Where a stack stands, without regard to whose it is. */
+export interface Cell {
   territoryId: TerritoryId
   sector: SectorId
 }
 
 /**
- * Is this cell killed by a storm sweeping `swept`?
+ * Is this cell exposed to a storm sweeping `swept`?
  *
  * Sand only. Rock, the strongholds and the Polar Sink shelter what stands on
  * them, and the Imperial Basin is a named exception despite being sand.
+ *
+ * Exposure is about the GROUND. How many die once exposed is about the faction,
+ * and is decided separately — see stormLosses.
  */
-export function isKilledByStorm(cell: Occupied, swept: readonly SectorId[]): boolean {
+export function isExposedToStorm(cell: Cell, swept: readonly SectorId[]): boolean {
   if (!swept.includes(cell.sector)) return false
   if (STORM_SHELTERED.includes(cell.territoryId)) return false
   const t = DUNE_TERRITORIES.find(x => x.id === cell.territoryId)
   return t?.terrain === 'sand'
 }
 
+/**
+ * How many of a stack the storm takes.
+ *
+ * The Fremen lose half, rounded UP, and only in the advanced game — their
+ * storm-loss rule lives under `advanced` in the faction data, not among their
+ * ordinary abilities. In the basic game they burn like everyone else.
+ *
+ * Rounded up rather than down: half of three is two lost, one surviving. The
+ * other rounding would make an odd stack better off than an even one.
+ */
+export function stormLosses(force: Force, mode: GameMode): number {
+  if (mode === 'advanced' && force.faction === 'fremen') {
+    return Math.ceil(force.count / 2)
+  }
+  return force.count
+}
+
+/** A stack after the storm has taken its share. */
+export interface StormCasualty {
+  force: Force
+  /** How many died. Fewer than the whole stack only for the Fremen. */
+  lost: number
+  /** How many are still standing there. */
+  survived: number
+}
+
 export interface StormOutcome {
   from: SectorId
   to: SectorId
   swept: SectorId[]
-  /** Forces killed — these go to the Tleilaxu Tanks. */
-  killed: Occupied[]
+  /** Every stack the storm touched, with what it took. */
+  casualties: StormCasualty[]
+  /** Forces bound for the Tleilaxu Tanks, as counts by faction and cell. */
+  killed: Force[]
+  /** The forces as they stand afterwards, survivors included, empties dropped. */
+  forcesAfter: Force[]
   /** Territories whose spice is swept away, to the Spice Bank. Spice is removed
    *  wherever the storm passes, with no terrain exemption: sheltering forces and
    *  sheltering spice are different rules. */
   spiceCleared: TerritoryId[]
 }
 
-/** Resolve a storm move against the forces on the board. */
+/**
+ * Resolve a storm move against the forces on the board.
+ *
+ * `mode` is required rather than defaulted. A default would let a caller resolve
+ * a storm without saying which game it is, and get the basic rules silently —
+ * which for the Fremen is the difference between losing half a stack and all of
+ * it.
+ */
 export function resolveStorm(
   from: SectorId,
   roll: number,
-  forces: readonly Occupied[],
-  spiceOnBoard: readonly { territoryId: TerritoryId; sector: SectorId }[] = [],
+  forces: readonly Force[],
+  mode: GameMode,
+  spiceOnBoard: readonly Cell[] = [],
 ): StormOutcome {
   const swept = sweptSectors(from, roll)
+
+  const casualties: StormCasualty[] = []
+  const forcesAfter: Force[] = []
+  for (const force of forces) {
+    if (!isExposedToStorm(force, swept)) { forcesAfter.push(force); continue }
+    const lost = Math.min(force.count, stormLosses(force, mode))
+    const survived = force.count - lost
+    casualties.push({ force, lost, survived })
+    if (survived > 0) forcesAfter.push({ ...force, count: survived })
+  }
+
   return {
     from,
     to: stormDestination(from, roll),
     swept,
-    killed: forces.filter(f => isKilledByStorm(f, swept)),
+    casualties,
+    killed: casualties
+      .filter(c => c.lost > 0)
+      .map(c => ({ ...c.force, count: c.lost })),
+    forcesAfter,
     spiceCleared: spiceOnBoard.filter(s => swept.includes(s.sector)).map(s => s.territoryId),
   }
 }
@@ -117,7 +182,7 @@ export function resolveStorm(
 // it. Both are the same question, so both callers ask it here.
 
 /** True when this cell is under the storm and therefore sealed. */
-export function isInStorm(cell: Occupied, storm: SectorId): boolean {
+export function isInStorm(cell: Cell, storm: SectorId): boolean {
   return cell.sector === storm
 }
 
