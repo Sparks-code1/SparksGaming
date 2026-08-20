@@ -15,11 +15,22 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
+
+    // Every file is its own module, even one that imports nothing.
+    // Without this, a test file with no imports is a global SCRIPT, and the
+    // `let pass = true` that every suite opens with collides with every other
+    // suite. That is a artefact of typechecking them together, not a real
+    // clash: the runner builds and runs each one on its own.
+    "moduleDetection": "force",
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"]
     }
   },
-  "include": ["src"],
+  // tests/ is here on purpose. It used to be src only, which meant a change to
+  // a rules signature typechecked clean and then failed at runtime in the
+  // suites — twice. The tests import from src through the same @/ alias, so
+  // they are exactly where a broken call site shows up first.
+  "include": ["src", "tests"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

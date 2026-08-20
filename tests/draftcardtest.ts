@@ -59,9 +59,13 @@ console.log('\n— two weaknesses on one faction both read yellow —')
 
 console.log('\n— weakness yellow is distinct from the other categories —')
 {
-  check('not the comeback blue', POWER_YELLOW !== POWER_BLUE)
-  check('not the star-power red', POWER_YELLOW !== POWER_RED)
-  check('not the starting-power green', POWER_YELLOW !== POWER_GREEN)
+  // Widened to string on purpose: narrowed to literals the compiler decides
+  // these can never be equal and objects to the comparison, which would leave
+  // nothing guarding against a future edit that makes two colours match.
+  const colour = (c: string) => c
+  check('not the comeback blue', colour(POWER_YELLOW) !== POWER_BLUE)
+  check('not the star-power red', colour(POWER_YELLOW) !== POWER_RED)
+  check('not the starting-power green', colour(POWER_YELLOW) !== POWER_GREEN)
 
   // A faction carrying one of each: the categories must stay tellable apart.
   const legacy = {

@@ -43,7 +43,7 @@ check('unrelated secrets survive a claim',
   applyCharity({ spice: 1, traitors: ['x'] }), { spice: 2, traitors: ['x'] })
 
 // ── the window ───────────────────────────────────────────────────────────────
-const w = openCharityWindow(T0)
+const w = openCharityWindow(T0, 1)
 check('the window is stamped, not measured', w.expiresAt, T0 + CHARITY_WINDOW_MS)
 check('it opens with no claims', w.claims, [])
 check('open before the deadline', charityWindowIsOpen(w, T0 + 1), true)

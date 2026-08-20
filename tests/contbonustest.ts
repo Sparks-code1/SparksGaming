@@ -35,13 +35,9 @@ const mission = (territories: any, ctx: any = {}) =>
     { turn: initialTurnState() } as any,
     { conqueredIds: [], conqueredViaSeaIds: [] }, 0, ctx)
 
-/** The continent-bonus part of what calcReinforcements actually pays. */
-const paid = (territories: any, ctx: any = {}) =>
-  calcReinforcements(ME, territories, false, ctx.namedContinents ?? {}, null, false,
-    ctx.continentBonusModifiers ?? [])
-  - calcReinforcements(ME, territories, false, {}, null, false,
-    [{ continentId: 'x', bonusDelta: 0 }])
-  + totalContinentBonus(ME, territories, {})
+// A `paid` helper stood here, meant to isolate the continent-bonus part of
+// calcReinforcements. Nothing ever called it — every check below builds its own
+// call — so it went when the tests came under the typechecker.
 
 console.log('\n— printed bonuses, no campaign changes —')
 {

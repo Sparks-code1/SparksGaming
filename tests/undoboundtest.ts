@@ -83,7 +83,7 @@ console.log('\n— phase and floor guards —')
 
   // Even a forged record cannot drain a territory to zero.
   const rigged = { ...base(), turn: { ...initialTurnState(), placedThisTurn: { sea: 99 } } } as GameState
-  const low = { ...rigged, territories: { ...rigged.territories, sea: terr('sea', 'p1', 1) } } as GameState
+  const low = { ...rigged, territories: { ...rigged.territories, sea: terr('sea', 'p1', 1) } } as unknown as GameState
   check('the last troop is never undone away', troopsAt(undo(low, 'sea'), 'sea') === 1)
 }
 

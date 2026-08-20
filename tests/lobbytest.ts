@@ -19,9 +19,9 @@ const check = (label: string, actual: unknown, expected: unknown) => {
 }
 
 const human = (seat: number, playerId: string, name: string, ready: boolean, userId = `u-${playerId}`): LobbySeat =>
-  ({ seat, playerId, userId, name, factionId: 'unassigned', isAI: false, aiDifficulty: null, ready })
+  ({ seat, playerId, userId, name, factionId: 'unassigned', isAI: false, aiDifficulty: null, ready, choice: null })
 const ai = (seat: number, playerId: string, name = 'Computer'): LobbySeat =>
-  ({ seat, playerId, userId: null, name, factionId: 'unassigned', isAI: true, aiDifficulty: 'medium', ready: true })
+  ({ seat, playerId, userId: null, name, factionId: 'unassigned', isAI: true, aiDifficulty: 'medium', ready: true, choice: null })
 
 // ─── 1. Waiting for people to arrive ──────────────────────────────────────
 console.log('--- the host is waiting ---')

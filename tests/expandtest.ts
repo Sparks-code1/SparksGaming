@@ -32,7 +32,7 @@ function runClicks(clicks: Array<{ id: string; isOwn: boolean; unoccupied: boole
 
 const OPEN = (id: string) => ({ id, isOwn: false, unoccupied: true, unmarked: true })
 // After a troop lands, the territory becomes OWNED by the player.
-const MINE = (id: string) => ({ id, isOwn: true, unoccupied: false, unmarked: true })
+const MINE = (id: string) => ({ id, isOwn: true, unoccupied: false, unmarked: true });   // ends the statement: see the note in tsconfig.json
 
 // ── THE BUG: click an empty territory, then click it again ────────────────
 // Old behaviour: select, then de-select — the troop could never be placed.

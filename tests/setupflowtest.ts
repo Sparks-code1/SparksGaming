@@ -7,7 +7,7 @@
 // declaration must bounce off.
 import {
   initialSetup, acceptRoll, applyPick, ingestChoices, expectedActor,
-  awaitedRolls, turnKey, type SetupCtx, type SetupDoc,
+  awaitedRolls, type SetupCtx, type SetupDoc,
 } from '@/lib/setupFlow'
 
 let pass = true

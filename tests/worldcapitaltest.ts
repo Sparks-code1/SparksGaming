@@ -115,7 +115,7 @@ check('resource-pile coin cards are not territory cards (so never 4+)',
 
 // ── the Capital covers whatever city is already there ────────────────────
 const S = (id: string, targetId: string, description: string, name = id) =>
-  ({ id, name, description, placement: 'territory', targetId })
+  ({ id, name, description, placement: 'territory', targetId });   // ends the statement: see the note in tsconfig.json
 
 {
   const stickers = [

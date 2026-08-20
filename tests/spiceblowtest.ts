@@ -60,7 +60,7 @@ const eaten = resolveSpiceBlow({
 check('the worm eats the territory showing', eaten.devoured.map(d => d.territoryId), ['a'])
 check('EVERY sector of it, not just one', eaten.devoured[0].forcesKilled.length, 2)
 check('...and the untouched territory keeps its forces',
-  eaten.toTanks.some(f => f.territoryId === 'b'), false)
+  eaten.toTanks.some(f => (f.territoryId as string) === 'b'), false)
 check('its spice goes to the bank', eaten.devoured[0].spiceRemoved, 8)
 check('the blow still lands on the NEXT territory drawn',
   eaten.placed, { territoryId: 'b', sector: 'sector-5', amount: 6 })
@@ -496,7 +496,12 @@ const ERG = 'territory-07' as TerritoryId
 
 // A deliberately broken resume, for the check above.
 function awaitingAgain(carry: Parameters<typeof placeFremenWorms>[0]) {
-  return { status: 'awaiting' as const, from: ['fremen' as Force['faction']], ask: { kind: 'place-worms' as const, pile: 'A' as const, worms: 1 }, carry }
+  return {
+    status: 'awaiting' as const, need: 'required' as const,
+    from: ['fremen' as Force['faction']],
+    ask: { kind: 'place-worms' as const, pile: 'A' as const, worms: 1 },
+    carry,
+  }
 }
 
 // ── a Fremen worm spares the Fremen, same as one off the deck ────────────────

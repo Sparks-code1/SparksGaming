@@ -16,6 +16,10 @@ function check(name: string, cond: boolean, detail = '') {
   else { fail++; console.log(`  FAIL ${name} ${detail}`) }
 }
 
+// Typed from the parameter it feeds rather than cast to `never`, which is what
+// it used to be: never satisfies every parameter and can be spread into
+// nothing, so the later "board already shows the capture" case could not
+// build its variant board.
 const state = {
   players: [
     { id: 'p1', name: 'Ryan' },
@@ -25,7 +29,7 @@ const state = {
     src: { id: 'src', name: 'Alaska', occupyingPlayerId: 'p1', troops: 8 },
     tgt: { id: 'tgt', name: 'Kamchatka', occupyingPlayerId: 'p2', troops: 3 },
   },
-} as never
+} as unknown as Parameters<typeof buildSpectatorReport>[2]
 
 const round = (a: number[], d: number[], aLoss = 0, dLoss = 1) => ({ atkDice: a, defDice: d, aLoss, dLoss })
 

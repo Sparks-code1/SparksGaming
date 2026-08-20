@@ -31,7 +31,9 @@ const row = (v: number, actionSeq?: number): MatchRow => ({ state: boardAt(v), v
 function fakeTransport(initial: MatchRow = row(0)) {
   const timers: Array<{ id: number; fn: () => void; due: number }> = []
   let now = 0, nextId = 1
-  const t = {
+  // Annotated because the mock's own methods refer back to it, which leaves
+  // TypeScript inferring its type from an expression that contains itself.
+  const t: any = {
     opens: 0, closes: 0, fetches: 0,
     online: true,
     stored: initial,
@@ -58,7 +60,10 @@ function fakeTransport(initial: MatchRow = row(0)) {
       },
       async fetchActions(_matchId, afterSeq) {
         t.actionFetches++
-        return t.actionLog.filter(a => a.seq > afterSeq).sort((x, y) => x.seq - y.seq).slice(0, 30)
+        return t.actionLog
+          .filter((a: { seq: number }) => a.seq > afterSeq)
+          .sort((x: { seq: number }, y: { seq: number }) => x.seq - y.seq)
+          .slice(0, 30)
       },
       setTimer(fn, ms) { const id = nextId++; timers.push({ id, fn, due: now + ms }); return id },
       clearTimer(handle) {

@@ -22,7 +22,7 @@ const board = (): Record<string, any> => ({
   en: T('en', 'p2', 5, 'mercenary'),  // merc scar but ENEMY owned
   bio: T('bio', 'p1', 4, 'biological'),
 })
-const troops = (t: Record<string, any>) => ({ m1: t.m1.troops, m2: t.m2.troops, pl: t.pl.troops, en: t.en.troops })
+const troops = (t: Record<string, any>) => ({ m1: t.m1.troops, m2: t.m2.troops, pl: t.pl.troops, en: t.en.troops });   // ends the statement: see the note in tsconfig.json
 
 // ── WITHOUT the comeback power: mercenary scar pays the normal +1 ─────────
 {

@@ -95,7 +95,7 @@ console.log('\n— rewards owed to OTHER players survive the hand-off —')
     riotRemovalPlayerId: 'ryan',
   }
 
-  const oldEndTurn = (p: Pickers): Pickers => ({
+  const oldEndTurn = (_p: Pickers): Pickers => ({
     fortifyEventPlayerId: null, resistancePlacement: null, joinCausePlacement: null,
     controlPeopleChoice: null, controlTroopsPlayerId: null, controlManeuver: null,
     riotRemovalPlayerId: null,

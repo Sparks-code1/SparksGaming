@@ -5,8 +5,10 @@
 // signed-in email during lookup, so on a FULL campaign (where the name field is
 // not even rendered) the commit button still read "Join as sparksjohnr" and was
 // enabled. You had to commit to be told it was impossible.
-import { addRosterMember, nextRosterId, MAX_ROSTER, type RosterMember }
-  from '@/lib/roster'
+import { addRosterMember, nextRosterId, MAX_ROSTER } from '@/lib/roster'
+// RosterMember is declared in the legacy types and re-used by roster.ts; it was
+// being imported from roster, which never exported it.
+import type { RosterMember } from '@/types/legacy'
 import { normalizeJoinCode, isValidJoinCode, generateJoinCode, JOIN_CODE_LENGTH }
   from '@/lib/joinCode'
 
