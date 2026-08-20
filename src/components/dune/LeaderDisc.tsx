@@ -79,7 +79,30 @@ export const LEADER_PORTRAITS: Record<string, Portrait> = {
   Otheym: { src: '/dune-leaders/Otheym.png', w: 400, h: 400, focusY: 0.5 },
   'Shadout Mapes': { src: '/dune-leaders/Shadout_mapes.png', w: 400, h: 400, focusY: 0.5 },
   Jamis: { src: '/dune-leaders/Jamis.png', w: 400, h: 400, focusY: 0.5 },
+
+  // Emperor. Four of the five; Bashar has no portrait and renders as a plain
+  // faction counter.
+  'Hasimir Fenring': { src: '/dune-leaders/Hasimir_Fenring.png', w: 400, h: 533, focusY: 0.48 },
+  'Captain Aramsham': { src: '/dune-leaders/Captain_Aramsham.png', w: 400, h: 500, focusY: 0.43 },
+  Caid: { src: '/dune-leaders/Caid.png', w: 400, h: 533, focusY: 0.43 },
+  Burseg: { src: '/dune-leaders/Burseg.png', w: 400, h: 533, focusY: 0.52 },
+
+  // Harkonnen. All five — Captain Iakin Nefud is one of theirs, not the
+  // Emperor's, however the folder happens to sort.
+  'Feyd-Rautha': { src: '/dune-leaders/Feyd-Rautha.png', w: 400, h: 400, focusY: 0.5 },
+  'Beast Rabban': { src: '/dune-leaders/Beast_Rabban.png', w: 400, h: 500, focusY: 0.53 },
+  'Piter De Vries': { src: '/dune-leaders/Piter_De_Vries.png', w: 400, h: 400, focusY: 0.5 },
+  'Captain Iakin Nefud': { src: '/dune-leaders/Captain_IakinNefud.png', w: 400, h: 533, focusY: 0.46 },
+  'Umman Kudu': { src: '/dune-leaders/UmmanKudu.png', w: 400, h: 534, focusY: 0.44 },
 }
+
+// The framings above are derived, not eyeballed: each tall portrait is centred a
+// little above its own DETAIL CENTROID — the vertical centre of mass of local
+// contrast, which tracks the face because a face carries far more edge energy
+// than the ground behind it. The offset upward is because a standing portrait
+// puts costume detail below the head and that drags the centroid down. Squares
+// stay dead centre, where the picture is exactly the circle's bounding box and
+// nothing is cropped at all. All of them are one number each to nudge.
 
 export function LeaderDisc({
   leader, faction, r = 60,
@@ -113,7 +136,11 @@ export function LeaderDisc({
   // Sweep 0 takes the long way round the bottom, which is what puts the letters
   // upright; sweep 1 runs them over the top and upside down.
   const namePath = `M ${end(142)} A ${tr.toFixed(2)} ${tr.toFixed(2)} 0 0 0 ${end(38)}`
-  const nameSize = r * (leader.name.length > 12 ? 0.135 : leader.name.length > 8 ? 0.15 : 0.17)
+  // Four tiers, because the names run from 5 characters to 19 and the arc is a
+  // fixed length. Twelve was enough while only the Fremen existed; CAPTAIN IAKIN
+  // NEFUD is nineteen and overruns the arc at the next size up.
+  const len = leader.name.length
+  const nameSize = r * (len > 16 ? 0.115 : len > 12 ? 0.135 : len > 8 ? 0.15 : 0.17)
 
   return (
     <g>
@@ -171,7 +198,10 @@ export function LeaderDisc({
       {/* The name, hanging under the portrait. */}
       <text
         fontSize={nameSize} fill={PALE}
-        fontFamily="Georgia, 'Times New Roman', serif" letterSpacing={r * 0.015}
+        // Spacing tracks the type size rather than the disc, so the tiers above
+        // tighten the letters as they shrink instead of leaving long names
+        // spaced out like short ones.
+        fontFamily="Georgia, 'Times New Roman', serif" letterSpacing={nameSize * 0.088}
       >
         <textPath href={`#${arc}`} startOffset="50%" textAnchor="middle">
           {leader.name.toUpperCase()}

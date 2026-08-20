@@ -20,7 +20,7 @@ import {
 import type { FactionId } from '@/types/Dune/Faction'
 import { SeatLayer, FACTION_LOOK } from './SeatLayer'
 import { LeaderDisc } from './LeaderDisc'
-import { FREMEN } from '@/data/dune/factions'
+import { EMPEROR, FREMEN, HARKONNEN } from '@/data/dune/factions'
 
 import {
   buildSpiceDeck, shuffle, resolveSpiceBlow, applyBlowToBoard,
@@ -374,18 +374,24 @@ export default function DuneDevBoard() {
         </fieldset>
 
 <fieldset style={panel}>
-          <legend>Leader discs — Fremen</legend>
-          {/* The one complete set: all five have portraits. */}
-          <svg viewBox="0 0 620 130" width="100%" style={{ display: 'block' }}>
-            {FREMEN.leaders.map((l, i) => (
-              <g key={l.name} transform={`translate(${62 + i * 124} 65)`}>
-                <LeaderDisc leader={l} faction="fremen" r={58} />
-              </g>
-            ))}
-          </svg>
-          <p style={{ opacity: 0.6, margin: '6px 0 0', fontSize: 12 }}>
-            strengths {FREMEN.leaders.map(l => l.strength).join(' · ')}
-          </p>
+          <legend>Leader discs</legend>
+          {/* Fremen and Harkonnen are complete. The Emperor's Bashar has no
+              portrait and renders as a plain faction counter, which is what a
+              missing picture should look like. */}
+          {[FREMEN, EMPEROR, HARKONNEN].map(faction => (
+            <div key={faction.id} style={{ marginBottom: 8 }}>
+              <div style={{ opacity: 0.55, fontSize: 11, marginBottom: 2 }}>
+                {FACTION_LOOK[faction.id].name}
+              </div>
+              <svg viewBox="0 0 620 130" width="100%" style={{ display: 'block' }}>
+                {faction.leaders.map((l, i) => (
+                  <g key={l.name} transform={`translate(${62 + i * 124} 65)`}>
+                    <LeaderDisc leader={l} faction={faction.id} r={58} />
+                  </g>
+                ))}
+              </svg>
+            </div>
+          ))}
         </fieldset>
 
         <fieldset style={panel}>
