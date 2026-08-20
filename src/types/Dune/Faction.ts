@@ -21,26 +21,39 @@ export interface Leader {
 }
 
 /**
- * Where a faction's forces begin.
+ * Where a faction's on-planet forces begin.
  *
- * Split into a count and a place, rather than the prose "10 forces in Arrakeen",
- * so setup can act on it without parsing a sentence.
+ * Discriminated because the three cases are genuinely different jobs for setup:
+ * one places pieces, one asks the player a question, one does nothing. Collapsing
+ * them into an optional territory plus an optional list would leave every reader
+ * working out which combination means what.
  */
+export type StartingPlacement =
+  /** All of them in one named territory — Atreides in Arrakeen. */
+  | { kind: 'fixed'; territoryId: TerritoryId }
+  /**
+   * The player distributes `onPlanet` freely across these, in whatever split
+   * they choose. A SETUP CHOICE, not a fixed division: the Fremen's ten may go
+   * ten-nil-nil or four-three-three.
+   */
+  | { kind: 'distribute'; among: readonly TerritoryId[] }
+  /** Nothing on the board at setup. */
+  | { kind: 'reserve-only' }
+
 export interface StartingForces {
   /** Already on the board at setup. Zero for factions that start in reserve. */
   onPlanet: number
-  /** Where those forces stand. Null when `onPlanet` is 0. */
-  territoryId: TerritoryId | null
+  /** How those forces get onto the board. */
+  placement: StartingPlacement
   /** Off-board, available to ship. */
   reserves: number
   /**
-   * Elite forces — the Emperor's five Sardaukar, the Fremen's Fedaykin.
+   * Elite forces — the Emperor's Sardaukar, the Fremen's Fedaykin.
    *
    * Counted as a SUBSET of the totals above, not in addition to them: five
    * starred out of twenty reserves means twenty forces, of which five are elite.
-   * Worth confirming against the rulebook before setup is built on it, because
-   * the alternative reading (twenty plus five) is equally sayable in English and
-   * would leave every faction with the wrong number of pieces.
+   * Still worth confirming against the rulebook before setup deals pieces from
+   * it, because the alternative reading is equally sayable in English.
    */
   starred: number
 }
@@ -49,12 +62,14 @@ export interface StartingForces {
  * Faction powers, keyed by the phase they apply in.
  *
  * All optional: most factions do not have one in every phase, and an absent key
- * says so more plainly than an empty string. Add a phase key when a faction
- * needs it rather than declaring all nine up front.
+ * says so more plainly than an empty string.
  */
 export interface FactionAbilities {
   storm?: string
   spiceBlow?: string
+  /** Shai-Hulud specifically, which is part of the spice blow but reads as its
+   *  own rule for the factions that care about worms. */
+  shaiHulud?: string
   charity?: string
   bidding?: string
   revival?: string
@@ -62,6 +77,21 @@ export interface FactionAbilities {
   movement?: string
   battle?: string
   spiceCollection?: string
+}
+
+/**
+ * Advanced-game rules.
+ *
+ * Extends the phase keys because some factions present theirs that way — the
+ * Fremen have separate storm, spice blow and shipment entries — while others are
+ * a single paragraph, which goes in `general`. Both shapes are the rulebook's,
+ * not a choice made here.
+ */
+export interface AdvancedRules extends FactionAbilities {
+  /** For factions whose advanced rules are one block of prose. */
+  general?: string
+  /** Rules about the forces themselves, such as what an elite force is worth. */
+  forces?: string
 }
 
 export interface Faction {
@@ -76,11 +106,8 @@ export interface Faction {
   abilities: FactionAbilities
   /** What this faction can do for an ally. */
   alliance: string
-  /**
-   * Advanced-game rules. One string because the rulebook presents it as a
-   * paragraph; if the advanced game is implemented these will want breaking
-   * apart, and that is the moment to do it rather than now.
-   */
-  advanced: string
+  advanced: AdvancedRules
+  /** Only some factions have one — the Fremen and the Guild. */
+  specialVictory?: string
   leaders: Leader[]
 }
