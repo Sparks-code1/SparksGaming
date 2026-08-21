@@ -20,6 +20,8 @@ import {
 import type { FactionId } from '@/types/Dune/Faction'
 import { SeatLayer, FACTION_LOOK } from './SeatLayer'
 import { LeaderDisc } from './LeaderDisc'
+import { TreacheryCardFace } from './TreacheryCardFace'
+import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { EMPEROR, FREMEN, HARKONNEN } from '@/data/dune/factions'
 
 import {
@@ -390,6 +392,16 @@ export default function DuneDevBoard() {
         </fieldset>
 
 <fieldset style={panel}>
+          <legend>Treachery cards</legend>
+          {/* The drawn ones, plus Karama for the text-only layout. */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {TREACHERY_CARDS.filter(c => c.image || c.textOnly).map(c => (
+              <TreacheryCardFace key={c.id} card={c} width={124} />
+            ))}
+          </div>
+        </fieldset>
+
+        <fieldset style={panel}>
           <legend>Leader discs</legend>
           {/* Fremen and Harkonnen are complete. The Emperor's Bashar has no
               portrait and renders as a plain faction counter, which is what a

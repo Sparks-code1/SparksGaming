@@ -3,7 +3,7 @@
        it sits on a sand-coloured card the way the territory marks sit on sand.
        The bowl is one path rather than a transformed ellipse — a nested
        transform here produced a lopsided shape that read as a bag. -->
-  <g fill="none" stroke="#3f2c1a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+  <g fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
     <!-- the bowl, wide at the base and narrowing to the shoulder -->
     <path d="M62 60
              C70 70 66 84 56 94
@@ -16,13 +16,13 @@
     <path d="M91 29 L104 16" stroke-width="9" />
   </g>
   <!-- soundhole -->
-  <circle cx="40" cy="76" r="8" fill="#3f2c1a" />
+  <circle cx="40" cy="76" r="8" fill="#000000" />
   <!-- strings, bridge to head -->
-  <g stroke="#3f2c1a" stroke-width="1.5" stroke-linecap="round" opacity="0.9">
+  <g stroke="#000000" stroke-width="1.5" stroke-linecap="round" opacity="0.9">
     <path d="M30 92 L96 26" />
     <path d="M34 96 L100 30" />
     <path d="M38 99 L103 34" />
   </g>
   <!-- bridge, across the lower bowl -->
-  <path d="M24 90 L42 98" stroke="#3f2c1a" stroke-width="4" stroke-linecap="round" />
+  <path d="M24 90 L42 98" stroke="#000000" stroke-width="4" stroke-linecap="round" />
 </svg>

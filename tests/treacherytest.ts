@@ -157,9 +157,29 @@ check('the two storm cards want two different windows',
 // ── headers ─────────────────────────────────────────────────────────────────
 check('every kind in the deck has a header colour',
   TREACHERY_CARDS.filter(c => !TREACHERY_HEADER[c.kind]).map(c => c.id), [])
-check('weapons red, defences blue, specials green',
-  (['weapon', 'defense', 'special'] as TreacheryKind[]).map(k => TREACHERY_HEADER[k]),
-  ['#a33a32', '#2f6fb5', '#2f8f4e'])
+// Checked as hues rather than as three hex strings. The exact shades have
+// already moved once — the green darkened when the header text went black — and
+// a check that pins the digits fails on every tweak while catching nothing that
+// matters. What matters is that a weapon is not blue.
+{
+  const rgb = (hex: string) => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16))
+  const dominant = (hex: string) => {
+    const [r, g, b] = rgb(hex)
+    return r >= g && r >= b ? 'red' : g >= b ? 'green' : 'blue'
+  }
+  check('weapons are red, defences blue, specials and worthless green',
+    (['weapon', 'defense', 'special', 'worthless'] as TreacheryKind[])
+      .map(k => dominant(TREACHERY_HEADER[k])),
+    ['red', 'blue', 'green', 'green'])
+  check('the three kinds that were given a colour have three different ones',
+    new Set((['weapon', 'defense', 'special'] as TreacheryKind[]).map(k => TREACHERY_HEADER[k])).size, 3)
+  // Black text sits on these, so none of them may be so dark it swallows it or
+  // so light the text has nothing to sit against. Loose bounds — this is a
+  // guard against a header going near-black, not a contrast policy.
+  const luma = (hex: string) => { const [r, g, b] = rgb(hex); return 0.2126 * r + 0.7152 * g + 0.0722 * b }
+  check('no header is so dark that black text vanishes into it',
+    (Object.keys(TREACHERY_HEADER) as TreacheryKind[]).filter(k => luma(TREACHERY_HEADER[k]) < 45), [])
+}
 
 // ── artwork ─────────────────────────────────────────────────────────────────
 // image is optional because none exists yet. textOnly says a card is never

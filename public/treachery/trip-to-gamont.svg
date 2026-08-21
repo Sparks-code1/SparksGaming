@@ -2,7 +2,7 @@
   <!-- Gamont: the pleasure planet, and a long way from here. A ringed world with
        a departure arc leaving it — the trip is the card, and the trip is the
        joke, because you are on Arrakis and you are not going. -->
-  <g fill="none" stroke="#3f2c1a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+  <g fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
     <!-- the world -->
     <circle cx="66" cy="62" r="28" />
     <!-- its ring, tilted -->
@@ -12,10 +12,10 @@
   </g>
   <!-- a couple of bands across the world, so it reads as a planet and not a
        coin with a hoop round it -->
-  <g fill="none" stroke="#3f2c1a" stroke-width="2.4" opacity="0.7">
+  <g fill="none" stroke="#000000" stroke-width="2.4" opacity="0.7">
     <path d="M42 50 C54 45 78 45 90 50" />
     <path d="M40 74 C54 80 78 80 92 74" />
   </g>
   <!-- the ship, small, already leaving -->
-  <path d="M22 104 l9 -4 -3 8 z" fill="#3f2c1a" />
+  <path d="M22 104 l9 -4 -3 8 z" fill="#000000" />
 </svg>

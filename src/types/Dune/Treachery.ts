@@ -95,10 +95,14 @@ export interface TreacheryCard {
  * Three colours were specified for four kinds. `worthless` takes the special
  * green, on the grounds that it is not a weapon and not a defence — but it is
  * the one that was not chosen deliberately, so it is the one to change.
+ *
+ * The header carries BLACK text, which is why the green is the darker one: at
+ * the lighter shade it was 3.4:1 against cream and is 2.9:1 against black here.
+ * Neither is generous; this is the shade that was asked for.
  */
 export const TREACHERY_HEADER: Record<TreacheryKind, string> = {
   weapon: '#a33a32',
   defense: '#2f6fb5',
-  special: '#2f8f4e',
-  worthless: '#2f8f4e',
+  special: '#1e5c34',
+  worthless: '#1e5c34',
 }

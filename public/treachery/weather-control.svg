@@ -1,25 +1,32 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
-  <!-- Weather Control: the storm, and a hand on it.
-       Two marks only. The wind is the same three-stream glyph the board prints
-       for the Storm phase, so anyone who has looked at the phase ring knows what
-       this card touches. The arc beneath it is the direction you send it —
-       counterclockwise, which on this board is the way the sector numbers climb.
+  <!-- Weather Control: a satellite dish, aimed up and to the right.
+       Black, like the rest of the treachery art.
 
-       An earlier version drew the whole storm track: a banded arc, sector ticks,
-       the marker sitting on it. At this size the ticks closed up into a smear and
-       the marker merged with the band. Two clean marks beat four muddled ones. -->
-
-  <!-- the storm itself -->
-  <g fill="none" stroke="#3f2c1a" stroke-width="4" stroke-linecap="round">
-    <path d="M22 34 h30 a6 6 0 1 0 -4.8 -6" />
-    <path d="M22 52 h38 a7 7 0 1 0 -5.6 -7" />
-    <path d="M22 70 h24 a5.5 5.5 0 1 0 -4.4 -5.5" />
+       The dish is two ellipses on the same tilt — the outer rim and an inner
+       one — which is what makes it read as a dish rather than as a coin. A
+       single ellipse at this size is a disc; the second one gives it depth. -->
+  <g transform="rotate(-28 56 50)">
+    <!-- the dish face -->
+    <ellipse cx="56" cy="50" rx="36" ry="27" fill="none" stroke="#000000" stroke-width="4" />
+    <!-- the bowl, so it reads as concave -->
+    <ellipse cx="56" cy="50" rx="24" ry="17" fill="none" stroke="#000000" stroke-width="2.6"
+             opacity="0.75" />
+    <!-- the feed horn, on its arm at the focus -->
+    <path d="M56 50 L56 22" stroke="#000000" stroke-width="3" stroke-linecap="round" />
+    <circle cx="56" cy="19" r="5" fill="#000000" />
   </g>
 
-  <!-- where you send it: a sweep beneath, opening to the right -->
-  <path d="M22 84 A44 44 0 0 0 96 84" fill="none" stroke="#3f2c1a"
-        stroke-width="4" stroke-linecap="round" />
-  <!-- the head, turned onto the arc's tangent so it reads as travel rather than
-       as a triangle parked at the end of a line -->
-  <path d="M0 0 l-13 -7 v14 z" fill="#3f2c1a" transform="translate(101 79) rotate(-52)" />
+  <!-- the mount: a yoke into a post into a base -->
+  <g fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M62 74 L62 94" />
+    <path d="M46 104 L78 104" stroke-width="5" />
+    <path d="M52 94 L72 94" />
+  </g>
+
+  <!-- the signal it is pulling down, three arcs off the upper right -->
+  <g fill="none" stroke="#000000" stroke-width="3" stroke-linecap="round" opacity="0.9">
+    <path d="M92 34 A12 12 0 0 1 100 22" />
+    <path d="M96 42 A21 21 0 0 1 110 21" />
+    <path d="M100 50 A30 30 0 0 1 118 20" />
+  </g>
 </svg>
