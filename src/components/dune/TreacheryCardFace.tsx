@@ -16,7 +16,7 @@
  * works for the shortest card in the deck is not a layout, it is a coincidence.
  */
 import { TREACHERY_HEADER } from '@/types/Dune/Treachery'
-import type { TreacheryCard } from '@/types/Dune/Treachery'
+import type { TreacheryCard, TreacheryKind } from '@/types/Dune/Treachery'
 
 const SAND = '#f0e2bb'
 const BLACK = '#000000'
@@ -31,6 +31,9 @@ const CHAR_W = 0.5
 const LINE_H = 1.28
 
 const ART = { x: 15, y: 50, w: CARD_W - 30 }
+/** The name starts here and must stop before the header mark. */
+export const NAME_X = 12
+export const NAME_W = CARD_W - NAME_X - 36
 const TEXT_BOTTOM = CARD_H - 9
 const TEXT_W = CARD_W - 24
 
@@ -107,40 +110,60 @@ export function layoutCard(card: TreacheryCard) {
 }
 
 /**
- * The stop hand.
+ * The mark at the right-hand end of the header.
  *
- * Every special card carries one, and it MEANS NOTHING. It is how the printed
- * cards look, and that is the whole of it — worth saying plainly, because a hand
+ * A stop hand on the specials, an asterisk on the worthless cards, nothing on
+ * weapons and defences. It MEANS NOTHING in either case — it is how the printed
+ * cards look, and that is the whole of it. Worth saying plainly, because a hand
  * signalling stop on exactly the cards that interrupt phases is the kind of
- * coincidence somebody later reads a rule into. There is no rule. Nothing
- * branches on it and nothing should.
+ * coincidence somebody later reads a rule into. Nothing branches on it and
+ * nothing should.
  *
- * It is the supplied hand icon turned upright: the file is drawn lying down,
- * which is why the board's charity symbol rotates it by the same ninety degrees.
+ * The asterisk is drawn rather than typed. A text `*` sits high in the line
+ * where a superscript would, so it would hang off the top of a 27-pixel band
+ * instead of sitting in the middle of it.
  */
-function StopBadge({ cx, cy, r }: { cx: number; cy: number; r: number }) {
-  const box = r * 1.25
-  return (
-    <g>
-      <circle cx={cx} cy={cy} r={r} fill={SAND} stroke={BLACK} strokeWidth={r * 0.14} />
-      <image
-        href="/icons/hand.svg"
-        x={cx - box / 2} y={cy - box / 2} width={box} height={box}
-        preserveAspectRatio="xMidYMid meet"
-        transform={`rotate(-90 ${cx} ${cy})`}
-      />
-    </g>
-  )
+function HeaderMark({ kind }: { kind: TreacheryKind }) {
+  const cx = CARD_W - 20, cy = 20, r = 10.5
+
+  if (kind === 'special') {
+    return (
+      <image href="/treachery/stop.svg"
+        x={cx - r} y={cy - r} width={r * 2} height={r * 2}
+        preserveAspectRatio="xMidYMid meet" />
+    )
+  }
+  if (kind === 'worthless') {
+    return (
+      <g stroke={BLACK} strokeWidth={r * 0.3} strokeLinecap="round">
+        {[0, 60, 120].map(a => (
+          <path key={a} d={`M${cx - r * 0.82} ${cy} H${cx + r * 0.82}`}
+            transform={`rotate(${a} ${cx} ${cy})`} />
+        ))}
+      </g>
+    )
+  }
+  return null
+}
+
+/**
+ * The size the name is set at.
+ *
+ * The name shares the header with the mark, so it cannot simply be as large as
+ * it likes: "Captain Iakin Nefud" is three times the length of "Shield" and both
+ * have to stop before the mark. Computed from the room available rather than
+ * stepped through tiers, which is what the tiers were approximating anyway.
+ */
+export function fitNameSize(name: string, width: number, max = 15.5, min = 8) {
+  const size = width / (Math.max(1, name.length) * 0.68)
+  return Math.max(min, Math.min(max, size))
 }
 
 export function TreacheryCardFace({ card, width = CARD_W }: { card: TreacheryCard; width?: number }) {
-  const isSpecial = card.kind === 'special'
   const { artH, textTop, size, lines } = layoutCard(card)
   const textOnly = !card.image
 
-  // The name shrinks rather than overrunning. Three tiers covers "Shield"
-  // through "Captain Iakin Nefud".
-  const nameSize = card.name.length > 13 ? 12 : card.name.length > 10 ? 13.5 : 15.5
+  const nameSize = fitNameSize(card.name, NAME_W)
 
   return (
     <svg viewBox={`0 0 ${CARD_W} ${CARD_H}`} width={width} height={width * (CARD_H / CARD_W)}>
@@ -152,10 +175,11 @@ export function TreacheryCardFace({ card, width = CARD_W }: { card: TreacheryCar
       {/* header, squared off at the bottom so it reads as a band rather than a pill */}
       <path d={`M1 11 a10 10 0 0 1 10 -10 h${CARD_W - 22} a10 10 0 0 1 10 10 v27 h-${CARD_W - 2} z`}
         fill={TREACHERY_HEADER[card.kind]} stroke={BLACK} strokeWidth="2" />
-      <text x={CARD_W / 2} y="26" fontSize={nameSize} fill={BLACK} textAnchor="middle"
+      <text x={NAME_X} y="25" fontSize={nameSize} fill={BLACK} textAnchor="start"
         fontFamily="Georgia, 'Times New Roman', serif" letterSpacing="0.5">
         {card.name.toUpperCase()}
       </text>
+      <HeaderMark kind={card.kind} />
 
       {card.image && (
         <>
@@ -167,14 +191,8 @@ export function TreacheryCardFace({ card, width = CARD_W }: { card: TreacheryCar
           <image href={card.image}
             x={ART.x} y={ART.y} width={ART.w} height={artH}
             preserveAspectRatio="xMidYMid meet" />
-          {/* the badge straddles the box's corner, so it reads as applied to the
-              card rather than as part of the picture */}
-          {isSpecial && <StopBadge cx={ART.x + ART.w - 6} cy={ART.y + artH - 4} r={17} />}
         </>
       )}
-
-      {/* a special card with no picture still gets its badge, up beside the name */}
-      {isSpecial && textOnly && <StopBadge cx={CARD_W - 26} cy={60} r={17} />}
 
       <g fontFamily="Georgia, 'Times New Roman', serif" fill={BLACK}>
         {lines.map((line, i) => (

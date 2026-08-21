@@ -76,6 +76,7 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'poison',
     timing: 'battle-plan',
     copies: 1,
+    image: '/treachery/Gom_Jabbar.png',
     text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved."
       + ' Opponent may protect leader with a Snooper.' + KEEP_IF_WON,
   },
@@ -86,6 +87,7 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'poison',
     timing: 'battle-plan',
     copies: 1,
+    image: '/treachery/Ellaca_Drug.png',
     text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved."
       + ' Opponent may protect leader with a Snooper.' + KEEP_IF_WON,
   },
@@ -230,6 +232,7 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'leader',
     timing: 'battle-plan',
     copies: 3,
+    image: '/treachery/Cheap_Hero.png',
     text: 'Play as a leader with zero strength on your Battle Plan and discard after the battle.'
       + '\n\nYou may also play a weapon and a defense. The cheap hero may be played in place of a'
       + ' leader or when you have no leaders available.',

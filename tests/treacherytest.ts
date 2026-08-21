@@ -5,7 +5,7 @@ import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { TREACHERY_HEADER } from '@/types/Dune/Treachery'
 import type { TreacheryCard, TreacheryKind } from '@/types/Dune/Treachery'
 import { readFileSync, existsSync } from 'node:fs'
-import { layoutCard, CARD_H } from '@/components/dune/TreacheryCardFace'
+import { layoutCard, fitNameSize, CARD_H, NAME_W } from '@/components/dune/TreacheryCardFace'
 
 let pass = true
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -107,6 +107,29 @@ check('the Shield stops projectiles and says so',
   /projectile/i.test(defenses.find(c => c.subtype === 'projectile')?.text ?? ''), true)
 check('the Snooper stops poison and says so',
   /poison/i.test(defenses.find(c => c.subtype === 'poison')?.text ?? ''), true)
+
+// ── the name stops before the mark ─────────────────────────────────────────
+// The name moved left and the mark moved into the header beside it, so they now
+// share a 27-pixel band and can collide. Names run from six characters to
+// nineteen, which is exactly the range where a fixed size works for the short
+// ones and overruns on the long ones.
+{
+  const tooWide = TREACHERY_CARDS.filter(c => {
+    const size = fitNameSize(c.name, NAME_W)
+    return c.name.length * size * 0.68 > NAME_W + 0.5
+  }).map(c => c.id)
+  check('no name runs into the header mark', tooWide, [])
+
+  // Fitting is trivial if the name is allowed to shrink to nothing, so the
+  // floor is checked too — the same trap the body text had.
+  const tiny = TREACHERY_CARDS.filter(c => fitNameSize(c.name, NAME_W) < 8).map(c => c.id)
+  check('...and none of them vanished to manage it', tiny, [])
+
+  // Short names should not be shrunk for nothing.
+  check('a short name takes the full size', fitNameSize('Shield', NAME_W), 15.5)
+  check('...and the longest name in the deck is smaller',
+    fitNameSize('Captain Iakin Nefud', NAME_W) < 15.5, true)
+}
 
 // ── every card fits on its own card ────────────────────────────────────────
 // The layout used a fixed type size and a fixed art box, which worked for a
@@ -229,11 +252,19 @@ check('every projectile weapon is drawn',
     .map(c => c.id), [])
 check('the Lasgun is drawn',
   !!TREACHERY_CARDS.find(c => c.id === 'lasgun')?.image, true)
-check('Weather Control is the one special with a picture',
-  TREACHERY_CARDS.filter(c => c.kind === 'special' && c.image).map(c => c.id), ['weathercontrol'])
+check('two specials have pictures so far',
+  TREACHERY_CARDS.filter(c => c.kind === 'special' && c.image).map(c => c.id).sort(),
+  ['cheaphero', 'weathercontrol'])
+// One of the four poison weapons is drawn; the other three and both defences
+// are the gap. Stated so the gap is visible rather than inferred from a count.
+check('the poison weapons still to be drawn',
+  TREACHERY_CARDS.filter(c => c.subtype === 'poison' && c.kind === 'weapon' && !c.image)
+    .map(c => c.id).sort(), ['chaumas', 'chaumurky'])
+check('neither defence is drawn yet',
+  TREACHERY_CARDS.filter(c => c.kind === 'defense' && c.image).map(c => c.id), [])
 // The count moves as art lands; when it fails it reports the new number, which
 // is the whole of the maintenance.
-check('eleven cards drawn so far', TREACHERY_CARDS.filter(c => c.image).length, 11)
+check('fourteen cards drawn so far', TREACHERY_CARDS.filter(c => c.image).length, 14)
 check('Weather Control is drawn too',
   TREACHERY_CARDS.find(c => c.id === 'weathercontrol')?.image, '/treachery/weather-control.svg')
 check('no two cards share a picture',
