@@ -11,6 +11,10 @@
 import type { TreacheryCard } from '@/types/Dune/Treachery'
 
 const KEEP_IF_WON = ' You may keep this card if you win this battle.'
+// The five worthless cards say exactly the same thing, so they share one string
+// rather than five copies that could drift apart.
+const WORTHLESS = 'Play as part of your Battle Plan, in place of a weapon, defense, or both.'
+  + '\n\nThis card has no value in play, and you can discard it only by playing it in your Battle Plan.'
 const PLAY_IN_PLAN = 'Play as part of your Battle Plan.'
 
 export const TREACHERY_CARDS: TreacheryCard[] = [
@@ -152,15 +156,63 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
   },
 
   // ── Worthless ─────────────────────────────────────────────────────────────
+  // Five cards, one copy each, rather than one card five times. They are
+  // mechanically identical — same text, same timing, same nothing — and differ
+  // only in name and picture, which is the whole joke: five ordinary objects
+  // from a desert planet, none of which will win you a battle.
+  //
+  // The names are the ones Dune prints. Worth checking against your own copy:
+  // they came from memory of the game rather than from anything in this repo,
+  // and this is the second time that has been a way to be wrong.
+  {
+    id: 'baliset',
+    name: 'Baliset',
+    kind: 'worthless',
+    subtype: 'none',
+    timing: 'battle-plan',
+    copies: 1,
+    image: '/treachery/baliset.svg',
+    text: WORTHLESS,
+  },
+  {
+    id: 'jubbacloak',
+    name: 'Jubba Cloak',
+    kind: 'worthless',
+    subtype: 'none',
+    timing: 'battle-plan',
+    copies: 1,
+    image: '/treachery/jubba-cloak.svg',
+    text: WORTHLESS,
+  },
+  {
+    id: 'kulon',
+    name: 'Kulon',
+    kind: 'worthless',
+    subtype: 'none',
+    timing: 'battle-plan',
+    copies: 1,
+    image: '/treachery/kulon.svg',
+    text: WORTHLESS,
+  },
   {
     id: 'lalala',
     name: 'LA, LA, LA',
     kind: 'worthless',
     subtype: 'none',
     timing: 'battle-plan',
-    copies: 5,
-    text: 'Play as part of your Battle Plan, in place of a weapon, defense, or both.'
-      + '\n\nThis card has no value in play, and you can discard it only by playing it in your Battle Plan.',
+    copies: 1,
+    image: '/treachery/la-la-la.svg',
+    text: WORTHLESS,
+  },
+  {
+    id: 'triptogamont',
+    name: 'Trip to Gamont',
+    kind: 'worthless',
+    subtype: 'none',
+    timing: 'battle-plan',
+    copies: 1,
+    image: '/treachery/trip-to-gamont.svg',
+    text: WORTHLESS,
   },
 
   // ── Specials ──────────────────────────────────────────────────────────────

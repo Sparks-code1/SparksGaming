@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <!-- A jubba cloak, hanging. Wide at the hem, hooded at the shoulder — the
+       shape reads as cloth rather than as a person, which is the point: it is
+       the garment that is worthless, not whoever wore it. -->
+  <g fill="none" stroke="#3f2c1a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <!-- the body of the cloak, shoulders down to a wide hem -->
+    <path d="M60 22
+             c-11 0 -19 5 -22 13
+             L20 96 c-1 4 1 6 5 6 h70 c4 0 6 -2 5 -6
+             L82 35 c-3 -8 -11 -13 -22 -13 z" />
+    <!-- the hood, thrown back over the shoulders -->
+    <path d="M40 36 c5 -12 12 -18 20 -18 s15 6 20 18" />
+    <!-- the opening down the front -->
+    <path d="M60 30 L60 102" stroke-width="3" />
+    <!-- folds, one either side, to give the cloth weight -->
+    <path d="M44 52 L36 100" stroke-width="2.4" opacity="0.75" />
+    <path d="M76 52 L84 100" stroke-width="2.4" opacity="0.75" />
+  </g>
+  <!-- clasp at the throat -->
+  <circle cx="60" cy="32" r="4" fill="#3f2c1a" />
+</svg>

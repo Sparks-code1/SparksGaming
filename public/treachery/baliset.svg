@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <!-- A baliset: the nine-stringed instrument. Drawn in the board's own ink so
+       it sits on a sand-coloured card the way the territory marks sit on sand.
+       The bowl is one path rather than a transformed ellipse — a nested
+       transform here produced a lopsided shape that read as a bag. -->
+  <g fill="none" stroke="#3f2c1a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <!-- the bowl, wide at the base and narrowing to the shoulder -->
+    <path d="M62 60
+             C70 70 66 84 56 94
+             C46 104 30 106 20 96
+             C10 86 12 68 24 58
+             C34 50 52 50 62 60 Z" />
+    <!-- neck, running up to the right -->
+    <path d="M60 62 L94 26" stroke-width="7" />
+    <!-- head, angled back off the neck -->
+    <path d="M91 29 L104 16" stroke-width="9" />
+  </g>
+  <!-- soundhole -->
+  <circle cx="40" cy="76" r="8" fill="#3f2c1a" />
+  <!-- strings, bridge to head -->
+  <g stroke="#3f2c1a" stroke-width="1.5" stroke-linecap="round" opacity="0.9">
+    <path d="M30 92 L96 26" />
+    <path d="M34 96 L100 30" />
+    <path d="M38 99 L103 34" />
+  </g>
+  <!-- bridge, across the lower bowl -->
+  <path d="M24 90 L42 98" stroke="#3f2c1a" stroke-width="4" stroke-linecap="round" />
+</svg>

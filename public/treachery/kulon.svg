@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <!-- A kulon: the wild desert ass. Drawn as a head in profile rather than a
+       whole animal — the ears are what make it a kulon and not a horse, and at
+       card size a full body would lose them. -->
+  <g fill="none" stroke="#3f2c1a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <!-- ears, long and set wide -->
+    <path d="M46 44 C40 26 40 16 46 12 C52 16 54 28 52 44" />
+    <path d="M74 44 C80 26 80 16 74 12 C68 16 66 28 68 44" />
+    <!-- skull and long muzzle down to the nose -->
+    <path d="M50 44 C42 50 38 60 40 70
+             C42 84 52 92 64 94
+             C74 96 84 90 88 80
+             C92 70 88 60 80 54
+             C74 50 66 44 60 42 z" />
+    <!-- the jaw line, which is what stops it reading as a bag -->
+    <path d="M46 76 C54 84 66 86 76 82" stroke-width="2.6" opacity="0.8" />
+    <!-- mane, a short brush along the back of the skull -->
+    <path d="M52 42 L48 34 M60 41 L58 32 M68 42 L70 33" stroke-width="2.6" opacity="0.8" />
+  </g>
+  <!-- eye and nostril -->
+  <circle cx="56" cy="60" r="3.6" fill="#3f2c1a" />
+  <circle cx="82" cy="76" r="2.6" fill="#3f2c1a" />
+</svg>

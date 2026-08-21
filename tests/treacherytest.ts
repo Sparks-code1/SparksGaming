@@ -4,7 +4,7 @@
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { TREACHERY_HEADER } from '@/types/Dune/Treachery'
 import type { TreacheryCard, TreacheryKind } from '@/types/Dune/Treachery'
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 
 let pass = true
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -79,6 +79,22 @@ check('exactly one weapon has no answer',
 // accident of transcription.
 check('nine weapons, eight defences', [copies(weapons), copies(defenses)], [9, 8])
 
+// Five worthless cards, one copy each, where there used to be one card with
+// five copies. The deck total is unchanged, which is the point of checking both
+// numbers rather than just the total.
+{
+  const worthless = TREACHERY_CARDS.filter(c => c.kind === 'worthless')
+  check('five worthless cards', worthless.length, 5)
+  check('...one copy of each', worthless.map(c => c.copies), [1, 1, 1, 1, 1])
+  check('...five copies in the deck, as before', copies(worthless), 5)
+  // They differ by name and picture and in no other way. If one ever gains a
+  // rule of its own it stops being worthless, and this is what notices.
+  check('they are mechanically identical',
+    new Set(worthless.map(c => `${c.kind}|${c.subtype}|${c.timing}|${c.text}`)).size, 1)
+  check('...and are told apart by name alone',
+    new Set(worthless.map(c => c.name)).size, 5)
+}
+
 // A poison weapon must name the Snooper and a projectile the Shield. This is the
 // check that catches the draft's real error, where the Snooper claimed to stop
 // projectiles while sitting in the poison class.
@@ -149,7 +165,24 @@ check('weapons red, defences blue, specials green',
 // image is optional because none exists yet. textOnly says a card is never
 // getting any, which is a different statement — without it a later art pass
 // could not tell "not drawn" from "not to be drawn".
-check('no artwork yet', TREACHERY_CARDS.filter(c => c.image).map(c => c.id), [])
+// The worthless cards have art; nothing else does yet.
+check('the five worthless cards are drawn',
+  TREACHERY_CARDS.filter(c => c.image).map(c => c.id).sort(),
+  ['baliset', 'jubbacloak', 'kulon', 'lalala', 'triptogamont'])
+check('every drawn card is a worthless one',
+  TREACHERY_CARDS.filter(c => c.image && c.kind !== 'worthless').map(c => c.id), [])
+check('no two cards share a picture',
+  new Set(TREACHERY_CARDS.filter(c => c.image).map(c => c.image)).size, 5)
+
+// A card pointing at a picture that is not there is silent — it renders as a
+// gap, and only at the moment somebody looks. Checked against the filesystem
+// rather than assumed, the same way the string joins are checked at the source.
+check('every picture a card names actually exists',
+  TREACHERY_CARDS.filter(c => c.image && !existsSync('public' + c.image)).map(c => c.image), [])
+check('...and is an SVG with something drawn in it',
+  TREACHERY_CARDS.filter(c => c.image
+    && !/\<(path|circle|ellipse|rect|polygon|polyline)\b/.test(readFileSync('public' + c.image, 'utf8')))
+    .map(c => c.image), [])
 check('Karama is the only card that is text by design',
   TREACHERY_CARDS.filter(c => c.textOnly).map(c => c.id), ['karama'])
 check('a text-only card never carries an image',
