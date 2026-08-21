@@ -8,6 +8,12 @@
  *
  * The layout in one line: a coloured header with the name, the artwork in a ruled
  * box, the rules text beneath. Cards with no artwork give the whole face to text.
+ *
+ * THE TEXT FITS BY CONSTRUCTION. A fixed size and a fixed art box worked for a
+ * weapon and ran off the bottom of the card for the Lasgun, which carries seven
+ * times as much text. So the layout is computed per card: the art box gives up
+ * height until the words fit at a size still worth reading. Anything that only
+ * works for the shortest card in the deck is not a layout, it is a coincidence.
  */
 import { TREACHERY_HEADER } from '@/types/Dune/Treachery'
 import type { TreacheryCard } from '@/types/Dune/Treachery'
@@ -19,10 +25,19 @@ const BLACK = '#000000'
 export const CARD_W = 168
 export const CARD_H = 236
 
+/** Georgia's average advance, as a fraction of the type size. An estimate, and
+ *  the reason `perLine` is approximate rather than exact — see fitCardText. */
+const CHAR_W = 0.5
+const LINE_H = 1.28
+
+const ART = { x: 15, y: 50, w: CARD_W - 30 }
+const TEXT_BOTTOM = CARD_H - 9
+const TEXT_W = CARD_W - 24
+
 /**
  * Break rules text into lines that fit.
  *
- * By character count rather than by measuring, which is crude and good enough:
+ * By character count rather than by measuring, which is crude and deliberate:
  * the alternative needs a text metric that only exists once the thing is on
  * screen, and a card that reflows after it renders is worse than one that is a
  * character or two off. Blank entries are paragraph breaks — the text uses \n\n
@@ -43,6 +58,52 @@ export function wrapCardText(text: string, perLine: number): string[] {
     if (line) out.push(line)
   })
   return out
+}
+
+/**
+ * The largest size at which this text fits the space, and the lines it makes.
+ *
+ * Walks down from `max` rather than solving, because the number of lines is a
+ * step function of the size — wrapping is discrete — and stepping is both easier
+ * to follow and impossible to get subtly wrong.
+ *
+ * `fits` is reported rather than assumed: at `min` the text may still overflow,
+ * and a caller that needs to know (to give up art space, say) should be able to
+ * ask instead of measuring the result again.
+ */
+export function fitCardText(text: string, width: number, height: number, max: number, min: number) {
+  for (let size = max; size >= min; size -= 0.2) {
+    const perLine = Math.max(10, Math.floor(width / (size * CHAR_W)))
+    const lines = wrapCardText(text, perLine)
+    if (lines.length * size * LINE_H <= height) return { size, lines, fits: true }
+  }
+  const perLine = Math.max(10, Math.floor(width / (min * CHAR_W)))
+  const lines = wrapCardText(text, perLine)
+  return { size: min, lines, fits: lines.length * min * LINE_H <= height }
+}
+
+/**
+ * Where everything goes on this particular card.
+ *
+ * The art box is the flexible part. It starts at its full height and steps down
+ * only when the text cannot otherwise be read — text is what a rules card is
+ * for, and a picture that squeezed the rules off the bottom would have it
+ * backwards.
+ */
+export function layoutCard(card: TreacheryCard) {
+  if (!card.image) {
+    const textTop = 56
+    return { artH: 0, textTop, ...fitCardText(card.text, TEXT_W, TEXT_BOTTOM - textTop, 7.5, 4.6) }
+  }
+  for (const artH of [104, 92, 80, 68, 56]) {
+    const textTop = ART.y + artH + 13
+    const fit = fitCardText(card.text, TEXT_W, TEXT_BOTTOM - textTop, 8.4, 6.4)
+    if (fit.fits) return { artH, textTop, ...fit }
+  }
+  // Nothing fits at a readable size, so take the smallest picture and the
+  // smallest type. Reached by no card in the deck today.
+  const artH = 56, textTop = ART.y + artH + 13
+  return { artH, textTop, ...fitCardText(card.text, TEXT_W, TEXT_BOTTOM - textTop, 8.4, 4.6) }
 }
 
 /**
@@ -73,34 +134,24 @@ function StopBadge({ cx, cy, r }: { cx: number; cy: number; r: number }) {
 }
 
 export function TreacheryCardFace({ card, width = CARD_W }: { card: TreacheryCard; width?: number }) {
-  const header = TREACHERY_HEADER[card.kind]
   const isSpecial = card.kind === 'special'
-
-  // A card with no picture gives its whole face to the text, and needs it —
-  // Karama runs to seven times the length of a weapon.
+  const { artH, textTop, size, lines } = layoutCard(card)
   const textOnly = !card.image
-  const perLine = textOnly ? 40 : 30
-  const size = textOnly ? 7 : 8.4
-  const lines = wrapCardText(card.text, perLine)
-  const textTop = textOnly ? 56 : 168
 
-  // The name shrinks rather than overrunning. Three tiers is enough for names
-  // running from "Shield" to "Family Atomics".
+  // The name shrinks rather than overrunning. Three tiers covers "Shield"
+  // through "Captain Iakin Nefud".
   const nameSize = card.name.length > 13 ? 12 : card.name.length > 10 ? 13.5 : 15.5
-
-  const art = { x: 15, y: 50, w: CARD_W - 30, h: 104 }
 
   return (
     <svg viewBox={`0 0 ${CARD_W} ${CARD_H}`} width={width} height={width * (CARD_H / CARD_W)}>
       <title>{card.name}</title>
 
-      {/* the card itself */}
       <rect x="1" y="1" width={CARD_W - 2} height={CARD_H - 2} rx="10"
         fill={SAND} stroke={BLACK} strokeWidth="2" />
 
       {/* header, squared off at the bottom so it reads as a band rather than a pill */}
       <path d={`M1 11 a10 10 0 0 1 10 -10 h${CARD_W - 22} a10 10 0 0 1 10 10 v27 h-${CARD_W - 2} z`}
-        fill={header} stroke={BLACK} strokeWidth="2" />
+        fill={TREACHERY_HEADER[card.kind]} stroke={BLACK} strokeWidth="2" />
       <text x={CARD_W / 2} y="26" fontSize={nameSize} fill={BLACK} textAnchor="middle"
         fontFamily="Georgia, 'Times New Roman', serif" letterSpacing="0.5">
         {card.name.toUpperCase()}
@@ -108,24 +159,26 @@ export function TreacheryCardFace({ card, width = CARD_W }: { card: TreacheryCar
 
       {card.image && (
         <>
-          {/* the picture sits in a ruled box, not loose on the card */}
-          <rect x={art.x} y={art.y} width={art.w} height={art.h}
+          <rect x={ART.x} y={ART.y} width={ART.w} height={artH}
             fill="none" stroke={BLACK} strokeWidth="1.8" />
+          {/* Fitted to the WHOLE box rather than to a square inside it: four of
+              the weapon images are square and the Maula Pistol is wide, and a
+              square slot would waste most of the box on the wide one. */}
           <image href={card.image}
-            x={art.x + (art.w - art.h) / 2} y={art.y} width={art.h} height={art.h}
+            x={ART.x} y={ART.y} width={ART.w} height={artH}
             preserveAspectRatio="xMidYMid meet" />
           {/* the badge straddles the box's corner, so it reads as applied to the
               card rather than as part of the picture */}
-          {isSpecial && <StopBadge cx={art.x + art.w - 6} cy={art.y + art.h - 4} r={17} />}
+          {isSpecial && <StopBadge cx={ART.x + ART.w - 6} cy={ART.y + artH - 4} r={17} />}
         </>
       )}
 
       {/* a special card with no picture still gets its badge, up beside the name */}
-      {isSpecial && !card.image && <StopBadge cx={CARD_W - 26} cy={60} r={17} />}
+      {isSpecial && textOnly && <StopBadge cx={CARD_W - 26} cy={60} r={17} />}
 
       <g fontFamily="Georgia, 'Times New Roman', serif" fill={BLACK}>
         {lines.map((line, i) => (
-          <text key={i} x={textOnly ? 12 : CARD_W / 2} y={textTop + i * (size * 1.28)}
+          <text key={i} x={textOnly ? 12 : CARD_W / 2} y={textTop + i * (size * LINE_H)}
             fontSize={size} textAnchor={textOnly ? 'start' : 'middle'}>
             {line}
           </text>

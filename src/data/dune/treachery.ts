@@ -20,7 +20,9 @@ const PLAY_IN_PLAN = 'Play as part of your Battle Plan.'
 export const TREACHERY_CARDS: TreacheryCard[] = [
   // ── Projectile weapons ────────────────────────────────────────────────────
   // Four of them, one copy each, all with the same text and all stopped by a
-  // Shield. They differ only by name.
+  // Shield. They differ only by name — and now by picture. Four of the five
+  // weapon images are square; the Maula Pistol is wide, which is why the art box
+  // fits an image to the whole box rather than to a square inside it.
   {
     id: 'crysknife',
     name: 'Crysknife',
@@ -28,6 +30,7 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'projectile',
     timing: 'battle-plan',
     copies: 1,
+    image: '/treachery/Crysknife.png',
     text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved."
       + ' Opponent may protect leader with a Shield.' + KEEP_IF_WON,
   },
@@ -38,6 +41,7 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'projectile',
     timing: 'battle-plan',
     copies: 1,
+    image: '/treachery/Stunner.png',
     text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved."
       + ' Opponent may protect leader with a Shield.' + KEEP_IF_WON,
   },
@@ -48,6 +52,7 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'projectile',
     timing: 'battle-plan',
     copies: 1,
+    image: '/treachery/Slip_tip.png',
     text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved."
       + ' Opponent may protect leader with a Shield.' + KEEP_IF_WON,
   },
@@ -58,6 +63,7 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'projectile',
     timing: 'battle-plan',
     copies: 1,
+    image: '/treachery/Maula_Pistol.png',
     text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved."
       + ' Opponent may protect leader with a Shield.' + KEEP_IF_WON,
   },
@@ -126,6 +132,7 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'lasgun',
     timing: 'battle-plan',
     copies: 1,
+    image: '/treachery/Lasgun.png',
     text: PLAY_IN_PLAN + "\n\nAutomatically kills opponent's leader regardless of defense card used."
       + '\n\nYou may keep this card if you win this battle.'
       + "\n\nIf anyone plays a Shield in this battle all forces, leaders, and spice in this battle's"

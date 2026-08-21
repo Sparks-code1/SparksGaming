@@ -5,6 +5,7 @@ import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { TREACHERY_HEADER } from '@/types/Dune/Treachery'
 import type { TreacheryCard, TreacheryKind } from '@/types/Dune/Treachery'
 import { readFileSync, existsSync } from 'node:fs'
+import { layoutCard, CARD_H } from '@/components/dune/TreacheryCardFace'
 
 let pass = true
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -107,6 +108,31 @@ check('the Shield stops projectiles and says so',
 check('the Snooper stops poison and says so',
   /poison/i.test(defenses.find(c => c.subtype === 'poison')?.text ?? ''), true)
 
+// ── every card fits on its own card ────────────────────────────────────────
+// The layout used a fixed type size and a fixed art box, which worked for a
+// weapon and ran the Lasgun off the bottom edge — it carries seven times the
+// text. Nothing noticed, because nothing was looking. This looks.
+{
+  const drawn = TREACHERY_CARDS.filter(c => c.image || c.textOnly)
+  const overflow = drawn.filter(c => {
+    const { textTop, size, lines } = layoutCard(c)
+    return textTop + lines.length * size * 1.28 > CARD_H - 6
+  }).map(c => c.id)
+  check('no card runs its text off the bottom', overflow, [])
+
+  // Fitting is not enough on its own — it could be achieved by shrinking the
+  // type to nothing. The floor is what keeps the fit honest.
+  const tiny = drawn.filter(c => layoutCard(c).size < 6).map(c => c.id)
+  check('...and none of them got there by becoming unreadable', tiny, [])
+
+  // The Lasgun is the worst case, so it is named: if it ever fits at full art
+  // height something has gone wrong with the measuring, not with the card.
+  const lasgun = layoutCard(TREACHERY_CARDS.find(c => c.id === 'lasgun')!)
+  check('the Lasgun gives up art space to fit its rules', lasgun.artH < 104, true)
+  check('...and a weapon with ordinary text keeps the full box',
+    layoutCard(TREACHERY_CARDS.find(c => c.id === 'crysknife')!).artH, 104)
+}
+
 // ── the Lasgun ruling ───────────────────────────────────────────────────────
 // The whole ruling rests on one word. "anyone" includes the Lasgun's own owner,
 // so the explosion turns on both cards being on the table rather than on who
@@ -193,9 +219,21 @@ check('every kind in the deck has a header colour',
 // getting any, which is a different statement — without it a later art pass
 // could not tell "not drawn" from "not to be drawn".
 // The worthless cards have art; nothing else does yet.
-check('six cards are drawn so far',
-  TREACHERY_CARDS.filter(c => c.image).map(c => c.id).sort(),
-  ['baliset', 'jubbacloak', 'kulon', 'lalala', 'triptogamont', 'weathercontrol'])
+// Stated by group rather than as a list of ids. A list has to be edited every
+// time a picture lands and says nothing about what is still missing; groups say
+// which sets are finished, which is the thing worth knowing.
+check('every worthless card is drawn',
+  TREACHERY_CARDS.filter(c => c.kind === 'worthless' && !c.image).map(c => c.id), [])
+check('every projectile weapon is drawn',
+  TREACHERY_CARDS.filter(c => c.subtype === 'projectile' && c.kind === 'weapon' && !c.image)
+    .map(c => c.id), [])
+check('the Lasgun is drawn',
+  !!TREACHERY_CARDS.find(c => c.id === 'lasgun')?.image, true)
+check('Weather Control is the one special with a picture',
+  TREACHERY_CARDS.filter(c => c.kind === 'special' && c.image).map(c => c.id), ['weathercontrol'])
+// The count moves as art lands; when it fails it reports the new number, which
+// is the whole of the maintenance.
+check('eleven cards drawn so far', TREACHERY_CARDS.filter(c => c.image).length, 11)
 check('Weather Control is drawn too',
   TREACHERY_CARDS.find(c => c.id === 'weathercontrol')?.image, '/treachery/weather-control.svg')
 check('no two cards share a picture',
@@ -207,10 +245,19 @@ check('no two cards share a picture',
 // rather than assumed, the same way the string joins are checked at the source.
 check('every picture a card names actually exists',
   TREACHERY_CARDS.filter(c => c.image && !existsSync('public' + c.image)).map(c => c.image), [])
-check('...and is an SVG with something drawn in it',
-  TREACHERY_CARDS.filter(c => c.image
-    && !/\<(path|circle|ellipse|rect|polygon|polyline)\b/.test(readFileSync('public' + c.image, 'utf8')))
-    .map(c => c.image), [])
+// Art arrives as SVG when it is drawn here and as PNG when it is supplied, so
+// the check has to accept both. An empty or truncated file is the thing being
+// guarded against, and it looks the same as a missing one on the card.
+check('...and is a real image with something in it',
+  TREACHERY_CARDS.filter(c => {
+    if (!c.image) return false
+    const bytes = readFileSync('public' + c.image)
+    if (c.image.endsWith('.svg')) {
+      return !/<(path|circle|ellipse|rect|polygon|polyline|image)\b/.test(bytes.toString('utf8'))
+    }
+    // PNG magic, and big enough to be a picture rather than a header.
+    return !(bytes.length > 1024 && bytes[0] === 0x89 && bytes.toString('ascii', 1, 4) === 'PNG')
+  }).map(c => c.image), [])
 check('Karama is the only card that is text by design',
   TREACHERY_CARDS.filter(c => c.textOnly).map(c => c.id), ['karama'])
 check('a text-only card never carries an image',
