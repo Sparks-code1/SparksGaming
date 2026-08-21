@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <!-- Weather Control: the storm, and a hand on it.
+       Two marks only. The wind is the same three-stream glyph the board prints
+       for the Storm phase, so anyone who has looked at the phase ring knows what
+       this card touches. The arc beneath it is the direction you send it —
+       counterclockwise, which on this board is the way the sector numbers climb.
+
+       An earlier version drew the whole storm track: a banded arc, sector ticks,
+       the marker sitting on it. At this size the ticks closed up into a smear and
+       the marker merged with the band. Two clean marks beat four muddled ones. -->
+
+  <!-- the storm itself -->
+  <g fill="none" stroke="#3f2c1a" stroke-width="4" stroke-linecap="round">
+    <path d="M22 34 h30 a6 6 0 1 0 -4.8 -6" />
+    <path d="M22 52 h38 a7 7 0 1 0 -5.6 -7" />
+    <path d="M22 70 h24 a5.5 5.5 0 1 0 -4.4 -5.5" />
+  </g>
+
+  <!-- where you send it: a sweep beneath, opening to the right -->
+  <path d="M22 84 A44 44 0 0 0 96 84" fill="none" stroke="#3f2c1a"
+        stroke-width="4" stroke-linecap="round" />
+  <!-- the head, turned onto the arc's tangent so it reads as travel rather than
+       as a triangle parked at the end of a line -->
+  <path d="M0 0 l-13 -7 v14 z" fill="#3f2c1a" transform="translate(101 79) rotate(-52)" />
+</svg>

@@ -166,13 +166,14 @@ check('weapons red, defences blue, specials green',
 // getting any, which is a different statement — without it a later art pass
 // could not tell "not drawn" from "not to be drawn".
 // The worthless cards have art; nothing else does yet.
-check('the five worthless cards are drawn',
+check('six cards are drawn so far',
   TREACHERY_CARDS.filter(c => c.image).map(c => c.id).sort(),
-  ['baliset', 'jubbacloak', 'kulon', 'lalala', 'triptogamont'])
-check('every drawn card is a worthless one',
-  TREACHERY_CARDS.filter(c => c.image && c.kind !== 'worthless').map(c => c.id), [])
+  ['baliset', 'jubbacloak', 'kulon', 'lalala', 'triptogamont', 'weathercontrol'])
+check('Weather Control is drawn too',
+  TREACHERY_CARDS.find(c => c.id === 'weathercontrol')?.image, '/treachery/weather-control.svg')
 check('no two cards share a picture',
-  new Set(TREACHERY_CARDS.filter(c => c.image).map(c => c.image)).size, 5)
+  new Set(TREACHERY_CARDS.filter(c => c.image).map(c => c.image)).size,
+  TREACHERY_CARDS.filter(c => c.image).length)
 
 // A card pointing at a picture that is not there is silent — it renders as a
 // gap, and only at the moment somebody looks. Checked against the filesystem

@@ -269,6 +269,7 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'storm',
     timing: 'storm-before-roll',
     copies: 1,
+    image: '/treachery/weather-control.svg',
     text: 'After the first game turn, play during the Storm Phase before the Storm Marker is moved.'
       + '\n\nWhen you play this card, you control the storm this phase and may move it from 0 to 10'
       + ' sectors in a counterclockwise direction.',
