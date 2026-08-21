@@ -111,8 +111,10 @@ export interface AdvancedRules extends FactionAbilities {
    * The advanced game adds a second, alternative use: spend it instead on your
    * OWN faction's one-time power. Either, not both, and the card is discarded.
    *
-   * Absent for the Bene Gesserit, and that absence is the rule rather than an
-   * unwritten entry — they are the one faction that gains nothing here.
+   * Absent for the Bene Gesserit, who have nothing to SPEND a Karama on. Not a
+   * statement that the card does nothing for them: their worthless cards are
+   * playable AS Karamas, which is a different rule and lives in
+   * `advanced.treachery`.
    */
   karama?: string
 }

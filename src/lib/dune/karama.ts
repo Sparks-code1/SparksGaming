@@ -25,6 +25,7 @@ import { FACTIONS } from '@/data/dune/factions'
 import { devourTerritory } from './spiceBlow'
 import type { Devoured } from './spiceBlow'
 import type { FactionId } from '@/types/Dune/Faction'
+import type { TreacheryCard } from '@/types/Dune/Treachery'
 import type { Force, GameMode, TerritoryId } from '@/types/Dune/Game'
 
 /**
@@ -103,8 +104,9 @@ const RESOLVABLE: readonly KaramaUseId[] = ['fremen-place-worm']
  * What this faction may spend a Karama on.
  *
  * The two basic uses always; its own power as well, in the advanced game. The
- * Bene Gesserit get two options rather than three, and that is the rule — they
- * are the one faction with no Karama power of their own.
+ * Bene Gesserit get two rather than three because they have nothing of their own
+ * to SPEND a Karama on — which is not the same as the card doing nothing for
+ * them. See isKaramaFor: their worthless cards ARE Karamas.
  */
 export function karamaOptions(faction: FactionId, mode: GameMode): KaramaOption[] {
   const options: KaramaOption[] = BASIC.map(o => ({ ...o, resolvable: RESOLVABLE.includes(o.id) }))
@@ -215,4 +217,25 @@ export function playKarama(input: {
   }
 
   return { use, discarded: true, resolved: null, pending: PENDING[use.id] }
+}
+
+/**
+ * Whether this card can be played as a Karama by this faction.
+ *
+ * Normally the answer is "only the Karama card". The Bene Gesserit advanced
+ * power is the exception: their worthless cards count as Karamas too.
+ *
+ * Which is a larger power than it first reads. There are two Karama cards in the
+ * deck and five worthless ones, so the faction that can play worthless cards as
+ * Karamas can hold more of them than everyone else combined — and they are the
+ * cards nobody else wants, so they come cheap at auction.
+ *
+ * Kept apart from karamaOptions on purpose. That answers "what may I spend this
+ * on"; this answers "is this a Karama at all". The Bene Gesserit changed the
+ * second question and not the first, and collapsing the two is what led to their
+ * empty options list being read as them gaining nothing from the card.
+ */
+export function isKaramaFor(faction: FactionId, mode: GameMode, card: TreacheryCard): boolean {
+  if (card.id === 'karama') return true
+  return mode === 'advanced' && faction === 'bene-gesserit' && card.kind === 'worthless'
 }

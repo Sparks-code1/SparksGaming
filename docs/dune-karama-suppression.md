@@ -121,6 +121,22 @@ there reads exactly like a faction with nothing to protect.
 
 ---
 
+## The Bene Gesserit hold more of these than anyone
+
+Their advanced power makes a Worthless Card playable as a Karama. Two Karama
+cards exist against five worthless ones, so the faction that can spend worthless
+cards this way can hold more Karamas than everyone else put together — and they
+are the cards nobody else bids for, so they come cheap.
+
+That lands squarely on this half. Whatever the window costs to open, the Bene
+Gesserit will be the ones answering it, and a design that assumes Karamas are
+rare is assuming something that is not true of one seat at the table.
+
+ answers what counts as a Karama.
+ answers what one buys. The Bene Gesserit changed the first and
+not the second, and collapsing those two questions is what led to their empty
+options list being read as them gaining nothing from the card.
+
 ## Open, and worth settling before it is built
 
 **Who sees the window.** Offering it to everyone holding a Karama tells the table

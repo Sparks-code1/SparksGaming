@@ -1,7 +1,8 @@
 // Karama, the proactive half. The menu is the rule here: which options a faction
 // is offered IS the rules statement, and the effects mostly land in phases that
 // do not exist yet.
-import { karamaOptions, playKarama } from '@/lib/dune/karama'
+import { karamaOptions, playKarama, isKaramaFor } from '@/lib/dune/karama'
+import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { FACTIONS, FACTION_IDS } from '@/data/dune/factions'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import type { FactionId } from '@/types/Dune/Faction'
@@ -34,7 +35,9 @@ check('advanced: the Guild gain theirs',
 check('advanced: Harkonnen gain theirs',
   ids('harkonnen', 'advanced'), ['guild-rate-shipment', 'free-treachery-card', 'harkonnen-take-cards'])
 
-// The rule, not an omission: they are the one faction with no power of their own.
+// Two rather than three because they have nothing of their own to SPEND a Karama
+// on. That is a narrower statement than "the card does nothing for them", and
+// reading it the wide way was a mistake — see the worthless-card block below.
 check('advanced: the Bene Gesserit still have only the two',
   ids('bene-gesserit', 'advanced'), ['guild-rate-shipment', 'free-treachery-card'])
 
@@ -125,6 +128,49 @@ check('the Bene Gesserit have no power to play',
     check(`${use.id}: what is owed is recorded`, typeof out.pending === 'string' && out.pending.length > 0, true)
   }
 }
+
+// ── what counts AS a Karama ─────────────────────────────────────────────────
+// A different question from what a Karama buys, and the one the Bene Gesserit
+// changed. Their advanced power makes worthless cards Karamas; everyone else has
+// only the two Karama cards in the deck.
+{
+  const karama = TREACHERY_CARDS.find(c => c.id === 'karama')!
+  const lalala = TREACHERY_CARDS.find(c => c.kind === 'worthless')!
+  const shield = TREACHERY_CARDS.find(c => c.id === 'shield')!
+
+  for (const f of FACTION_IDS) {
+    check(`${f}: the Karama card is a Karama`, isKaramaFor(f, 'advanced', karama), true)
+  }
+  check('advanced: a worthless card is a Karama for the Bene Gesserit',
+    isKaramaFor('bene-gesserit', 'advanced', lalala), true)
+  check('...and for nobody else',
+    FACTION_IDS.filter(f => f !== 'bene-gesserit' && isKaramaFor(f, 'advanced', lalala)), [])
+  check('...and not in the basic game, where the power does not exist',
+    isKaramaFor('bene-gesserit', 'basic', lalala), false)
+  check('a Shield is never a Karama for anyone',
+    FACTION_IDS.filter(f => isKaramaFor(f, 'advanced', shield)), [])
+
+  // The size of the power, which the rules text does not say out loud: two
+  // Karama cards exist and five worthless ones, so the faction that can play
+  // worthless as Karama can hold more than everyone else put together.
+  const karamas = TREACHERY_CARDS.filter(c => c.id === 'karama').reduce((n, c) => n + c.copies, 0)
+  const worthless = TREACHERY_CARDS.filter(c => c.kind === 'worthless').reduce((n, c) => n + c.copies, 0)
+  check('two Karamas in the deck against five worthless', [karamas, worthless], [2, 5])
+  check('so the Bene Gesserit can play more Karamas than exist as Karama cards',
+    worthless > karamas, true)
+
+  // Playing one gets the ordinary menu: what it counts as changed, what it buys
+  // did not.
+  check('a worthless card played as a Karama buys the same two things',
+    karamaOptions('bene-gesserit', 'advanced').map(o => o.id),
+    ['guild-rate-shipment', 'free-treachery-card'])
+}
+
+// The rule has to stay written down as well as implemented, since the mechanic
+// and the prose can be edited apart.
+check('the Bene Gesserit rules say worthless cards are Karamas',
+  /Worthless Card as though it were a Karama/i.test(
+    FACTIONS['bene-gesserit']?.advanced.treachery ?? ''), true)
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 

@@ -231,9 +231,12 @@ export const SPACING_GUILD: Faction = {
   ],
 }
 
-// No `karama` in the advanced block below, and that is deliberate: the Bene
-// Gesserit are the one faction that gains no special Karama power. They keep the
-// ordinary use — stopping an opponent's advantage — and nothing more.
+// No `karama` in the advanced block below, and that is a narrow statement: the
+// Bene Gesserit are the one faction with nothing to SPEND a Karama on. That is
+// not the same as gaining nothing from the card, and reading it that way was a
+// mistake — see `advanced.treachery` below, where their worthless cards become
+// Karamas. One is about what a Karama buys; the other is about what counts as
+// one.
 export const BENE_GESSERIT: Faction = {
   id: 'bene-gesserit',
   name: 'Bene Gesserit',
@@ -273,6 +276,12 @@ export const BENE_GESSERIT: Faction = {
     + 'When another faction ships or moves into a territory where you have fighters, you may flip them to advisors',
     charity:
     'You always receive CHOAM charity of 2 spice regardless of how many spice you already have',
+    // NOT from docs/dune-advance-rules.md — that file lists Karama powers for
+    // five factions and omits the Bene Gesserit entirely, which is how their
+    // absence came to be read as "they get nothing". This wording is mine and
+    // wants replacing with yours.
+    treachery:
+    'You may play a Worthless Card as though it were a Karama Card.',
     advisors:
       
       'Advisors coexist peacefully with other faction forces in the same territory. Advisors have no effect'
