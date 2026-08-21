@@ -2,6 +2,7 @@
 // are checked the moment they are added rather than needing new assertions.
 import { FACTIONS, FACTION_IDS, factionById, ATREIDES, EMPEROR, FREMEN, SPACING_GUILD } from '@/data/dune/factions'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
+import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import type { Faction } from '@/types/Dune/Faction'
 
 let pass = true
@@ -133,6 +134,23 @@ check("the Fremen's text still says their reserves come in free",
   /for free/i.test(FACTIONS.fremen?.abilities.shipment ?? ''), true)
 check('...and the Fremen are the faction that pays nothing to ship',
   FACTIONS.fremen?.reservesHeld, 'on-planet')
+
+// ── the advanced Karama powers ─────────────────────────────────────────────
+// A Karama card can stop an opponent using an advantage. The advanced game adds
+// an alternative: spend it on your OWN faction power instead. Five factions have
+// one; the Bene Gesserit deliberately do not, and that absence is the rule.
+check('five factions have a Karama power',
+  written.filter(f => f.advanced.karama).map(f => f.id).sort(),
+  ['atreides', 'emperor', 'fremen', 'harkonnen', 'spacing-guild'])
+check('the Bene Gesserit gain nothing here', FACTIONS['bene-gesserit']?.advanced.karama, undefined)
+check('every Karama power says which card spends it',
+  written.filter(f => f.advanced.karama && !/Karama Card/.test(f.advanced.karama)).map(f => f.id), [])
+
+// The card and the powers have to keep pointing at each other: the powers are
+// unreachable without the card, and the card does half its advanced job through
+// them. Either file can be edited alone.
+check('the treachery deck still carries Karama',
+  TREACHERY_CARDS.filter(c => c.id === 'karama').map(c => c.copies), [2])
 
 // ── the draft's editor accidents are gone ────────────────────────────────────
 // dealScarCards is a real function in src/data/scarCards.ts that autocomplete

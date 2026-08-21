@@ -47,6 +47,8 @@ export const ATREIDES: Faction = {
   alliance:
     'The Atreides may assist your allies by forcing their opponent to show them one element of their battle plan.',
   advanced: {
+    karama:
+      "You may use a Karama Card to look at any one player's entire Battle Plan.",
     general:
       'If you are playing the advanced game, Kwisatz Haderach is in play. If you are the Atreides, use the '
       + 'Kwisatz Haderach card and counter token to secretly keep track of force losses. Once you have lost 7 or '
@@ -89,6 +91,8 @@ export const EMPEROR: Faction = {
     + 'revival of up to 3 extra of their forces (for a possible total of 6 during each revival phase) from the '
     + 'Tleilaxu tanks.',
   advanced: {
+    karama:
+      'You may use a Karama Card to revive up to three forces or one leader for free.',
     general:
       'If you are playing the advanced game, Sardaukar is in play. Your 5 starred forces, elite Sardaukar, have a '
       + 'special fighting capability. They are worth two normal forces in battle and in taking losses against all '
@@ -147,6 +151,9 @@ export const FREMEN: Faction = {
     'If no faction has won by the end of turn 10, and you (or no one) occupies Sietch Tabr and Habbanya Sietch, '
     + 'and neither Harkonnen, Atreides nor Emperor occupies Tuek\'s Sietch, you and your allies win the game.',
   advanced: {
+    karama:
+      'You may use a Karama Card to place your sandworm token in any sand territory that you wish. '
+      + 'This is treated as a normal sandworm.',
     storm:
       'The first storm in the game is normal. All subsequent storms can move either 1-6 sectors and you get to '
       + 'know the number of sectors before the storm moves on the previous turn.',
@@ -200,6 +207,8 @@ export const SPACING_GUILD: Faction = {
   specialVictory:
     'If no faction has been able to win the game by the end of play, you automatically win the game.',
   advanced: {
+    karama:
+      'You may use a Karama Card to stop one off-planet shipment of any one player.',
     shipment:
       'You may take your shipment and move action out of turn. This would allow you to go first or last or in '
       + 'between other players\' turns, however you wish. The rest of the factions must make their shipments and '
@@ -215,6 +224,9 @@ export const SPACING_GUILD: Faction = {
   ],
 }
 
+// No `karama` in the advanced block below, and that is deliberate: the Bene
+// Gesserit are the one faction that gains no special Karama power. They keep the
+// ordinary use — stopping an opponent's advantage — and nothing more.
 export const BENE_GESSERIT: Faction = {
   id: 'bene-gesserit',
   name: 'Bene Gesserit',
@@ -301,6 +313,10 @@ export const HARKONNEN: Faction = {
   alliance: 
   'Traitor Cards that you hold may be used against your ally\'s opponent if you so choose',
   advanced: {
+    karama:
+      'You may use a Karama Card to take without looking any number of cards, up to the entire hand of '
+      + 'any one player of your choice. For each card you take, you must give that player one of your '
+      + 'cards in return.',
     capturedLeaders:
     'Every time you win a battle, you can either randomly select 1 leader from the loser (including the leader'
     + 'used in battle, if not killed, but excluding all leaders already used elsewhere that turn) and place'

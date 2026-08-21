@@ -104,6 +104,17 @@ export interface AdvancedRules extends FactionAbilities {
   fighters?: string
   /** Harkonnen keep or sell the leaders they defeat. */
   capturedLeaders?: string
+  /**
+   * This faction's own Karama power, in the advanced game.
+   *
+   * A Karama card can already stop an opponent using one of their advantages.
+   * The advanced game adds a second, alternative use: spend it instead on your
+   * OWN faction's one-time power. Either, not both, and the card is discarded.
+   *
+   * Absent for the Bene Gesserit, and that absence is the rule rather than an
+   * unwritten entry — they are the one faction that gains nothing here.
+   */
+  karama?: string
 }
 
 /**

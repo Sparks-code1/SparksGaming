@@ -231,6 +231,11 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     // Text by design, not by omission — there is more rules text here than a
     // picture would leave room for.
     textOnly: true,
+    // The text below is the BASIC card. In the advanced game it gains a second,
+    // alternative use: instead of stopping an opponent's advantage, spend it on
+    // your own faction's Karama power. Those live on the factions rather than
+    // here — see AdvancedRules.karama — because they differ per faction and the
+    // card is the same card. Either use, not both, and it discards afterwards.
     text: 'After the factions complete their "At Start" actions and after game set-up, use this card'
       + ' to stop a player from using one of their faction advantages when they attempt to use it.'
       + ' Stops the use of that advantage during one game phase.'
@@ -297,6 +302,14 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
 // used, for one phase — so every faction power has to be something that can be
 // asked about and switched off. They are prose strings today. It also needs to
 // know which advantages are win conditions, because it cannot stop those.
+//
+// And in the advanced game it does double duty: five of the six factions gain a
+// one-time power of their own, spendable INSTEAD of the cancellation. Those are
+// data now, in AdvancedRules.karama. What they still need is somewhere to fire:
+// the Atreides one reads another player's battle plan, the Harkonnen one takes
+// cards blindly from a hand and gives cards back, the Fremen one puts a worm on
+// the board from outside the deck, the Guild one cancels a shipment, and the
+// Emperor one revives for free. Every phase they touch is unbuilt.
 //
 // Truthtrance. Pauses the whole game for a question, at any time, in any phase.
 // phase.ts stops a phase; this stops the game, which is a different thing and
