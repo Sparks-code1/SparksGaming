@@ -1,8 +1,7 @@
 /**
  * The treachery deck.
  *
- * Rules text verbatim as written, with two exceptions marked FIXED below and one
- * marked WRONG that could not be repaired without inventing a rule.
+ * Rules text verbatim as written, with one exception marked FIXED below.
  *
  * Concatenation spacing was repaired throughout. The draft joined string pieces
  * without a space at the seam — 'Opponent may' + 'protect leader' reads as
@@ -105,6 +104,17 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
   // Its class is its own, and there is no defence card to match it. That is the
   // card, not a gap in the data: a Shield played in the same battle does not
   // save anyone, it destroys the territory.
+  //
+  // RULING: "anyone" includes the Lasgun's own owner. A Lasgun and a Shield on
+  // the table together destroy the territory whoever held which — shielding your
+  // own leader behind your own Lasgun sets it off exactly as the defender's
+  // Shield would.
+  //
+  // So the explosion is a property of the PAIR being present, not of who played
+  // what. Battle resolution should ask "were both cards played in this battle",
+  // never "did my opponent play a Shield". The word carrying that is "anyone",
+  // and treacherytest pins it, because nothing else in the repo can enforce a
+  // battle rule while battles do not exist.
   {
     id: 'lasgun',
     name: 'Lasgun',
@@ -137,9 +147,6 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'poison',
     timing: 'battle-plan',
     copies: 4,
-    // FIXED: the draft said "protects your leader from a projectile weapon",
-    // which is the Shield's text. A Snooper stops poison — the four poison
-    // weapons above all name it, and its own subtype says poison. Left as poison.
     text: PLAY_IN_PLAN + '\n\nProtects your leader from a poison weapon in this battle.'
       + '\n\nYou may keep this card if you win this battle.',
   },
@@ -199,13 +206,9 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'movement',
     timing: 'movement',
     copies: 1,
-    // WRONG, and left as written. The draft carries Cheap Hero's text — a card
-    // about playing a zero-strength leader, under a card whose subtype and
-    // timing say movement. The real wording is not in this repo and guessing at
-    // a rule is worse than leaving an obvious error in place. Needs your text.
-    text: 'Play as a leader with zero strength on your Battle Plan and discard after the battle.'
-      + '\n\nYou may also play a weapon and a defense. The cheap hero may be played in place of a'
-      + ' leader or when you have no leaders available.',
+    text: 'Play during Movement Phase.'
+      + '\n\nMake an extra on-planet force movement subject to normal movement rules.'
+      + "\n\nThe forces you move may be a group you've already moved this phase or another group.",
   },
   {
     id: 'weathercontrol',
@@ -284,7 +287,8 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
 // The lasgun/Shield explosion. Forces, leaders AND spice in the territory are
 // destroyed, both sides lose, no spice is paid for leaders, every card is
 // discarded. That is five exceptions to normal resolution in one card, and it
-// fires on "anyone" playing a Shield — including the lasgun's own owner.
+// fires on the PAIR being on the table rather than on an opponent's choice —
+// ruled: "anyone" includes the Lasgun's own owner.
 //
 // Cheap Hero. A leader-shaped thing that is not a leader, playable in the leader
 // slot at strength zero. Battle plans need a leader slot that accepts either.
@@ -311,4 +315,10 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
 // game state — the board SVG is generated once and identical in every match, so
 // this belongs in an overlay like the seat marks, not in the generator.
 //
-// Revival and the Tleilaxu Tanks, for the Ghola. Movement, for Hajr.
+// Revival and the Tleilaxu Tanks, for the Ghola.
+//
+// Per-group movement tracking, for Hajr. Its whole point is that the forces it
+// moves "may be a group you've already moved this phase" — which only means
+// something if movement remembers which groups have gone. Nothing tracks that
+// today, so the card cannot be told from an ordinary move. Hajr is the reason
+// the movement phase needs that flag, and the card that breaks it.

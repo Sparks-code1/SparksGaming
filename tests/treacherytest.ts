@@ -4,6 +4,7 @@
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { TREACHERY_HEADER } from '@/types/Dune/Treachery'
 import type { TreacheryCard, TreacheryKind } from '@/types/Dune/Treachery'
+import { readFileSync } from 'node:fs'
 
 let pass = true
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -26,11 +27,22 @@ check('every kind is one of the four',
   TREACHERY_CARDS.filter(c => !['weapon', 'defense', 'special', 'worthless'].includes(c.kind))
     .map(c => `${c.id}: ${c.kind}`), [])
 
-// The concatenation bug the draft had: pieces joined without a space at the
-// seam, producing "mayprotect" and "cardif". Cheap to check, invisible to read.
-check('no words are welded together at a join',
-  TREACHERY_CARDS.filter(c => /[a-z]{2,}(may|card|and|you|the)[A-Z]|mayprotect|cardif/.test(c.text))
-    .map(c => c.id), [])
+// The concatenation bug, checked at the SOURCE rather than by hunting for words
+// in the output. Every draft of this file has welded at least one join — first
+// "mayprotect" and "cardif", then "movementrules" — because a string split
+// across two lines loses the space at the seam and nothing about the result
+// looks wrong until you read it aloud.
+//
+// Listing the welds already seen only ever catches those. Reading the joins
+// catches the class: if the left piece ends in a letter and the right piece
+// starts with one, there is no space between them.
+{
+  const src = readFileSync('src/data/dune/treachery.ts', 'utf8')
+  const welds = [...src.matchAll(/(\S)['"]\s*\n\s*\+ ['"](\S)/g)]
+    .filter(m => /[A-Za-z,.]/.test(m[1]) && /[A-Za-z]/.test(m[2]))
+    .map(m => `...${m[1]}|${m[2]}...`)
+  check('no string join welds two words together', welds, [])
+}
 check('no text has a doubled space',
   TREACHERY_CARDS.filter(c => /  /.test(c.text.replace(/\n/g, ''))).map(c => c.id), [])
 
@@ -78,6 +90,40 @@ check('the Shield stops projectiles and says so',
   /projectile/i.test(defenses.find(c => c.subtype === 'projectile')?.text ?? ''), true)
 check('the Snooper stops poison and says so',
   /poison/i.test(defenses.find(c => c.subtype === 'poison')?.text ?? ''), true)
+
+// ── the Lasgun ruling ───────────────────────────────────────────────────────
+// The whole ruling rests on one word. "anyone" includes the Lasgun's own owner,
+// so the explosion turns on both cards being on the table rather than on who
+// played which. Soften it to "your opponent" and the rule changes quietly —
+// nothing else in the repo would notice, because battles do not exist yet.
+{
+  const lasgun = TREACHERY_CARDS.find(c => c.id === 'lasgun')!
+  check('the explosion fires on ANYONE playing a Shield',
+    /if anyone plays a Shield/i.test(lasgun.text), true)
+  check('...not on the opponent specifically',
+    /opponent'?s? (?:plays? a )?Shield/i.test(lasgun.text), false)
+  check('the lasgun still kills through any defence',
+    /regardless of defense card/i.test(lasgun.text), true)
+  check('...and the territory, not just the leaders, is lost',
+    /forces, leaders, and spice/i.test(lasgun.text), true)
+}
+
+// ── Hajr ────────────────────────────────────────────────────────────────────
+// It arrived carrying Cheap Hero's text: a card about a zero-strength leader,
+// under a subtype and timing that both said movement. The generalised check
+// below is what catches that class — a card that is not committed in a battle
+// plan has no business mentioning one.
+{
+  const hajr = TREACHERY_CARDS.find(c => c.id === 'hajr')!
+  check('Hajr says movement in every field',
+    [hajr.kind, hajr.subtype, hajr.timing], ['special', 'movement', 'movement'])
+  check('...and its text is about moving forces', /force movement/i.test(hajr.text), true)
+  check('...including a group that has already moved',
+    /already moved this phase/i.test(hajr.text), true)
+}
+check('no card outside a battle plan claims to be part of one',
+  TREACHERY_CARDS.filter(c => c.timing !== 'battle-plan' && /Battle Plan/i.test(c.text))
+    .map(c => c.id), [])
 
 // ── timing ──────────────────────────────────────────────────────────────────
 // Every timing names a window some phase has to open. Two of these do not exist
