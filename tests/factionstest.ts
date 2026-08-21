@@ -153,6 +153,22 @@ check('...and the Fremen are the faction that pays nothing to ship',
   check('no string join welds two words together', welds, [])
 }
 
+// ── the advisor switch, all three directions in one place ──────────────────
+// Flipping fighters back to advisors used to sit at the end of advanced
+// shipment, welded onto the previous sentence. It fires on "ships OR moves",
+// so it was only ever half a shipment rule; it now sits with the other two
+// directions of the same switch. Pinned because a rule that moved once can
+// move back, and because this one was invisible for a while.
+check('flipping fighters to advisors is a fighters rule',
+  /ships or moves into a territory where you have fighters/i.test(FACTIONS['bene-gesserit']?.advanced.fighters ?? ''), true)
+check('...and no longer hides in the shipment rule',
+  /flip them to advisors/i.test(FACTIONS['bene-gesserit']?.advanced.shipment ?? ''), false)
+check('the shipment rule still says what it is for',
+  /ship for free one advisor/i.test(FACTIONS['bene-gesserit']?.advanced.shipment ?? ''), true)
+check('both directions of the switch are in fighters',
+  [/turn into fighters/i, /flip them to advisors/i].map(re => re.test(FACTIONS['bene-gesserit']?.advanced.fighters ?? '')),
+  [true, true])
+
 // ── what Karama cannot stop ────────────────────────────────────────────────
 // Karama stops a faction using one of its advantages, except a win condition.
 // Which rules those are is stated by each faction, and canKaramaStop reads it —

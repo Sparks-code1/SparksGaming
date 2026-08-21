@@ -272,8 +272,7 @@ export const BENE_GESSERIT: Faction = {
     + ' advisor in any territory of your choice. If you are alone in the territory flip the advisor turns into a fighter',
     shipment: 
     'Whenever any other faction ships forces to Dune from off-planet, you may ship for free one advisor from your'
-    + ' reserves into that same territory (instead of the Polar Sink).'
-    + ' When another faction ships or moves into a territory where you have fighters, you may flip them to advisors',
+    + ' reserves into that same territory (instead of the Polar Sink).',
     charity:
     'You always receive CHOAM charity of 2 spice regardless of how many spice you already have',
     // NOT from docs/dune-advance-rules.md — that file lists Karama powers for
@@ -291,7 +290,14 @@ export const BENE_GESSERIT: Faction = {
     fighters:
             'when you ship forces into an unoccupied territory, you must ship as fighters, If you move advisors'
       + ' into an unoccupied territory they turn into fighters. If you move advisors into occupied territories'
-      + ' they remain as advisors or flip to fighters, fighters follow the same rules for battles',
+      + ' they remain as advisors or flip to fighters, fighters follow the same rules for battles.'
+      // Moved here from advanced.shipment. It fires on "ships OR moves", so it
+      // was only half a shipment rule, and it belongs with the other two
+      // directions of the same switch — advisors becoming fighters above, and
+      // fighters becoming advisors here. A full stop was added to the sentence
+      // before it, which had run out without one.
+      + ' When another faction ships or moves into a territory where you have fighters,'
+      + ' you may flip them to advisors',
     battle: 
     'On each turn after the Spice Blow and Nexus Phase and before any shipment occurs, in all territories in which you have'
     + ' advisors and wish to battle, announce you are doing so and turn all those advisors to fighters'
