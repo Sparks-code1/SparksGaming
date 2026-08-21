@@ -7,6 +7,7 @@ import {
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import type { Faction } from '@/types/Dune/Faction'
+import { readFileSync } from 'node:fs'
 
 let pass = true
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -137,6 +138,20 @@ check("the Fremen's text still says their reserves come in free",
   /for free/i.test(FACTIONS.fremen?.abilities.shipment ?? ''), true)
 check('...and the Fremen are the faction that pays nothing to ship',
   FACTIONS.fremen?.reservesHeld, 'on-planet')
+
+// ── no string join welds two words together ────────────────────────────────
+// Read at the SOURCE, not in the output. Twenty-five joins in this file had run
+// their pieces together — "from yourreserves", "the Polar Sink)When another" —
+// and one of them hid a whole rule: the Bene Gesserit flipping fighters to
+// advisors was welded onto the tail of their shipment text, present and
+// unreadable. Nobody spots that by reading; a machine spots it every time.
+{
+  const src = readFileSync('src/data/dune/factions.ts', 'utf8')
+  const welds = [...src.matchAll(/(\S)['"]\s*\n\s*\+ ['"](\S)/g)]
+    .filter(m => /[A-Za-z,.)]/.test(m[1]) && /[A-Za-z(]/.test(m[2]))
+    .map(m => `...${m[1]}|${m[2]}...`)
+  check('no string join welds two words together', welds, [])
+}
 
 // ── what Karama cannot stop ────────────────────────────────────────────────
 // Karama stops a faction using one of its advantages, except a win condition.
