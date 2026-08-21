@@ -1,6 +1,9 @@
 // Faction data. Four of six are filled in; this suite is written so the last two
 // are checked the moment they are added rather than needing new assertions.
-import { FACTIONS, FACTION_IDS, factionById, ATREIDES, EMPEROR, FREMEN, SPACING_GUILD } from '@/data/dune/factions'
+import {
+  FACTIONS, FACTION_IDS, factionById, factionRuleText, canKaramaStop,
+  ATREIDES, EMPEROR, FREMEN, SPACING_GUILD,
+} from '@/data/dune/factions'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import type { Faction } from '@/types/Dune/Faction'
@@ -134,6 +137,50 @@ check("the Fremen's text still says their reserves come in free",
   /for free/i.test(FACTIONS.fremen?.abilities.shipment ?? ''), true)
 check('...and the Fremen are the faction that pays nothing to ship',
   FACTIONS.fremen?.reservesHeld, 'on-planet')
+
+// ── what Karama cannot stop ────────────────────────────────────────────────
+// Karama stops a faction using one of its advantages, except a win condition.
+// Which rules those are is stated by each faction, and canKaramaStop reads it —
+// so there is one place for the answer rather than a list beside the check.
+check('every faction says what is beyond a Karama card',
+  written.filter(f => !Array.isArray(f.unsuppressable)).map(f => f.id), [])
+
+check('three factions have something out of reach',
+  written.filter(f => f.unsuppressable.length > 0).map(f => f.id).sort(),
+  ['bene-gesserit', 'fremen', 'spacing-guild'])
+check('...and they protect one rule each',
+  written.filter(f => f.unsuppressable.length > 0).map(f => f.unsuppressable.length), [1, 1, 1])
+
+// The failure mode of a reference held as a string: it points at nothing, and a
+// faction protecting a rule that does not exist reads exactly like a faction
+// with nothing to protect. Proved to resolve rather than assumed.
+check('every protected rule points at text that exists',
+  written.flatMap(f => f.unsuppressable
+    .filter(ref => !factionRuleText(f, ref))
+    .map(ref => `${f.id}: ${ref}`)), [])
+
+// Derived, not restated: whoever has a special victory must have flagged it. Add
+// one to a third faction and forget, and this names them.
+check('every special victory is out of reach',
+  written.filter(f => f.specialVictory && !f.unsuppressable.includes('specialVictory'))
+    .map(f => f.id), [])
+// The Bene Gesserit win is the odd one — a prediction, not a specialVictory —
+// so it is checked by where it actually lives.
+check("the Bene Gesserit prediction is the third win condition",
+  FACTIONS['bene-gesserit']?.unsuppressable, ['abilities.beforeGame'])
+check('...and it is the text about predicting a winner',
+  /secretly predict/.test(factionRuleText(FACTIONS['bene-gesserit']!, 'abilities.beforeGame') ?? ''), true)
+
+// The check itself, both ways round.
+check('Karama cannot stop the Fremen victory', canKaramaStop(FREMEN, 'specialVictory'), false)
+check('Karama cannot stop the Guild victory', canKaramaStop(SPACING_GUILD, 'specialVictory'), false)
+check('Karama cannot stop the prediction',
+  canKaramaStop(FACTIONS['bene-gesserit']!, 'abilities.beforeGame'), false)
+check('Karama CAN stop an ordinary advantage', canKaramaStop(ATREIDES, 'abilities.bidding'), true)
+check('...including one belonging to a faction that also wins its own way',
+  canKaramaStop(FREMEN, 'abilities.shaiHulud'), true)
+check('...and one faction being protected does not protect another',
+  canKaramaStop(EMPEROR, 'specialVictory'), true)
 
 // ── the advanced Karama powers ─────────────────────────────────────────────
 // A Karama card can stop an opponent using an advantage. The advanced game adds

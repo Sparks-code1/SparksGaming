@@ -11,7 +11,7 @@
  * is not decoration: the draft of this file named the right territories in its
  * comments and the wrong ids beside them.
  */
-import type { Faction, FactionId } from '@/types/Dune/Faction'
+import type { Faction, FactionId, FactionRuleRef } from '@/types/Dune/Faction'
 
 /** Turn order and setup both need a stable list, so the ids live in one place. */
 export const FACTION_IDS: readonly FactionId[] = [
@@ -60,6 +60,8 @@ export const ATREIDES: Faction = {
       + 'any other leader. Alive or dead, the Kwisatz Haderach has no effect on the rule governing revival of '
       + 'Atreides leaders.',
   },
+  // Nothing here is beyond a Karama card.
+  unsuppressable: [],
   leaders: [
     { name: 'Lady Jessica', strength: 5 },
     { name: 'Thufir Hawat', strength: 5 },
@@ -99,6 +101,7 @@ export const EMPEROR: Faction = {
       + 'opponents except Fremen. Your starred forces are worth just one force against Fremen. They are treated as '
       + 'one force in revival. Only one Sardaukar force can be revived per turn.',
   },
+  unsuppressable: [],
   leaders: [
     { name: 'Hasimir Fenring', strength: 6 },
     { name: 'Captain Aramsham', strength: 5 },
@@ -170,6 +173,8 @@ export const FREMEN: Faction = {
     battle:
       'Your forces do not require spice to count at their full strength.',
   },
+  // Their special victory. Karama cannot stop a win condition.
+  unsuppressable: ['specialVictory'],
   leaders: [
     { name: 'Stilgar', strength: 7 },
     { name: 'Chani', strength: 6 },
@@ -215,6 +220,8 @@ export const SPACING_GUILD: Faction = {
       + 'moves in the proper sequence. You do not have to reveal when you intend to make your shipment and '
       + 'movement until the moment you wish to take it.',
   },
+  // Their special victory. Karama cannot stop a win condition.
+  unsuppressable: ['specialVictory'],
   leaders: [
     { name: 'Staban Tuek', strength: 5 },
     { name: 'Master Bewt', strength: 3 },
@@ -280,6 +287,9 @@ export const BENE_GESSERIT: Faction = {
     'On each turn after the Spice Blow and Nexus Phase and before any shipment occurs, in all territories in which you have'
     + 'advisors and wish to battle, announce you are doing so and turn all those advisors to fighters'
   },
+  // The prediction win, which lives in abilities.beforeGame rather than in
+  // specialVictory — see the note on Faction.unsuppressable.
+  unsuppressable: ['abilities.beforeGame'],
   leaders: [
     { name: 'Mother Ramallo', strength: 5 },
     { name: 'Wanna Yueh', strength: 5 },
@@ -326,6 +336,7 @@ export const HARKONNEN: Faction = {
     + 'all captured leaders immediately to their factions. Killed leaders are put in the Tleilaxu Tanks from which their'
     + 'factions can revive them (subject to revival rules). A captured leader used in battle may be claimed as a traitor',
   },
+  unsuppressable: [],
   leaders: [
     { name: 'Feyd-Rautha', strength: 6 },
     { name: 'Beast Rabban', strength: 4 },
@@ -348,6 +359,32 @@ export const FACTIONS: Partial<Record<FactionId, Faction>> = {
 }
 
 export const factionById = (id: FactionId): Faction | null => FACTIONS[id] ?? null
+
+/**
+ * The text a rule reference points at, or undefined if there is none.
+ *
+ * Exists so a reference can be PROVED to point at something. A string key that
+ * resolves to nothing is the failure mode of this shape, and it is silent —
+ * "unsuppressable" listing a rule that does not exist reads exactly like a
+ * faction with nothing to protect.
+ */
+export function factionRuleText(f: Faction, ref: FactionRuleRef): string | undefined {
+  if (ref === 'specialVictory') return f.specialVictory
+  const [group, key] = ref.split('.') as ['abilities' | 'advanced', string]
+  return (f[group] as Record<string, string | undefined>)[key]
+}
+
+/**
+ * Whether a Karama card may stop this faction doing this.
+ *
+ * The one rule of it: everything is stoppable except a win condition, and which
+ * rules those are is stated by each faction rather than listed here. A check
+ * that carried its own list would be a second place for the answer to live, and
+ * the two would part company the first time a faction changed.
+ */
+export function canKaramaStop(f: Faction, ref: FactionRuleRef): boolean {
+  return !f.unsuppressable.includes(ref)
+}
 
 
 // ─── Ambiguous, left exactly as written ──────────────────────────────────────

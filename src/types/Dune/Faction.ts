@@ -139,6 +139,21 @@ export interface AdvancedRules extends FactionAbilities {
  */
 export type ReserveLocation = 'off-planet' | 'on-planet'
 
+/**
+ * A pointer at one of a faction's own rules.
+ *
+ * The group has to be named, not just the key. The Bene Gesserit carry TWO
+ * `beforeGame` entries — the secret prediction under `abilities`, the advisor
+ * placement under `advanced` — so a bare key identifies neither of them.
+ *
+ * These are the closest thing to ability ids the data has. When abilities stop
+ * being prose keyed by phase, this is what becomes a real id.
+ */
+export type FactionRuleRef =
+  | 'specialVictory'
+  | `abilities.${keyof FactionAbilities & string}`
+  | `advanced.${keyof AdvancedRules & string}`
+
 export interface Faction {
   id: FactionId
   /** As shown to players. */
@@ -162,5 +177,26 @@ export interface Faction {
   advanced: AdvancedRules
   /** Only some factions have one — the Fremen and the Guild. */
   specialVictory?: string
+  /**
+   * What a Karama card can never switch off.
+   *
+   * Karama stops a faction using one of its advantages, with one exception: it
+   * cannot stop a win condition. Rather than that exception living as a list
+   * beside the suppression check — where it would be a second place to forget —
+   * each faction states which of its own rules are out of reach, and the check
+   * reads it. See canKaramaStop.
+   *
+   * Not optional. A faction added without it should fail to compile rather than
+   * default to "everything I do can be stopped", which is the wrong answer for
+   * any faction that wins its own way.
+   *
+   * Three entries exist across the six, and they are the three win conditions.
+   * Two are `specialVictory`; the Bene Gesserit's is their prediction, which
+   * sits in `abilities.beforeGame` rather than in the field named for victories.
+   * That asymmetry is in the prose, not here: their paragraph describes making
+   * the prediction AND winning by it, and splitting it would be a rules edit
+   * rather than a tidy-up.
+   */
+  unsuppressable: readonly FactionRuleRef[]
   leaders: Leader[]
 }
