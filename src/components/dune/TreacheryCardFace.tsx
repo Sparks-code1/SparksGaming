@@ -48,9 +48,14 @@ export function wrapCardText(text: string, perLine: number): string[] {
 /**
  * The stop hand.
  *
- * Every special card carries one. It is the supplied hand icon turned upright —
- * the file is drawn lying down, which is why the board's charity symbol rotates
- * it by the same ninety degrees.
+ * Every special card carries one, and it MEANS NOTHING. It is how the printed
+ * cards look, and that is the whole of it — worth saying plainly, because a hand
+ * signalling stop on exactly the cards that interrupt phases is the kind of
+ * coincidence somebody later reads a rule into. There is no rule. Nothing
+ * branches on it and nothing should.
+ *
+ * It is the supplied hand icon turned upright: the file is drawn lying down,
+ * which is why the board's charity symbol rotates it by the same ninety degrees.
  */
 function StopBadge({ cx, cy, r }: { cx: number; cy: number; r: number }) {
   const box = r * 1.25

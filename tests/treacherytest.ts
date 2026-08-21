@@ -163,16 +163,23 @@ check('every kind in the deck has a header colour',
 // matters. What matters is that a weapon is not blue.
 {
   const rgb = (hex: string) => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16))
-  const dominant = (hex: string) => {
+  // A real hue angle rather than "which channel is biggest". Yellow has red as
+  // its largest channel, so the cruder test called the worthless header red the
+  // moment it stopped being green — a check that would have passed while
+  // describing the card wrongly.
+  const hue = (hex: string) => {
     const [r, g, b] = rgb(hex)
-    return r >= g && r >= b ? 'red' : g >= b ? 'green' : 'blue'
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min
+    if (!d) return 'grey'
+    const deg = ((60 * (max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4)) + 360) % 360
+    return deg < 20 || deg >= 330 ? 'red' : deg < 70 ? 'yellow' : deg < 170 ? 'green' : 'blue'
   }
-  check('weapons are red, defences blue, specials and worthless green',
+  check('weapons red, defences blue, specials green, worthless yellow',
     (['weapon', 'defense', 'special', 'worthless'] as TreacheryKind[])
-      .map(k => dominant(TREACHERY_HEADER[k])),
-    ['red', 'blue', 'green', 'green'])
-  check('the three kinds that were given a colour have three different ones',
-    new Set((['weapon', 'defense', 'special'] as TreacheryKind[]).map(k => TREACHERY_HEADER[k])).size, 3)
+      .map(k => hue(TREACHERY_HEADER[k])),
+    ['red', 'blue', 'green', 'yellow'])
+  check('all four kinds have their own colour',
+    new Set(Object.values(TREACHERY_HEADER)).size, 4)
   // Black text sits on these, so none of them may be so dark it swallows it or
   // so light the text has nothing to sit against. Loose bounds — this is a
   // guard against a header going near-black, not a contrast policy.

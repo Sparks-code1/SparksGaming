@@ -92,17 +92,20 @@ export interface TreacheryCard {
  * thirty-three times is thirty-three chances for one of them to disagree with
  * its own kind, and nothing would catch it.
  *
- * Three colours were specified for four kinds. `worthless` takes the special
- * green, on the grounds that it is not a weapon and not a defence — but it is
- * the one that was not chosen deliberately, so it is the one to change.
+ * Four colours for four kinds. Worthless was green for a while, borrowed from
+ * the specials because it is neither a weapon nor a defence; it has its own
+ * yellow now, which is the right answer — a worthless card is its own thing and
+ * the header is how you tell at a glance.
  *
- * The header carries BLACK text, which is why the green is the darker one: at
- * the lighter shade it was 3.4:1 against cream and is 2.9:1 against black here.
- * Neither is generous; this is the shade that was asked for.
+ * The header carries BLACK text, which is why the green is the darker shade.
+ * Worth knowing what each buys against black: yellow 8.8:1, red 4.8:1, blue
+ * 4.2:1, green 2.9:1. The green is the weak one and the yellow is far and away
+ * the strongest, so the worthless cards will read as the loudest of the four.
+ * That is a consequence of the colours chosen rather than a decision in itself.
  */
 export const TREACHERY_HEADER: Record<TreacheryKind, string> = {
   weapon: '#a33a32',
   defense: '#2f6fb5',
   special: '#1e5c34',
-  worthless: '#1e5c34',
+  worthless: '#d4a017',
 }
