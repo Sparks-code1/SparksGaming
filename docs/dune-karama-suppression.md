@@ -132,10 +132,12 @@ That lands squarely on this half. Whatever the window costs to open, the Bene
 Gesserit will be the ones answering it, and a design that assumes Karamas are
 rare is assuming something that is not true of one seat at the table.
 
- answers what counts as a Karama.
- answers what one buys. The Bene Gesserit changed the first and
-not the second, and collapsing those two questions is what led to their empty
-options list being read as them gaining nothing from the card.
+`isKaramaFor(faction, mode, card)` answers what counts as a Karama.
+`karamaOptions(faction, mode)` answers what one buys. The Bene Gesserit changed
+the first and not the second, and collapsing those two questions is what led to
+their empty options list being read as them gaining nothing from the card.
+
+---
 
 ## Open, and worth settling before it is built
 
