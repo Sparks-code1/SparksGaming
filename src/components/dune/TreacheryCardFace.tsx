@@ -112,18 +112,25 @@ export function layoutCard(card: TreacheryCard) {
 /**
  * The mark at the right-hand end of the header.
  *
- * A stop hand on the specials, an asterisk on the worthless cards, nothing on
- * weapons and defences. It MEANS NOTHING in either case — it is how the printed
- * cards look, and that is the whole of it. Worth saying plainly, because a hand
+ * Four of them: a stop hand on the specials, an asterisk on the worthless cards,
+ * a droplet for poison and a bullseye for projectiles.
+ *
+ * The last two go by SUBTYPE rather than kind, which is what makes them worth
+ * having. A weapon and the defence that stops it share a class — the Snooper
+ * answers poison, the Shield answers projectiles — so the mark pairs them across
+ * the two colours. A player holding a Snooper and looking at a droplet on the
+ * table knows the answer is in their hand without reading either card.
+ *
+ * That is the only one of the four that carries meaning. The hand and the
+ * asterisk mean nothing at all: they are how the printed cards look, and a hand
  * signalling stop on exactly the cards that interrupt phases is the kind of
- * coincidence somebody later reads a rule into. Nothing branches on it and
- * nothing should.
+ * coincidence somebody later reads a rule into. Nothing branches on any of them.
  *
  * The asterisk is drawn rather than typed. A text `*` sits high in the line
  * where a superscript would, so it would hang off the top of a 27-pixel band
  * instead of sitting in the middle of it.
  */
-function HeaderMark({ kind }: { kind: TreacheryKind }) {
+function HeaderMark({ kind, subtype }: { kind: TreacheryKind; subtype: string }) {
   const cx = CARD_W - 20, cy = 20, r = 10.5
 
   if (kind === 'special') {
@@ -140,6 +147,26 @@ function HeaderMark({ kind }: { kind: TreacheryKind }) {
           <path key={a} d={`M${cx - r * 0.82} ${cy} H${cx + r * 0.82}`}
             transform={`rotate(${a} ${cx} ${cy})`} />
         ))}
+      </g>
+    )
+  }
+  if (subtype === 'poison') {
+    // A drop: a point at the top opening into a round belly. Drawn rather than
+    // a circle with a spike, because the curve into the point is the whole of
+    // what makes it read as liquid.
+    return (
+      <path d={`M${cx} ${cy - r}
+                C${cx + r * 0.52} ${cy - r * 0.32} ${cx + r * 0.78} ${cy + r * 0.2} ${cx} ${cy + r * 0.86}
+                C${cx - r * 0.78} ${cy + r * 0.2} ${cx - r * 0.52} ${cy - r * 0.32} ${cx} ${cy - r}Z`}
+        fill={BLACK} />
+    )
+  }
+  if (subtype === 'projectile') {
+    return (
+      <g>
+        <circle cx={cx} cy={cy} r={r * 0.9} fill="none" stroke={BLACK} strokeWidth={r * 0.2} />
+        <circle cx={cx} cy={cy} r={r * 0.5} fill="none" stroke={BLACK} strokeWidth={r * 0.2} />
+        <circle cx={cx} cy={cy} r={r * 0.17} fill={BLACK} />
       </g>
     )
   }
@@ -179,12 +206,20 @@ export function TreacheryCardFace({ card, width = CARD_W }: { card: TreacheryCar
         fontFamily="Georgia, 'Times New Roman', serif" letterSpacing="0.5">
         {card.name.toUpperCase()}
       </text>
-      <HeaderMark kind={card.kind} />
+      <HeaderMark kind={card.kind} subtype={card.subtype} />
 
       {card.image && (
         <>
-          <rect x={ART.x} y={ART.y} width={ART.w} height={artH}
-            fill="none" stroke={BLACK} strokeWidth="1.8" />
+          {/* A ruled box around line art gives it an edge to sit against. Around
+              a painted picture it reads as a second frame inside the card's own,
+              so the supplied artwork goes without one. The file format is the
+              proxy for which is which — everything drawn here is SVG and
+              everything supplied is not — and it is self-maintaining, which a
+              per-card flag would not be. */}
+          {card.image.endsWith('.svg') && (
+            <rect x={ART.x} y={ART.y} width={ART.w} height={artH}
+              fill="none" stroke={BLACK} strokeWidth="1.8" />
+          )}
           {/* Fitted to the WHOLE box rather than to a square inside it: four of
               the weapon images are square and the Maula Pistol is wide, and a
               square slot would waste most of the box on the wide one. */}

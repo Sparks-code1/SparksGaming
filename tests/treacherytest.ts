@@ -108,6 +108,50 @@ check('the Shield stops projectiles and says so',
 check('the Snooper stops poison and says so',
   /poison/i.test(defenses.find(c => c.subtype === 'poison')?.text ?? ''), true)
 
+// ── the header mark, and the one of the four that means something ──────────
+// The droplet and the bullseye go by SUBTYPE, so a weapon and the defence that
+// answers it carry the same mark across two different header colours. That is
+// the pairing rule showing up in the art, so it is checked like a rule rather
+// than left to the eye.
+{
+  const mark = (c: TreacheryCard) =>
+    c.kind === 'special' ? 'stop'
+      : c.kind === 'worthless' ? 'asterisk'
+      : c.subtype === 'poison' ? 'droplet'
+      : c.subtype === 'projectile' ? 'bullseye' : 'none'
+
+  check('a poison weapon and the Snooper carry the same mark',
+    [mark(TREACHERY_CARDS.find(c => c.id === 'gomjabbar')!),
+      mark(TREACHERY_CARDS.find(c => c.id === 'snooper')!)], ['droplet', 'droplet'])
+  check('a projectile weapon and the Shield carry the same mark',
+    [mark(TREACHERY_CARDS.find(c => c.id === 'crysknife')!),
+      mark(TREACHERY_CARDS.find(c => c.id === 'shield')!)], ['bullseye', 'bullseye'])
+  // Written the other way round on the first attempt: "every card WITH a class
+  // is marked", which filtered on the very property it was asserting and so
+  // could never fail. Taking a card's class away removed it from the check
+  // instead of failing it. This asks the question that can be answered no.
+  check('every weapon and defence carries a class the header can mark',
+    TREACHERY_CARDS.filter(c => ['weapon', 'defense'].includes(c.kind)
+      && c.id !== 'lasgun' && mark(c) === 'none').map(c => c.id), [])
+  // The Lasgun is answered by nothing, so it is marked as nothing. If it ever
+  // gains a mark, something has decided it belongs to a class.
+  check('the Lasgun carries no class mark',
+    mark(TREACHERY_CARDS.find(c => c.id === 'lasgun')!), 'none')
+}
+
+// ── borders belong to line art ─────────────────────────────────────────────
+// Drawn art gets a ruled box; supplied pictures do not, because a frame inside
+// the card's own frame reads as a mistake. Format is the proxy for which is
+// which, so it is worth stating that the proxy still holds.
+// Every picture is one or the other, so "is it an SVG" is a total question and
+// safe to branch a border on. A third format arriving would make it a partial
+// one, and the card would silently lose its frame.
+check('every picture is an SVG or a PNG, nothing else',
+  TREACHERY_CARDS.filter(c => c.image && !/\.(svg|png)$/.test(c.image)).map(c => c.id), [])
+check('the drawn cards are the SVGs',
+  TREACHERY_CARDS.filter(c => c.image?.endsWith('.svg')).map(c => c.id).sort(),
+  ['baliset', 'jubbacloak', 'kulon', 'lalala', 'triptogamont', 'weathercontrol'])
+
 // ── the name stops before the mark ─────────────────────────────────────────
 // The name moved left and the mark moved into the header beside it, so they now
 // share a 27-pixel band and can collide. Names run from six characters to
