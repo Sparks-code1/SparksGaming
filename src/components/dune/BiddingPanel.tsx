@@ -157,10 +157,14 @@ export function BiddingPanel(props: BiddingPanelProps) {
     <div style={{
       position: 'absolute', inset: 0, background: '#000000a8',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
+      // Scrolls rather than spilling. A hard minWidth in a column narrower than
+      // it does not shrink the panel, it puts half of it outside the board area
+      // and over the chat.
+      overflow: 'auto', padding: 8,
     }}>
       <div role="dialog" aria-label="treachery bidding" style={{
         background: INK, color: SAND, border: `1px solid ${SAND}44`, borderRadius: 10,
-        padding: 18, minWidth: 520, maxWidth: 720,
+        padding: 18, width: 'min(720px, 100%)', minWidth: 'min(520px, 100%)', maxWidth: 720,
         font: '14px Georgia, "Times New Roman", serif',
         boxShadow: '0 18px 60px #000000cc',
       }}>

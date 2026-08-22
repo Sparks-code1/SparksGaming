@@ -22,6 +22,28 @@ import type { GamePhase } from '@/types/Dune/Game'
 /** What a Dune seat keeps hidden. One number, for now. */
 export interface DuneSecrets extends Secrets {
   spice: number
+  /**
+   * Treachery card ids. The HAND, not the count.
+   *
+   * The count is public and lives in the shared row on DunePlayerPublic; this
+   * is what the cards actually are, and it reaches one seat and no other.
+   */
+  cards?: string[]
+  /**
+   * Leaders this seat may call as traitors, by name.
+   *
+   * The single most valuable secret in the game — a known traitor is a battle
+   * that cannot be lost — so it is the one thing that must never be derived,
+   * inferred or defaulted anywhere a client can reach.
+   */
+  traitors?: string[]
+  /**
+   * The treachery card currently up for auction, for the Atreides alone.
+   *
+   * Written by the server at OPEN_BIDDING and cleared when the auction settles.
+   * See lib/dune/prescience.
+   */
+  prescience?: string
 }
 
 /** Claiming brings a player UP TO this, it does not add it. */

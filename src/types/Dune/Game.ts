@@ -61,16 +61,27 @@ export interface Force {
  * Strings rather than an enum or an index: they read in logs, survive a JSON
  * round trip, and cannot silently renumber.
  */
-export type GamePhase =
-  | 'Storm'
-  | 'Spice Blow and Nexus'
-  | 'CHOAM Charity'
-  | 'Bidding'
-  | 'Revival'
-  | 'Shipment and Movement'
-  | 'Battles'
-  | 'Spice Collection'
-  | 'Mentat Pause'
+export const DUNE_PHASES = [
+  'Storm',
+  'Spice Blow and Nexus',
+  'CHOAM Charity',
+  'Bidding',
+  'Revival',
+  'Shipment and Movement',
+  'Battles',
+  'Spice Collection',
+  'Mentat Pause',
+] as const
+
+/**
+ * A LIST, with the union read off it, rather than a union and a list beside it.
+ *
+ * Anything showing all nine in order — the phase strip across the top of the
+ * game screen, the board's own nine medallions — needs the sequence, not just
+ * the set. Two declarations of one sequence is two places to add the tenth
+ * phase, and the one that gets forgotten is always the one nobody imports.
+ */
+export type GamePhase = typeof DUNE_PHASES[number]
 
 /** In turn order, so `PHASES[0]` starts a turn and the last one ends it. */
 export const PHASES: readonly GamePhase[] = [
@@ -134,6 +145,60 @@ export interface SpiceDeckPublic {
   discardB: SpiceCard[]
 }
 
+/**
+ * One seat, as the whole table may see it.
+ *
+ * EVERY FIELD HERE IS PUBLIC BY RULE, which is the only reason this can sit in
+ * the shared row at all. Worth saying field by field, because the neighbouring
+ * facts are not:
+ *
+ *   Forces on the board are pieces standing on Arrakis in front of everybody.
+ *   Reserves are counted out in the open too. Both public.
+ *
+ *   The NUMBER of treachery cards a faction holds is public — you can see the
+ *   cards in their hand — and it is load-bearing in bidding, where a faction at
+ *   its limit must pass. WHICH cards they are is not, and is not here.
+ *
+ *   Spice is NOT public and is not here. It is per-seat in match_secrets, and a
+ *   count of it in this object would put every purse in the shared row.
+ *
+ *   Alliances are announced at a Nexus, so who is allied with whom is public.
+ */
+export interface DunePlayerPublic {
+  faction: FactionId
+  /** Which of the six printed circles they sit at — 'player-position-N'. */
+  seat: string
+  /** Off-board forces still to ship. On-planet for the Fremen, but still theirs. */
+  reserves: number
+  /**
+   * How many treachery cards they hold. NOT the cards.
+   *
+   * Published rather than derived, for the same reason the spice deck's count
+   * is: the cards live in match_secrets and nothing on this side can count a
+   * row it cannot read.
+   */
+  handCount: number
+  /** Their ally, or null. Both halves of a pair name each other. */
+  ally: FactionId | null
+  /**
+   * Atreides forces lost IN BATTLE, for the Kwisatz Haderach.
+   *
+   * Only meaningful for the Atreides in the advanced game, and absent
+   * otherwise. The count is stored; whether he is AVAILABLE is derived from it
+   * by `kwisatzHaderachAvailable` — a stored flag is a second copy of the same
+   * fact and the two drift.
+   */
+  battleLosses?: number
+}
+
+/** Battle losses that unlock the Kwisatz Haderach. */
+export const KWISATZ_HADERACH_AT = 7
+
+/** Derived, never stored beside the count it comes from. */
+export function kwisatzHaderachAvailable(battleLosses: number | undefined): boolean {
+  return (battleLosses ?? 0) >= KWISATZ_HADERACH_AT
+}
+
 export interface DuneGameState {
   /**
    * Where the storm sits now. `number`, not `18` — a bare literal in a type
@@ -154,12 +219,40 @@ export interface DuneGameState {
    */
   shieldWall: ShieldWall
   /**
+   * Which game is being played. Public, and read by nearly every phase — see
+   * GameMode. The screen needs it too: the Kwisatz Haderach tracker is an
+   * advanced-game thing and must not appear in a basic one.
+   */
+  mode: GameMode
+  /**
    * The spice deck: how much is left, and what is showing on the pile(s).
    *
    * Public on purpose, and safe: no card order, only a count and the face-up
    * discards. See SpiceDeckPublic.
    */
   spiceDeck: SpiceDeckPublic
+  /** Everyone at the table, in seat order. */
+  players: DunePlayerPublic[]
+  /**
+   * Forces standing on Arrakis. Public: they are pieces on a board.
+   *
+   * The board draws them, and the HUD's force and stronghold counts are summed
+   * from this rather than stored per seat — a stored total is a second copy of
+   * what the board is already showing, and the two disagree the first time a
+   * worm eats a stack.
+   */
+  forces: Force[]
+  /** Spice lying in territories, keyed by territory id. Face up on the board. */
+  spiceOnBoard: Record<string, number>
+  /**
+   * The seat the game is waiting on, or null.
+   *
+   * PUBLIC ON PURPOSE. Six people round a table can all see who is thinking;
+   * six people in six browsers cannot, and the commonest failure of a play-by-
+   * network game is everybody waiting on everybody. It says WHO, never what
+   * they are deciding.
+   */
+  awaiting: FactionId | null
 }
 
 // ── Not here yet, and the reason ─────────────────────────────────────────────

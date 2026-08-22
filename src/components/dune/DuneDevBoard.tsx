@@ -9,17 +9,15 @@
  * overlay can share its coordinate system exactly: markers sit at the numbers
  * boardData already holds, not at numbers measured off a picture.
  */
-import { useEffect, useMemo, useState } from 'react'
-import {
-  DUNE_BOARD, DUNE_PLAYER_POSITIONS, DUNE_STORM_RING, DUNE_SECTORS, DUNE_TERRITORIES,
-} from '@/data/dune/boardData'
+import { useMemo, useState } from 'react'
+import { DUNE_PLAYER_POSITIONS, DUNE_TERRITORIES } from '@/data/dune/boardData'
 import {
   resolveStorm, seatsFromPositions, firstPlayerAfterStorm,
   STORM_START, FIRST_STORM_ROLL, stormRollRange,
 } from '@/lib/dune/storm'
 import type { FactionId } from '@/types/Dune/Faction'
-import { SeatLayer, FACTION_LOOK } from './SeatLayer'
-import { SpiceDeckArea } from './SpiceDeckArea'
+import { FACTION_LOOK } from './SeatLayer'
+import { DuneBoard } from './DuneBoard'
 import { LeaderDisc } from './LeaderDisc'
 import { TreacheryCardFace } from './TreacheryCardFace'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
@@ -35,38 +33,7 @@ import type { Awaiting } from '@/lib/dune/phase'
 import type { Force, GameMode, SectorId, ShieldWall, TerritoryId } from '@/types/Dune/Game'
 import CharityPanel from './CharityPanel'
 
-const { cx, cy } = DUNE_BOARD
 
-function polar(bearing: number, r: number): [number, number] {
-  const a = ((bearing - 90) * Math.PI) / 180
-  return [cx + r * Math.cos(a), cy + r * Math.sin(a)]
-}
-
-/** The storm marker: a wedge filling its sector of the ring the board draws. */
-function stormWedge(sector: SectorId): string | null {
-  const s = DUNE_SECTORS.find(x => x.id === sector)
-  if (!s) return null
-  const { inner, outer } = DUNE_STORM_RING
-  let span = s.toBearing - s.fromBearing
-  if (span < 0) span += 360
-  const [x1, y1] = polar(s.fromBearing, inner)
-  const [x2, y2] = polar(s.fromBearing, outer)
-  const [x3, y3] = polar(s.fromBearing + span, outer)
-  const [x4, y4] = polar(s.fromBearing + span, inner)
-  const big = span > 180 ? 1 : 0
-  return [
-    'M', x1, y1, 'L', x2, y2,
-    'A', outer, outer, 0, big, 1, x3, y3,
-    'L', x4, y4,
-    'A', inner, inner, 0, big, 0, x1, y1, 'Z',
-  ].join(' ')
-}
-
-/** Where a stack stands: the cell for this (territory, sector). */
-function cellAt(territoryId: string, sector: string) {
-  const t = DUNE_TERRITORIES.find(x => x.id === territoryId)
-  return t?.cells.find(c => c.sector === sector)?.at ?? t?.centroid ?? null
-}
 
 /** Stacks over sand, rock and strongholds, so the storm and the worm can be
  *  seen treating them differently. */
@@ -95,7 +62,6 @@ function seedForces(): Force[] {
 const panel = { border: '1px solid #ffffff22', borderRadius: 6, padding: 10, marginBottom: 10 }
 
 export default function DuneDevBoard() {
-  const [svg, setSvg] = useState<string | null>(null)
   const [storm, setStorm] = useState<SectorId>(STORM_START)
   const [turn, setTurn] = useState(1)
   const [roll, setRoll] = useState(3)
@@ -130,19 +96,6 @@ export default function DuneDevBoard() {
   const [worms, setWorms] = useState<TerritoryId[]>([])
   const [log, setLog] = useState<string[]>(['Ready. Storm at sector-1.'])
 
-  useEffect(() => {
-    fetch('/dune-board.svg')
-      .then(r => r.text())
-      // Drop the fixed width/height so the board scales to its container off its
-      // viewBox alone. Left in place it renders at its natural 970px, overflows,
-      // and the overlay — which IS sized to the container — stops lining up with
-      // it. The two must share one coordinate system or every marker is wrong.
-      .then(t => t.replace(/<svg([^>]*)>/, (_m, attrs: string) =>
-        '<svg' + attrs.replace(/\s(width|height)="[^"]*"/g, '') +
-        ' width="100%" style="display:block">'))
-      .then(setSvg)
-      .catch(() => setSvg(null))
-  }, [])
 
   const say = (line: string) => setLog(l => [line, ...l].slice(0, 40))
   const name = (id: string) => DUNE_TERRITORIES.find(t => t.id === id)?.displayName ?? id
@@ -287,72 +240,27 @@ export default function DuneDevBoard() {
   }
 
   const stacks = useMemo(() => {
-    const byCell = new Map<string, { x: number; y: number; n: number }>()
+    const byCell = new Map<string, { territoryId: string; sector: string; count: number }>()
     for (const f of forces) {
-      const at = cellAt(f.territoryId, f.sector)
-      if (!at) continue
       const key = `${f.territoryId}|${f.sector}`
-      byCell.set(key, { x: at.x, y: at.y, n: (byCell.get(key)?.n ?? 0) + f.count })
+      const had = byCell.get(key)
+      byCell.set(key, { territoryId: f.territoryId, sector: f.sector, count: (had?.count ?? 0) + f.count })
     }
-    return [...byCell.entries()]
+    return [...byCell.values()]
   }, [forces])
-
-  const wedge = stormWedge(storm)
 
   return (
     <div style={{ display: 'flex', gap: 16, padding: 16, background: '#0d1220', minHeight: '100vh', color: '#f0e2bb' }}>
-      <div style={{ position: 'relative', flex: '0 0 auto', width: 680 }}>
-        {svg
-          ? <div dangerouslySetInnerHTML={{ __html: svg }} />
-          : <p>loading /dune-board.svg…</p>}
-        <svg viewBox={DUNE_BOARD.viewBox} style={{
-          position: 'absolute', inset: 0, width: '100%',
-          // The board only takes clicks while the phase is stopped and waiting.
-          pointerEvents: pending ? 'auto' : 'none',
-        }}>
-          {wedge && <path d={wedge} fill="#c9542a" fillOpacity="0.55" stroke="#f2d9a0" strokeWidth="2" />}
-          {stacks.map(([key, s]) => (
-            <g key={key}>
-              <circle cx={s.x} cy={s.y} r="9" fill="#1d3f70" stroke="#f0e2bb" strokeWidth="1.5" />
-              <text x={s.x} y={s.y} fontSize="10" fill="#f0e2bb" textAnchor="middle"
-                dominantBaseline="central" fontFamily="Georgia, serif">{s.n}</text>
-            </g>
-          ))}
-          {Object.entries(spice).map(([id, n]) => {
-            const t = DUNE_TERRITORIES.find(x => x.id === id)
-            const at = t ? cellAt(id, t.spiceSector ?? '') ?? t.centroid : null
-            if (!at || n <= 0) return null
-            return (
-              <g key={id}>
-                <circle cx={at.x + 15} cy={at.y - 13} r="10" fill="#c98a1e" stroke="#3f2c1a" strokeWidth="1.4" />
-                <text x={at.x + 15} y={at.y - 13} fontSize="11" fill="#3f2c1a" textAnchor="middle"
-                  dominantBaseline="central" fontWeight="bold" fontFamily="Georgia, serif">{n}</text>
-              </g>
-            )
-          })}
-          {/* Who is sitting where. An overlay, not part of the board: the
-              seating changes every game and the printed circles do not. */}
-          <SeatLayer seating={seating} />
-
-          {/* The spice deck and its discards, in the box on the surround.
-              Through publicSpiceDeck rather than from the three arrays directly:
-              this view holds the real deck because it runs the rules locally,
-              and handing it straight to the overlay would make the one place
-              that must never see a card order the one place that does. */}
-          <SpiceDeckArea mode={mode}
-            deck={publicSpiceDeck({ deck, discardA, discardB })} />
-
-          {/* A worm surfaced here this turn. */}
-          {worms.map(id => {
-            const t = DUNE_TERRITORIES.find(x => x.id === id)
-            const at = t ? cellAt(id, t.spiceSector ?? '') ?? t.centroid : null
-            if (!at) return null
-            return (
-              <image key={id} href="/icons/sandworm.svg"
-                x={at.x - 20} y={at.y - 20} width="40" height="40" />
-            )
-          })}
-
+      <div style={{ flex: '0 0 auto', width: 680 }}>
+        {/* The same board component the game screen draws. It was all inline
+            here — the fetch, the width fix-up, the storm wedge, the stack and
+            spice markers — and a second copy of it in the game screen would
+            have been two boards that drift apart. The picker below is the one
+            thing only this harness has, so it goes in as children. */}
+        <DuneBoard
+          storm={storm} stacks={stacks} spice={spice} seating={seating}
+          deck={publicSpiceDeck({ deck, discardA, discardB })} mode={mode}
+          worms={worms} interactive={!!pending}>
           {/* While the phase waits, every territory is a target. */}
           {pending && DUNE_TERRITORIES.map(t => {
             const chosen = picks.includes(t.id as TerritoryId)
@@ -367,7 +275,7 @@ export default function DuneDevBoard() {
               </circle>
             )
           })}
-        </svg>
+        </DuneBoard>
       </div>
 
       <div style={{ flex: 1, fontFamily: 'system-ui', fontSize: 14, maxWidth: 420 }}>

@@ -11,7 +11,7 @@
  * is not decoration: the draft of this file named the right territories in its
  * comments and the wrong ids beside them.
  */
-import type { Faction, FactionId, FactionRuleRef } from '@/types/Dune/Faction'
+import type { Faction, FactionId, FactionRuleRef, Leader } from '@/types/Dune/Faction'
 
 /** Turn order and setup both need a stable list, so the ids live in one place. */
 export const FACTION_IDS: readonly FactionId[] = [
@@ -435,3 +435,20 @@ export function canKaramaStop(f: Faction, ref: FactionRuleRef): boolean {
 // 5. The Atreides battle text reads oddly — 'force your opponent to reveal YOUR
 //    choice of one of the four elements' — but that is the rule: you pick which
 //    element they must show. Not touched.
+
+/**
+ * A leader by name, with the faction they belong to.
+ *
+ * Traitor cards are leader cards, and a traitor card names a leader from
+ * SOMEBODY ELSE'S faction — so the holder's own faction cannot resolve it and
+ * the search has to cross all six. Names are unique across the game's leaders,
+ * which is what makes a name a usable id here.
+ */
+export function findLeader(name: string): { leader: Leader; faction: FactionId } | null {
+  for (const id of FACTION_IDS) {
+    const f = FACTIONS[id]
+    const leader = f?.leaders.find(l => l.name === name)
+    if (leader) return { leader, faction: id }
+  }
+  return null
+}
