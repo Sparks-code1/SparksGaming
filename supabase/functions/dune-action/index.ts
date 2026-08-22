@@ -25,6 +25,10 @@
 // ============================================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { applySpiceMoves, BANK } from '../_shared/duneSpice.gen.ts'
+import { settleAuction } from '../_shared/duneAuction.gen.ts'
+import { beginAuction, answerBid, cardsOnOffer, BID_SECONDS } from '../_shared/duneBidding.gen.ts'
+import { drawTreachery, discardUnsold, shuffleWithSeed } from '../_shared/duneDeck.gen.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -75,16 +79,40 @@ Deno.serve(async req => {
   // claim about identity, and this is the one place that can check it.
   const { data: seat } = await admin
     .from('match_players')
-    .select('player_id')
+    .select('player_id, faction_id')
     .eq('match_id', matchId)
     .eq('user_id', user.id)
     .maybeSingle()
   if (!seat?.player_id) return json({ error: 'no seat in that match', code: 'not-seated' }, 403)
   const playerId = seat.player_id as string
 
+  // A SEAT IS NOT A FACTION, and the auction speaks faction. Seats are 'p1'..
+  // 'p6' and hand limits, the Emperor's redirect and the bidding order are all
+  // keyed by 'atreides' and the rest. Passing a seat id into answerBid compared
+  // 'p1' against 'atreides' and refused every bid as not-your-turn — forever,
+  // since nothing could ever match.
+  //
+  // The whole roster, because settling needs to map every winner back to the
+  // row their card and their spice are written to.
+  const { data: roster } = await admin
+    .from('match_players').select('player_id, faction_id').eq('match_id', matchId)
+  const seatOfFaction: Record<string, string> = {}
+  const factionOfSeat: Record<string, string> = {}
+  for (const r of roster ?? []) {
+    if (!r.faction_id) continue
+    seatOfFaction[r.faction_id as string] = r.player_id as string
+    factionOfSeat[r.player_id as string] = r.faction_id as string
+  }
+  const myFaction = factionOfSeat[playerId]
+
   const { data: match } = await admin
     .from('matches')
-    .select('state, version')
+    // rng_seed and action_seq are here for the treachery reshuffle. Without
+    // them the shuffle seed was Number(undefined) + undefined — NaN, which
+    // mulberry32 floors to 1, so every match on the planet reshuffled into the
+    // same order. Deterministic, replayable, and identical everywhere: the one
+    // failure a seeded shuffle is supposed to prevent.
+    .select('state, version, rng_seed, action_seq')
     .eq('id', matchId)
     .maybeSingle()
   if (!match) return json({ error: 'no such match', code: 'not-found' }, 404)
@@ -294,7 +322,10 @@ Deno.serve(async req => {
         .eq('match_id', matchId).eq('player_id', playerId).maybeSingle()
       const purse = readSpice((mine?.data ?? {}) as DuneSecrets)
 
-      const outcome = answerBid(step.carry, playerId, action.bid, purse, now + BID_SECONDS * 1000)
+      if (!myFaction) {
+        return json({ error: 'your seat has no faction', code: 'no-faction' }, 409)
+      }
+      const outcome = answerBid(step.carry, myFaction, action.bid, purse, now + BID_SECONDS * 1000)
 
       // A REFUSAL IS PRIVATE and changes nothing. Saying "more than you hold" to
       // the table would announce roughly what the bidder has, which is most of
@@ -319,10 +350,15 @@ Deno.serve(async req => {
       // ── Settled. Cards, spice and the discard, or none of them ─────────────
       const { data: allSecrets } = await admin
         .from('match_secrets').select('player_id, data').eq('match_id', matchId)
-      const hands = Object.fromEntries((allSecrets ?? []).map(
-        (r) => [r.player_id, ((r.data ?? {}) as { cards?: string[] }).cards ?? []]))
-      const purses = Object.fromEntries((allSecrets ?? []).map(
-        (r) => [r.player_id, readSpice((r.data ?? {}) as DuneSecrets)]))
+      // Keyed by FACTION on the way in, because that is what the auction's
+      // awards name. Rows whose seat has no faction are skipped rather than
+      // keyed by seat id, which would put two namespaces in one object and make
+      // the mismatch above possible all over again.
+      const withFaction = (allSecrets ?? []).filter((r) => factionOfSeat[r.player_id as string])
+      const hands = Object.fromEntries(withFaction.map(
+        (r) => [factionOfSeat[r.player_id as string], ((r.data ?? {}) as { cards?: string[] }).cards ?? []]))
+      const purses = Object.fromEntries(withFaction.map(
+        (r) => [factionOfSeat[r.player_id as string], readSpice((r.data ?? {}) as DuneSecrets)]))
       const byId = Object.fromEntries((allSecrets ?? []).map((r) => [r.player_id, r.data ?? {}]))
 
       const { data: lotRows } = await admin
@@ -347,9 +383,16 @@ Deno.serve(async req => {
       // ONE transaction for all of it. A card dealt without its payment, or a
       // payment without its card, is invisible afterwards — both live in secret
       // rows — so it would surface as somebody quietly richer several turns on.
+      // ...and back to SEAT on the way out, because match_secrets is keyed by
+      // seat. A faction with no seat cannot be written to and is a bug upstream
+      // rather than something to swallow here.
       const secretsPatch: Record<string, unknown> = {}
-      for (const [seat, next] of Object.entries(settled.writes.secrets)) {
-        secretsPatch[seat] = { ...(byId[seat] ?? {}), cards: next.hand, spice: next.spice }
+      for (const [faction, next] of Object.entries(settled.writes.secrets)) {
+        const seatId = seatOfFaction[faction]
+        if (!seatId) {
+          return json({ error: `no seat holds ${faction}`, code: 'unseated-winner' }, 409)
+        }
+        secretsPatch[seatId] = { ...(byId[seatId] ?? {}), cards: next.hand, spice: next.spice }
       }
       const { data, error } = await admin.rpc('apply_match_write', {
         p_match_id: matchId,

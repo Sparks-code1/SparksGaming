@@ -103,6 +103,82 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
     /hydrateState\(/.test(fn), true)
 }
 
+// ── the Dune server, which nothing was looking at ──────────────────────────
+// The guard above reads apply-action, which is Risk's. dune-action runs the
+// auction and had no offline coverage whatsoever — and it held two faults that
+// only a real call would have found, both of them invisible to tsc because it
+// does not read supabase/functions.
+{
+  const fn = SRC.find(f => f.path === 'supabase/functions/dune-action/index.ts')?.text ?? ''
+  check('the Dune write path exists to be checked', fn.length > 0, true)
+
+  // A SEAT IS NOT A FACTION. Seats are 'p1'..'p6'; the auction's order, the
+  // hand limits and the Emperor's redirect are all keyed by faction. Handing a
+  // seat id to answerBid compared 'p1' against 'atreides' and refused every bid
+  // as not-your-turn — forever, because nothing could ever match.
+  check('the bidder is identified by faction, not by seat',
+    fn.includes('answerBid(step.carry, myFaction'), true)
+  check('...and never by seat id', fn.includes('answerBid(step.carry, playerId'), false)
+  check('the faction is resolved from the roster, not from the request',
+    /faction_id/.test(fn) && /factionOfSeat/.test(fn), true)
+  // Settlement is keyed by faction going in and by seat coming out, because
+  // match_secrets is keyed by seat. One namespace in, the other out, and the
+  // mapping named in both directions.
+  // BOTH mappings, each anchored on what it builds. Checking for the mere
+  // presence of `factionOfSeat[r.player_id` passed while `hands` reverted to
+  // seat keys, because three other lines still used it — a settlement reading
+  // two namespaces at once, which finds no winner and refuses every auction.
+  // Counting occurrences was no better: the threshold is a guess about how many
+  // other uses exist, and it was wrong the first time.
+  check('the hands are keyed by faction for the settlement',
+    fn.includes('[factionOfSeat[r.player_id as string], ((r.data'), true)
+  check('...and so are the purses',
+    fn.includes('[factionOfSeat[r.player_id as string], readSpice('), true)
+  check('...and mapped back to a seat before being written',
+    fn.includes('seatOfFaction[faction]'), true)
+  check('...refusing a winner no seat holds rather than dropping them',
+    /unseated-winner/.test(fn), true)
+
+  // The reshuffle's seed. Reading columns the query never selected gives NaN,
+  // which mulberry32 floors to 1 — so every match on the planet would reshuffle
+  // into the same order. Deterministic, replayable, and identical everywhere:
+  // the one failure a seeded shuffle exists to prevent.
+  check('the match row is read with the columns the shuffle seeds from',
+    fn.includes("select('state, version, rng_seed, action_seq')"), true)
+  check('...and the shuffle uses them', fn.includes('shuffleWithSeed(Number(match.rng_seed)'), true)
+
+  // The same three-store transaction the Risk side has, for the same reason.
+  check('cards, spice and the discard are written in one call',
+    /p_decks/.test(fn) && /p_secrets: secretsPatch/.test(fn), true)
+  check('the auction runs from the shared bundle, not a copy',
+    /_shared\/duneBidding\.gen\.ts/.test(fn), true)
+  check('...and so does the settlement', /_shared\/duneAuction\.gen\.ts/.test(fn), true)
+
+  // EVERY SHARED NAME IT USES IS IMPORTED. tsc does not read this directory, so
+  // a missing import is not a compile error here — it is a ReferenceError on the
+  // first real call and nowhere before that.
+  //
+  // It happened, to all nine at once: two patches anchored on an import line
+  // that exists in apply-action and not in this file, so they no-op'd while the
+  // code that used the names landed. The function referenced nine identifiers it
+  // never imported and every other check stayed green.
+  {
+    const imported = new Set(
+      [...fn.matchAll(/import \{([^}]*)\} from/g)]
+        .flatMap(m => m[1].split(',').map(x => x.trim()))
+        .filter(Boolean))
+    const shared = [
+      'applySpiceMoves', 'BANK', 'settleAuction', 'beginAuction', 'answerBid',
+      'cardsOnOffer', 'BID_SECONDS', 'drawTreachery', 'discardUnsold', 'shuffleWithSeed',
+    ]
+    const used = shared.filter(name => new RegExp(`\\b${name}\\b`).test(fn))
+    // The rule is only worth anything if it is looking at names actually in use.
+    check('the Dune server uses the shared modules', used.length > 5, true)
+    check('...and imports every name it uses from them',
+      used.filter(name => !imported.has(name)), [])
+  }
+}
+
 // ── the client puts its own hand back, and checks what it was sent ─────────
 {
   const callers = (name: string, definedIn: string) =>
@@ -225,17 +301,27 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
     text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
 
   /** The object literal passed to the FIRST .insert() after .from(table). */
-  const insertBody = (table: string): string => {
-    const from = script.indexOf(`.from('${table}')`)
-    if (from < 0) return ''
-    const ins = script.indexOf('.insert(', from)
-    if (ins < 0) return ''
-    let depth = 0
-    for (let i = ins + '.insert'.length; i < script.length; i++) {
-      if (script[i] === '(') depth++
-      else if (script[i] === ')' && --depth === 0) return script.slice(ins, i + 1)
+  /**
+   * EVERY insert into `table`, not the first.
+   *
+   * It read only the first, and the moment a second match was seeded for the
+   * Dune auction probe that insert went unchecked — a whole row's mandatory
+   * columns unexamined, silently, because the guard had already found one.
+   * "The first one is fine" is not what this claims to check.
+   */
+  const insertBodies = (table: string): string[] => {
+    const out: string[] = []
+    const re = new RegExp(`\\.from\\('${table}'\\)[\\s\\S]{0,40}?\\.insert\\(`, 'g')
+    let m: RegExpExecArray | null
+    while ((m = re.exec(script))) {
+      const open = script.indexOf('(', m.index + m[0].length - 1)
+      let depth = 0
+      for (let i = open; i < script.length; i++) {
+        if (script[i] === '(') depth++
+        else if (script[i] === ')' && --depth === 0) { out.push(script.slice(open, i + 1)); break }
+      }
     }
-    return ''
+    return out
   }
 
   /**
@@ -290,7 +376,8 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
 
   for (const table of ['campaigns', 'matches', 'match_players', 'match_secrets', 'match_decks']) {
     const required = requiredColumns(table)
-    const rows = rowsIn(insertBody(table))
+    const bodies = insertBodies(table)
+    const rows = bodies.flatMap(rowsIn)
     const missing = rows.length === 0
       ? ['<no insert found for this table>']
       : rows.flatMap((row, i) => {
@@ -299,6 +386,12 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
       })
     check(`the seed supplies every mandatory column of ${table}, in every row`, missing, [])
   }
+  // The probe seeds a SECOND match — Dune's state is a different shape from
+  // Risk's, so one board cannot serve both. Asserted so that "every row" above
+  // is known to be looking at more than one of them.
+  check('both matches the probes need are seeded',
+    insertBodies('matches').length >= 2, true)
+  check('...each with its own seats', insertBodies('match_players').length >= 2, true)
 
   // ── no absence is asserted without a control ─────────────────────────────
   // The bug this exists to prevent, stated exactly: the script looked for B's
@@ -341,7 +434,8 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
     // exist. Flagging those made the guard fail on the controls it depends on.
     const asserts = (c: string) => /!s*(JSON.stringify|[A-Za-z_$][w$.]*)s*[.(]/.test(c)
     check('no uncontrolled check asserts that a foreign secret is absent',
-      calls.filter(c => asserts(c) && /SECRET_B|DECK_SECRET|SPICE_B|BOUGHT|LOSER_SPICE/.test(c))
+      calls.filter(c => asserts(c)
+        && /SECRET_B|DECK_SECRET|SPICE_B|BOUGHT|LOSER_SPICE|CARD_ON_OFFER|CARD_UNDRAWN/.test(c))
         .map(c => c.slice(0, 60).replace(/\s+/g, ' ')), [])
     // The control machinery itself lives in scripts/lib/controlledCheck.js and
     // its BEHAVIOUR is tested in controlledchecktest — a source guard can see
@@ -443,6 +537,12 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
       payloadsTo('match_secrets').some(p => /LOSER_SPICE/.test(p)), true)
     check('...and the unsold card into the public state',
       payloadsTo('matches').some(p => /UNSOLD/.test(p)), true)
+    // The live auction probe's card has to be IN the deck it is drawn from, or
+    // "the winner holds it" is a claim about a card that was never on offer.
+    check('the auctioned card is seeded into the deck it is drawn from',
+      payloadsTo('match_decks').some(p => /CARD_ON_OFFER/.test(p)), true)
+    check('...along with one that stays undrawn, to prove the deck is still hidden',
+      payloadsTo('match_decks').some(p => /CARD_UNDRAWN/.test(p)), true)
 
     // THE DISCARD IS A PRESENCE CLAIM, not an absence. It is public — face up at
     // a table — so asserting it is hidden would be the opposite bug. Flipping it

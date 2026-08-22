@@ -139,6 +139,7 @@ const userIdFor = async email => {
 }
 
 let matchId = null
+let duneMatchId = null
 let campaignId = null
 // Set by the diagnosis in section 3; the frame checks are meaningless without it.
 let realtimeWorks = false
@@ -696,6 +697,148 @@ try {
     checkGiven(winnerHasIt, "AUCTION-SPICE  the loser's purse is not readable by the winner",
       !JSON.stringify(rows ?? []).includes(String(LOSER_SPICE)),
       "A can read the losing bidder's spice")
+  }
+
+  // ── 7. an auction, run for real ───────────────────────────────────────────
+  // OPEN_BIDDING and BID had never executed. Every claim about them rested on
+  // the modules they delegate to, which are well covered — and on the glue,
+  // which was not covered at all and turned out to hold two faults: the match
+  // row was selected without the columns the reshuffle seeds from, and a SEAT
+  // id was handed to an auction keyed by FACTION, so every bid would have been
+  // refused as not-your-turn forever. Neither is visible from any test that
+  // does not make the call.
+  //
+  // A SECOND MATCH, because Dune's state is a different shape from Risk's and
+  // the probe above needs a Risk board. Same campaign, so the same teardown
+  // takes it.
+  //
+  // ONE ELIGIBLE BIDDER, because only seat A's password is read here. With the
+  // Harkonnen at their eight-card limit the auction offers one card, the
+  // Atreides open it, and their bid wins with nobody left to raise — a whole
+  // auction in two calls, both of them A's. It exercises the hand limit live as
+  // well, and leaves B as a seat whose purse must come out untouched.
+  {
+    const CARD_ON_OFFER = `${TAG}-lot-onlyTheWinnerMaySeeThis`
+    const CARD_UNDRAWN = `${TAG}-lot-stillInTheDeck`
+    const B_SPICE = 909
+
+    const { data: dm, error: dmErr } = await admin.from('matches').insert({
+      campaign_id: campaignId,
+      game_number: 2,
+      status: 'active',
+      // Dune's shape, and the phase the action demands.
+      state: { phase: 'Bidding', turn: 1, treacheryDiscard: [] },
+    }).select('id').single()
+    if (dmErr) throw new Error(`seed dune match: ${dmErr.message}`)
+    duneMatchId = dm.id
+
+    // Dune factions, not Risk ones: the auction, the hand limits and the
+    // Emperor's redirect are all keyed by these.
+    await admin.from('match_players').insert([
+      { match_id: duneMatchId, seat: 0, player_id: 'p1', user_id: userA, name: `${TAG}-A`, faction_id: 'atreides' },
+      { match_id: duneMatchId, seat: 1, player_id: 'p2', user_id: userB, name: `${TAG}-B`, faction_id: 'harkonnen' },
+    ])
+    await admin.from('match_secrets').insert([
+      { match_id: duneMatchId, player_id: 'p1', data: { cards: [], spice: 20 } },
+      { match_id: duneMatchId, player_id: 'p2', data: { cards: [], spice: B_SPICE } },
+    ])
+    await admin.from('match_decks').insert({
+      match_id: duneMatchId, deck: 'treachery', cards: [CARD_ON_OFFER, CARD_UNDRAWN],
+    })
+
+    const { data: sess2 } = await asA.auth.getSession()
+    const token2 = sess2?.session?.access_token
+    const call = async (action) => {
+      const res = await fetch(`${URL}/functions/v1/dune-action`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token2}`,
+          apikey: ANON,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ matchId: duneMatchId, action }),
+      })
+      return { status: res.status, body: await res.json().catch(() => ({})) }
+    }
+
+    // The Harkonnen sit at eight cards, so only one card is offered and the
+    // Atreides open it.
+    const opened = await call({
+      type: 'OPEN_BIDDING',
+      order: ['atreides', 'harkonnen'],
+      hands: { atreides: 0, harkonnen: 8 },
+      limits: { atreides: 4, harkonnen: 8 },
+    })
+    const auctionOpened = opened.status === 200 && !!opened.body?.auction
+    check('CONTROL  OPEN_BIDDING ran', auctionOpened,
+      () => `${opened.status}: ${JSON.stringify(opened.body).slice(0, 300)}`
+        + ' — 404 means dune-action is not deployed')
+    checkGiven(auctionOpened, 'BIDDING  one card is offered, the other seat being full',
+      opened.body?.auction?.carry?.cardCount === 1,
+      () => `cardCount was ${JSON.stringify(opened.body?.auction?.carry?.cardCount)}`)
+    checkGiven(auctionOpened, '...and the eligible seat opens it',
+      opened.body?.auction?.carry?.toAct, 'atreides')
+    // THE CARD IS NOT IN THE PUBLIC STEP. The auction is card-blind, and this is
+    // where that stops being a claim about a module and becomes one about the
+    // bytes a client receives.
+    checkGiven(auctionOpened, 'BIDDING  the open auction names no card',
+      !JSON.stringify(opened.body).includes(CARD_ON_OFFER),
+      'the card up for auction is in the response every client will see')
+
+    const bid = await call({ type: 'BID', bid: { kind: 'bid', spice: 3 } })
+    const bidTaken = bid.status === 200 && Array.isArray(bid.body?.awards)
+    check('CONTROL  BID ran and settled the auction', bidTaken,
+      () => `${bid.status}: ${JSON.stringify(bid.body).slice(0, 300)}`
+        + ' — not-your-turn here means the seat/faction mapping is wrong again')
+    checkGiven(bidTaken, 'BIDDING  the bidder won at their own price',
+      bid.body?.awards, [{ index: 0, winner: 'atreides', price: 3 }])
+    checkGiven(bidTaken, '...and the response names no card either',
+      !JSON.stringify(bid.body).includes(CARD_ON_OFFER),
+      'the won card came back in the response')
+
+    // ── what the server actually wrote ──────────────────────────────────────
+    const { data: rows2 } = await admin.from('match_secrets')
+      .select('player_id, data').eq('match_id', duneMatchId)
+    const p1 = (rows2 ?? []).find(r => r.player_id === 'p1')?.data ?? {}
+    const p2 = (rows2 ?? []).find(r => r.player_id === 'p2')?.data ?? {}
+
+    const dealt = JSON.stringify(p1).includes(CARD_ON_OFFER)
+    check('CONTROL  the winner\'s row holds the card the server dealt', dealt,
+      () => `p1: ${JSON.stringify(p1).slice(0, 200)}`)
+    checkGiven(dealt, 'AUCTION-LIVE  the card is in no other seat\'s row',
+      !JSON.stringify(p2).includes(CARD_ON_OFFER))
+    checkGiven(dealt, 'AUCTION-LIVE  ...and the winner paid for it',
+      p1.spice, 17)
+    // The card and the payment landed in the same write, which is the invariant
+    // the whole settlement exists for. Both being right is the evidence.
+    checkGiven(dealt, 'AUCTION-LIVE  ...so no card arrived without its payment',
+      dealt && p1.spice === 17, true)
+    checkGiven(dealt, 'AUCTION-LIVE  the seat that did not bid is untouched',
+      p2.spice, B_SPICE)
+
+    // The rest of the deck stays where nobody can read it, and A cannot.
+    const { data: asAdminDecks } = await admin.from('match_decks')
+      .select('deck, cards').eq('match_id', duneMatchId)
+    const undrawnKept = JSON.stringify(asAdminDecks ?? []).includes(CARD_UNDRAWN)
+    check('CONTROL  the undrawn card is still in the deck store', undrawnKept,
+      () => `decks: ${JSON.stringify(asAdminDecks ?? []).slice(0, 200)}`)
+    const { data: seenByA } = await asA.from('match_decks')
+      .select('deck, cards').eq('match_id', duneMatchId)
+    checkGiven(undrawnKept, 'AUCTION-LIVE  the deck order is still unreadable',
+      !JSON.stringify(seenByA ?? []).includes(CARD_UNDRAWN),
+      'A can read the deck after an auction')
+    // The lot is emptied by the same write that dealt it, so a retry cannot
+    // deal the same card twice.
+    checkGiven(dealt, 'AUCTION-LIVE  the lot is emptied once dealt',
+      ((asAdminDecks ?? []).find(d => d.deck === 'auction-lot')?.cards ?? []).length, 0)
+
+    const { data: after } = await asA.from('matches')
+      .select('state').eq('id', duneMatchId).maybeSingle()
+    checkGiven(dealt, 'AUCTION-LIVE  the public row carries no card',
+      !JSON.stringify(after?.state ?? null).includes(CARD_ON_OFFER),
+      'the won card is in matches.state, which every client receives')
+    checkGiven(dealt, '...and the auction is closed out of it',
+      after?.state?.auction ?? null, null)
   }
 
 } catch (e) {
