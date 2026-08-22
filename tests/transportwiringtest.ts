@@ -279,6 +279,52 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
       /const checkGiven\s*=/.test(script), false)
   }
 
+  // ── the seed must write the shape the server writes ──────────────────────
+  // The check seeds matches.state directly with the service role, which never
+  // goes near publicView. So whatever shape the seed writes is the shape the
+  // check reads back, and if the seed puts hands in the row then PRIVATE-STATE
+  // fails against its own fixture — a hand-written legacy row the server would
+  // never produce.
+  //
+  // That happened, and it was convincing: identical failure, identical message,
+  // before and after the wiring landed. A false negative that looks like a true
+  // one is worse than a false positive, because it sends somebody to debug
+  // working code.
+  //
+  // The rule is that no payload written to `matches` may contain either seat's
+  // secret. The hands belong in match_secrets and nowhere else.
+  {
+    /** Every object literal written to `table` by insert or update. */
+    const payloadsTo = (table: string): string[] => {
+      const out: string[] = []
+      const re = new RegExp(`\\.from\\('${table}'\\)[\\s\\S]{0,40}?\\.(insert|update)\\(`, 'g')
+      let m: RegExpExecArray | null
+      while ((m = re.exec(script))) {
+        const open = script.indexOf('(', m.index + m[0].length - 1)
+        let depth = 0
+        for (let i = open; i < script.length; i++) {
+          if (script[i] === '(') depth++
+          else if (script[i] === ')' && --depth === 0) { out.push(script.slice(open, i + 1)); break }
+        }
+      }
+      return out
+    }
+
+    const toMatches = payloadsTo('matches')
+    // Without this the rule below is vacuous: no payloads found, nothing to
+    // contain a secret, green forever. The script writes the row twice — once
+    // seeding and once to provoke a frame.
+    check('the guard can see what the seed writes to matches', toMatches.length >= 2, true)
+    check('no payload written to matches carries a seat secret',
+      toMatches.filter(p => /SECRET_A|SECRET_B/.test(p)).map(p => p.slice(0, 70).replace(/\s+/g, ' ')),
+      [])
+    // And the counterpart: the hands DO have to be written somewhere, or the
+    // check is asserting the absence of something that was never seeded.
+    const toSecrets = payloadsTo('match_secrets')
+    check('the hands are written to match_secrets instead',
+      toSecrets.some(p => /SECRET_A/.test(p)) && toSecrets.some(p => /SECRET_B/.test(p)), true)
+  }
+
   // The seed is only half of it. Everything it creates hangs off the campaign,
   // so teardown deleting that is what makes the script safe to run twice.
   check('teardown deletes the campaign, which everything else cascades from',

@@ -31,6 +31,19 @@
  * row can be addressed to them; signing in as B would prove nothing that
  * signing in as A does not.
  *
+ * WHAT THE SEED PROVES, AND WHAT IT DOES NOT. It writes the SPLIT shape
+ * directly with the service role — the public row with counts only, the hands in
+ * match_secrets — which is the shape apply-action now writes through publicView.
+ * So this exercises the TRANSPORT: the RLS policies, the changefeed, and what a
+ * seat can actually reach, given correctly split data.
+ *
+ * It does NOT prove the server applies publicView, because it never calls the
+ * server. It used to seed the hands inline, and PRIVATE-STATE then failed
+ * against its own fixture — a hand-written legacy row the server would never
+ * produce — which read exactly like the wiring being broken. That publicView is
+ * applied on every write is asserted in tests/transportwiringtest.ts against the
+ * edge function's source; the end-to-end proof is a turn taken in a real match.
+ *
  * IT WRITES TO A LIVE PROJECT. It creates its own campaign — matches.campaign_id
  * is NOT NULL — plus a match, two seats, their secrets and a deck row, and tears
  * the lot down in a finally block by deleting the campaign, which everything
@@ -48,6 +61,7 @@
  */
 import { createClient } from '@supabase/supabase-js'
 import { createChecker } from './lib/controlledCheck.js'
+import { diagnoseRealtime } from './lib/diagnoseRealtime.js'
 
 const checker = createChecker()
 
@@ -139,13 +153,17 @@ try {
       // really holds — the check is about what a real seat receives. It is
       // visible to the two accounts for the few seconds the script runs.
       status: 'active',
+      // THE SPLIT SHAPE — no hand, only counts — which is what apply-action now
+      // writes through publicView. See the note at the head of this file about
+      // what seeding it directly does and does not prove.
+      //
+      // It used to seed the hands inline here, and PRIVATE-STATE then failed on
+      // its own fixture: a hand-written legacy row that the server would never
+      // produce. That failure looked exactly like the wiring being broken.
       state: {
-        // Deliberately shaped like the state the app writes today, hands and
-        // all. If the app has stopped putting hands here, this seeding is what
-        // needs updating — not the assertion below.
         players: [
-          { id: 'p1', name: TAG, cards: [SECRET_A], cardCount: 1 },
-          { id: 'p2', name: TAG, cards: [SECRET_B], cardCount: 1 },
+          { id: 'p1', name: TAG, cardCount: 1 },
+          { id: 'p2', name: TAG, cardCount: 1 },
         ],
       },
     })
@@ -208,15 +226,31 @@ try {
   {
     const { data, error } = await asA.from('matches').select('state').eq('id', matchId).maybeSingle()
     const stateJson = JSON.stringify(data?.state ?? null)
-    const canReadMatch = !error && stateJson.includes(SECRET_A)
-    check('CONTROL  A can read the match row, and its own hand is in it',
-      canReadMatch,
-      error?.message ?? (data ? "read the row but A's own hand was not in it — the seed shape has drifted" : 'no row returned'))
-    checkGiven(canReadMatch, "PRIVATE-STATE  B's hand is absent from the match state A can read",
+
+    // The control cannot be "A's own hand is in the row" any more — under the
+    // split it is in nobody's row, which is the point. So it asserts the row is
+    // REAL AND PROJECTED instead: both seats present, each with a count. A row
+    // that failed to load, or an empty one, contains no secret either and would
+    // satisfy everything below for entirely the wrong reason.
+    const projected = !error
+      && stateJson.includes('"p1"') && stateJson.includes('"p2"')
+      && stateJson.includes('cardCount')
+    check('CONTROL  A reads the match row and it has the projected shape',
+      projected,
+      () => error?.message ?? (data
+        ? `read the row but it is not the projected shape: ${stateJson.slice(0, 160)}`
+        : 'no row returned'))
+
+    checkGiven(projected, "PRIVATE-STATE  B's hand is absent from the match state A can read",
       !stateJson.includes(SECRET_B),
-      stateJson.includes(SECRET_B)
-        ? "B's hand is in the row A reads — this is the leak, and it is what the wiring has to remove"
-        : '')
+      "B's hand is in the row A reads")
+    // The actual rule, which the first claim alone does not state: the shared
+    // row carries NOBODY's hand. A projection that kept the reader's own would
+    // be right for one seat and wrong for every other seat reading the same
+    // bytes, and only this catches that.
+    checkGiven(projected, "PRIVATE-STATE  ...and so is A's own — the shared row carries no hand at all",
+      !stateJson.includes(SECRET_A),
+      "A's own hand is in the shared row, which every other seat receives too")
   }
 
   // ── 3. why is the socket quiet? ───────────────────────────────────────────
@@ -275,20 +309,40 @@ try {
       }
     }
 
-    realtimeWorks = a1.got || !!(a2 && a2.got)
-    const diagnosis =
-      !svc.got
-        ? (svc.status !== 'SUBSCRIBED'
-          ? `SOCKET — even the service role could not subscribe (${svc.status})`
-          : 'PUBLICATION — the service role subscribed and still saw nothing. It bypasses RLS, so RLS is excluded: matches is not reaching the changefeed')
-        : a1.got
-          ? 'none — A receives frames'
-          : a2 && a2.got
-            ? "TOKEN — A's realtime socket had no access token, so RLS judged it anon and filtered everything. setAuth fixed it; the app does this automatically in a browser"
-            : `RLS-FOR-SUBSCRIBERS — the service role receives frames and A does not, even with its token set (A: ${a1.status})`
+    // The logic lives in scripts/lib/diagnoseRealtime.js and is tested in
+    // realtimediagnosistest. It was wrong while it was inline here: it branched
+    // on the service probe before looking at A at all, so a probe that missed
+    // announced "PUBLICATION — matches is not reaching the changefeed" on a run
+    // whose very next lines reported frames arriving for A. Being inline in a
+    // script that only runs against a live database is why nothing could see it.
+    const d = diagnoseRealtime({ seat: a1, seatAfterAuth: a2, service: svc })
+    const diagnosis = d.text
+    realtimeWorks = d.working
 
     console.log(`\nDIAGNOSIS  ${diagnosis}\n`)
     check('CONTROL  A receives realtime frames at all', realtimeWorks, () => diagnosis)
+
+    // The probes disagreeing is worth saying out loud rather than silently
+    // resolving in A's favour: A working while the service role does not means
+    // the service probe is unreliable, and it is the instrument the other two
+    // diagnoses rest on.
+    if (a1.got && !svc.got) {
+      console.log('        note: A received frames but the service-role probe did not.'
+        + ' The diagnosis follows A, which is the observation that matters, but the'
+        + ' probe cannot be trusted to distinguish SOCKET from PUBLICATION.')
+    }
+    // A check on the check, stating exactly the contradiction that was reported:
+    // the diagnosis blamed the transport while the checks underneath it watched
+    // frames arrive.
+    //
+    // Not "the diagnosis matches realtimeWorks" — both are computed from the
+    // same two probes, so that compares a value with itself and can never fail.
+    // This asks the narrower question that can: does it name a broken transport
+    // while a frame demonstrably got through?
+    const blamesTransport = /^(SOCKET|PUBLICATION|RLS)/.test(diagnosis)
+    check('the diagnosis does not blame the transport while frames were arriving',
+      !(blamesTransport && realtimeWorks),
+      () => `it says "${diagnosis}" while A did receive frames`)
   }
 
   // ── 4. the realtime frame A receives ──────────────────────────────────────
@@ -323,11 +377,13 @@ try {
     await admin.from('match_secrets')
       .update({ data: { hand: [SECRET_B], touched: 1 } })
       .eq('match_id', matchId).eq('player_id', 'p2')
+    // Split, like the insert. Writing hands here would have put them back on
+    // the wire by hand and failed WIRE-STATE for the same wrong reason.
     await admin.from('matches')
       .update({ state: {
         players: [
-          { id: 'p1', name: TAG, cards: [SECRET_A], cardCount: 1 },
-          { id: 'p2', name: TAG, cards: [SECRET_B], cardCount: 1 },
+          { id: 'p1', name: TAG, cardCount: 1, touched: 1 },
+          { id: 'p2', name: TAG, cardCount: 1, touched: 1 },
         ],
       } })
       .eq('id', matchId)
