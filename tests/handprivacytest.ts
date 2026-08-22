@@ -3,10 +3,11 @@
 // is ABSENT from the projected state — hiding it in the UI hides nothing from
 // anyone who opens devtools.
 //
-// This suite is written to FAIL against the current behaviour. viewForSeat is
-// still a stub that returns the state unchanged, which is the live leak. It
-// goes green when step 3 lands the real projection, and not before. A check
-// that has never failed has not been shown to catch anything.
+// This suite WAS written to fail, when viewForSeat was a stub returning the
+// state unchanged. It is not a stub any more and this is green — but the leak
+// is still live, because nothing CALLS viewForSeat. A correct projection with
+// no caller changes nothing about what crosses the wire, and a unit test cannot
+// see the difference. transportwiringtest is the one that can, and it is red.
 //
 // Live equivalent, on the JOINER's machine with a match open. Read the WIRE,
 // not the app — inspecting React state only tells you what the client was sent
