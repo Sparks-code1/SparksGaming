@@ -52,6 +52,37 @@ function sources(dir: string): { path: string; text: string }[] {
   return out
 }
 
+/**
+ * Names declared twice by `const` in the SAME block.
+ *
+ * Braces inside comments and strings would throw the depth off, so those are
+ * blanked first — the point is to count blocks, not to parse the language.
+ */
+function redeclared(src: string): string[] {
+  // ONE PASS, leftmost wins: a `//` inside a string cannot open a comment,
+  // because the string's own quote comes first.
+  const bare = src.replace(
+    /\/\*[\s\S]*?\*\/|\/\/[^\n]*|'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|`(?:\\.|[^`\\])*`/g,
+    m => (m[0] === '/' ? ' ' : "''"))
+  const scopes: Set<string>[] = [new Set()]
+  const hits = new Set<string>()
+  let depth = 0
+  const token = /\{|\}|\bconst\s+([A-Za-z_$][\w$]*)\s*=/g
+  for (let m = token.exec(bare); m; m = token.exec(bare)) {
+    if (m[0] === '{') { depth++; scopes.push(new Set()) }
+    else if (m[0] === '}') { depth--; if (scopes.length > 1) scopes.pop() }
+    else {
+      const here = scopes[scopes.length - 1]
+      if (here.has(m[1])) hits.add(m[1])
+      here.add(m[1])
+    }
+  }
+  // Unbalanced braces mean the stripping went wrong and the scan saw a
+  // different program than the one on disk. Say so rather than return [].
+  if (depth !== 0) return ['UNBALANCED: the scanner lost track of the blocks']
+  return [...hits]
+}
+
 // The server half lives in supabase/functions, not src. Scanning only src said
 // "nothing applies viewForSeat" while the edge function was applying it on
 // every write — the projection that matters most runs where the state is
@@ -151,14 +182,62 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
   check('cards, spice and the discard are written in one call',
     /p_decks/.test(fn) && /p_secrets: secretsPatch/.test(fn), true)
 
+  // ── Atreides prescience, written by the server ───────────────────────────
+  // The first power that hands one seat information nobody else has, so it is
+  // also the first that can leak by being written to the wrong row.
+  {
+    check('the reveal is computed by the shared rule, not here',
+      fn.includes('_shared/dunePrescience.gen.ts'), true)
+    // Written in the SAME transaction as the lot it names: separately, a crash
+    // between them leaves the Atreides reading a card from an auction that
+    // never opened.
+    check('OPEN_BIDDING writes it with the lot',
+      fn.includes('p_secrets: openSecrets'), true)
+    // It FOLLOWS THE ROW. A card that has closed is not the card up, and a
+    // reveal still pointing at it is one they can read after it is dealt.
+    check('the reveal moves with the card currently up',
+      fn.includes('index: outcome.step.carry.index'), true)
+    check('...and is cleared when the auction settles',
+      /withReveal\([\s\S]{0,160}?,\s*null\)/.test(fn), true)
+    // MERGED. p_secrets upserts the whole blob, so writing the reveal alone
+    // takes that seat's hand and purse with it.
+    check('...and is merged into the row rather than replacing it',
+      fn.includes('withReveal((theirs?.data ?? {})'), true)
+    check('only the prescient seat is written to',
+      fn.includes('seatOfFaction[PRESCIENT_FACTION]'), true)
+    // ANCHORED ON THE SETTLE PATH. The same phrase appears on the awaiting
+    // path, so the bare mention stayed true while the settle path stopped
+    // resolving the seat — leaving a reveal in the row after the auction ended.
+    check('...and the settle path resolves that seat to clear it',
+      fn.includes('const prescientOut = seatOfFaction[PRESCIENT_FACTION]'), true)
+  }
+
+  // ── nothing is declared twice in the same block ──────────────────────────
+  // Two `const lot` in one case block is a SyntaxError AT LOAD, so the function
+  // fails on its first request — and tsc does not read this directory, so every
+  // test stays green while the server is dead. It happened: prescience needed
+  // the lot on the awaiting path and the settle path had already read it.
+  //
+  // SCOPE-AWARE, because a flat scan is not good enough. Two `const seatId` in
+  // different nested blocks are legal and both correct here, and calling that a
+  // clash is a false alarm in a suite whose whole value is being believed.
+  check('nothing in the Dune server is declared twice in one block',
+    redeclared(fn), [])
+
   // ── the two effects that are invisible in the response ───────────────────
   // Both were reported missing after a real run. They have to be in the
   // SETTLEMENT's call specifically — not merely somewhere in the file, which
   // OPEN_BIDDING's own p_decks would satisfy — so the block is sliced out and
   // read on its own.
   {
+    // Sliced to the END OF THE CALL, not to a fixed number of characters. It
+    // was `at + 1400`, and adding the prescience clear-down pushed p_decks past
+    // the window — the guard failed on code that was correct, which is the same
+    // "the threshold is a guess" mistake as counting occurrences earlier in
+    // this file.
     const at = fn.indexOf('const secretsPatch')
-    const settleCall = at < 0 ? '' : fn.slice(at, at + 1400)
+    const end = at < 0 ? -1 : fn.indexOf('if (error) return json', at)
+    const settleCall = at < 0 || end < 0 ? '' : fn.slice(at, end)
     check('the settlement block is where it is expected', settleCall.length > 0, true)
     // Without this the phase never ends: the row still holds an open auction
     // and every client goes on waiting for a bid nobody can make.
@@ -457,10 +536,10 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
     // secret is usually a control asserting the opposite — 'the loser's purse
     // was written' names LOSER_SPICE and is exactly what the rule wants to
     // exist. Flagging those made the guard fail on the controls it depends on.
-    const asserts = (c: string) => /!s*(JSON.stringify|[A-Za-z_$][w$.]*)s*[.(]/.test(c)
+    const asserts = (c: string) => /!\s*[(A-Za-z_$]/.test(c)
     check('no uncontrolled check asserts that a foreign secret is absent',
       calls.filter(c => asserts(c)
-        && /SECRET_B|DECK_SECRET|SPICE_B|BOUGHT|LOSER_SPICE|CARD_ON_OFFER|CARD_UNDRAWN|PRESCIENT/.test(c))
+        && /SECRET_B|DECK_SECRET|SPICE_B|BOUGHT|LOSER_SPICE|CARD_ON_OFFER|CARD_UNDRAWN|PRESCIENT|'prescience'/.test(c))
         .map(c => c.slice(0, 60).replace(/\s+/g, ' ')), [])
     // The control machinery itself lives in scripts/lib/controlledCheck.js and
     // its BEHAVIOUR is tested in controlledchecktest — a source guard can see
@@ -658,6 +737,14 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
     // Equal purses would make "whose did A see" unanswerable: finding the number
     // would prove nothing about which seat it came from.
     check('...and they differ, so a hit names a seat', a === b, false)
+
+    // ── a control may not be a constant ───────────────────────────────────
+    // Every absence claim leans on one, so a control stubbed to `true` turns
+    // the claim it guards into an unconditional pass without touching the
+    // claim itself. `const wroteReveal = true` is the shape.
+    check('no control is a literal',
+      [...script.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*(true|false)\s*$/gm)]
+        .map(m => m[1]), [])
 
     // ── the completed auction ─────────────────────────────────────────────
     // Its claims are absences too, and absences are free unless the thing was

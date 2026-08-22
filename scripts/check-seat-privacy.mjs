@@ -806,6 +806,48 @@ try {
       !JSON.stringify(opened.body).includes(CARD_ON_OFFER),
       'the card up for auction is in the response every client will see')
 
+    // ── prescience, written by the server ─────────────────────────────────
+    // The seeded section further down proves the CHANNEL keeps a reveal
+    // private. This proves there is one to keep: that OPEN_BIDDING put the card
+    // now up for purchase into the Atreides seat's row, and into no other.
+    //
+    // Read with the SERVICE ROLE for the entitled seat, because A is the
+    // Atreides here and RLS would let them read it either way — the question is
+    // what was written, not what A can see, and those are different questions.
+    {
+      const { data: afterOpen } = await admin.from('match_secrets')
+        .select('player_id, data').eq('match_id', duneMatchId)
+      const atreides = (afterOpen ?? []).find(r => r.player_id === 'p1')?.data ?? {}
+      const other = (afterOpen ?? []).find(r => r.player_id === 'p2')?.data ?? {}
+
+      const wroteReveal = atreides.prescience === CARD_ON_OFFER
+      check('CONTROL  the server wrote the reveal to the Atreides seat', wroteReveal,
+        () => `p1 holds prescience=${JSON.stringify(atreides.prescience)}, expected ${CARD_ON_OFFER}`)
+
+      checkGiven(wroteReveal, 'PRESCIENCE-LIVE  and to no other seat',
+        !('prescience' in other),
+        () => `p2 holds prescience=${JSON.stringify(other.prescience)}`)
+      checkGiven(wroteReveal, 'PRESCIENCE-LIVE  ...nor anywhere in shared state',
+        !JSON.stringify(opened.body ?? {}).includes(CARD_ON_OFFER),
+        'the reveal came back in the OPEN_BIDDING response, which is not private')
+
+      // ONE CARD, not the lot. A reveal naming the row would hand the Atreides
+      // every card in the auction before a single bid.
+      checkGiven(wroteReveal, 'PRESCIENCE-LIVE  ...and it is one card, not the row',
+        !JSON.stringify(atreides.prescience).includes(CARD_UNDRAWN),
+        'the reveal names a card that is not up for purchase')
+
+      // The write MERGED. Writing the reveal alone would upsert the whole data
+      // blob and take the seat's hand and purse with it — the smallest write in
+      // the phase, and the easiest place to lose everything else.
+      checkGiven(wroteReveal, 'PRESCIENCE-LIVE  ...and the seat kept its spice',
+        atreides.spice === 20,
+        () => `p1 holds ${JSON.stringify(atreides.spice)} spice, expected the 20 it started with`)
+      checkGiven(wroteReveal, 'PRESCIENCE-LIVE  ...and its hand',
+        Array.isArray(atreides.cards),
+        () => `p1's cards are ${JSON.stringify(atreides.cards)}`)
+    }
+
     const bid = await call({ type: 'BID', bid: { kind: 'bid', spice: 3 } })
     const bidTaken = bid.status === 200 && Array.isArray(bid.body?.awards)
     check('CONTROL  BID ran and settled the auction', bidTaken,
@@ -856,6 +898,21 @@ try {
     checkGiven(dealt, 'AUCTION-LIVE  the lot is emptied once dealt',
       ((asAdminDecks ?? []).find(d => d.deck === 'auction-lot')?.cards ?? []).length === 0,
       () => `the lot still holds ${JSON.stringify((asAdminDecks ?? []).find(d => d.deck === 'auction-lot')?.cards)}`)
+
+    // THE REVEAL IS GONE once the auction has settled. Nothing is up for
+    // purchase, and a reveal left behind names a card now sitting in a hand.
+    {
+      const { data: afterSettle } = await admin.from('match_secrets')
+        .select('player_id, data').eq('match_id', duneMatchId)
+      const atreides = (afterSettle ?? []).find(r => r.player_id === 'p1')?.data ?? {}
+      checkGiven(dealt, 'PRESCIENCE-LIVE  the reveal is cleared when the auction ends',
+        !('prescience' in atreides),
+        () => `p1 still holds prescience=${JSON.stringify(atreides.prescience)}`)
+      // Cleared, not clobbered: the seat still has what it won and what it paid.
+      checkGiven(dealt, '...without taking the hand with it',
+        JSON.stringify(atreides.cards ?? []).includes(CARD_ON_OFFER),
+        () => `p1's cards are ${JSON.stringify(atreides.cards)}`)
+    }
 
     // ── Atreides prescience ─────────────────────────────────────────────────
     // The one thing in this phase that shows a card to a player before it is

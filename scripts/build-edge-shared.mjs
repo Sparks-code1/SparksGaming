@@ -63,6 +63,15 @@ const TARGETS = [
     exportName: 'settleAuction',
   },
   {
+    entry: 'src/lib/dune/prescience.ts',
+    out: 'supabase/functions/_shared/dunePrescience.gen.ts',
+    what: 'Atreides prescience',
+    // Deliberately not in the auction bundle: that one is card-blind, and this
+    // is the one thing in the phase that handles a card id during bidding.
+    mustExport: /export\s*\{[^}]*prescienceFor/,
+    exportName: 'prescienceFor',
+  },
+  {
     entry: 'src/lib/dune/spice.ts',
     out: 'supabase/functions/_shared/duneSpice.gen.ts',
     what: 'spice ledger',

@@ -29,6 +29,7 @@ import { applySpiceMoves, BANK } from '../_shared/duneSpice.gen.ts'
 import { settleAuction } from '../_shared/duneAuction.gen.ts'
 import { beginAuction, answerBid, cardsOnOffer, BID_SECONDS } from '../_shared/duneBidding.gen.ts'
 import { drawTreachery, discardUnsold, shuffleWithSeed } from '../_shared/duneDeck.gen.ts'
+import { prescienceFor, withReveal, PRESCIENT_FACTION } from '../_shared/dunePrescience.gen.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -294,13 +295,37 @@ Deno.serve(async req => {
         closesAt: now + BID_SECONDS * 1000,
       })
 
+      // ── Atreides prescience ─────────────────────────────────────────────
+      // The card about to be bid on, written into the Atreides seat's own row.
+      // Only that seat, only that card, and only if they are at the table.
+      //
+      // MERGED, not replaced. p_secrets upserts the whole data blob, so writing
+      // { prescience } alone would take that seat's hand and purse with it —
+      // this is the smallest write in the phase and the easiest place to lose
+      // everything else.
+      const openIndex = step.status === 'awaiting' ? step.carry.index : -1
+      const openReveal = prescienceFor({ seated: order, lot: deal.drawn, index: openIndex })
+      const prescientSeat = seatOfFaction[PRESCIENT_FACTION]
+      let openSecrets: Record<string, unknown> = {}
+      if (openReveal && prescientSeat) {
+        const { data: theirs } = await admin
+          .from('match_secrets').select('data')
+          .eq('match_id', matchId).eq('player_id', prescientSeat).maybeSingle()
+        openSecrets = {
+          [prescientSeat]: withReveal((theirs?.data ?? {}) as Record<string, unknown>, openReveal),
+        }
+      }
+
       const { data, error } = await admin.rpc('apply_match_write', {
         p_match_id: matchId,
         p_expected_version: match.version,
         // The STEP is public — it names no card. The reshuffle may have emptied
         // the discard, so that goes back too.
         p_state: { ...state, auction: step, treacheryDiscard: deal.discard },
-        p_secrets: {},
+        // The reveal rides in the SAME transaction as the lot it names. Written
+        // separately, a crash between them leaves the Atreides reading a card
+        // from an auction that never opened.
+        p_secrets: openSecrets,
         // The drawn cards park where nobody can read them, beside the pile they
         // came out of, in the same transaction that shortened it.
         p_decks: { treachery: deal.draw, 'auction-lot': deal.drawn },
@@ -325,6 +350,12 @@ Deno.serve(async req => {
       if (!myFaction) {
         return json({ error: 'your seat has no faction', code: 'no-faction' }, 409)
       }
+      // Needed whichever way this goes: to move the reveal on when the row
+      // advances, and to deal the cards when it ends.
+      const { data: deckNow } = await admin
+        .from('match_decks').select('deck, cards').eq('match_id', matchId)
+      const lot = ((deckNow ?? []).find((r) => r.deck === 'auction-lot')?.cards ?? []) as string[]
+
       const outcome = answerBid(step.carry, myFaction, action.bid, purse, now + BID_SECONDS * 1000)
 
       // A REFUSAL IS PRIVATE and changes nothing. Saying "more than you hold" to
@@ -336,11 +367,30 @@ Deno.serve(async req => {
       }
 
       if (outcome.step.status === 'awaiting') {
+        // The reveal FOLLOWS THE ROW. A card that has closed is no longer the
+        // card up for purchase, and a reveal left pointing at it is one the
+        // Atreides can still read after it has been dealt to somebody else.
+        // Written every time rather than only when the index moves: an upsert
+        // of the same value costs nothing, and "only when it changed" is a
+        // second thing to get right.
+        const nextReveal = prescienceFor({
+          seated: step.carry.order, lot, index: outcome.step.carry.index,
+        })
+        const seatId = seatOfFaction[PRESCIENT_FACTION]
+        let bidSecrets: Record<string, unknown> = {}
+        if (seatId) {
+          const { data: theirs } = await admin
+            .from('match_secrets').select('data')
+            .eq('match_id', matchId).eq('player_id', seatId).maybeSingle()
+          bidSecrets = {
+            [seatId]: withReveal((theirs?.data ?? {}) as Record<string, unknown>, nextReveal),
+          }
+        }
         const { data, error } = await admin.rpc('apply_match_write', {
           p_match_id: matchId,
           p_expected_version: match.version,
           p_state: { ...state, auction: outcome.step },
-          p_secrets: {},
+          p_secrets: bidSecrets,
         })
         if (error) return json({ error: error.message }, 500)
         if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
@@ -361,9 +411,10 @@ Deno.serve(async req => {
         (r) => [factionOfSeat[r.player_id as string], readSpice((r.data ?? {}) as DuneSecrets)]))
       const byId = Object.fromEntries((allSecrets ?? []).map((r) => [r.player_id, r.data ?? {}]))
 
-      const { data: lotRows } = await admin
-        .from('match_decks').select('deck, cards').eq('match_id', matchId)
-      const lot = ((lotRows ?? []).find((r) => r.deck === 'auction-lot')?.cards ?? []) as string[]
+      // `lot` was read at the top of this case — prescience needs it on the
+      // awaiting path too. Reading it twice declared it twice in one block,
+      // which is a SyntaxError the moment the function loads, and tsc does not
+      // read this directory.
 
       const settled = settleAuction({
         result: outcome.step.result,
@@ -393,6 +444,16 @@ Deno.serve(async req => {
           return json({ error: `no seat holds ${faction}`, code: 'unseated-winner' }, 409)
         }
         secretsPatch[seatId] = { ...(byId[seatId] ?? {}), cards: next.hand, spice: next.spice }
+      }
+      // THE REVEAL IS CLEARED when the auction ends. Nothing is up for purchase
+      // any more, and a reveal left behind names a card now sitting in a hand —
+      // possibly somebody else's. The Atreides seat may not be in the patch at
+      // all (they may have won nothing and paid nobody), so it is added rather
+      // than assumed present.
+      const prescientOut = seatOfFaction[PRESCIENT_FACTION]
+      if (prescientOut) {
+        secretsPatch[prescientOut] = withReveal(
+          (secretsPatch[prescientOut] ?? byId[prescientOut] ?? {}) as Record<string, unknown>, null)
       }
       const { data, error } = await admin.rpc('apply_match_write', {
         p_match_id: matchId,
