@@ -248,6 +248,7 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'information',
     timing: 'any-time',
     copies: 2,
+    image: '/treachery/Truthtrance.png',
     // PRESENT, though it was described as deliberately absent. Left in place
     // rather than deleted: removing it takes the deck to 31 and that is a
     // decision about the deck, not a tidy-up. See the note at the foot.
@@ -261,6 +262,7 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'revival',
     timing: 'any-time',
     copies: 1,
+    image: '/treachery/Tleilaxu_Ghola.png',
     text: 'Play at any time to gain an extra revival.\n\nYou may immediately revive 1 of your leaders'
       + ' regardless of how many leaders you have in the tanks, or up to 5 of your forces from the'
       + ' Tleilaxu Tanks to your reserves at no cost in spice.',
@@ -272,6 +274,7 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'movement',
     timing: 'movement',
     copies: 1,
+    image: '/treachery/HAJR.png',
     text: 'Play during Movement Phase.'
       + '\n\nMake an extra on-planet force movement subject to normal movement rules.'
       + "\n\nThe forces you move may be a group you've already moved this phase or another group.",
@@ -319,6 +322,7 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'storm',
     timing: 'storm-after-roll',
     copies: 1,
+    image: '/treachery/Family_atomics.png',
     text: 'After the first game turn, play after the storm movement is calculated, but before the'
       + ' storm is moved, but only if you have one or more forces on the Shield Wall or a territory'
       + ' adjacent to the Shield Wall with no storm between your sector and the Wall.'

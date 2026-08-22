@@ -5,7 +5,13 @@ import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { TREACHERY_HEADER } from '@/types/Dune/Treachery'
 import type { TreacheryCard, TreacheryKind } from '@/types/Dune/Treachery'
 import { readFileSync, existsSync, readdirSync } from 'node:fs'
-import { layoutCard, fitNameSize, isDrawnHere, artFit, CARD_H, NAME_W } from '@/components/dune/TreacheryCardFace'
+import { createElement } from 'react'
+// The .browser entry, not 'react-dom/server': the node one is CJS and reaches
+// for require('stream'), which esbuild cannot fold into an ESM bundle. Nothing
+// here needs streaming — renderToStaticMarkup returns a string either way.
+import { renderToStaticMarkup } from 'react-dom/server.browser'
+import { TreacheryCardFace } from '@/components/dune/TreacheryCardFace'
+import { layoutCard, fitNameSize, isDrawnHere, artFit, headerMarkFor, CARD_H, NAME_W } from '@/components/dune/TreacheryCardFace'
 
 let pass = true
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -108,35 +114,81 @@ check('the Shield stops projectiles and says so',
 check('the Snooper stops poison and says so',
   /poison/i.test(defenses.find(c => c.subtype === 'poison')?.text ?? ''), true)
 
-// ── the header mark, and the one of the four that means something ──────────
-// The droplet and the bullseye go by SUBTYPE, so a weapon and the defence that
-// answers it carry the same mark across two different header colours. That is
-// the pairing rule showing up in the art, so it is checked like a rule rather
-// than left to the eye.
+// ── the header mark ───────────────────────────────────────────────────────
+// The glyph goes by SUBTYPE, so a weapon and the defence that answers it carry
+// the same one across two different header colours, and the defence wears it
+// inside a shield. That is the pairing rule showing up in the art, so it is
+// checked like a rule rather than left to the eye.
+//
+// Asserted through headerMarkFor — the function the card actually renders from
+// — rather than through a copy of its rules written here. The copy passed while
+// agreeing only with itself; it could not have caught the renderer drifting.
 {
-  const mark = (c: TreacheryCard) =>
-    c.kind === 'special' ? 'stop'
-      : c.kind === 'worthless' ? 'asterisk'
-      : c.subtype === 'poison' ? 'droplet'
-      : c.subtype === 'projectile' ? 'bullseye' : 'none'
+  const spec = (id: string) => headerMarkFor(TREACHERY_CARDS.find(c => c.id === id)!)
 
-  check('a poison weapon and the Snooper carry the same mark',
-    [mark(TREACHERY_CARDS.find(c => c.id === 'gomjabbar')!),
-      mark(TREACHERY_CARDS.find(c => c.id === 'snooper')!)], ['droplet', 'droplet'])
-  check('a projectile weapon and the Shield carry the same mark',
-    [mark(TREACHERY_CARDS.find(c => c.id === 'crysknife')!),
-      mark(TREACHERY_CARDS.find(c => c.id === 'shield')!)], ['bullseye', 'bullseye'])
+  check('a poison weapon and the Snooper carry the same glyph',
+    [spec('gomjabbar').glyph, spec('snooper').glyph], ['droplet', 'droplet'])
+  check('a projectile weapon and the Shield carry the same glyph',
+    [spec('crysknife').glyph, spec('shield').glyph], ['crosshair', 'crosshair'])
+  // ...and the shield is what tells them apart. Same class, opposite roles.
+  check('the weapon deals the class and the defence answers it',
+    [spec('gomjabbar').shielded, spec('snooper').shielded,
+      spec('crysknife').shielded, spec('shield').shielded],
+    [false, true, false, true])
+
   // Written the other way round on the first attempt: "every card WITH a class
   // is marked", which filtered on the very property it was asserting and so
   // could never fail. Taking a card's class away removed it from the check
   // instead of failing it. This asks the question that can be answered no.
-  check('every weapon and defence carries a class the header can mark',
+  check('every weapon and defence carries a glyph the header can draw',
     TREACHERY_CARDS.filter(c => ['weapon', 'defense'].includes(c.kind)
-      && c.id !== 'lasgun' && mark(c) === 'none').map(c => c.id), [])
-  // The Lasgun is answered by nothing, so it is marked as nothing. If it ever
-  // gains a mark, something has decided it belongs to a class.
-  check('the Lasgun carries no class mark',
-    mark(TREACHERY_CARDS.find(c => c.id === 'lasgun')!), 'none')
+      && headerMarkFor(c).glyph === 'none').map(c => c.id), [])
+
+  // The Lasgun's bolt is its own class, and nothing answers a Lasgun. So the
+  // absence of a SHIELDED bolt is the rule, not an accident of today's deck: a
+  // shielded bolt would mean somebody had invented a defence the game lacks.
+  check('the Lasgun carries the bolt', spec('lasgun').glyph, 'bolt')
+  check('nothing shields against a Lasgun',
+    TREACHERY_CARDS.filter(c => headerMarkFor(c).glyph === 'bolt' && headerMarkFor(c).shielded)
+      .map(c => c.id), [])
+  // Only defences are shielded, and every one of them is. The mark is a claim
+  // about the card's ROLE, so it has to track kind exactly or it is decoration.
+  check('the shielded cards are exactly the defences',
+    TREACHERY_CARDS.filter(c => headerMarkFor(c).shielded).map(c => c.id).sort(),
+    TREACHERY_CARDS.filter(c => c.kind === 'defense').map(c => c.id).sort())
+}
+
+// ── what the card actually draws ───────────────────────────────────────────
+// Everything above asks headerMarkFor what the mark SHOULD be. Nothing above
+// establishes that the card draws it — the rule could be exported, correct, and
+// simply not called. Deleting the <HeaderMark> element left the whole suite
+// green, which is how this check came to exist.
+//
+// So the card is rendered and the mark is read back off it. This is the only
+// place the drawing itself is under test; everything else is data.
+{
+  const drawn = (c: TreacheryCard) =>
+    renderToStaticMarkup(createElement(TreacheryCardFace, { card: c }))
+  const markOf = (c: TreacheryCard) =>
+    (/data-mark="([a-z-]+)"/.exec(drawn(c)) ?? [])[1] ?? 'nothing drawn'
+  const expected = (c: TreacheryCard) => {
+    const { glyph, shielded } = headerMarkFor(c)
+    return shielded ? `shield-${glyph}` : glyph
+  }
+
+  check('every card draws the mark its own rule asks for',
+    TREACHERY_CARDS.filter(c => markOf(c) !== expected(c))
+      .map(c => `${c.id}: drew ${markOf(c)}, rule says ${expected(c)}`), [])
+  // Spot-checked by name as well, so a bug that made expected() and markOf()
+  // wrong in the same direction still fails. The pair above cannot catch that.
+  check('the Shield draws a shielded crosshair', markOf(
+    TREACHERY_CARDS.find(c => c.id === 'shield')!), 'shield-crosshair')
+  check('the Snooper draws a shielded droplet', markOf(
+    TREACHERY_CARDS.find(c => c.id === 'snooper')!), 'shield-droplet')
+  check('the Lasgun draws a bare bolt', markOf(
+    TREACHERY_CARDS.find(c => c.id === 'lasgun')!), 'bolt')
+  check('a poison weapon draws a bare droplet', markOf(
+    TREACHERY_CARDS.find(c => c.id === 'chaumas')!), 'droplet')
 }
 
 // ── drawn art and supplied art are treated as opposites ────────────────────
@@ -160,8 +212,9 @@ check('the drawn cards are exactly the SVGs',
   ['baliset', 'jubbacloak', 'kulon', 'lalala', 'triptogamont'])
 check('...and the supplied pictures are exactly the rasters',
   TREACHERY_CARDS.filter(c => c.image && !isDrawnHere(c.image)).map(c => c.id).sort(),
-  ['chaumas', 'chaumurky', 'cheaphero', 'crysknife', 'ellacadrug', 'gomjabbar',
-    'lasgun', 'maulapistol', 'shield', 'sliptip', 'snooper', 'stunner', 'weathercontrol'])
+  ['chaumas', 'chaumurky', 'cheaphero', 'crysknife', 'ellacadrug', 'familyatomics',
+    'gomjabbar', 'hajr', 'lasgun', 'maulapistol', 'shield', 'sliptip', 'snooper',
+    'stunner', 'tleilaxughola', 'truthtrance', 'weathercontrol'])
 // The decision that actually hangs off the predicate. Asserted on the value the
 // renderer uses rather than on the predicate alone, because "meet" and "slice"
 // are one word apart and the wrong one is invisible in a diff.
@@ -325,9 +378,8 @@ check('every projectile weapon is drawn',
     .map(c => c.id), [])
 check('the Lasgun is drawn',
   !!TREACHERY_CARDS.find(c => c.id === 'lasgun')?.image, true)
-check('two specials have pictures so far',
-  TREACHERY_CARDS.filter(c => c.kind === 'special' && c.image).map(c => c.id).sort(),
-  ['cheaphero', 'weathercontrol'])
+check('every special is drawn',
+  TREACHERY_CARDS.filter(c => c.kind === 'special' && !c.image && !c.textOnly).map(c => c.id), [])
 // The poison class is complete: all four weapons and the one defence that
 // answers them. Worth asserting as a CLASS rather than as five card names,
 // because that is what completeness means here — a poison weapon added later
@@ -346,18 +398,19 @@ check('...which is likewise four weapons and one defence',
 // entirely the specials, which is a different job.
 check('every card that can go in a battle plan is drawn',
   TREACHERY_CARDS.filter(c => c.timing === 'battle-plan' && !c.image).map(c => c.id), [])
-// What is left. Listed rather than counted, so the gap is a thing you can read
-// instead of a number you have to subtract.
-check('the cards still to be drawn, all of them specials',
-  TREACHERY_CARDS.filter(c => !c.image && !c.textOnly).map(c => c.id).sort(),
-  ['familyatomics', 'hajr', 'tleilaxughola', 'truthtrance'])
+// Nothing is left. Every card in the deck now carries a face except Karama,
+// which is text by design — so the exception is named rather than the gap being
+// listed, and a card added later without art fails this instead of quietly
+// joining a list of known absences.
+check('every card is drawn, and Karama is the only one that is text instead',
+  TREACHERY_CARDS.filter(c => !c.image && !c.textOnly).map(c => c.id), [])
 
 // ── art on disk that no card points at ─────────────────────────────────────
 // The other direction of the same question, and the one that is silent. A card
 // naming a missing picture renders a hole and gets noticed; a picture nobody
-// names renders nothing anywhere and does not. Three pictures were supplied and
-// all three were left unwired — the Ghola one was not even noticed until this
-// check listed it, which is exactly the failure being caught.
+// names renders nothing anywhere and does not. It earned itself immediately:
+// three supplied pictures were sitting unwired when it went in, one of which
+// nobody had noticed was there at all.
 //
 // weather-control.svg and snooper.svg are here for the opposite reason: both
 // were drawn here and then superseded by supplied pictures. Kept rather than
@@ -372,10 +425,10 @@ check('pictures in the folder that no card uses',
     .filter(f => f !== 'stop.svg')
     .filter(f => !TREACHERY_CARDS.some(c => c.image === '/treachery/' + f))
     .sort(),
-  ['Family_atomics.png', 'HAJR.png', 'Tleilaxu_Ghola.png', 'snooper.svg', 'weather-control.svg'])
+  ['snooper.svg', 'weather-control.svg'])
 // The count moves as art lands; when it fails it reports the new number, which
 // is the whole of the maintenance.
-check('eighteen cards drawn so far', TREACHERY_CARDS.filter(c => c.image).length, 18)
+check('twenty-two cards drawn', TREACHERY_CARDS.filter(c => c.image).length, 22)
 check('Weather Control is drawn too',
   TREACHERY_CARDS.find(c => c.id === 'weathercontrol')?.image, '/treachery/weather_control.png')
 check('no two cards share a picture',

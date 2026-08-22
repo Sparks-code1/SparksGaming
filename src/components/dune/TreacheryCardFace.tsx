@@ -16,7 +16,7 @@
  * works for the shortest card in the deck is not a layout, it is a coincidence.
  */
 import { TREACHERY_HEADER } from '@/types/Dune/Treachery'
-import type { TreacheryCard, TreacheryKind } from '@/types/Dune/Treachery'
+import type { TreacheryCard } from '@/types/Dune/Treachery'
 
 const SAND = '#f0e2bb'
 const BLACK = '#000000'
@@ -144,39 +144,130 @@ export function layoutCard(card: TreacheryCard) {
 }
 
 /**
- * The mark at the right-hand end of the header.
+ * What goes at the right-hand end of the header.
  *
- * Four of them: a stop hand on the specials, an asterisk on the worthless cards,
- * a droplet for poison and a bullseye for projectiles.
+ * Separated from the drawing because it is the only part that carries meaning,
+ * and because the alternative was a copy of these rules living in the test —
+ * which could then agree with itself while the card rendered something else.
  *
- * The last two go by SUBTYPE rather than kind, which is what makes them worth
- * having. A weapon and the defence that stops it share a class — the Snooper
- * answers poison, the Shield answers projectiles — so the mark pairs them across
- * the two colours. A player holding a Snooper and looking at a droplet on the
- * table knows the answer is in their hand without reading either card.
+ * THE CLASS GLYPH IS THE POINT. A weapon and the defence that answers it share
+ * a class, so they share a glyph: droplet for poison, crosshair for projectiles.
+ * The defence wears it INSIDE A SHIELD. So the mark says two things at once —
+ * which class, and whether this card is the threat or the answer to it — and it
+ * says them across two different header colours, where colour alone cannot.
  *
- * That is the only one of the four that carries meaning. The hand and the
- * asterisk mean nothing at all: they are how the printed cards look, and a hand
- * signalling stop on exactly the cards that interrupt phases is the kind of
- * coincidence somebody later reads a rule into. Nothing branches on any of them.
+ * The Lasgun's bolt is its own class and is never shielded, because nothing
+ * answers a Lasgun. That absence is the rule, and it is asserted rather than
+ * merely true today: a shielded bolt would mean somebody had invented a defence
+ * the game does not have.
  *
- * The asterisk is drawn rather than typed. A text `*` sits high in the line
- * where a superscript would, so it would hang off the top of a 27-pixel band
- * instead of sitting in the middle of it.
+ * The stop hand and the asterisk mean nothing at all. They are how the printed
+ * cards look, and a hand signalling stop on exactly the cards that interrupt
+ * phases is the kind of coincidence somebody later reads a rule into. Nothing
+ * branches on any of it.
  */
-function HeaderMark({ kind, subtype }: { kind: TreacheryKind; subtype: string }) {
-  const cx = CARD_W - 20, cy = 20, r = 10.5
+export type HeaderGlyph = 'stop' | 'asterisk' | 'droplet' | 'crosshair' | 'bolt' | 'none'
 
-  if (kind === 'special') {
+export interface HeaderMarkSpec {
+  glyph: HeaderGlyph
+  /** Drawn inside a knight's shield: this card ANSWERS the class, not deals it. */
+  shielded: boolean
+}
+
+export function headerMarkFor(card: TreacheryCard): HeaderMarkSpec {
+  if (card.kind === 'special') return { glyph: 'stop', shielded: false }
+  if (card.kind === 'worthless') return { glyph: 'asterisk', shielded: false }
+  const glyph: HeaderGlyph =
+    card.subtype === 'poison' ? 'droplet'
+      : card.subtype === 'projectile' ? 'crosshair'
+      : card.subtype === 'lasgun' ? 'bolt'
+      : 'none'
+  return { glyph, shielded: glyph !== 'none' && card.kind === 'defense' }
+}
+
+/** A drop: a point at the top opening into a round belly. The curve into the
+ *  point is the whole of what makes it read as liquid. */
+const Droplet = ({ cx, cy, r }: XYR) => (
+  <path fill={BLACK} d={`M${cx} ${cy - r}
+    C${cx + r * 0.52} ${cy - r * 0.32} ${cx + r * 0.78} ${cy + r * 0.2} ${cx} ${cy + r * 0.86}
+    C${cx - r * 0.78} ${cy + r * 0.2} ${cx - r * 0.52} ${cy - r * 0.32} ${cx} ${cy - r}Z`} />
+)
+
+/** A crosshair: a ring broken by four ticks that overshoot it, with a dot at
+ *  the centre. The overshoot is what separates it from a target — concentric
+ *  rings alone read as something to hit rather than something aiming. */
+const Crosshair = ({ cx, cy, r }: XYR) => (
+  <g stroke={BLACK} strokeWidth={r * 0.24} strokeLinecap="round" fill="none">
+    <circle cx={cx} cy={cy} r={r * 0.68} />
+    <path d={`M${cx} ${cy - r} V${cy - r * 0.34}`} />
+    <path d={`M${cx} ${cy + r} V${cy + r * 0.34}`} />
+    <path d={`M${cx - r} ${cy} H${cx - r * 0.34}`} />
+    <path d={`M${cx + r} ${cy} H${cx + r * 0.34}`} />
+    <circle cx={cx} cy={cy} r={r * 0.1} fill={BLACK} stroke="none" />
+  </g>
+)
+
+/** A bolt. Plotted on a unit square and mapped, because a zigzag written as
+ *  absolute coordinates is unreadable and impossible to retune. */
+const BOLT: readonly [number, number][] = [
+  [0.62, 0.00], [0.17, 0.56], [0.45, 0.56], [0.33, 1.00], [0.82, 0.41], [0.53, 0.41],
+]
+const Bolt = ({ cx, cy, r }: XYR) => (
+  <path fill={BLACK} d={BOLT.map(([u, v], i) =>
+    `${i ? 'L' : 'M'}${cx - r + 2 * r * u} ${cy - r + 2 * r * v}`).join(' ') + 'Z'} />
+)
+
+/** A heater shield: flat across the top, straight down the flanks, tapering to
+ *  a point. The straight upper flank is what makes it read as a shield rather
+ *  than as a badge or a crest. */
+const KnightShield = ({ cx, cy, r }: XYR) => {
+  const hw = r * 0.95, hh = r * 1.02
+  return (
+    <path fill="none" stroke={BLACK} strokeWidth={r * 0.19} strokeLinejoin="round"
+      d={`M${cx - hw} ${cy - hh} H${cx + hw} V${cy - hh * 0.1}
+         Q${cx + hw} ${cy + hh * 0.58} ${cx} ${cy + hh}
+         Q${cx - hw} ${cy + hh * 0.58} ${cx - hw} ${cy - hh * 0.1} Z`} />
+  )
+}
+
+interface XYR { cx: number; cy: number; r: number }
+
+function Glyph({ glyph, cx, cy, r }: XYR & { glyph: HeaderGlyph }) {
+  if (glyph === 'droplet') return <Droplet cx={cx} cy={cy} r={r} />
+  if (glyph === 'crosshair') return <Crosshair cx={cx} cy={cy} r={r} />
+  if (glyph === 'bolt') return <Bolt cx={cx} cy={cy} r={r} />
+  return null
+}
+
+/**
+ * `data-mark` is on the output on purpose.
+ *
+ * headerMarkFor can be right while the card renders something else entirely —
+ * including nothing, if the element is dropped — and the rule being exported
+ * does not by itself tie it to the drawing. The attribute is what lets a test
+ * read what the card actually drew and compare it against what the rule said,
+ * rather than checking the rule against itself.
+ *
+ * Found by deliberately deleting the element and watching the suite stay green.
+ */
+function HeaderMark({ card }: { card: TreacheryCard }) {
+  const cx = CARD_W - 20, cy = 20, r = 10.5
+  const { glyph, shielded } = headerMarkFor(card)
+  const mark = shielded ? `shield-${glyph}` : glyph
+
+  if (glyph === 'stop') {
     return (
-      <image href="/treachery/stop.svg"
+      <image data-mark={mark} href="/treachery/stop.svg"
         x={cx - r} y={cy - r} width={r * 2} height={r * 2}
         preserveAspectRatio="xMidYMid meet" />
     )
   }
-  if (kind === 'worthless') {
+  // Drawn rather than typed. A text `*` sits high in the line where a
+  // superscript would, so it would hang off the top of a 27-pixel band instead
+  // of sitting in the middle of it.
+  if (glyph === 'asterisk') {
     return (
-      <g stroke={BLACK} strokeWidth={r * 0.3} strokeLinecap="round">
+      <g data-mark={mark} stroke={BLACK} strokeWidth={r * 0.3} strokeLinecap="round">
         {[0, 60, 120].map(a => (
           <path key={a} d={`M${cx - r * 0.82} ${cy} H${cx + r * 0.82}`}
             transform={`rotate(${a} ${cx} ${cy})`} />
@@ -184,27 +275,16 @@ function HeaderMark({ kind, subtype }: { kind: TreacheryKind; subtype: string })
       </g>
     )
   }
-  if (subtype === 'poison') {
-    // A drop: a point at the top opening into a round belly. Drawn rather than
-    // a circle with a spike, because the curve into the point is the whole of
-    // what makes it read as liquid.
-    return (
-      <path d={`M${cx} ${cy - r}
-                C${cx + r * 0.52} ${cy - r * 0.32} ${cx + r * 0.78} ${cy + r * 0.2} ${cx} ${cy + r * 0.86}
-                C${cx - r * 0.78} ${cy + r * 0.2} ${cx - r * 0.52} ${cy - r * 0.32} ${cx} ${cy - r}Z`}
-        fill={BLACK} />
-    )
-  }
-  if (subtype === 'projectile') {
-    return (
-      <g>
-        <circle cx={cx} cy={cy} r={r * 0.9} fill="none" stroke={BLACK} strokeWidth={r * 0.2} />
-        <circle cx={cx} cy={cy} r={r * 0.5} fill="none" stroke={BLACK} strokeWidth={r * 0.2} />
-        <circle cx={cx} cy={cy} r={r * 0.17} fill={BLACK} />
-      </g>
-    )
-  }
-  return null
+  if (glyph === 'none') return null
+  if (!shielded) return <g data-mark={mark}><Glyph glyph={glyph} cx={cx} cy={cy} r={r} /></g>
+  return (
+    <g data-mark={mark}>
+      <KnightShield cx={cx} cy={cy} r={r} />
+      {/* Sat slightly high: the shield tapers, so its visual centre is above
+          its geometric one and a glyph on the true centre looks dropped. */}
+      <Glyph glyph={glyph} cx={cx} cy={cy - r * 0.1} r={r * 0.46} />
+    </g>
+  )
 }
 
 /**
@@ -240,7 +320,7 @@ export function TreacheryCardFace({ card, width = CARD_W }: { card: TreacheryCar
         fontFamily="Georgia, 'Times New Roman', serif" letterSpacing="0.5">
         {card.name.toUpperCase()}
       </text>
-      <HeaderMark kind={card.kind} subtype={card.subtype} />
+      <HeaderMark card={card} />
 
       {card.image && (
         <>
