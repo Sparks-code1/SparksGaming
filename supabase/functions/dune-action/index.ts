@@ -37,11 +37,11 @@ const CORS = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
-// ── The rules, duplicated deliberately ───────────────────────────────────────
-// Deno cannot import from src/, and there is no generated shared bundle for
-// Dune yet the way there is for Risk's reducer (npm run build:edge). These
-// constants are small and stable; when Dune's rules grow past this they want
-// the same generate-and-verify treatment, NOT a longer copy.
+// ── The rules ────────────────────────────────────────────────────────────────
+// They grew past a copy, and got the generate-and-verify treatment this comment
+// used to promise: the auction, the deck, the ledger and the settlement are all
+// bundled from src/lib/dune by npm run build:edge and imported above. What is
+// left here are two constants that are small, stable and have no logic in them.
 const CHARITY_TOPS_UP_TO = 2
 const CHARITY_WINDOW_MS = 15_000
 
@@ -219,6 +219,161 @@ Deno.serve(async req => {
     // unless DUNE_DEV_SEEDING is on cannot quietly become the mechanism. When
     // faction setup exists it will write these rows from the faction, and this
     // case should be deleted rather than repurposed.
+    // ── Start the auction ────────────────────────────────────────────────────
+    // Cards are drawn HERE, before anyone bids, and parked in match_decks under
+    // their own key. Drawing them at the end instead would mean the server chose
+    // which cards existed after seeing who won — true of nothing it would
+    // actually do, and unprovable either way, which is the problem. Drawn up
+    // front, the order is fixed before a single bid is made.
+    //
+    // They go to match_decks rather than into the auction state because nobody
+    // may see them: that table has RLS on and no read policy at all, and the
+    // auction's own state is public.
+    case 'OPEN_BIDDING': {
+      if (state.phase !== 'Bidding') {
+        return json({ error: 'the turn is not at bidding', code: 'wrong-phase' }, 409)
+      }
+      if (state.auction) {
+        return json({ error: 'bidding has already opened this turn', code: 'already-opened' }, 409)
+      }
+
+      const order = (action.order ?? []) as string[]
+      const hands = (action.hands ?? {}) as Record<string, number>
+      const limits = (action.limits ?? {}) as Record<string, number>
+      const count = cardsOnOffer(order, hands, limits)
+      if (count === 0) {
+        // Every hand full. Nothing is drawn and nothing is discarded — offering
+        // cards nobody may take would take real cards out of the deck and turn
+        // them face up for nobody's benefit.
+        return json({ error: 'every hand is full, so no cards are auctioned', code: 'no-cards' }, 409)
+      }
+
+      const { data: deckRows } = await admin
+        .from('match_decks').select('deck, cards').eq('match_id', matchId)
+      const piles = Object.fromEntries((deckRows ?? []).map((r) => [r.deck, r.cards as string[]]))
+      let deal
+      try {
+        deal = drawTreachery(
+          piles.treachery ?? [], (state.treacheryDiscard ?? []) as string[], count,
+          (cards) => shuffleWithSeed(Number(match.rng_seed) + match.action_seq, cards),
+        )
+      } catch (e) {
+        return json({ error: String(e), code: 'deck-exhausted' }, 409)
+      }
+
+      const step = beginAuction({
+        turn: state.turn ?? 0, order, hands, limits,
+        closesAt: now + BID_SECONDS * 1000,
+      })
+
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        // The STEP is public — it names no card. The reshuffle may have emptied
+        // the discard, so that goes back too.
+        p_state: { ...state, auction: step, treacheryDiscard: deal.discard },
+        p_secrets: {},
+        // The drawn cards park where nobody can read them, beside the pile they
+        // came out of, in the same transaction that shortened it.
+        p_decks: { treachery: deal.draw, 'auction-lot': deal.drawn },
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ auction: step, version: data[0].version })
+    }
+
+    // ── One bid or pass ──────────────────────────────────────────────────────
+    case 'BID': {
+      const step = state.auction
+      if (!step || step.status !== 'awaiting') {
+        return json({ error: 'no auction is running', code: 'no-auction' }, 409)
+      }
+
+      const { data: mine } = await admin
+        .from('match_secrets').select('data')
+        .eq('match_id', matchId).eq('player_id', playerId).maybeSingle()
+      const purse = readSpice((mine?.data ?? {}) as DuneSecrets)
+
+      const outcome = answerBid(step.carry, playerId, action.bid, purse, now + BID_SECONDS * 1000)
+
+      // A REFUSAL IS PRIVATE and changes nothing. Saying "more than you hold" to
+      // the table would announce roughly what the bidder has, which is most of
+      // what bidding hides — so it goes back to the caller as their own response
+      // and no state is written at all.
+      if (outcome.kind === 'refused') {
+        return json({ error: 'bid refused', code: outcome.refusal }, 409)
+      }
+
+      if (outcome.step.status === 'awaiting') {
+        const { data, error } = await admin.rpc('apply_match_write', {
+          p_match_id: matchId,
+          p_expected_version: match.version,
+          p_state: { ...state, auction: outcome.step },
+          p_secrets: {},
+        })
+        if (error) return json({ error: error.message }, 500)
+        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+        return json({ auction: outcome.step, version: data[0].version })
+      }
+
+      // ── Settled. Cards, spice and the discard, or none of them ─────────────
+      const { data: allSecrets } = await admin
+        .from('match_secrets').select('player_id, data').eq('match_id', matchId)
+      const hands = Object.fromEntries((allSecrets ?? []).map(
+        (r) => [r.player_id, ((r.data ?? {}) as { cards?: string[] }).cards ?? []]))
+      const purses = Object.fromEntries((allSecrets ?? []).map(
+        (r) => [r.player_id, readSpice((r.data ?? {}) as DuneSecrets)]))
+      const byId = Object.fromEntries((allSecrets ?? []).map((r) => [r.player_id, r.data ?? {}]))
+
+      const { data: lotRows } = await admin
+        .from('match_decks').select('deck, cards').eq('match_id', matchId)
+      const lot = ((lotRows ?? []).find((r) => r.deck === 'auction-lot')?.cards ?? []) as string[]
+
+      const settled = settleAuction({
+        result: outcome.step.result,
+        cards: lot,
+        hands,
+        purses,
+        // Who is in the game, for the Emperor redirect. Taken from the auction's
+        // own order rather than from whoever happens to have a secrets row.
+        seated: step.carry.order,
+      })
+      // Refusing here leaves the auction settled in state and nothing dealt,
+      // which is recoverable; dealing half of it would not be.
+      if (!settled.ok) {
+        return json({ error: settled.detail, code: settled.refusal }, 409)
+      }
+
+      // ONE transaction for all of it. A card dealt without its payment, or a
+      // payment without its card, is invisible afterwards — both live in secret
+      // rows — so it would surface as somebody quietly richer several turns on.
+      const secretsPatch: Record<string, unknown> = {}
+      for (const [seat, next] of Object.entries(settled.writes.secrets)) {
+        secretsPatch[seat] = { ...(byId[seat] ?? {}), cards: next.hand, spice: next.spice }
+      }
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state,
+          auction: null,
+          // The discard is PUBLIC — a treachery discard is face up at a table.
+          treacheryDiscard: discardUnsold(
+            (state.treacheryDiscard ?? []) as string[], settled.writes.discard),
+        },
+        p_secrets: secretsPatch,
+        // The lot is emptied in the same write that deals it out, so a card
+        // cannot be dealt twice by a retry.
+        p_decks: { 'auction-lot': [] },
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+
+      // Awards are public — who won and for how much was visible at the table.
+      // WHICH CARD is not, and is not in this response.
+      return json({ awards: outcome.step.result.awards, version: data[0].version })
+    }
+
     case 'SEED_SPICE': {
       if (Deno.env.get('DUNE_DEV_SEEDING') !== 'on') {
         return json({

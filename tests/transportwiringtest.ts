@@ -335,8 +335,13 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
     // The parser has to be finding calls at all, or the rule below is vacuous —
     // which would be this very bug, in the check written to prevent it.
     check('the guard can see the script\'s checks', calls.length > 5, true)
+    // An ABSENCE claim is a negated one. A bare check that merely MENTIONS a
+    // secret is usually a control asserting the opposite — 'the loser's purse
+    // was written' names LOSER_SPICE and is exactly what the rule wants to
+    // exist. Flagging those made the guard fail on the controls it depends on.
+    const asserts = (c: string) => /!s*(JSON.stringify|[A-Za-z_$][w$.]*)s*[.(]/.test(c)
     check('no uncontrolled check asserts that a foreign secret is absent',
-      calls.filter(c => /SECRET_B|DECK_SECRET|SPICE_B/.test(c))
+      calls.filter(c => asserts(c) && /SECRET_B|DECK_SECRET|SPICE_B|BOUGHT|LOSER_SPICE/.test(c))
         .map(c => c.slice(0, 60).replace(/\s+/g, ' ')), [])
     // The control machinery itself lives in scripts/lib/controlledCheck.js and
     // its BEHAVIOUR is tested in controlledchecktest — a source guard can see
@@ -427,6 +432,32 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
     // Equal purses would make "whose did A see" unanswerable: finding the number
     // would prove nothing about which seat it came from.
     check('...and they differ, so a hit names a seat', a === b, false)
+
+    // ── the completed auction ─────────────────────────────────────────────
+    // Its claims are absences too, and absences are free unless the thing was
+    // actually written. The bought card has to reach a secrets row, or "no
+    // other seat has it" is true of a match where no auction ever happened.
+    check('the bought card is seeded into a hand',
+      payloadsTo('match_secrets').some(p => /BOUGHT/.test(p)), true)
+    check('...and the losing bidder\'s purse is written',
+      payloadsTo('match_secrets').some(p => /LOSER_SPICE/.test(p)), true)
+    check('...and the unsold card into the public state',
+      payloadsTo('matches').some(p => /UNSOLD/.test(p)), true)
+
+    // THE DISCARD IS A PRESENCE CLAIM, not an absence. It is public — face up at
+    // a table — so asserting it is hidden would be the opposite bug. Flipping it
+    // fails loudly the moment the script runs against a real database, since the
+    // seed writes it; this catches it without waiting for that.
+    {
+      const at = script.indexOf('AUCTION-DISCARD')
+      const claim = at < 0 ? '' : script.slice(at, at + 400)
+      check('the discard claim exists', claim.length > 0, true)
+      check('...and asserts the card is THERE, not absent',
+        // Not `[^)]*`: there is a close paren between the negation and UNSOLD,
+        // so that stopped short and the flip went through unnoticed.
+        /!\s*JSON\.stringify[\s\S]{0,80}UNSOLD/.test(claim), false)
+      check('...which is a claim about UNSOLD at all', claim.includes('UNSOLD'), true)
+    }
     // ...and the decks likewise, through the store's own insert.
     check('the decks are written to match_decks',
       payloadsTo('match_decks').length > 0, true)

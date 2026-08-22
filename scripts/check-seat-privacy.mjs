@@ -27,6 +27,13 @@
  *   SEAT_B_EMAIL                 an account for seat p2 — no password needed,
  *                                nothing ever signs in as B
  *
+ * A COMPLETED AUCTION is checked too, at the end. That is where the three
+ * stores meet — a card leaves the deck, enters one hand, and spice moves between
+ * purses — and every one of those is secret, so the whole event is invisible
+ * from outside. It is simulated at the store level rather than by driving the
+ * phase: whether the auction picks the right winner is the offline suite's
+ * question, and whether its outcome is reachable by the wrong seat is this one's.
+ *
  * SPICE IS CHECKED THE WAY HANDS ARE. It is per-seat and hidden for the same
  * reason and lives in the same rows, so every claim about a hand has one about a
  * purse beside it — including the control that the fixture actually seeded one.
@@ -617,6 +624,78 @@ try {
     checkGiven(serverWrote, 'SERVER-REPLY  ...and no deck order at all',
       !replyJson.includes(DECK_SECRET),
       'the draw order came back in the action response')
+  }
+
+  // ── 6. a completed auction ────────────────────────────────────────────────
+  // The auction is where the three stores meet: a card comes out of the deck,
+  // goes into one hand, and spice moves between purses. Every one of those is
+  // secret, so the whole thing is invisible from outside — which is exactly why
+  // it is checked rather than played and eyeballed.
+  //
+  // Simulated at the STORE level rather than by driving the phase. Bidding is
+  // fifteen seconds a turn and several round trips; what is being asked here is
+  // not whether the auction picks the right winner (that is the offline suite)
+  // but whether its OUTCOME, once written, is reachable by the wrong seat.
+  {
+    const BOUGHT = `${TAG}-card-onlyTheWinnerMaySeeThis`
+    const UNSOLD = `${TAG}-card-nobodyBoughtThisOne`
+    const LOSER_SPICE = 777
+
+    // A settled auction, written the way the server writes one: the winner's
+    // card into their secrets row, the unsold card face up in public state, the
+    // deck order untouched in match_decks, and the loser's purse unchanged.
+    await admin.from('match_secrets')
+      .update({ data: { cards: [SECRET_A, BOUGHT], missionCardId: null, spice: SPICE_A - 3 } })
+      .eq('match_id', matchId).eq('player_id', 'p1')
+    await admin.from('match_secrets')
+      .update({ data: { cards: [SECRET_B], missionCardId: null, spice: LOSER_SPICE } })
+      .eq('match_id', matchId).eq('player_id', 'p2')
+    await admin.from('matches')
+      .update({ state: { ...publicHalf, treacheryDiscard: [UNSOLD] } })
+      .eq('id', matchId)
+
+    const { data: row } = await asA.from('matches').select('state').eq('id', matchId).maybeSingle()
+    const { data: rows } = await asA.from('match_secrets').select('player_id, data').eq('match_id', matchId)
+    const { data: decks } = await asA.from('match_decks').select('deck, cards').eq('match_id', matchId)
+    const mine = JSON.stringify((rows ?? []).filter(r => r.player_id === 'p1'))
+    const everything = JSON.stringify({ row: row?.state ?? null, rows: rows ?? [], decks: decks ?? [] })
+
+    // THE CONTROL. A won card nobody wrote is absent from everywhere, and every
+    // claim below would be true of a match where no auction ever happened.
+    const winnerHasIt = mine.includes(BOUGHT)
+    check('CONTROL  the winner can read the card they bought', winnerHasIt,
+      () => `p1's row does not hold the bought card: ${mine.slice(0, 200)}`)
+
+    checkGiven(winnerHasIt, 'AUCTION-CARD  the card reaches the winner and nobody else',
+      !JSON.stringify((rows ?? []).filter(r => r.player_id !== 'p1')).includes(BOUGHT),
+      'the bought card is in another seat\'s row')
+    checkGiven(winnerHasIt, 'AUCTION-CARD  ...and is not in the shared row either',
+      !JSON.stringify(row?.state ?? null).includes(BOUGHT),
+      'the bought card is in matches.state, which every client receives')
+
+    // The unsold card IS public — a treachery discard is face up at a table —
+    // so this is the one thing here that must be visible. Asserted because
+    // stripping it would be the opposite bug, and nothing else would notice.
+    checkGiven(winnerHasIt, 'AUCTION-DISCARD  the unsold card is public, being face up',
+      JSON.stringify(row?.state ?? null).includes(UNSOLD),
+      'the discard was hidden — it is public by rule and the board reads it')
+
+    // The deck the cards came out of is still nobody's to see.
+    checkGiven(winnerHasIt, 'AUCTION-DECK  the draw order stays hidden through it all',
+      !everything.includes(DECK_SECRET),
+      'the deck order is reachable after an auction')
+
+    // The losing bidder's purse is untouched AND unreadable. Two different
+    // claims: bidding must not charge somebody who lost, and A must not learn
+    // what B has whether it changed or not.
+    const { data: asAdmin } = await admin.from('match_secrets')
+      .select('player_id, data').eq('match_id', matchId)
+    const loser = (asAdmin ?? []).find(r => r.player_id === 'p2')
+    check('CONTROL  the loser\'s purse was written', (loser?.data ?? {}).spice === LOSER_SPICE,
+      () => `p2 holds ${JSON.stringify((loser?.data ?? {}).spice)}, expected ${LOSER_SPICE}`)
+    checkGiven(winnerHasIt, "AUCTION-SPICE  the loser's purse is not readable by the winner",
+      !JSON.stringify(rows ?? []).includes(String(LOSER_SPICE)),
+      "A can read the losing bidder's spice")
   }
 
 } catch (e) {

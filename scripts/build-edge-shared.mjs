@@ -40,6 +40,29 @@ const TARGETS = [
     exportName: 'gameReducer',
   },
   {
+    entry: 'src/lib/dune/bidding.ts',
+    out: 'supabase/functions/_shared/duneBidding.gen.ts',
+    what: 'treachery auction',
+    mustExport: /beginAuction/,
+    exportName: 'beginAuction',
+  },
+  {
+    entry: 'src/lib/dune/treacheryDeck.ts',
+    out: 'supabase/functions/_shared/duneDeck.gen.ts',
+    what: 'treachery deck',
+    mustExport: /drawTreachery/,
+    exportName: 'drawTreachery',
+  },
+  {
+    entry: 'src/lib/dune/auctionSettlement.ts',
+    out: 'supabase/functions/_shared/duneAuction.gen.ts',
+    what: 'auction settlement',
+    // The one place cards and payment are decided together. A second copy on
+    // the server could deal a card the client thinks was refused.
+    mustExport: /export\s*\{[^}]*settleAuction/,
+    exportName: 'settleAuction',
+  },
+  {
     entry: 'src/lib/dune/spice.ts',
     out: 'supabase/functions/_shared/duneSpice.gen.ts',
     what: 'spice ledger',
