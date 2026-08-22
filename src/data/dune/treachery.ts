@@ -98,6 +98,7 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'poison',
     timing: 'battle-plan',
     copies: 1,
+    image: '/treachery/Chaumas.jpg',
     text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved."
       + ' Opponent may protect leader with a Snooper.' + KEEP_IF_WON,
   },
@@ -108,6 +109,7 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'poison',
     timing: 'battle-plan',
     copies: 1,
+    image: '/treachery/Chaumurky.jpg',
     text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved."
       + ' Opponent may protect leader with a Snooper.' + KEEP_IF_WON,
   },
@@ -160,6 +162,7 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'poison',
     timing: 'battle-plan',
     copies: 4,
+    image: '/treachery/snooper.svg',
     text: PLAY_IN_PLAN + '\n\nProtects your leader from a poison weapon in this battle.'
       + '\n\nYou may keep this card if you win this battle.',
   },
@@ -279,7 +282,7 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'storm',
     timing: 'storm-before-roll',
     copies: 1,
-    image: '/treachery/weather-control.svg',
+    image: '/treachery/weather_control.png',
     text: 'After the first game turn, play during the Storm Phase before the Storm Marker is moved.'
       + '\n\nWhen you play this card, you control the storm this phase and may move it from 0 to 10'
       + ' sectors in a counterclockwise direction.',

@@ -4,8 +4,8 @@
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { TREACHERY_HEADER } from '@/types/Dune/Treachery'
 import type { TreacheryCard, TreacheryKind } from '@/types/Dune/Treachery'
-import { readFileSync, existsSync } from 'node:fs'
-import { layoutCard, fitNameSize, CARD_H, NAME_W } from '@/components/dune/TreacheryCardFace'
+import { readFileSync, existsSync, readdirSync } from 'node:fs'
+import { layoutCard, fitNameSize, isDrawnHere, artFit, CARD_H, NAME_W } from '@/components/dune/TreacheryCardFace'
 
 let pass = true
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -139,18 +139,47 @@ check('the Snooper stops poison and says so',
     mark(TREACHERY_CARDS.find(c => c.id === 'lasgun')!), 'none')
 }
 
-// ── borders belong to line art ─────────────────────────────────────────────
-// Drawn art gets a ruled box; supplied pictures do not, because a frame inside
-// the card's own frame reads as a mistake. Format is the proxy for which is
-// which, so it is worth stating that the proxy still holds.
-// Every picture is one or the other, so "is it an SVG" is a total question and
-// safe to branch a border on. A third format arriving would make it a partial
-// one, and the card would silently lose its frame.
-check('every picture is an SVG or a PNG, nothing else',
-  TREACHERY_CARDS.filter(c => c.image && !/\.(svg|png)$/.test(c.image)).map(c => c.id), [])
-check('the drawn cards are the SVGs',
-  TREACHERY_CARDS.filter(c => c.image?.endsWith('.svg')).map(c => c.id).sort(),
-  ['baliset', 'jubbacloak', 'kulon', 'lalala', 'triptogamont', 'weathercontrol'])
+// ── drawn art and supplied art are treated as opposites ────────────────────
+// Two decisions hang off the same question. Drawn art gets a ruled box and is
+// fitted inside it; supplied art gets no box and fills it, cropping. Both are
+// right for one kind of picture and wrong for the other — a frame inside the
+// card's own frame reads as a mistake, and fitting a wide subject on a square
+// canvas scales it by its empty margin instead of its subject.
+//
+// So the question is asked once, by isDrawnHere, and these checks are about
+// that predicate rather than about either use of it.
+//
+// The list of formats matters because the predicate is a BINARY split of a set
+// that is not binary. Anything not an SVG is treated as a supplied photograph
+// and cropped. A format arriving that is neither drawn-here nor a photograph
+// would be cropped silently, so the set is pinned rather than left open.
+check('every picture is a format the drawn/supplied split has been thought about',
+  TREACHERY_CARDS.filter(c => c.image && !/\.(svg|png|jpe?g)$/.test(c.image)).map(c => c.id), [])
+check('the drawn cards are exactly the SVGs',
+  TREACHERY_CARDS.filter(c => c.image && isDrawnHere(c.image)).map(c => c.id).sort(),
+  ['baliset', 'jubbacloak', 'kulon', 'lalala', 'snooper', 'triptogamont'])
+check('...and the supplied pictures are exactly the rasters',
+  TREACHERY_CARDS.filter(c => c.image && !isDrawnHere(c.image)).map(c => c.id).sort(),
+  ['chaumas', 'chaumurky', 'cheaphero', 'crysknife', 'ellacadrug', 'gomjabbar',
+    'lasgun', 'maulapistol', 'sliptip', 'stunner', 'weathercontrol'])
+// The decision that actually hangs off the predicate. Asserted on the value the
+// renderer uses rather than on the predicate alone, because "meet" and "slice"
+// are one word apart and the wrong one is invisible in a diff.
+check('supplied pictures fill their box',
+  TREACHERY_CARDS.filter(c => c.image && !isDrawnHere(c.image))
+    .map(c => artFit(c.image!)).filter(f => f !== 'xMidYMid slice'), [])
+check('drawn pictures are fitted inside it, never cropped',
+  TREACHERY_CARDS.filter(c => c.image && isDrawnHere(c.image))
+    .map(c => artFit(c.image!)).filter(f => f !== 'xMidYMid meet'), [])
+// Stated as a rule because it is the reason the split is safe: every drawn
+// picture is authored to the same square box, so "fit inside" never wastes
+// space on one, and cropping one would cut art that has no margin to give.
+check('every drawn picture is authored square, which is why it is never cropped',
+  TREACHERY_CARDS.filter(c => c.image && isDrawnHere(c.image)).filter(c => {
+    const svg = readFileSync('public' + c.image, 'utf8')
+    const box = /viewBox="0 0 (\d+(?:\.\d+)?) (\d+(?:\.\d+)?)"/.exec(svg)
+    return !box || box[1] !== box[2]
+  }).map(c => c.id), [])
 
 // ── the name stops before the mark ─────────────────────────────────────────
 // The name moved left and the mark moved into the header beside it, so they now
@@ -299,18 +328,47 @@ check('the Lasgun is drawn',
 check('two specials have pictures so far',
   TREACHERY_CARDS.filter(c => c.kind === 'special' && c.image).map(c => c.id).sort(),
   ['cheaphero', 'weathercontrol'])
-// One of the four poison weapons is drawn; the other three and both defences
-// are the gap. Stated so the gap is visible rather than inferred from a count.
-check('the poison weapons still to be drawn',
-  TREACHERY_CARDS.filter(c => c.subtype === 'poison' && c.kind === 'weapon' && !c.image)
-    .map(c => c.id).sort(), ['chaumas', 'chaumurky'])
-check('neither defence is drawn yet',
-  TREACHERY_CARDS.filter(c => c.kind === 'defense' && c.image).map(c => c.id), [])
+// The poison class is complete: all four weapons and the one defence that
+// answers them. Worth asserting as a CLASS rather than as five card names,
+// because that is what completeness means here — a poison weapon added later
+// with no picture should fail this, and a list of names would not notice.
+check('every poison card is drawn, weapons and defence alike',
+  TREACHERY_CARDS.filter(c => c.subtype === 'poison' && !c.image).map(c => c.id), [])
+check('...which is four weapons and one defence',
+  TREACHERY_CARDS.filter(c => c.subtype === 'poison').map(c => c.kind).sort(),
+  ['defense', 'weapon', 'weapon', 'weapon', 'weapon'])
+// What is left. Listed rather than counted, so the gap is a thing you can read
+// instead of a number you have to subtract.
+check('the cards still to be drawn',
+  TREACHERY_CARDS.filter(c => !c.image && !c.textOnly).map(c => c.id).sort(),
+  ['familyatomics', 'hajr', 'shield', 'tleilaxughola', 'truthtrance'])
+
+// ── art on disk that no card points at ─────────────────────────────────────
+// The other direction of the same question, and the one that is silent. A card
+// naming a missing picture renders a hole and gets noticed; a picture nobody
+// names renders nothing anywhere and does not. Three pictures were supplied and
+// all three were left unwired — the Ghola one was not even noticed until this
+// check listed it, which is exactly the failure being caught.
+//
+// weather-control.svg is here for the opposite reason: it was drawn here and
+// then superseded by a supplied picture. Kept rather than deleted, because it
+// costs a kilobyte and the card may want it back.
+//
+// Listed rather than asserted empty, because the list IS the finding. When one
+// gets wired this fails and reports the shorter list, which is the maintenance.
+check('pictures in the folder that no card uses',
+  readdirSync('public/treachery')
+    // stop.svg is the header mark, drawn by the component rather than named by
+    // a card, so it is not an orphan.
+    .filter(f => f !== 'stop.svg')
+    .filter(f => !TREACHERY_CARDS.some(c => c.image === '/treachery/' + f))
+    .sort(),
+  ['Family_atomics.png', 'HAJR.png', 'Tleilaxu_Ghola.png', 'weather-control.svg'])
 // The count moves as art lands; when it fails it reports the new number, which
 // is the whole of the maintenance.
-check('fourteen cards drawn so far', TREACHERY_CARDS.filter(c => c.image).length, 14)
+check('seventeen cards drawn so far', TREACHERY_CARDS.filter(c => c.image).length, 17)
 check('Weather Control is drawn too',
-  TREACHERY_CARDS.find(c => c.id === 'weathercontrol')?.image, '/treachery/weather-control.svg')
+  TREACHERY_CARDS.find(c => c.id === 'weathercontrol')?.image, '/treachery/weather_control.png')
 check('no two cards share a picture',
   new Set(TREACHERY_CARDS.filter(c => c.image).map(c => c.image)).size,
   TREACHERY_CARDS.filter(c => c.image).length)
@@ -320,18 +378,20 @@ check('no two cards share a picture',
 // rather than assumed, the same way the string joins are checked at the source.
 check('every picture a card names actually exists',
   TREACHERY_CARDS.filter(c => c.image && !existsSync('public' + c.image)).map(c => c.image), [])
-// Art arrives as SVG when it is drawn here and as PNG when it is supplied, so
-// the check has to accept both. An empty or truncated file is the thing being
-// guarded against, and it looks the same as a missing one on the card.
+// An empty or truncated file is the thing being guarded against, and on the
+// card it looks exactly like a missing one. Checked by magic bytes rather than
+// by extension, so a file renamed to .png does not pass for one.
 check('...and is a real image with something in it',
   TREACHERY_CARDS.filter(c => {
     if (!c.image) return false
     const bytes = readFileSync('public' + c.image)
-    if (c.image.endsWith('.svg')) {
+    if (isDrawnHere(c.image)) {
       return !/<(path|circle|ellipse|rect|polygon|polyline|image)\b/.test(bytes.toString('utf8'))
     }
-    // PNG magic, and big enough to be a picture rather than a header.
-    return !(bytes.length > 1024 && bytes[0] === 0x89 && bytes.toString('ascii', 1, 4) === 'PNG')
+    if (bytes.length <= 1024) return true
+    const png = bytes[0] === 0x89 && bytes.toString('ascii', 1, 4) === 'PNG'
+    const jpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+    return !(png || jpeg)
   }).map(c => c.image), [])
 check('Karama is the only card that is text by design',
   TREACHERY_CARDS.filter(c => c.textOnly).map(c => c.id), ['karama'])

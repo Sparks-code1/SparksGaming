@@ -38,6 +38,40 @@ const TEXT_BOTTOM = CARD_H - 9
 const TEXT_W = CARD_W - 24
 
 /**
+ * Was this picture drawn here, or supplied?
+ *
+ * Everything drawn here is SVG, authored to its own box, on nothing. Everything
+ * supplied is a raster photograph of a silhouette with its own opaque ground.
+ * The two want opposite treatment — see the border and the fit below — and they
+ * ask the same question, so they ask it once.
+ *
+ * Format is the proxy, which is self-maintaining where a per-card flag would not
+ * be: art is drawn as SVG or exported as a raster, and nobody has to remember to
+ * set anything.
+ */
+export const isDrawnHere = (image: string) => image.endsWith('.svg')
+
+/**
+ * How a picture meets its box.
+ *
+ * Drawn art is fitted INSIDE the box; supplied art FILLS it.
+ *
+ * Not a style choice. The supplied pictures are wide subjects exported onto
+ * square canvases, so fitting one inside the box scales it by its empty margin
+ * rather than by its subject. The Lasgun is the clearest case: a rifle spanning
+ * 93% of its canvas width but 24% of its height, so fitting the canvas into a
+ * 56-tall box drew the gun 13 pixels tall with 82 pixels of nothing either
+ * side. Filling crops the empty ground away and draws the same gun at 128 by 32.
+ *
+ * Filling crops, so it is only safe while subjects sit near the middle of their
+ * canvas — which is what "exported onto a square canvas" amounts to in practice.
+ * Drawn art is authored to its own box with no margin to spare, so it keeps the
+ * fit that cannot crop.
+ */
+export const artFit = (image: string) =>
+  isDrawnHere(image) ? 'xMidYMid meet' : 'xMidYMid slice'
+
+/**
  * Break rules text into lines that fit.
  *
  * By character count rather than by measuring, which is crude and deliberate:
@@ -216,16 +250,13 @@ export function TreacheryCardFace({ card, width = CARD_W }: { card: TreacheryCar
               proxy for which is which — everything drawn here is SVG and
               everything supplied is not — and it is self-maintaining, which a
               per-card flag would not be. */}
-          {card.image.endsWith('.svg') && (
+          {isDrawnHere(card.image) && (
             <rect x={ART.x} y={ART.y} width={ART.w} height={artH}
               fill="none" stroke={BLACK} strokeWidth="1.8" />
           )}
-          {/* Fitted to the WHOLE box rather than to a square inside it: four of
-              the weapon images are square and the Maula Pistol is wide, and a
-              square slot would waste most of the box on the wide one. */}
           <image href={card.image}
             x={ART.x} y={ART.y} width={ART.w} height={artH}
-            preserveAspectRatio="xMidYMid meet" />
+            preserveAspectRatio={artFit(card.image)} />
         </>
       )}
 

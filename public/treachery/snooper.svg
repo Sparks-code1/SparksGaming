@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <!-- Snooper: the poison detector, hanging over a cup and sniffing it.
+
+       Drawn over a cup on purpose. The Snooper is the answer to the poison
+       weapons, and two of those are a poisoned banquet and a poisoned drink, so
+       the pictures pair the way the droplet in the header pairs them. A device
+       drawn on its own would be a gadget; drawn over a cup it is a defence.
+
+       Black, like the rest of the treachery art. -->
+
+  <!-- the body: a pod, wider than it is tall, hanging in the air -->
+  <ellipse cx="60" cy="26" rx="27" ry="12" fill="#000000" />
+  <!-- a rim under the pod, so it reads as a housing rather than a blob -->
+  <path d="M35 31 Q60 43 85 31" fill="none" stroke="#000000" stroke-width="3"
+        stroke-linecap="round" />
+  <!-- the lens it looks through -->
+  <circle cx="60" cy="37" r="5.5" fill="#000000" />
+
+  <!-- the sniff: three arcs widening downward, the sensing cone -->
+  <g fill="none" stroke="#000000" stroke-width="2.6" stroke-linecap="round" opacity="0.8">
+    <path d="M50 49 Q60 55 70 49" />
+    <path d="M45 57 Q60 66 75 57" />
+    <path d="M40 65 Q60 76 80 65" />
+  </g>
+
+  <!-- the cup it is sniffing: bowl, handle, stem, foot -->
+  <g fill="none" stroke="#000000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M43 80 L47 98 Q60 105 73 98 L77 80 Z" />
+    <path d="M77 83 Q87 85 85 92 Q83 97 76 96" stroke-width="3" />
+    <path d="M60 105 L60 110" />
+    <path d="M48 112 L72 112" stroke-width="5" />
+  </g>
+</svg>
