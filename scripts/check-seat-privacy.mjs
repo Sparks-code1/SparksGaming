@@ -62,6 +62,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { createChecker } from './lib/controlledCheck.js'
 import { diagnoseRealtime } from './lib/diagnoseRealtime.js'
+import { probeState, PROBE_ACTION } from './lib/probeFixture.js'
 
 const checker = createChecker()
 
@@ -135,6 +136,18 @@ try {
   // borrowed from a real one: this seeds deliberately leaky state and writes
   // into match_secrets, and neither belongs anywhere near a campaign somebody
   // is playing.
+  // The public half of the probe board: the fixture with every hand replaced by
+  // a count, which is exactly what publicView produces. Written by hand here
+  // because this script is plain node and cannot import the TypeScript.
+  const board = probeState(RUN)
+  const publicHalf = {
+    ...board,
+    players: board.players.map(p => {
+      const { cards: _c, missionCardId: _m, ...rest } = p
+      return { ...rest, cardCount: 1 }
+    }),
+  }
+
   campaignId = RUN
   const { error: cErr } = await admin.from('campaigns').insert({
     id: campaignId,
@@ -160,12 +173,11 @@ try {
       // It used to seed the hands inline here, and PRIVATE-STATE then failed on
       // its own fixture: a hand-written legacy row that the server would never
       // produce. That failure looked exactly like the wiring being broken.
-      state: {
-        players: [
-          { id: 'p1', name: TAG, cardCount: 1 },
-          { id: 'p2', name: TAG, cardCount: 1 },
-        ],
-      },
+      //
+      // A REAL board rather than two bare players, so the last section can make
+      // the server take an actual turn on it. probeState is checked against the
+      // real reducer in probewritepathtest.
+      state: publicHalf,
     })
     .select('id')
     .single()
@@ -180,9 +192,14 @@ try {
   ])
   if (pErr) throw new Error(`seed match_players: ${pErr.message}`)
 
+  // { cards, missionCardId } — the shape hydrateState reads, not a shape of this
+  // script's own choosing. It seeded { hand: [...] } before, which no server
+  // code has ever looked at: the transport checks passed on it because they only
+  // search the payload for a string, and the write-path probe below would have
+  // died on the first hand it tried to rebuild.
   const { error: sErr } = await admin.from('match_secrets').insert([
-    { match_id: matchId, player_id: 'p1', data: { hand: [SECRET_A] } },
-    { match_id: matchId, player_id: 'p2', data: { hand: [SECRET_B] } },
+    { match_id: matchId, player_id: 'p1', data: { cards: [SECRET_A], missionCardId: null } },
+    { match_id: matchId, player_id: 'p2', data: { cards: [SECRET_B], missionCardId: null } },
   ])
   if (sErr) throw new Error(`seed match_secrets: ${sErr.message}`)
 
@@ -372,20 +389,15 @@ try {
     // reach A — without it there is no control for the secrets channel, only an
     // absence that could mean anything.
     await admin.from('match_secrets')
-      .update({ data: { hand: [SECRET_A], touched: 1 } })
+      .update({ data: { cards: [SECRET_A], missionCardId: null, touched: 1 } })
       .eq('match_id', matchId).eq('player_id', 'p1')
     await admin.from('match_secrets')
-      .update({ data: { hand: [SECRET_B], touched: 1 } })
+      .update({ data: { cards: [SECRET_B], missionCardId: null, touched: 1 } })
       .eq('match_id', matchId).eq('player_id', 'p2')
     // Split, like the insert. Writing hands here would have put them back on
     // the wire by hand and failed WIRE-STATE for the same wrong reason.
     await admin.from('matches')
-      .update({ state: {
-        players: [
-          { id: 'p1', name: TAG, cardCount: 1, touched: 1 },
-          { id: 'p2', name: TAG, cardCount: 1, touched: 1 },
-        ],
-      } })
+      .update({ state: { ...publicHalf, turnNumber: 2 } })
       .eq('id', matchId)
 
     // Wait for the MATCH frame specifically. "At least one frame" was satisfied
@@ -442,6 +454,86 @@ try {
         !JSON.stringify(rows).includes(DECK_SECRET))
     }
   }
+  // ── 5. the server's own write ─────────────────────────────────────────────
+  // EVERYTHING ABOVE SEEDS THE ROW ITSELF, so none of it can say whether
+  // publicView runs. This section makes one real call to apply-action and looks
+  // at what the SERVER wrote.
+  //
+  // It is cheap because END_REINFORCE_PHASE is cheap: on the allow-list, needs
+  // no territories or troops, and its whole implementation is "if it is your
+  // turn and the phase is reinforce, make it attack". The fixture that satisfies
+  // it is checked against the real reducer in probewritepathtest, so a 4xx here
+  // means the server, not a bad board.
+  //
+  // The proof is a squeeze. The row is seeded WITHOUT hands and the hands live
+  // in match_secrets, so the server must read them back to run the reducer at
+  // all — which means it holds both hands in memory at the moment it writes. If
+  // it writes what it holds, they land in the row. If it writes publicView of
+  // what it holds, they do not.
+  {
+    const { data: sess } = await asA.auth.getSession()
+    const token = sess?.session?.access_token
+    let res = null
+    let body = null
+    try {
+      res = await fetch(`${URL}/functions/v1/apply-action`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          apikey: ANON,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ matchId, action: PROBE_ACTION }),
+      })
+      body = await res.json()
+    } catch (e) {
+      body = { error: String(e) }
+    }
+
+    // The control: the server accepted the action and wrote. Without this every
+    // claim below is about a row nobody touched, which is the seed again.
+    const wrote = !!res && res.ok && typeof body?.version === 'number'
+    check('CONTROL  the server accepted one real action and wrote a new version',
+      wrote,
+      () => `${res ? res.status : 'no response'}: ${JSON.stringify(body).slice(0, 300)}`
+        + ' — if this is 404 the function is not deployed; 403 not-your-turn means the fixture drifted')
+
+    const { data: row } = await admin.from('matches').select('state, version').eq('id', matchId).maybeSingle()
+    const rowJson = JSON.stringify(row?.state ?? null)
+
+    // A second control: the row is the state the server just computed, not the
+    // one seeded. If the phase did not move, the write did not happen and the
+    // absence of hands below would be the seed's doing.
+    const advanced = row?.state?.phase === 'attack'
+    check('CONTROL  the row holds the state the server computed, not the seeded one',
+      advanced, () => `phase is ${JSON.stringify(row?.state?.phase)}, expected "attack"`)
+
+    const serverWrote = wrote && advanced
+    checkGiven(serverWrote, 'SERVER-STRIPS  the row the server wrote carries no hand',
+      !rowJson.includes(SECRET_A) && !rowJson.includes(SECRET_B),
+      'the server wrote a hand into the shared row — publicView is not being applied')
+    checkGiven(serverWrote, '...and the counts survived, so it stripped rather than dropped',
+      /cardCount/.test(rowJson), 'no cardCount in the row: the hands went missing rather than being projected')
+    // The hands must still EXIST. Stripping them from the row is right; losing
+    // them is a different bug that looks identical from the row alone.
+    {
+      const { data: after } = await admin.from('match_secrets')
+        .select('player_id, data').eq('match_id', matchId)
+      const kept = JSON.stringify(after ?? [])
+      checkGiven(serverWrote, '...and both hands are still in the secrets store',
+        kept.includes(SECRET_A) && kept.includes(SECRET_B),
+        `match_secrets after the write: ${kept.slice(0, 300)}`)
+    }
+    // The response is the other copy, and it goes to a known seat, so it may
+    // carry that seat's own hand and nobody else's.
+    const replyJson = JSON.stringify(body?.state ?? null)
+    checkGiven(serverWrote, "SERVER-REPLY  the action response carries A's own hand",
+      replyJson.includes(SECRET_A), 'A did not get its own hand back in the response')
+    checkGiven(serverWrote, "SERVER-REPLY  ...and not B's",
+      !replyJson.includes(SECRET_B),
+      "B's hand came back in A's action response — a private channel is still a channel")
+  }
+
 } catch (e) {
   // Through the checker, so a crash counts as a failure the same way a leak
   // does. A script that dies mid-way must never exit 0.

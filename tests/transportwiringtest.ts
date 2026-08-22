@@ -310,11 +310,47 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
       return out
     }
 
-    const toMatches = payloadsTo('matches')
+    /**
+     * A payload, plus the source of any `const` it names.
+     *
+     * The payload used to be a literal, so searching its text was enough. Then
+     * the seed grew a `state: publicHalf` variable and this guard went blind:
+     * the literal it was reading no longer contained anything, and the sabotage
+     * that puts hands back into the row walked straight past it.
+     *
+     * One level of indirection, which is all the seed uses. Deeper than that and
+     * this would want a parser rather than a regex — but a guard that silently
+     * stops looking is worse than one that admits a depth limit, so the limit is
+     * asserted below rather than assumed.
+     */
+    const withReferents = (payload: string): string => {
+      const names = new Set([...payload.matchAll(/\b([A-Za-z_$][\w$]*)\b/g)].map(m => m[1]))
+      let text = payload
+      for (const name of names) {
+        const at = script.indexOf(`const ${name} = `)
+        if (at < 0) continue
+        // To the end of the statement's outermost braces, or the line if it has
+        // none — enough to catch a mapped object literal.
+        const open = script.indexOf('{', at)
+        if (open < 0 || open > script.indexOf('\n', at)) { text += script.slice(at, script.indexOf('\n', at)); continue }
+        let depth = 0
+        for (let i = open; i < script.length; i++) {
+          if (script[i] === '{') depth++
+          else if (script[i] === '}' && --depth === 0) { text += script.slice(at, i + 1); break }
+        }
+      }
+      return text
+    }
+
+    const toMatches = payloadsTo('matches').map(withReferents)
     // Without this the rule below is vacuous: no payloads found, nothing to
     // contain a secret, green forever. The script writes the row twice — once
     // seeding and once to provoke a frame.
     check('the guard can see what the seed writes to matches', toMatches.length >= 2, true)
+    // ...and can see THROUGH a variable, which is how it is written now. Without
+    // this the rule below reads an identifier and finds nothing in it.
+    check('...including the contents of a state it passes by name',
+      toMatches.some(p => p.includes('cardCount')), true)
     check('no payload written to matches carries a seat secret',
       toMatches.filter(p => /SECRET_A|SECRET_B/.test(p)).map(p => p.slice(0, 70).replace(/\s+/g, ' ')),
       [])
