@@ -249,11 +249,15 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     timing: 'any-time',
     copies: 2,
     image: '/treachery/Truthtrance.png',
-    // PRESENT, though it was described as deliberately absent. Left in place
-    // rather than deleted: removing it takes the deck to 31 and that is a
-    // decision about the deck, not a tidy-up. See the note at the foot.
-    text: 'Publicly ask one other player a single yes/no question about the game that must be'
-      + ' answered publicly.\n\nThe player must answer "yes or no truthfully".',
+    // REWRITTEN, and the only card in the deck whose text is not the printed
+    // one. The printed card asks a player to answer truthfully; nothing can hold
+    // them to it, and the questions worth asking are about intent, which is not
+    // state and never becomes checkable. So the server answers instead of the
+    // player, out of a fixed set of questions it can prove — see
+    // lib/dune/truthtrance.ts for the set and for what had to be given up.
+    text: 'Play at any time. Name another player and choose one question from the Truthtrance'
+      + ' list.\n\nThe question and its answer are announced to every player. The answer is yes'
+      + ' or no, and is always true.',
   },
   {
     id: 'tleilaxughola',
