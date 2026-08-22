@@ -91,6 +91,96 @@ const callersOf = (name: string, definedIn: string) =>
     /supabase_realtime[\s\S]*match_decks[\s\S]*raise exception/i.test(sql), true)
 }
 
+// ── the privacy check's seed matches the schema ────────────────────────────
+// scripts/check-seat-privacy.mjs writes real rows into a real project, so it
+// fails on the FIRST missing column and hides the rest behind it. That is a
+// round trip per mistake, each one needing a live database to discover: it
+// failed on matches.campaign_id, and would then have failed on seat, name and
+// faction_id one at a time.
+//
+// The schema already says which columns are mandatory, so this compares the
+// seed against it and reports every gap at once. Offline, because the point is
+// to stop finding these by running the thing.
+{
+  const schema = ['supabase/schema.sql', 'supabase/multiplayer-schema.sql',
+    'supabase/migrations/20260816120000_match_secrets.sql',
+    'supabase/migrations/20260822000000_match_decks.sql']
+    .map(p => readFileSync(p, 'utf8')).join('\n')
+  const script = readFileSync('scripts/check-seat-privacy.mjs', 'utf8')
+
+  /** Columns a row cannot be inserted without: NOT NULL or PRIMARY KEY, and no
+   *  default to fill them in. */
+  const requiredColumns = (table: string): string[] => {
+    const m = new RegExp(`create table if not exists ${table} \\(([\\s\\S]*?)\\n\\);`).exec(schema)
+    if (!m) return ['<table not found in schema>']
+    return m[1].split('\n')
+      .map(l => l.replace(/--.*$/, '').trim())
+      // Table-level constraints are not columns.
+      .filter(l => l && !/^(primary key|unique|constraint|check|foreign key)\b/i.test(l))
+      .filter(l => !/\bdefault\b/i.test(l)
+        && (/\bnot null\b/i.test(l) || /\bprimary key\b/i.test(l)))
+      .map(l => l.split(/\s+/)[0])
+  }
+
+  /** The object literal passed to the FIRST .insert() after .from(table). */
+  const insertBody = (table: string): string => {
+    const from = script.indexOf(`.from('${table}')`)
+    if (from < 0) return ''
+    const ins = script.indexOf('.insert(', from)
+    if (ins < 0) return ''
+    let depth = 0
+    for (let i = ins + '.insert'.length; i < script.length; i++) {
+      if (script[i] === '(') depth++
+      else if (script[i] === ')' && --depth === 0) return script.slice(ins, i + 1)
+    }
+    return ''
+  }
+
+  /**
+   * Each top-level object in an insert body, separately.
+   *
+   * ROW BY ROW, not as one bag of keys. Two of these inserts pass an ARRAY of
+   * rows, and reading the whole body at once meant a column missing from one row
+   * was still "supplied" by the other — sabotage caught three of those passing:
+   * a seat could lose faction_id, or its seat number, and the check said nothing.
+   *
+   * Braces only, so nested values (`data: { hand: [...] }`) stay inside their
+   * own row rather than being counted as rows of their own.
+   */
+  const rowsIn = (body: string): string[] => {
+    const rows: string[] = []
+    let depth = 0, start = 0
+    for (let i = 0; i < body.length; i++) {
+      if (body[i] === '{') { if (depth++ === 0) start = i }
+      else if (body[i] === '}' && --depth === 0) rows.push(body.slice(start, i + 1))
+    }
+    return rows
+  }
+
+  for (const table of ['campaigns', 'matches', 'match_players', 'match_secrets', 'match_decks']) {
+    const required = requiredColumns(table)
+    const rows = rowsIn(insertBody(table))
+    const missing = rows.length === 0
+      ? ['<no insert found for this table>']
+      : rows.flatMap((row, i) => {
+        const supplied = new Set([...row.matchAll(/(\w+)\s*:/g)].map(m => m[1]))
+        return required.filter(c => !supplied.has(c)).map(c => `row ${i}: ${c}`)
+      })
+    check(`the seed supplies every mandatory column of ${table}, in every row`, missing, [])
+  }
+
+  // The seed is only half of it. Everything it creates hangs off the campaign,
+  // so teardown deleting that is what makes the script safe to run twice.
+  check('teardown deletes the campaign, which everything else cascades from',
+    /from\('campaigns'\)\s*\.delete\(\)/.test(script), true)
+  check('...and it runs even when the check throws',
+    /finally\s*\{[\s\S]*from\('campaigns'\)\s*\.delete\(\)/.test(script), true)
+  // A fixed id would collide with a crashed run's leftovers, and campaigns.id
+  // is a TEXT primary key rather than a generated one.
+  check('the campaign id is unique per run',
+    /const RUN = .*Date\.now\(\)/.test(script), true)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.

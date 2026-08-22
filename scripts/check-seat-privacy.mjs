@@ -23,8 +23,18 @@
  * row can be addressed to them; signing in as B would prove nothing that
  * signing in as A does not.
  *
- * Everything it creates is torn down in a finally block, and every row it makes
- * is tagged so a crashed run can be found and removed by hand.
+ * IT WRITES TO A LIVE PROJECT. It creates its own campaign — matches.campaign_id
+ * is NOT NULL — plus a match, two seats, their secrets and a deck row, and tears
+ * the lot down in a finally block by deleting the campaign, which everything
+ * else cascades from. It never touches a campaign anybody is playing: this seeds
+ * deliberately leaky state, which has no business near real data.
+ *
+ * Every row it makes is tagged `privacy-check-<runid>`, so a crashed run leaves
+ * something findable. To sweep up after one:
+ *
+ *   delete from campaigns where id like 'privacy-check-%';
+ *
+ * To run it:
  *
  *   node scripts/check-seat-privacy.mjs
  */
@@ -45,6 +55,10 @@ const ANON = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY
 if (!ANON) { console.error('missing SUPABASE_ANON_KEY'); process.exit(2) }
 
 const TAG = 'privacy-check'
+// Per-run, because campaigns.id is a TEXT primary key: two runs sharing one id
+// would collide, and a crashed run leaves a row somebody has to find by hand.
+// Anything matching `privacy-check-%` in campaigns is safe to delete.
+const RUN = `${TAG}-${Date.now().toString(36)}`
 const admin = createClient(URL, SERVICE, { auth: { persistSession: false } })
 
 let failures = 0
@@ -75,6 +89,7 @@ const userIdFor = async email => {
 }
 
 let matchId = null
+let campaignId = null
 
 try {
   const emailA = need('SEAT_A_EMAIL')
@@ -89,9 +104,29 @@ try {
   const SECRET_A = `${TAG}-A-onlyAmaySeeThis`
   const SECRET_B = `${TAG}-B-onlyBmaySeeThis`
 
+  // matches.campaign_id is NOT NULL and references campaigns(id), so there has
+  // to be a campaign before there can be a match. Made fresh rather than
+  // borrowed from a real one: this seeds deliberately leaky state and writes
+  // into match_secrets, and neither belongs anywhere near a campaign somebody
+  // is playing.
+  campaignId = RUN
+  const { error: cErr } = await admin.from('campaigns').insert({
+    id: campaignId,
+    world_name: TAG,
+    // NOT NULL with no default.
+    legacy_state: {},
+  })
+  if (cErr) throw new Error(`seed campaign: ${cErr.message}`)
+
   const { data: match, error: mErr } = await admin
     .from('matches')
     .insert({
+      campaign_id: campaignId,
+      game_number: 1,
+      // 'active' rather than 'lobby' so the row is shaped like one a player
+      // really holds — the check is about what a real seat receives. It is
+      // visible to the two accounts for the few seconds the script runs.
+      status: 'active',
       state: {
         // Deliberately shaped like the state the app writes today, hands and
         // all. If the app has stopped putting hands here, this seeding is what
@@ -107,9 +142,11 @@ try {
   if (mErr) throw new Error(`seed match: ${mErr.message}`)
   matchId = match.id
 
+  // seat, name and faction_id are all NOT NULL. Leaving them out was the next
+  // failure after the campaign one, so they are here rather than discovered.
   const { error: pErr } = await admin.from('match_players').insert([
-    { match_id: matchId, player_id: 'p1', user_id: userA },
-    { match_id: matchId, player_id: 'p2', user_id: userB },
+    { match_id: matchId, seat: 0, player_id: 'p1', user_id: userA, name: `${TAG}-A`, faction_id: 'khan-industries' },
+    { match_id: matchId, seat: 1, player_id: 'p2', user_id: userB, name: `${TAG}-B`, faction_id: 'imperial-balkania' },
   ])
   if (pErr) throw new Error(`seed match_players: ${pErr.message}`)
 
@@ -210,11 +247,25 @@ try {
   failures++
   console.log(`FAIL  the check could not run\n        ${e.message}`)
 } finally {
+  // matches cascade from campaigns, and match_players, match_secrets and
+  // match_decks all cascade from matches — so deleting the campaign removes
+  // everything. The match is deleted first anyway: if the campaign insert
+  // succeeded and something later failed, both still have to go, and a delete
+  // of a row that is already gone is not an error.
   if (matchId) {
-    // match_players, match_secrets and match_decks all cascade from matches.
     const { error } = await admin.from('matches').delete().eq('id', matchId)
     if (error) console.log(`        cleanup failed for match ${matchId}: ${error.message}`)
   }
+  if (campaignId) {
+    const { error } = await admin.from('campaigns').delete().eq('id', campaignId)
+    if (error) {
+      console.log(`        cleanup failed for campaign ${campaignId}: ${error.message}`)
+      console.log(`        remove it by hand: delete from campaigns where id = '${campaignId}';`)
+    }
+  }
+  // Said out loud, because a silent teardown is indistinguishable from one that
+  // never ran, and this script writes to a live project.
+  if (matchId || campaignId) console.log(`\n(torn down ${RUN})`)
 }
 
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURE(S)`)
