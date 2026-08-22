@@ -157,11 +157,11 @@ check('every picture is a format the drawn/supplied split has been thought about
   TREACHERY_CARDS.filter(c => c.image && !/\.(svg|png|jpe?g)$/.test(c.image)).map(c => c.id), [])
 check('the drawn cards are exactly the SVGs',
   TREACHERY_CARDS.filter(c => c.image && isDrawnHere(c.image)).map(c => c.id).sort(),
-  ['baliset', 'jubbacloak', 'kulon', 'lalala', 'snooper', 'triptogamont'])
+  ['baliset', 'jubbacloak', 'kulon', 'lalala', 'triptogamont'])
 check('...and the supplied pictures are exactly the rasters',
   TREACHERY_CARDS.filter(c => c.image && !isDrawnHere(c.image)).map(c => c.id).sort(),
   ['chaumas', 'chaumurky', 'cheaphero', 'crysknife', 'ellacadrug', 'gomjabbar',
-    'lasgun', 'maulapistol', 'sliptip', 'stunner', 'weathercontrol'])
+    'lasgun', 'maulapistol', 'shield', 'sliptip', 'snooper', 'stunner', 'weathercontrol'])
 // The decision that actually hangs off the predicate. Asserted on the value the
 // renderer uses rather than on the predicate alone, because "meet" and "slice"
 // are one word apart and the wrong one is invisible in a diff.
@@ -337,11 +337,20 @@ check('every poison card is drawn, weapons and defence alike',
 check('...which is four weapons and one defence',
   TREACHERY_CARDS.filter(c => c.subtype === 'poison').map(c => c.kind).sort(),
   ['defense', 'weapon', 'weapon', 'weapon', 'weapon'])
+check('every projectile card is drawn, weapons and defence alike',
+  TREACHERY_CARDS.filter(c => c.subtype === 'projectile' && !c.image).map(c => c.id), [])
+check('...which is likewise four weapons and one defence',
+  TREACHERY_CARDS.filter(c => c.subtype === 'projectile').map(c => c.kind).sort(),
+  ['defense', 'weapon', 'weapon', 'weapon', 'weapon'])
+// Everything a battle plan can hold now has a face. What is left undrawn is
+// entirely the specials, which is a different job.
+check('every card that can go in a battle plan is drawn',
+  TREACHERY_CARDS.filter(c => c.timing === 'battle-plan' && !c.image).map(c => c.id), [])
 // What is left. Listed rather than counted, so the gap is a thing you can read
 // instead of a number you have to subtract.
-check('the cards still to be drawn',
+check('the cards still to be drawn, all of them specials',
   TREACHERY_CARDS.filter(c => !c.image && !c.textOnly).map(c => c.id).sort(),
-  ['familyatomics', 'hajr', 'shield', 'tleilaxughola', 'truthtrance'])
+  ['familyatomics', 'hajr', 'tleilaxughola', 'truthtrance'])
 
 // ── art on disk that no card points at ─────────────────────────────────────
 // The other direction of the same question, and the one that is silent. A card
@@ -350,9 +359,9 @@ check('the cards still to be drawn',
 // all three were left unwired — the Ghola one was not even noticed until this
 // check listed it, which is exactly the failure being caught.
 //
-// weather-control.svg is here for the opposite reason: it was drawn here and
-// then superseded by a supplied picture. Kept rather than deleted, because it
-// costs a kilobyte and the card may want it back.
+// weather-control.svg and snooper.svg are here for the opposite reason: both
+// were drawn here and then superseded by supplied pictures. Kept rather than
+// deleted, because they cost a kilobyte each and the cards may want them back.
 //
 // Listed rather than asserted empty, because the list IS the finding. When one
 // gets wired this fails and reports the shorter list, which is the maintenance.
@@ -363,10 +372,10 @@ check('pictures in the folder that no card uses',
     .filter(f => f !== 'stop.svg')
     .filter(f => !TREACHERY_CARDS.some(c => c.image === '/treachery/' + f))
     .sort(),
-  ['Family_atomics.png', 'HAJR.png', 'Tleilaxu_Ghola.png', 'weather-control.svg'])
+  ['Family_atomics.png', 'HAJR.png', 'Tleilaxu_Ghola.png', 'snooper.svg', 'weather-control.svg'])
 // The count moves as art lands; when it fails it reports the new number, which
 // is the whole of the maintenance.
-check('seventeen cards drawn so far', TREACHERY_CARDS.filter(c => c.image).length, 17)
+check('eighteen cards drawn so far', TREACHERY_CARDS.filter(c => c.image).length, 18)
 check('Weather Control is drawn too',
   TREACHERY_CARDS.find(c => c.id === 'weathercontrol')?.image, '/treachery/weather_control.png')
 check('no two cards share a picture',

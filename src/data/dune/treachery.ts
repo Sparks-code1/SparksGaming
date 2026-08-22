@@ -152,6 +152,7 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'projectile',
     timing: 'battle-plan',
     copies: 4,
+    image: '/treachery/Shield.png',
     text: PLAY_IN_PLAN + '\n\nProtects your leader from a projectile weapon in this battle.'
       + '\n\nYou may keep this card if you win this battle.',
   },
@@ -162,7 +163,7 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
     subtype: 'poison',
     timing: 'battle-plan',
     copies: 4,
-    image: '/treachery/snooper.svg',
+    image: '/treachery/Snooper.png',
     text: PLAY_IN_PLAN + '\n\nProtects your leader from a poison weapon in this battle.'
       + '\n\nYou may keep this card if you win this battle.',
   },
