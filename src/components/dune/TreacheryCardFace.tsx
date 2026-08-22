@@ -351,3 +351,40 @@ export function TreacheryCardFace({ card, width = CARD_W }: { card: TreacheryCar
     </svg>
   )
 }
+
+/**
+ * The back of a treachery card.
+ *
+ * Same footprint as the face, because the two swap places in the same slot: a
+ * card that changed size when it turned over would move everything beside it.
+ *
+ * Deliberately featureless. A back exists to be identical to every other back —
+ * anything distinguishing on it, even a corner mark, is a way to tell one card
+ * from another without turning it over, which is the whole thing the auction is
+ * built on. The pattern is generated from the geometry rather than from the
+ * card, so there is nothing here that COULD vary per card.
+ */
+export function TreacheryCardBack({ width = CARD_W }: { width?: number }) {
+  const step = 14
+  const lines: JSX.Element[] = []
+  for (let i = -CARD_H; i < CARD_W + CARD_H; i += step) {
+    lines.push(<path key={i} d={`M${i} 0 L${i + CARD_H} ${CARD_H}`} />)
+  }
+  return (
+    <svg viewBox={`0 0 ${CARD_W} ${CARD_H}`} width={width} height={width * (CARD_H / CARD_W)}>
+      <title>a treachery card, face down</title>
+      <defs>
+        <clipPath id="dune-card-back-clip">
+          <rect x="1" y="1" width={CARD_W - 2} height={CARD_H - 2} rx="10" />
+        </clipPath>
+      </defs>
+      <rect x="1" y="1" width={CARD_W - 2} height={CARD_H - 2} rx="10"
+        fill="#3a2c1a" stroke={BLACK} strokeWidth="2" />
+      <g clipPath="url(#dune-card-back-clip)" stroke="#00000033" strokeWidth="5" fill="none">
+        {lines}
+      </g>
+      <rect x="12" y="12" width={CARD_W - 24} height={CARD_H - 24} rx="5"
+        fill="none" stroke="#00000055" strokeWidth="2" />
+    </svg>
+  )
+}

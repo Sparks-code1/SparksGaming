@@ -34,6 +34,12 @@
  * phase: whether the auction picks the right winner is the offline suite's
  * question, and whether its outcome is reachable by the wrong seat is this one's.
  *
+ * ATREIDES PRESCIENCE gets its own section, because it is the first power that
+ * hands ONE SEAT information nobody else has — every other one moves pieces or
+ * spice. The reveal travels on that seat's secrets row; the panel takes it as a
+ * prop and cannot fetch a card, so what is checked here is whether the thing
+ * handed to that prop was ever anywhere public.
+ *
  * SPICE IS CHECKED THE WAY HANDS ARE. It is per-seat and hidden for the same
  * reason and lives in the same rows, so every claim about a hand has one about a
  * purse beside it — including the control that the fixture actually seeded one.
@@ -850,6 +856,49 @@ try {
     checkGiven(dealt, 'AUCTION-LIVE  the lot is emptied once dealt',
       ((asAdminDecks ?? []).find(d => d.deck === 'auction-lot')?.cards ?? []).length === 0,
       () => `the lot still holds ${JSON.stringify((asAdminDecks ?? []).find(d => d.deck === 'auction-lot')?.cards)}`)
+
+    // ── Atreides prescience ─────────────────────────────────────────────────
+    // The one thing in this phase that shows a card to a player before it is
+    // won, and the only faction power so far that hands ONE SEAT information
+    // nobody else gets. Every other power moves pieces or spice.
+    //
+    // It travels on that seat's secrets row and nowhere else. The panel takes
+    // it as a prop and cannot fetch a card, so the whole question is whether
+    // the thing handed to that prop ever existed anywhere public.
+    {
+      const PRESCIENT = `${TAG}-prescience-onlyAtreidesMaySeeThis`
+      // Written the way the server would: into the entitled seat's own row,
+      // beside their hand and their spice.
+      await admin.from('match_secrets')
+        .update({ data: { ...( (rows2 ?? []).find(r => r.player_id === 'p1')?.data ?? {} ), prescience: PRESCIENT } })
+        .eq('match_id', duneMatchId).eq('player_id', 'p1')
+
+      const { data: seatRows } = await asA.from('match_secrets')
+        .select('player_id, data').eq('match_id', duneMatchId)
+      const own = JSON.stringify((seatRows ?? []).filter(r => r.player_id === 'p1'))
+
+      // THE CONTROL. A reveal nobody wrote is absent from everywhere, and every
+      // claim below would hold for a match where prescience never happened.
+      const sees = own.includes(PRESCIENT)
+      check('CONTROL  the entitled seat can read its own reveal', sees,
+        () => `p1's row does not hold the reveal: ${own.slice(0, 200)}`)
+
+      checkGiven(sees, 'PRESCIENCE  it reaches no other seat',
+        !JSON.stringify((seatRows ?? []).filter(r => r.player_id !== 'p1')).includes(PRESCIENT),
+        'the reveal is in another seat\'s row')
+
+      const { data: pubRow } = await asA.from('matches')
+        .select('state').eq('id', duneMatchId).maybeSingle()
+      checkGiven(sees, 'PRESCIENCE  ...and is in no shared state at all',
+        !JSON.stringify(pubRow?.state ?? null).includes(PRESCIENT),
+        'the reveal is in matches.state, which the changefeed delivers to everyone')
+
+      // The auction's own public step is the thing most likely to be reached
+      // for, since it is where the rest of the card's context lives.
+      checkGiven(sees, 'PRESCIENCE  ...least of all in the auction step',
+        !JSON.stringify((pubRow?.state ?? {}).auction ?? null).includes(PRESCIENT),
+        'the reveal rode along on the auction state')
+    }
 
     const { data: after } = await asA.from('matches')
       .select('state').eq('id', duneMatchId).maybeSingle()

@@ -460,7 +460,7 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
     const asserts = (c: string) => /!s*(JSON.stringify|[A-Za-z_$][w$.]*)s*[.(]/.test(c)
     check('no uncontrolled check asserts that a foreign secret is absent',
       calls.filter(c => asserts(c)
-        && /SECRET_B|DECK_SECRET|SPICE_B|BOUGHT|LOSER_SPICE|CARD_ON_OFFER|CARD_UNDRAWN/.test(c))
+        && /SECRET_B|DECK_SECRET|SPICE_B|BOUGHT|LOSER_SPICE|CARD_ON_OFFER|CARD_UNDRAWN|PRESCIENT/.test(c))
         .map(c => c.slice(0, 60).replace(/\s+/g, ' ')), [])
     // The control machinery itself lives in scripts/lib/controlledCheck.js and
     // its BEHAVIOUR is tested in controlledchecktest — a source guard can see
@@ -514,7 +514,7 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
     // seeding and once to provoke a frame.
     check('the guard can see what the seed writes to matches', toMatches.length >= 2, true)
     check('no payload written to matches carries a hand, a purse or a deck order',
-      toMatches.filter(p => /SECRET_A|SECRET_B|DECK_SECRET|SPICE_A|SPICE_B/.test(p))
+      toMatches.filter(p => /SECRET_A|SECRET_B|DECK_SECRET|SPICE_A|SPICE_B|PRESCIENT/.test(p))
         .map(p => p.slice(0, 70).replace(/\s+/g, ' ')),
       [])
     // And the counterpart: the hands DO have to be written somewhere, or the
@@ -675,6 +675,11 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
       payloadsTo('match_decks').some(p => /CARD_ON_OFFER/.test(p)), true)
     check('...along with one that stays undrawn, to prove the deck is still hidden',
       payloadsTo('match_decks').some(p => /CARD_UNDRAWN/.test(p)), true)
+    // Atreides prescience: the reveal has to be WRITTEN to the entitled seat's
+    // row, or "no other seat has it" is a claim about a reveal that never
+    // happened — the same vacuity the legacy hands hid behind.
+    check('the prescience reveal is seeded into the entitled seat\'s row',
+      payloadsTo('match_secrets').some(p => /PRESCIENT/.test(p)), true)
 
     // THE DISCARD IS A PRESENCE CLAIM, not an absence. It is public — face up at
     // a table — so asserting it is hidden would be the opposite bug. Flipping it
