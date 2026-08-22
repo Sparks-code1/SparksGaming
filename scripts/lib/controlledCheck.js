@@ -31,11 +31,32 @@ export function createChecker(log = console.log) {
   const line = (verdict, label, detail) =>
     log(`${verdict}  ${label}${detail ? `\n        ${detail}` : ''}`)
 
+  /**
+   * DETAIL IS ONLY EVER SHOWN ON A FAILURE.
+   *
+   * A detail is an explanation of what went wrong, and callers write it that
+   * way — "read the row but A's own hand was not in it", "no row returned".
+   * Printing one under a PASS produces a check that reports success while
+   * describing failure, which is worse than either: a reader believes the
+   * sentence and not the verdict, or stops trusting both.
+   *
+   * That happened. A control passed and printed "A's own hand was not in it —
+   * the seed shape has drifted" underneath it, because the string was built
+   * eagerly and handed over whatever the outcome.
+   *
+   * A function may be passed instead of a string, so an expensive explanation
+   * costs nothing on the path where it is not needed.
+   */
+  const render = detail => {
+    const text = typeof detail === 'function' ? detail() : detail
+    return text ?? ''
+  }
+
   /** A plain assertion. Use for controls and for anything that is not an absence. */
   const check = (label, ok, detail = '') => {
-    if (!ok) failures++
-    line(ok ? 'PASS' : 'FAIL', label, detail)
-    return !!ok
+    if (!ok) { failures++; line('FAIL', label, render(detail)); return false }
+    line('PASS', label, '')
+    return true
   }
 
   /**
@@ -50,6 +71,7 @@ export function createChecker(log = console.log) {
       inconclusive++
       line('INCONCLUSIVE', label,
         'its control failed — nothing was visible by this route, so finding no secret proves nothing')
+      void detail
       return false
     }
     controls++

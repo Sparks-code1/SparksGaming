@@ -100,6 +100,8 @@ const userIdFor = async email => {
 
 let matchId = null
 let campaignId = null
+// Set by the diagnosis in section 3; the frame checks are meaningless without it.
+let realtimeWorks = false
 
 try {
   const emailA = need('SEAT_A_EMAIL')
@@ -217,7 +219,79 @@ try {
         : '')
   }
 
-  // ── 3. the realtime frame A receives ──────────────────────────────────────
+  // ── 3. why is the socket quiet? ───────────────────────────────────────────
+  // A subscribed successfully and then received nothing for ten seconds. Three
+  // things produce exactly that, and they are indistinguishable from silence:
+  //
+  //   SOCKET       the connection never really established
+  //   PUBLICATION  matches is not in supabase_realtime, so nothing is emitted
+  //   RLS          it is emitted, and the subscriber is not allowed to see it
+  //
+  // The SERVICE ROLE separates them, because it bypasses RLS entirely. If it
+  // receives frames, the socket and the publication are both fine and the cause
+  // is RLS — or A's token, which is the same thing seen from the other side,
+  // since a socket with no token is evaluated as anon.
+  //
+  // Worth doing rather than guessing: the publication is asserted by a migration
+  // and the browser client receives these frames every day, so the likely answer
+  // is the token. "Likely" is not a diagnosis.
+  {
+    const probe = async (client, label) => {
+      const seen = []
+      const ch = client
+        .channel(`probe-${label}-${matchId}-${Math.random().toString(36).slice(2, 8)}`)
+        .on('postgres_changes',
+          { event: '*', schema: 'public', table: 'matches', filter: `id=eq.${matchId}` },
+          p => seen.push(p))
+      const status = await new Promise(resolve =>
+        ch.subscribe((st, err) => {
+          if (['SUBSCRIBED', 'CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'].includes(st)) {
+            resolve(err ? `${st}: ${err.message}` : st)
+          }
+        }))
+      // SUBSCRIBED can arrive fractionally before the server is routing to it,
+      // and an update sent into that gap is simply missed.
+      await new Promise(r => setTimeout(r, 750))
+      await admin.from('matches').update({ updated_at: new Date().toISOString() }).eq('id', matchId)
+      const got = await until(() => seen.length > 0, 8000)
+      await client.removeChannel(ch)
+      return { status, got, count: seen.length }
+    }
+
+    const svc = await probe(admin, 'service')
+    const a1 = await probe(asA, 'seat-a')
+
+    // If A heard nothing, hand the socket its token explicitly and ask again.
+    // In a browser supabase-js wires auth to realtime for you; under node, with
+    // persistSession off and a sign-in that has only just returned, the socket
+    // can be up before the token reaches it.
+    let a2 = null
+    if (!a1.got) {
+      const { data: sess } = await asA.auth.getSession()
+      const token = sess?.session?.access_token
+      if (token) {
+        await asA.realtime.setAuth(token)
+        a2 = await probe(asA, 'seat-a-authed')
+      }
+    }
+
+    realtimeWorks = a1.got || !!(a2 && a2.got)
+    const diagnosis =
+      !svc.got
+        ? (svc.status !== 'SUBSCRIBED'
+          ? `SOCKET — even the service role could not subscribe (${svc.status})`
+          : 'PUBLICATION — the service role subscribed and still saw nothing. It bypasses RLS, so RLS is excluded: matches is not reaching the changefeed')
+        : a1.got
+          ? 'none — A receives frames'
+          : a2 && a2.got
+            ? "TOKEN — A's realtime socket had no access token, so RLS judged it anon and filtered everything. setAuth fixed it; the app does this automatically in a browser"
+            : `RLS-FOR-SUBSCRIBERS — the service role receives frames and A does not, even with its token set (A: ${a1.status})`
+
+    console.log(`\nDIAGNOSIS  ${diagnosis}\n`)
+    check('CONTROL  A receives realtime frames at all', realtimeWorks, () => diagnosis)
+  }
+
+  // ── 4. the realtime frame A receives ──────────────────────────────────────
   // The actual devtools question: what came down the socket. Anything reachable
   // here is reachable from the Network tab.
   {
@@ -267,9 +341,10 @@ try {
     // of this script — it can fail on the socket, on the publication, or on RLS
     // for subscribers — and every one of those failures looks like silence.
     // Silence is not evidence that nothing leaked.
-    check('CONTROL  a frame for the match reached A',
-      arrived,
-      arrived ? '' : `no matches frame in 10s (${frames.length} frame(s) total: ${JSON.stringify(frames.map(f => f.table))}) — the socket, the publication or RLS-for-subscribers, not the app`)
+    check('CONTROL  a frame for the match reached A', arrived,
+      () => realtimeWorks
+        ? `realtime works — see the diagnosis above — but no matches frame arrived in 10s (${frames.length} frame(s): ${JSON.stringify(frames.map(f => f.table))})`
+        : 'realtime is not delivering to A at all — see the DIAGNOSIS above, which names the cause')
 
     const wire = JSON.stringify(frames)
     checkGiven(arrived, "WIRE-STATE  B's hand is absent from the match frames A receives",

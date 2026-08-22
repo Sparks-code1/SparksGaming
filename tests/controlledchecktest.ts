@@ -81,6 +81,42 @@ const quiet = () => {
     [false, false, 2])
 }
 
+// ── a detail explains a failure, and never accompanies a pass ─────────────
+// The bug: a control reported PASS and printed "A's own hand was not in it —
+// the seed shape has drifted" underneath it. The string was built eagerly and
+// handed over whatever the outcome, so the verdict and the sentence disagreed.
+// A reader then believes the sentence, or stops trusting both.
+{
+  const { c, lines } = quiet()
+  c.check('passed', true, 'this explanation belongs to a failure')
+  check('a passing check prints no detail',
+    lines[0].includes('explanation'), false)
+  check('...and is just the verdict and the label', lines[0], 'PASS  passed')
+}
+{
+  const { c, lines } = quiet()
+  c.check('failed', false, 'because of the thing')
+  check('a failing check prints its detail',
+    lines[0], 'FAIL  failed\n        because of the thing')
+}
+// The same rule through the controlled path, since that is where the bug was.
+{
+  const { c, lines } = quiet()
+  c.checkGiven(true, 'absent', true, 'this explanation belongs to a failure')
+  check('a passing controlled claim prints no detail either',
+    lines[0].includes('explanation'), false)
+}
+// A detail may be a function, so an expensive explanation costs nothing when
+// there is nothing to explain.
+{
+  let built = 0
+  const { c } = quiet()
+  c.check('passed', true, () => { built++; return 'expensive' })
+  check('a lazy detail is not built for a passing check', built, 0)
+  c.check('failed', false, () => { built++; return 'expensive' })
+  check('...and is built for a failing one', built, 1)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.
