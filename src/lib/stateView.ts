@@ -318,11 +318,20 @@ export function hydrateState(
 export function viewForSeat(state: GameState, seatId: string, opts: ViewOptions): SeatState {
   if (!opts.online) return state
 
-  return {
-    ...state,
-    players: state.players.map((p): SeatPlayer =>
-      p.id === seatId ? { ...p, cardCount: p.cards.length } : withoutSecrets(p)),
-  }
+  // COMPOSED, not hand-rolled. This is exactly "the public row, plus your own
+  // secrets" — which is also what the client ends up holding after it merges,
+  // so the reply and the subscription now agree by construction rather than by
+  // two implementations happening to match.
+  //
+  // It used to walk players[] itself, and that is why it leaked twice. It never
+  // learned about the second copy of the hands in the legacy snapshot, and it
+  // never learned about the deck orders: both were added to publicView and
+  // neither reached here, because there was nothing forcing them to.
+  //
+  // The decks are simply absent. mergeOwnSecrets restores a seat's own hand and
+  // nothing else, and there is no seat's-own half of a draw pile — nobody may
+  // see one, including the player who just acted.
+  return mergeOwnSecrets(publicView(state), seatId, secretsFromState(state)[seatId] ?? null)
 }
 
 /**

@@ -338,6 +338,62 @@ check('the source state still holds every hand after projecting',
       .legacySnapshot.activeGameCards.territoryDeck, ['tc-next-1', 'tc-next-2'])
 }
 
+// ── the reply channel ─────────────────────────────────────────────────────
+// viewForSeat projects the state that goes back in the ACTION RESPONSE — one
+// copy of the whole game, over HTTP, to the seat that just acted. A private
+// channel is still a channel.
+//
+// IT LEAKED TWICE, and both times for the same reason: it walked players[]
+// itself. It never learned about the second copy of the hands in the legacy
+// snapshot, and it never learned about the deck orders. Each was added to
+// publicView, and nothing forced either to reach here — the tests below did not
+// exist, so the suite was green through both.
+//
+// It is composed now: the public row plus this seat's own secrets, which is also
+// what the client holds after merging. The two agree by construction instead of
+// by two implementations happening to match.
+{
+  const mine = viewForSeat(state, 'p1', online)
+  const cards = (v: unknown) =>
+    (v as { legacySnapshot: { activeGameCards: Record<string, unknown> } })
+      .legacySnapshot.activeGameCards
+
+  // The seat's own, in BOTH the places a hand lives.
+  check('the acting seat gets its own hand', mine.players[0].cards, ['tc-ural', 'tc-peru'])
+  check('...and its own legacy copy of it',
+    cards(mine).playerHands, { p1: ['tc-ural', 'tc-peru'] })
+  check('...and its own mission', mine.players[0].missionCardId, 'mc-6-cities')
+
+  // Nobody else's, in both places.
+  check('no other seat\'s hand', mine.players.slice(1).map(p => p.cards), [undefined, undefined])
+  check('...and no other seat in the legacy copy either',
+    Object.keys(cards(mine).playerHands as object), ['p1'])
+  check('...which is what the assertion says too',
+    leaksOtherSeatsSecrets(mine, 'p1'), false)
+
+  // AND NO DECK AT ALL. Not even the acting seat's — there is no seat's-own half
+  // of a draw pile. This is where the composition earns itself: mergeOwnSecrets
+  // restores a hand and nothing else, so a deck cannot come back by accident.
+  check('no draw order reaches the seat that acted',
+    SECRET_DECK_KEYS.filter(k => Array.isArray(cards(mine)[k]) && (cards(mine)[k] as unknown[]).length > 0),
+    [])
+  check('...which the deck assertion agrees with', leaksDeckOrder(mine), false)
+  // The control: the state it was projected from really did carry them.
+  check('...and the source state really did hold one',
+    leaksDeckOrder(state as unknown as SeatState), true)
+
+  // The face-up piles survive, or the reply is missing what the board draws.
+  check('the discards still reach the seat', cards(mine).territoryDiscard, ['tc-seen'])
+  check('...and the sideboard', cards(mine).sideboard, ['tc-face-1'])
+
+  // Every seat, not just the first: an off-by-one here would be invisible above.
+  check('the same holds for every seat',
+    ['p1', 'p2', 'p3'].map(id => {
+      const v = viewForSeat(state, id, online)
+      return leaksOtherSeatsSecrets(v, id) || leaksDeckOrder(v)
+    }), [false, false, false])
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.

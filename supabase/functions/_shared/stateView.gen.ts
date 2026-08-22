@@ -129,10 +129,7 @@ function hydrateState(view, secrets, decks) {
 }
 function viewForSeat(state, seatId, opts) {
   if (!opts.online) return state;
-  return {
-    ...state,
-    players: state.players.map((p) => p.id === seatId ? { ...p, cardCount: p.cards.length } : withoutSecrets(p))
-  };
+  return mergeOwnSecrets(publicView(state), seatId, secretsFromState(state)[seatId] ?? null);
 }
 var SECRET_PLAYER_KEYS = ["cards", "missionCardId"];
 function leaksOtherSeatsSecrets(state, seatId) {
