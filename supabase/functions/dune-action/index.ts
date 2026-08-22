@@ -412,6 +412,36 @@ Deno.serve(async req => {
       if (error) return json({ error: error.message }, 500)
       if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
 
+      // ── The write says what it did ─────────────────────────────────────────
+      // Read back and confirm the two effects that are not visible in the
+      // response: the auction closed out of the public row, and the lot emptied.
+      //
+      // Both were reported missing after a real run while being plainly present
+      // in this call, which is a report nothing here could act on — a write that
+      // returns success and did not do what it says leaves no way to tell a
+      // stale deploy from a bug. So it is checked rather than assumed, and the
+      // failure names WHICH half did not land.
+      //
+      // The cards and the spice are not re-read: those the caller can see for
+      // itself in its own secrets row, and this is about the parts nobody would
+      // notice were missing until the phase failed to end.
+      {
+        const { data: back } = await admin
+          .from('matches').select('state').eq('id', matchId).maybeSingle()
+        const { data: lotBack } = await admin
+          .from('match_decks').select('cards').eq('match_id', matchId).eq('deck', 'auction-lot').maybeSingle()
+        const stillOpen = !!(back?.state as Record<string, unknown> | null)?.auction
+        const stillDealt = ((lotBack?.cards ?? []) as string[]).length > 0
+        if (stillOpen || stillDealt) {
+          return json({
+            error: 'the settlement wrote, and part of it did not land',
+            code: 'settlement-incomplete',
+            auctionStillOpen: stillOpen,
+            lotStillHoldingCards: stillDealt,
+          }, 500)
+        }
+      }
+
       // Awards are public — who won and for how much was visible at the table.
       // WHICH CARD is not, and is not in this response.
       return json({ awards: outcome.step.result.awards, version: data[0].version })

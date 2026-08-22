@@ -150,6 +150,31 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
   // The same three-store transaction the Risk side has, for the same reason.
   check('cards, spice and the discard are written in one call',
     /p_decks/.test(fn) && /p_secrets: secretsPatch/.test(fn), true)
+
+  // ── the two effects that are invisible in the response ───────────────────
+  // Both were reported missing after a real run. They have to be in the
+  // SETTLEMENT's call specifically — not merely somewhere in the file, which
+  // OPEN_BIDDING's own p_decks would satisfy — so the block is sliced out and
+  // read on its own.
+  {
+    const at = fn.indexOf('const secretsPatch')
+    const settleCall = at < 0 ? '' : fn.slice(at, at + 1400)
+    check('the settlement block is where it is expected', settleCall.length > 0, true)
+    // Without this the phase never ends: the row still holds an open auction
+    // and every client goes on waiting for a bid nobody can make.
+    check('...and it closes the auction out of the public row',
+      settleCall.includes('auction: null'), true)
+    // Without this a retry deals the same cards a second time, from a lot that
+    // was never cleared.
+    check('...and empties the lot in the same call',
+      settleCall.includes("'auction-lot': []"), true)
+    check('...both inside the one apply_match_write',
+      settleCall.indexOf('apply_match_write') < settleCall.indexOf("'auction-lot': []"), true)
+    // And the write is made to prove it landed, because a success that did
+    // nothing leaves no way to tell a stale deploy from a bug.
+    check('...and the write reads back to confirm both took effect',
+      fn.includes('settlement-incomplete'), true)
+  }
   check('the auction runs from the shared bundle, not a copy',
     /_shared\/duneBidding\.gen\.ts/.test(fn), true)
   check('...and so does the settlement', /_shared\/duneAuction\.gen\.ts/.test(fn), true)
