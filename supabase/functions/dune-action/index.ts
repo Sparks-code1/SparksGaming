@@ -12,6 +12,7 @@
 //
 //   Public state  -> matches.state, broadcast to every seat by the changefeed
 //   Hidden state  -> match_secrets, one row per seat, RLS'd to that seat
+//   Spice         -> the same row, moved only through the shared ledger
 //
 // The service role bypasses RLS, so this function can see every seat's secrets.
 // That is exactly why eligibility is decided here and never sent anywhere: a
@@ -150,6 +151,22 @@ Deno.serve(async req => {
         return json({ error: 'not eligible for charity', code: 'not-eligible' }, 409)
       }
 
+      // Through the ledger, not by adding a number to a field. Charity is spice
+      // ENTERING the game from the bank, and saying so is what makes it
+      // auditable later — a purse three higher than expected is a question
+      // somebody asks, and "which rule did this" has to be answerable without
+      // replaying the turn. It is also the only mover: a second way to change a
+      // balance is a second answer to whether it was allowed.
+      const moved = applySpiceMoves(
+        { [playerId]: readSpice(secrets) },
+        granted > 0
+          ? [{ from: BANK, to: playerId, amount: granted, reason: 'choam-charity' }]
+          : [],
+      )
+      if (!moved.ok) {
+        return json({ error: 'charity could not be paid', code: moved.refusal }, 500)
+      }
+
       const next: CharityWindow = { ...window, claims: [...window.claims, playerId] }
       // One transaction for the public claim and the private top-up. Split into
       // two writes, a failure between them shows a claim that granted nothing —
@@ -159,7 +176,7 @@ Deno.serve(async req => {
         p_match_id: matchId,
         p_expected_version: match.version,
         p_state: { ...state, charity: next },
-        p_secrets: { [playerId]: { ...secrets, spice: readSpice(secrets) + granted } },
+        p_secrets: { [playerId]: { ...secrets, spice: moved.purses[playerId] } },
       })
       if (error) return json({ error: error.message }, 500)
       if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)

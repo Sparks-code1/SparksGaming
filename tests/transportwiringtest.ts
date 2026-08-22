@@ -336,7 +336,7 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
     // which would be this very bug, in the check written to prevent it.
     check('the guard can see the script\'s checks', calls.length > 5, true)
     check('no uncontrolled check asserts that a foreign secret is absent',
-      calls.filter(c => /SECRET_B|DECK_SECRET/.test(c))
+      calls.filter(c => /SECRET_B|DECK_SECRET|SPICE_B/.test(c))
         .map(c => c.slice(0, 60).replace(/\s+/g, ' ')), [])
     // The control machinery itself lives in scripts/lib/controlledCheck.js and
     // its BEHAVIOUR is tested in controlledchecktest — a source guard can see
@@ -389,8 +389,8 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
     // contain a secret, green forever. The script writes the row twice — once
     // seeding and once to provoke a frame.
     check('the guard can see what the seed writes to matches', toMatches.length >= 2, true)
-    check('no payload written to matches carries a seat secret or a deck order',
-      toMatches.filter(p => /SECRET_A|SECRET_B|DECK_SECRET/.test(p))
+    check('no payload written to matches carries a hand, a purse or a deck order',
+      toMatches.filter(p => /SECRET_A|SECRET_B|DECK_SECRET|SPICE_A|SPICE_B/.test(p))
         .map(p => p.slice(0, 70).replace(/\s+/g, ' ')),
       [])
     // And the counterpart: the hands DO have to be written somewhere, or the
@@ -398,6 +398,35 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
     const toSecrets = payloadsTo('match_secrets')
     check('the hands are written to match_secrets instead',
       toSecrets.some(p => /SECRET_A/.test(p)) && toSecrets.some(p => /SECRET_B/.test(p)), true)
+    // ...and the purses with them, or the spice claims assert an absence against
+    // a store that never held one.
+    check('the purses are written there too',
+      toSecrets.some(p => /SPICE_A/.test(p)) && toSecrets.some(p => /SPICE_B/.test(p)), true)
+    // EVERY row that carries a hand carries a purse. Checking "some payload
+    // mentions it" was not enough: the seed writes the secrets twice, once to
+    // insert and once to provoke a frame, and dropping the purse from only the
+    // insert left the other payload satisfying the rule.
+    check('no seeded secrets row has a hand without a purse',
+      toSecrets.filter(p => /SECRET_A/.test(p) && !/SPICE_A/.test(p))
+        .map(p => p.slice(0, 60).replace(/\s+/g, ' ')), [])
+
+    // The purses themselves have to be usable as evidence. Spice is a NUMBER,
+    // so it cannot carry a tag the way a hand can — which makes two properties
+    // load-bearing that would be obvious for a string.
+    const constant = (name: string) => {
+      const m = new RegExp(`const ${name} = (-?\\d+)`).exec(script)
+      return m ? Number(m[1]) : null
+    }
+    const a = constant('SPICE_A')
+    const b = constant('SPICE_B')
+    check('both purses are seeded with something', [a !== null, b !== null], [true, true])
+    // Zero is absent from every result, so "B's purse is not here" would be true
+    // of a store holding no spice at all — the vacuity that let the legacy hands
+    // through, in its arithmetic form.
+    check('...and neither is zero, which no search can find', [a === 0, b === 0], [false, false])
+    // Equal purses would make "whose did A see" unanswerable: finding the number
+    // would prove nothing about which seat it came from.
+    check('...and they differ, so a hit names a seat', a === b, false)
     // ...and the decks likewise, through the store's own insert.
     check('the decks are written to match_decks',
       payloadsTo('match_decks').length > 0, true)

@@ -40,6 +40,16 @@ const TARGETS = [
     exportName: 'gameReducer',
   },
   {
+    entry: 'src/lib/dune/spice.ts',
+    out: 'supabase/functions/_shared/duneSpice.gen.ts',
+    what: 'spice ledger',
+    // A second implementation on the server would be a second answer to
+    // "did that purse have enough", and the two would disagree the first
+    // time either was fixed.
+    mustExport: /export\s*\{[^}]*applySpiceMoves/,
+    exportName: 'applySpiceMoves',
+  },
+  {
     entry: 'src/lib/stateView.ts',
     out: 'supabase/functions/_shared/stateView.gen.ts',
     what: 'state projections',

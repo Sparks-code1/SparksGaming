@@ -27,6 +27,12 @@
  *   SEAT_B_EMAIL                 an account for seat p2 — no password needed,
  *                                nothing ever signs in as B
  *
+ * SPICE IS CHECKED THE WAY HANDS ARE. It is per-seat and hidden for the same
+ * reason and lives in the same rows, so every claim about a hand has one about a
+ * purse beside it — including the control that the fixture actually seeded one.
+ * A purse nobody seeded is absent from every result, and "B's spice is not here"
+ * would be true of a store holding no spice at all.
+ *
  * B's password is deliberately not read. The check only needs B to EXIST so a
  * row can be addressed to them; signing in as B would prove nothing that
  * signing in as A does not.
@@ -143,6 +149,11 @@ try {
   const SECRET_A = `${TAG}-A-onlyAmaySeeThis`
   const SECRET_B = `${TAG}-B-onlyBmaySeeThis`
   const DECK_SECRET = `${TAG}-deck-nobodyMaySeeThis`
+  // Spice is a NUMBER, so it cannot carry a tagged string the way a hand can.
+  // Two values nobody would pick by accident, and different from each other —
+  // if A could read B's purse the check has to be able to tell whose it saw.
+  const SPICE_A = 1337
+  const SPICE_B = 4242
 
   // matches.campaign_id is NOT NULL and references campaigns(id), so there has
   // to be a campaign before there can be a match. Made fresh rather than
@@ -208,8 +219,8 @@ try {
   // search the payload for a string, and the write-path probe below would have
   // died on the first hand it tried to rebuild.
   const { error: sErr } = await admin.from('match_secrets').insert([
-    { match_id: matchId, player_id: 'p1', data: { cards: [SECRET_A], missionCardId: null, legacyHand: [SECRET_A], legacyMission: null } },
-    { match_id: matchId, player_id: 'p2', data: { cards: [SECRET_B], missionCardId: null, legacyHand: [SECRET_B], legacyMission: null } },
+    { match_id: matchId, player_id: 'p1', data: { cards: [SECRET_A], missionCardId: null, legacyHand: [SECRET_A], legacyMission: null, spice: SPICE_A } },
+    { match_id: matchId, player_id: 'p2', data: { cards: [SECRET_B], missionCardId: null, legacyHand: [SECRET_B], legacyMission: null, spice: SPICE_B } },
   ])
   if (sErr) throw new Error(`seed match_secrets: ${sErr.message}`)
 
@@ -239,6 +250,19 @@ try {
       `read ${rows.length} row(s): ${JSON.stringify(rows.map(r => r.player_id))}`)
     checkGiven(canReadOwn, "SECRETS-RLS  B's value appears nowhere in what A can read",
       !JSON.stringify(rows).includes(SECRET_B))
+
+    // ── spice, which is a purse rather than a hand ─────────────────────────
+    // THE CONTROL FIRST, and it is not a formality: a purse the fixture never
+    // seeded is absent from every result, so "B's spice is not here" would be
+    // true of a store that held no spice at all. That is exactly how the legacy
+    // hands got through — an absence asserted against something never present.
+    const own = JSON.stringify(rows.filter(r => r.player_id === 'p1'))
+    const sawOwnSpice = own.includes(String(SPICE_A))
+    check('CONTROL  A can read its own spice', sawOwnSpice,
+      () => `A's row does not hold ${SPICE_A}: ${own.slice(0, 200)}`)
+    checkGiven(sawOwnSpice, "SPICE-RLS  B's purse appears nowhere in what A can read",
+      !JSON.stringify(rows).includes(String(SPICE_B)),
+      "A can read B's spice — the whole of what bidding is built to hide")
   }
 
   // ── 2. the match row A can simply READ ────────────────────────────────────
@@ -398,10 +422,10 @@ try {
     // reach A — without it there is no control for the secrets channel, only an
     // absence that could mean anything.
     await admin.from('match_secrets')
-      .update({ data: { cards: [SECRET_A], missionCardId: null, touched: 1 } })
+      .update({ data: { cards: [SECRET_A], missionCardId: null, spice: SPICE_A, touched: 1 } })
       .eq('match_id', matchId).eq('player_id', 'p1')
     await admin.from('match_secrets')
-      .update({ data: { cards: [SECRET_B], missionCardId: null, touched: 1 } })
+      .update({ data: { cards: [SECRET_B], missionCardId: null, spice: SPICE_B, touched: 1 } })
       .eq('match_id', matchId).eq('player_id', 'p2')
     // Split, like the insert. Writing hands here would have put them back on
     // the wire by hand and failed WIRE-STATE for the same wrong reason.
@@ -432,6 +456,10 @@ try {
     // arrived, say so rather than claim B's was kept away.
     const ownSecretFrame = frames.some(f =>
       f.table === 'match_secrets' && JSON.stringify(f.new ?? {}).includes(SECRET_A))
+    checkGiven(ownSecretFrame, "SPICE-WIRE  no frame carries B's purse",
+      !frames.some(f =>
+        f.table === 'match_secrets' && JSON.stringify(f.new ?? {}).includes(String(SPICE_B))),
+      "B's spice crossed the wire to A")
     checkGiven(ownSecretFrame, "SECRETS-WIRE  no frame carries B's secrets row",
       !frames.some(f => f.table === 'match_secrets' && JSON.stringify(f.new ?? {}).includes(SECRET_B)),
       `${frames.length} frame(s) seen`)
@@ -543,7 +571,10 @@ try {
       const { data: after } = await admin.from('match_secrets')
         .select('player_id, data').eq('match_id', matchId)
       const kept = JSON.stringify(after ?? [])
-      checkGiven(serverWrote, '...and both hands are still in the secrets store',
+      checkGiven(serverWrote, 'SERVER-STRIPS  ...and no purse either',
+      !rowJson.includes(String(SPICE_A)) && !rowJson.includes(String(SPICE_B)),
+      () => `a spice holding is in the shared row: ${rowJson.slice(0, 200)}`)
+    checkGiven(serverWrote, '...and both hands are still in the secrets store',
         kept.includes(SECRET_A) && kept.includes(SECRET_B),
         `match_secrets after the write: ${kept.slice(0, 300)}`)
     }
@@ -575,6 +606,9 @@ try {
     const replyJson = JSON.stringify(body?.state ?? null)
     checkGiven(serverWrote, "SERVER-REPLY  the action response carries A's own hand",
       replyJson.includes(SECRET_A), 'A did not get its own hand back in the response')
+    checkGiven(serverWrote, "SERVER-REPLY  ...and not B's purse",
+      !replyJson.includes(String(SPICE_B)),
+      "B's spice came back in A's action response")
     checkGiven(serverWrote, "SERVER-REPLY  ...and not B's",
       !replyJson.includes(SECRET_B),
       "B's hand came back in A's action response — a private channel is still a channel")
