@@ -38,12 +38,42 @@ const player = (id: string, cards: string[], missionCardId: string | null): Play
   troops: 3, cards, missionCardId, isEliminated: false, holdsHq: true, wins: 0, winHistory: [],
 })
 
+// A HAND LIVES IN TWO PLACES, and for a long time this fixture had only one of
+// them. legacySnapshot.activeGameCards.playerHands is a second complete copy,
+// keyed by seat, in the same row — so every "no hand in the projected state"
+// assertion below was true of a state that never carried the second copy, and
+// publicView stripping only players[].cards passed all of them while leaving
+// every hand on the wire.
+//
+// That is the whole lesson: the fixture did not contain the leak, so the tests
+// could not see it. It contains it now.
 const state = {
   players: [
     player('p1', ['tc-ural', 'tc-peru'], 'mc-6-cities'),
     player('p2', ['tc-siam', 'tc-egypt', 'tc-brazil', 'tc-japan'], 'mc-hq-raid'),
     player('p3', [], null),
   ],
+  legacySnapshot: {
+    activeGameCards: {
+      gameNumber: 1,
+      playerHands: {
+        p1: ['tc-ural', 'tc-peru'],
+        p2: ['tc-siam', 'tc-egypt', 'tc-brazil', 'tc-japan'],
+        p3: [],
+      },
+      playerMissions: { p1: 'mc-6-cities', p2: 'mc-hq-raid' },
+      // The DECK ORDERS, which are also in this object and are also public.
+      // They are not a per-seat secret — nobody may see them — so they cannot go
+      // in match_secrets and are not fixed here. See the check at the foot.
+      territoryDeck: ['tc-next-1', 'tc-next-2'],
+      territoryDiscard: ['tc-seen'],
+      eventDeck: ['ev-next'],
+      eventDiscard: [],
+      missionDeck: ['mc-next'],
+      resourceDeck: ['res-next'],
+      sideboard: ['tc-face-1'],
+    },
+  },
 } as unknown as GameState
 
 const online = { online: true }
@@ -107,6 +137,20 @@ check('the source state still holds every hand after projecting',
     ['p1', 'p2', 'p3'].map(id => leaksOtherSeatsSecrets(shared, id)), [false, false, false])
   check('the source state is not mutated by projecting it',
     state.players.map(p => p.cards.length), [2, 4, 0])
+
+  // THE SECOND COPY. Everything above is about players[]; this is the same hands
+  // again, one level down, and stripping one without the other strips nothing.
+  const legacy = (v: SeatState) =>
+    (v as unknown as { legacySnapshot: { activeGameCards: { playerHands: Record<string, string[]> } } })
+      .legacySnapshot.activeGameCards.playerHands
+  check('the legacy snapshot carries no hand either', legacy(shared), {})
+  // Named explicitly, because "the object is empty" would also be true of a
+  // publicView that deleted the whole block and broke every reader of it.
+  check('...while the block itself survives',
+    Object.keys((shared as unknown as { legacySnapshot: { activeGameCards: object } })
+      .legacySnapshot.activeGameCards).includes('territoryDeck'), true)
+  check('...and the fixture really did carry hands there to begin with',
+    Object.keys(legacy(state as unknown as SeatState)).sort(), ['p1', 'p2', 'p3'])
 }
 
 // ── strip and rehydrate is the identity ────────────────────────────────────
@@ -161,7 +205,12 @@ check('the source state still holds every hand after projecting',
 // ── the client puts back its own, and only its own ────────────────────────
 {
   const shared = publicView(state)
-  const mine = { cards: ['tc-ural', 'tc-peru'], missionCardId: 'mc-6-cities' }
+  const mine = {
+    cards: ['tc-ural', 'tc-peru'],
+    missionCardId: 'mc-6-cities',
+    legacyHand: ['tc-ural', 'tc-peru'],
+    legacyMission: 'mc-6-cities',
+  }
   const merged = mergeOwnSecrets(shared, 'p1', mine)
   check('the seat gets its own hand back', merged.players[0].cards, ['tc-ural', 'tc-peru'])
   check('...and its own mission', merged.players[0].missionCardId, 'mc-6-cities')
@@ -169,10 +218,56 @@ check('the source state still holds every hand after projecting',
     merged.players.slice(1).map(p => p.cards), [undefined, undefined])
   check('...so the merged state still leaks nothing',
     leaksOtherSeatsSecrets(merged, 'p1'), false)
+  // The seat's own second copy comes back too, or the legacy readers see an
+  // empty hand for the player holding cards.
+  check('the seat gets its legacy hand back as well',
+    (merged as unknown as { legacySnapshot: { activeGameCards: { playerHands: Record<string, string[]> } } })
+      .legacySnapshot.activeGameCards.playerHands, { p1: ['tc-ural', 'tc-peru'] })
   // Before the secrets arrive there is simply nothing to merge, and the board
   // has to render anyway rather than wait.
   check('no secrets yet is the public state unchanged',
     JSON.stringify(mergeOwnSecrets(shared, 'p1', null)), JSON.stringify(shared))
+}
+
+// ── the assertion looks in both places ────────────────────────────────────
+// leaksOtherSeatsSecrets is what the client runs on every frame. It checked
+// players[] only, so it returned false — "nothing leaked" — on state carrying
+// every hand in the legacy snapshot. An assertion that looks in one of the two
+// places a secret lives is an assertion that passes while the secret travels.
+{
+  const halfStripped = {
+    ...publicView(state),
+    legacySnapshot: (state as unknown as { legacySnapshot: object }).legacySnapshot,
+  } as unknown as SeatState
+  check('a foreign hand in the legacy snapshot is caught',
+    leaksOtherSeatsSecrets(halfStripped, 'p1'), true)
+  check('...and the seat\'s own is not mistaken for one',
+    leaksOtherSeatsSecrets(
+      mergeOwnSecrets(publicView(state), 'p1',
+        { cards: [], missionCardId: null, legacyHand: ['tc-ural'], legacyMission: null }),
+      'p1'),
+    false)
+}
+
+// ── what is STILL public, said out loud ───────────────────────────────────
+// The deck orders sit in the same object as the hands and are not stripped.
+// They are not a per-seat secret — no player may see the order of the draw pile
+// — so they cannot go in match_secrets, which is read-your-own. They belong in
+// match_decks, which nobody may read, and moving them there is step 3.
+//
+// Listed rather than asserted away, because the list IS the finding: when one
+// moves, this fails and reports the shorter list.
+{
+  const shared = publicView(state) as unknown as
+    { legacySnapshot: { activeGameCards: Record<string, unknown> } }
+  const cards = shared.legacySnapshot.activeGameCards
+  const stillPublic = ['territoryDeck', 'eventDeck', 'missionDeck', 'resourceDeck']
+    .filter(k => Array.isArray(cards[k]) && (cards[k] as unknown[]).length > 0)
+  check('deck orders are still in the shared row — step 3 moves them to match_decks',
+    stillPublic, ['territoryDeck', 'eventDeck', 'missionDeck', 'resourceDeck'])
+  // The discards genuinely are public — face up on the table — so they stay.
+  check('...while the discards are public by rule and stay',
+    Array.isArray(cards.territoryDiscard), true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

@@ -58,6 +58,13 @@
  * To run it:
  *
  *   node scripts/check-seat-privacy.mjs
+ *
+ * To leave the match standing and read the row the server wrote by hand:
+ *
+ *   node scripts/check-seat-privacy.mjs --keep
+ *
+ * It prints the match id and the queries worth running, including the two
+ * separate places a hand lives in that row.
  */
 import { createClient } from '@supabase/supabase-js'
 import { createChecker } from './lib/controlledCheck.js'
@@ -79,6 +86,11 @@ const URL = need('SUPABASE_URL')
 const SERVICE = need('SUPABASE_SERVICE_ROLE_KEY')
 const ANON = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY
 if (!ANON) { console.error('missing SUPABASE_ANON_KEY'); process.exit(2) }
+
+// --keep leaves everything standing so the row the SERVER wrote can be read by
+// hand. The point of the probe is that row, and a check that tears it down two
+// seconds later leaves nothing to look at.
+const KEEP = process.argv.includes('--keep')
 
 const TAG = 'privacy-check'
 // Per-run, because campaigns.id is a TEXT primary key: two runs sharing one id
@@ -146,6 +158,19 @@ try {
       const { cards: _c, missionCardId: _m, ...rest } = p
       return { ...rest, cardCount: 1 }
     }),
+    // Emptied here, like publicView leaves it. The HANDS go in match_secrets and
+    // the server merges them back — so if it writes what it merged rather than a
+    // projection of it, they reappear here and the check above catches it.
+    legacySnapshot: {
+      ...board.legacySnapshot,
+      activeGameCards: {
+        gameNumber: 1,
+        playerHands: {},
+        playerMissions: {},
+        territoryDeck: [], territoryDiscard: [], eventDeck: [], eventDiscard: [],
+        missionDeck: [], resourceDeck: [], sideboard: [],
+      },
+    },
   }
 
   campaignId = RUN
@@ -198,8 +223,8 @@ try {
   // search the payload for a string, and the write-path probe below would have
   // died on the first hand it tried to rebuild.
   const { error: sErr } = await admin.from('match_secrets').insert([
-    { match_id: matchId, player_id: 'p1', data: { cards: [SECRET_A], missionCardId: null } },
-    { match_id: matchId, player_id: 'p2', data: { cards: [SECRET_B], missionCardId: null } },
+    { match_id: matchId, player_id: 'p1', data: { cards: [SECRET_A], missionCardId: null, legacyHand: [SECRET_A], legacyMission: null } },
+    { match_id: matchId, player_id: 'p2', data: { cards: [SECRET_B], missionCardId: null, legacyHand: [SECRET_B], legacyMission: null } },
   ])
   if (sErr) throw new Error(`seed match_secrets: ${sErr.message}`)
 
@@ -508,10 +533,24 @@ try {
     check('CONTROL  the row holds the state the server computed, not the seeded one',
       advanced, () => `phase is ${JSON.stringify(row?.state?.phase)}, expected "attack"`)
 
+    if (wrote) {
+      // Printed whatever the verdict, because this is the row the question was
+      // about and reading it beats being told about it.
+      console.log('\n  the row the server wrote:')
+      console.log(`    players       ${JSON.stringify(row?.state?.players)}`)
+      console.log(`    legacy hands  ${JSON.stringify(row?.state?.legacySnapshot?.activeGameCards?.playerHands)}\n`)
+    }
+
     const serverWrote = wrote && advanced
     checkGiven(serverWrote, 'SERVER-STRIPS  the row the server wrote carries no hand',
       !rowJson.includes(SECRET_A) && !rowJson.includes(SECRET_B),
       'the server wrote a hand into the shared row — publicView is not being applied')
+    // A hand lives in TWO places in this row, and a search of the whole payload
+    // above would catch either. This names the second one so a failure says
+    // WHICH copy survived, rather than leaving somebody to find out.
+    checkGiven(serverWrote, '...including the copy in the legacy snapshot',
+      Object.keys(row?.state?.legacySnapshot?.activeGameCards?.playerHands ?? {}).length === 0,
+      () => `playerHands still has ${JSON.stringify(row?.state?.legacySnapshot?.activeGameCards?.playerHands)}`)
     checkGiven(serverWrote, '...and the counts survived, so it stripped rather than dropped',
       /cardCount/.test(rowJson), 'no cardCount in the row: the hands went missing rather than being projected')
     // The hands must still EXIST. Stripping them from the row is right; losing
@@ -544,20 +583,34 @@ try {
   // everything. The match is deleted first anyway: if the campaign insert
   // succeeded and something later failed, both still have to go, and a delete
   // of a row that is already gone is not an error.
-  if (matchId) {
-    const { error } = await admin.from('matches').delete().eq('id', matchId)
-    if (error) console.log(`        cleanup failed for match ${matchId}: ${error.message}`)
-  }
-  if (campaignId) {
-    const { error } = await admin.from('campaigns').delete().eq('id', campaignId)
-    if (error) {
-      console.log(`        cleanup failed for campaign ${campaignId}: ${error.message}`)
-      console.log(`        remove it by hand: delete from campaigns where id = '${campaignId}';`)
+  if (KEEP) {
+    console.log(`\nKEPT — nothing was torn down. The match is ${matchId}\n`)
+    console.log('  The row the server wrote, and whether anything of a hand is in it:')
+    console.log(`    select state from matches where id = '${matchId}';`)
+    console.log('  Both places a hand lives, so a strip of one and not the other shows up:')
+    console.log(`    select state->'players' as players,`)
+    console.log(`           state->'legacySnapshot'->'activeGameCards'->'playerHands' as legacy_hands`)
+    console.log(`      from matches where id = '${matchId}';`)
+    console.log('  Where the hands are supposed to be:')
+    console.log(`    select player_id, data from match_secrets where match_id = '${matchId}';`)
+    console.log('  And when you are done:')
+    console.log(`    delete from campaigns where id = '${campaignId}';`)
+  } else {
+    if (matchId) {
+      const { error } = await admin.from('matches').delete().eq('id', matchId)
+      if (error) console.log(`        cleanup failed for match ${matchId}: ${error.message}`)
     }
+    if (campaignId) {
+      const { error } = await admin.from('campaigns').delete().eq('id', campaignId)
+      if (error) {
+        console.log(`        cleanup failed for campaign ${campaignId}: ${error.message}`)
+        console.log(`        remove it by hand: delete from campaigns where id = '${campaignId}';`)
+      }
+    }
+    // Said out loud, because a silent teardown is indistinguishable from one
+    // that never ran, and this script writes to a live project.
+    if (matchId || campaignId) console.log(`\n(torn down ${RUN})`)
   }
-  // Said out loud, because a silent teardown is indistinguishable from one that
-  // never ran, and this script writes to a live project.
-  if (matchId || campaignId) console.log(`\n(torn down ${RUN})`)
 }
 
 const failures = checker.failures

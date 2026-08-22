@@ -44,7 +44,35 @@ export interface ViewOptions {
 export interface SeatSecrets {
   cards: string[]
   missionCardId: string | null
+  /**
+   * THE SAME HAND AGAIN, from inside the legacy snapshot.
+   *
+   * `legacySnapshot.activeGameCards.playerHands` is a second, complete copy of
+   * every player's hand, keyed by seat, living in the same row. Stripping
+   * players[].cards and leaving it behind changes nothing: the hand is still
+   * there, one level down, in a field nobody was looking at.
+   *
+   * It is carried per seat rather than restored from `cards`, because they are
+   * two stores that are ALLOWED to disagree mid-turn — the legacy snapshot is
+   * written at campaign checkpoints and the live hand moves during play — and
+   * rebuilding one from the other would quietly fix up a difference that means
+   * something.
+   */
+  legacyHand: string[]
+  /** Dead field (missions became shared), still per-seat, still travelling. */
+  legacyMission: string | null
 }
+
+/** The legacy card block, if this state has one. Optional all the way down: it
+ *  is absent on a fresh match and null between games. */
+const activeCards = (state: { legacySnapshot?: unknown }) =>
+  (state.legacySnapshot as { activeGameCards?: Record<string, unknown> } | undefined)?.activeGameCards ?? null
+
+const legacyHands = (state: { legacySnapshot?: unknown }): Record<string, string[]> =>
+  (activeCards(state)?.playerHands as Record<string, string[]> | undefined) ?? {}
+
+const legacyMissions = (state: { legacySnapshot?: unknown }): Record<string, string> =>
+  (activeCards(state)?.playerMissions as Record<string, string> | undefined) ?? {}
 
 /**
  * A player with their secrets removed and a count left in their place.
@@ -72,7 +100,26 @@ const withoutSecrets = (p: Player): SeatPlayer => {
  * seat, and merges it on arrival.
  */
 export function publicView(state: GameState): SeatState {
-  return { ...state, players: state.players.map(withoutSecrets) }
+  const cards = activeCards(state)
+  return {
+    ...state,
+    players: state.players.map(withoutSecrets),
+    // Emptied, not deleted: the legacy block has a shape the rest of the app
+    // reads, and removing the key would make every consumer handle an absence
+    // that only happens on the wire. Each seat's own entry is put back on
+    // arrival, the same way players[].cards is.
+    //
+    // NOTE the deck orders in this same object — territoryDeck, eventDeck,
+    // missionDeck, resourceDeck — are NOT touched here and are still public.
+    // They belong in match_decks, which nobody may read, and that is step 3.
+    // See the check in handprivacytest that names them.
+    ...(cards ? {
+      legacySnapshot: {
+        ...(state.legacySnapshot as object),
+        activeGameCards: { ...cards, playerHands: {}, playerMissions: {} },
+      },
+    } : {}),
+  } as SeatState
 }
 
 /**
@@ -83,8 +130,14 @@ export function publicView(state: GameState): SeatState {
  * fact and cannot drift.
  */
 export function secretsFromState(state: GameState): Record<string, SeatSecrets> {
-  return Object.fromEntries(state.players.map(p =>
-    [p.id, { cards: p.cards, missionCardId: p.missionCardId }]))
+  const hands = legacyHands(state)
+  const missions = legacyMissions(state)
+  return Object.fromEntries(state.players.map(p => [p.id, {
+    cards: p.cards,
+    missionCardId: p.missionCardId,
+    legacyHand: hands[p.id] ?? [],
+    legacyMission: missions[p.id] ?? null,
+  }]))
 }
 
 /**
@@ -97,12 +150,25 @@ export function mergeOwnSecrets(
   view: SeatState, seatId: string, secrets: SeatSecrets | null,
 ): SeatState {
   if (!secrets) return view
+  const cards = activeCards(view)
   return {
     ...view,
     players: view.players.map(p => p.id === seatId
       ? { ...p, cards: secrets.cards, missionCardId: secrets.missionCardId }
       : p),
-  }
+    ...(cards ? {
+      legacySnapshot: {
+        ...(view.legacySnapshot as object),
+        activeGameCards: {
+          ...cards,
+          playerHands: { ...(cards.playerHands as object), [seatId]: secrets.legacyHand ?? [] },
+          playerMissions: secrets.legacyMission
+            ? { ...(cards.playerMissions as object), [seatId]: secrets.legacyMission }
+            : (cards.playerMissions as object),
+        },
+      },
+    } : {}),
+  } as SeatState
 }
 
 /**
@@ -126,8 +192,23 @@ export function mergeOwnSecrets(
 export function hydrateState(
   view: SeatState, secrets: Record<string, SeatSecrets>,
 ): GameState {
+  const cards = activeCards(view)
+  // Rebuilt from the same secrets the players are, so the two copies of a hand
+  // cannot come back disagreeing when they went out agreeing.
+  const restoredHands: Record<string, string[]> = { ...legacyHands(view) }
+  const restoredMissions: Record<string, string> = { ...legacyMissions(view) }
+  for (const [seat, held] of Object.entries(secrets)) {
+    if (held.legacyHand) restoredHands[seat] = held.legacyHand
+    if (held.legacyMission) restoredMissions[seat] = held.legacyMission
+  }
   return {
     ...view,
+    ...(cards ? {
+      legacySnapshot: {
+        ...(view.legacySnapshot as object),
+        activeGameCards: { ...cards, playerHands: restoredHands, playerMissions: restoredMissions },
+      },
+    } : {}),
     players: view.players.map(p => {
       const { cardCount: _n, ...rest } = p
       const held = secrets[p.id]
@@ -139,7 +220,9 @@ export function hydrateState(
       throw new Error(
         `no secrets for seat ${p.id}: refusing to treat an unloaded hand as an empty one`)
     }),
-  }
+    // Cast at the boundary: spreading legacySnapshot widens it to a partial, and
+    // the pieces put back are exactly the ones taken out.
+  } as GameState
 }
 
 /**
@@ -177,6 +260,10 @@ export const SECRET_PLAYER_KEYS = ['cards', 'missionCardId'] as const
  * arrives from the wire — the check that distinguishes absent from hidden.
  */
 export function leaksOtherSeatsSecrets(state: SeatState, seatId: string): boolean {
-  return state.players.some(p =>
-    p.id !== seatId && SECRET_PLAYER_KEYS.some(k => k in p))
+  if (state.players.some(p => p.id !== seatId && SECRET_PLAYER_KEYS.some(k => k in p))) return true
+  // The second copy. Checking only players[] was why this returned false on
+  // state that carried every hand in legacySnapshot.activeGameCards.playerHands
+  // — an assertion looking in one of the two places a hand lives.
+  const hands = legacyHands(state)
+  return Object.keys(hands).some(id => id !== seatId && (hands[id]?.length ?? 0) > 0)
 }
