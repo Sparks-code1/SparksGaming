@@ -3,7 +3,7 @@
 // any individual question: that the menu never offers something unanswerable,
 // and that a gap in the server's knowledge never comes out as a "no".
 import {
-  askTruthtrance, truthtranceBank, phraseQuestion, isPredictionQuestion,
+  askTruthtrance, truthtranceBank, phraseQuestion, isPredictionQuestion, isBattlePlanQuestion,
 } from '@/lib/dune/truthtrance'
 import type { TruthtranceQuestion, TruthtranceSecrets } from '@/lib/dune/truthtrance'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
@@ -40,6 +40,27 @@ const secrets = (): TruthtranceSecrets => ({
     'bene-gesserit': 5, emperor: 12, 'spacing-guild': 5,
   },
   prediction: { faction: 'atreides', turn: 7 },
+  // A battle both sides have committed to and neither has revealed — the only
+  // window the plan questions are legal in.
+  //
+  // The Harkonnen plan is the interesting one: a Cheap Hero leading, a BALISET
+  // in the weapon slot, and nothing in the defence slot. A worthless card in a
+  // weapon slot is the bluff the whole deck is built around, and it is what
+  // separates "is a card there" from "is it a weapon".
+  battle: {
+    combatants: ['atreides', 'harkonnen'],
+    plans: {
+      atreides: {
+        leader: { kind: 'leader', name: 'Duncan Idaho' },
+        dialled: 6, weapon: 'lasgun', defence: 'shield',
+      },
+      harkonnen: {
+        leader: { kind: 'cheap-hero' },
+        dialled: 3, weapon: 'baliset', defence: null,
+      },
+    },
+    revealed: false,
+  },
 })
 
 const ask = (target: FactionId, question: TruthtranceQuestion, s = secrets()) =>
@@ -111,8 +132,12 @@ check('the prediction is one bit at a time',
 // seat the store knows nothing about must refuse, not answer.
 {
   const empty: TruthtranceSecrets = { hands: {}, traitors: {}, spice: {} }
+  // Battle plan questions are excluded: they refuse for a window reason before
+  // they ever reach a seat's secrets, which is a different rule tested below.
+  const perSeat = (q: TruthtranceQuestion) =>
+    !isPredictionQuestion(q) && !isBattlePlanQuestion(q)
   const answers = truthtranceBank({ maxSpice: 3 })
-    .filter(q => !isPredictionQuestion(q))
+    .filter(perSeat)
     .map(q => ask('atreides', q, empty))
   check('no question about an unknown seat is answered at all',
     answers.filter(r => r.ok).length, 0)
@@ -121,7 +146,7 @@ check('the prediction is one bit at a time',
   // And the same seat WITH secrets answers all of them, so the check above is
   // about the missing data and not about the questions being broken.
   check('...while the same questions all answer when the store has the seat',
-    truthtranceBank({ maxSpice: 3 }).filter(q => !isPredictionQuestion(q))
+    truthtranceBank({ maxSpice: 3 }).filter(perSeat)
       .map(q => ask('atreides', q)).filter(r => !r.ok).length, 0)
 }
 
@@ -132,6 +157,9 @@ check('the prediction is one bit at a time',
 // offers a question the resolver refuses is a dead end in the UI.
 {
   const bank = truthtranceBank()
+  // Prediction questions go to the Bene Gesserit; everything else to the
+  // Atreides, who are a combatant in the fixture's battle and so can answer the
+  // plan questions too.
   const refused = bank
     .map(q => ({ q, r: ask(isPredictionQuestion(q) ? 'bene-gesserit' : 'atreides', q) }))
     .filter(x => !x.r.ok)
@@ -143,6 +171,113 @@ check('the prediction is one bit at a time',
     bank.filter(q => q.ask === 'traitor-is').length,
     FACTION_IDS.reduce((n, id) => n + (FACTIONS[id]?.leaders.length ?? 0), 0))
 }
+
+// ── the battle plan ─────────────────────────────────────────────────────────
+check('a leader in the plan answers yes',
+  answerOf(ask('atreides', { ask: 'plan-leader-is', leader: 'Duncan Idaho' })), true)
+check('another of their own leaders answers no',
+  answerOf(ask('atreides', { ask: 'plan-leader-is', leader: 'Gurney Halleck' })), false)
+check('a Cheap Hero is not a leader and answers no to every leader',
+  answerOf(ask('harkonnen', { ask: 'plan-leader-is', leader: 'Feyd-Rautha' })), false)
+check('...and is found by its own question',
+  [answerOf(ask('harkonnen', { ask: 'plan-uses-cheap-hero' })),
+    answerOf(ask('atreides', { ask: 'plan-uses-cheap-hero' }))], [true, false])
+
+// THE CARD THIS ONE IS FOR. The Harkonnen have a Baliset in the weapon slot.
+// Something is there, and everyone at the table can see that something is
+// there — what they cannot see is that it will do nothing. A question about
+// the slot being occupied would answer yes and be worthless; this asks whether
+// the card is a weapon.
+check('a worthless card in the weapon slot is not a weapon',
+  answerOf(ask('harkonnen', { ask: 'plan-has-weapon' })), false)
+check('...while a real weapon answers yes',
+  answerOf(ask('atreides', { ask: 'plan-has-weapon' })), true)
+check('an empty defence slot answers no',
+  answerOf(ask('harkonnen', { ask: 'plan-has-defence' })), false)
+check('...and a defence answers yes',
+  answerOf(ask('atreides', { ask: 'plan-has-defence' })), true)
+
+// The Atreides are playing a Lasgun, whose class is its own. So they are
+// playing a weapon, and they are playing neither a poison nor a projectile one
+// — which is exactly the shape of the card and the reason "any weapon" is a
+// separate question from the two classes.
+check('the Lasgun is a weapon of no askable class',
+  [answerOf(ask('atreides', { ask: 'plan-has-weapon' })),
+    answerOf(ask('atreides', { ask: 'plan-weapon-of-class', battleClass: 'poison' })),
+    answerOf(ask('atreides', { ask: 'plan-weapon-of-class', battleClass: 'projectile' }))],
+  [true, false, false])
+check('a Shield is found as a projectile defence, not a poison one',
+  [answerOf(ask('atreides', { ask: 'plan-defence-of-class', battleClass: 'projectile' })),
+    answerOf(ask('atreides', { ask: 'plan-defence-of-class', battleClass: 'poison' }))],
+  [true, false])
+
+// A slot holding the wrong sort of card. The battle phase should never write
+// this, and that is exactly why it is worth pinning: the card's promise is that
+// nothing it says is false, and "yes, they are playing a projectile weapon"
+// about a Shield in the weapon slot would be false however the Shield got there.
+// Every plan question reads the card's KIND as well as its class for this
+// reason, and without that reading these four all answer the wrong way.
+{
+  const malformed = secrets()
+  malformed.battle = {
+    ...malformed.battle!,
+    plans: {
+      ...malformed.battle!.plans,
+      atreides: {
+        leader: { kind: 'leader', name: 'Duncan Idaho' },
+        dialled: 6, weapon: 'shield', defence: 'crysknife',
+      },
+    },
+  }
+  check('a defence in the weapon slot is not a weapon of any class',
+    [answerOf(ask('atreides', { ask: 'plan-has-weapon' }, malformed)),
+      answerOf(ask('atreides', { ask: 'plan-weapon-of-class', battleClass: 'projectile' }, malformed))],
+    [false, false])
+  check('...and a weapon in the defence slot defends against nothing',
+    [answerOf(ask('atreides', { ask: 'plan-has-defence' }, malformed)),
+      answerOf(ask('atreides', { ask: 'plan-defence-of-class', battleClass: 'projectile' }, malformed))],
+    [false, false])
+}
+
+check('the dial is met exactly', answerOf(ask('atreides', { ask: 'plan-dialled-at-least', amount: 6 })), true)
+check('...and one over is not', answerOf(ask('atreides', { ask: 'plan-dialled-at-least', amount: 7 })), false)
+
+// ── the window, which is the whole design ──────────────────────────────────
+// THE ONE THAT MATTERS. The Atreides have committed; the Harkonnen have not.
+// Answering here would let the asker read a plan while somebody is still
+// writing theirs, which ends simultaneity as a phase. That the TARGET has
+// committed is not enough.
+{
+  const midCommit = secrets()
+  midCommit.battle = {
+    combatants: ['atreides', 'harkonnen'],
+    plans: { atreides: midCommit.battle!.plans.atreides },
+    revealed: false,
+  }
+  check('a committed plan is not readable while anyone is still writing theirs',
+    answerOf(ask('atreides', { ask: 'plan-has-weapon' }, midCommit)),
+    'refused: plans-not-all-committed')
+}
+check('nothing is readable outside a battle',
+  answerOf(ask('atreides', { ask: 'plan-has-weapon' }, { ...secrets(), battle: undefined })),
+  'refused: no-battle-in-progress')
+// Spending the card on a fact everyone can already see is a trap, not a play.
+check('nothing is readable once the plans are face up',
+  answerOf(ask('atreides', { ask: 'plan-has-weapon' },
+    { ...secrets(), battle: { ...secrets().battle!, revealed: true } })),
+  'refused: plans-already-revealed')
+check('a player who is not in the battle has no plan to read',
+  answerOf(ask('fremen', { ask: 'plan-has-weapon' })), 'refused: not-in-this-battle')
+// The asker need not be fighting. A bystander learns a bit they cannot use in
+// this battle, which is the card being weak rather than the rule being loose.
+check('but the asker may be a bystander',
+  answerOf(ask('atreides', { ask: 'plan-uses-cheap-hero' })), false)
+
+check('a leader nobody has, asked of a plan',
+  answerOf(ask('atreides', { ask: 'plan-leader-is', leader: 'Nobody' })), 'refused: no-such-leader')
+check('a dial of zero, which every plan meets',
+  answerOf(ask('atreides', { ask: 'plan-dialled-at-least', amount: 0 })),
+  'refused: amount-out-of-range')
 
 // ── who may be asked what ───────────────────────────────────────────────────
 check('the card cannot be turned on its holder',

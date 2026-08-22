@@ -72,6 +72,15 @@ export type TruthtranceQuestion =
    *  prediction outright takes two cards or a good guess. */
   | { ask: 'predicted-faction'; faction: FactionId }
   | { ask: 'predicted-turn'; turn: number }
+  /** The seven below read a COMMITTED battle plan, and are legal only in the
+   *  window described on TruthtranceSecrets.battle. */
+  | { ask: 'plan-leader-is'; leader: string }
+  | { ask: 'plan-uses-cheap-hero' }
+  | { ask: 'plan-has-weapon' }
+  | { ask: 'plan-has-defence' }
+  | { ask: 'plan-weapon-of-class'; battleClass: AskableClass }
+  | { ask: 'plan-defence-of-class'; battleClass: AskableClass }
+  | { ask: 'plan-dialled-at-least'; amount: number }
 
 /**
  * The slice of the secret store this reads.
@@ -82,6 +91,29 @@ export type TruthtranceQuestion =
  * that answers "no, they hold no Karama" because it failed to load their hand
  * has lied under a rule whose entire promise is that it cannot.
  */
+/**
+ * A battle plan as committed: who leads, how many forces, and the two cards.
+ *
+ * The card slots hold card IDS, not classes, because a WORTHLESS card can be
+ * played in either slot. That is the whole of the bluff — a Jubba Cloak in the
+ * weapon slot looks exactly like a weapon until the reveal — and it is why
+ * "are you playing a weapon?" reads the card's kind rather than asking whether
+ * the slot is occupied. How many cards someone played is visible at the table
+ * anyway; what they are is not.
+ */
+export type PlanLeader =
+  | { kind: 'leader'; name: string }
+  | { kind: 'cheap-hero' }
+
+export interface CommittedPlan {
+  leader: PlanLeader
+  /** Forces committed to the wheel. Zero is a legal dial. */
+  dialled: number
+  /** Card id, or null for an empty slot. */
+  weapon: string | null
+  defence: string | null
+}
+
 export interface TruthtranceSecrets {
   /** Treachery card ids, per seat. */
   hands: Partial<Record<FactionId, readonly string[]>>
@@ -90,6 +122,33 @@ export interface TruthtranceSecrets {
   spice: Partial<Record<FactionId, number>>
   /** The Bene Gesserit's, made at setup. Absent before it is made. */
   prediction?: { faction: FactionId; turn: number }
+  /**
+   * The battle in progress, if there is one.
+   *
+   * THE WINDOW IS THE WHOLE DESIGN HERE. Battle plan questions are answerable
+   * only once EVERY combatant has committed, and only before the reveal.
+   *
+   * Not a fussy restriction — it is what stops the card breaking simultaneity.
+   * Plans are meant to be written blind and turned over together. Digitally the
+   * commits arrive at different moments and the server knows it, so a card that
+   * could be played in that gap would read one plan and then write its own
+   * against it. That is not a strong card, it is the end of the phase as a
+   * phase.
+   *
+   * Waiting for every commit also settles the balance question the bank
+   * otherwise raises. The Atreides power sees one element of a plan BEFORE
+   * committing, which is what makes it worth a faction. Truthtrance sees one bit
+   * AFTER everyone has committed, which cannot change anyone's plan and is
+   * therefore strictly the weaker thing — it informs a Karama, an alliance, and
+   * the next battle, and that is all.
+   */
+  battle?: {
+    /** Everyone whose plan this battle is waiting on, allies included. */
+    combatants: readonly FactionId[]
+    plans: Partial<Record<FactionId, CommittedPlan>>
+    /** Once true the plans are public and the card would be spent on nothing. */
+    revealed: boolean
+  }
 }
 
 export interface TruthtranceAnswer {
@@ -119,6 +178,10 @@ export type TruthtranceRefusal =
   | 'not-the-bene-gesserit'
   | 'no-prediction-made'
   | 'no-secret-for-seat'
+  | 'no-battle-in-progress'
+  | 'plans-not-all-committed'
+  | 'plans-already-revealed'
+  | 'not-in-this-battle'
 
 export type TruthtranceResult =
   | { ok: true; answer: TruthtranceAnswer }
@@ -165,6 +228,20 @@ export function phraseQuestion(q: TruthtranceQuestion): string {
       return `Did you predict the ${FACTIONS[q.faction]?.name ?? q.faction}?`
     case 'predicted-turn':
       return `Did you predict turn ${q.turn}?`
+    case 'plan-leader-is':
+      return `Is ${q.leader} your leader in this battle?`
+    case 'plan-uses-cheap-hero':
+      return 'Are you using a Cheap Hero in this battle?'
+    case 'plan-has-weapon':
+      return 'Are you playing a weapon in this battle?'
+    case 'plan-has-defence':
+      return 'Are you playing a defence in this battle?'
+    case 'plan-weapon-of-class':
+      return `Are you playing a ${q.battleClass} weapon in this battle?`
+    case 'plan-defence-of-class':
+      return `Are you playing a defence against ${q.battleClass} in this battle?`
+    case 'plan-dialled-at-least':
+      return `Have you dialled at least ${q.amount} forces?`
   }
 }
 
@@ -175,11 +252,18 @@ export function phraseQuestion(q: TruthtranceQuestion): string {
  * a card or a leader added later is askable about without touching this file —
  * and so the menu cannot offer a question the answerer has never heard of.
  *
- * `maxSpice` bounds the one open-ended parameter. It is a UI concern, not a
- * rule: any amount is answerable, but a menu cannot show infinitely many.
+ * `maxSpice` and `maxDial` bound the two open-ended parameters. They are a UI
+ * concern, not a rule: any amount is answerable, but a menu cannot show
+ * infinitely many.
+ *
+ * The battle plan questions are always in the bank, even out of a battle. A menu
+ * that hid them would leave a player unable to see what the card can do until
+ * the moment they need it; asking one at the wrong time refuses with a reason,
+ * which is what the menu should be showing instead.
  */
-export function truthtranceBank(opts: { maxSpice?: number } = {}): TruthtranceQuestion[] {
+export function truthtranceBank(opts: { maxSpice?: number; maxDial?: number } = {}): TruthtranceQuestion[] {
   const maxSpice = opts.maxSpice ?? 20
+  const maxDial = opts.maxDial ?? 20
   const kinds: TreacheryKind[] = ['weapon', 'defense', 'special', 'worthless']
   const classes: AskableClass[] = ['poison', 'projectile']
   return [
@@ -196,12 +280,25 @@ export function truthtranceBank(opts: { maxSpice?: number } = {}): TruthtranceQu
     ...FACTION_IDS.map((faction): TruthtranceQuestion => ({ ask: 'predicted-faction', faction })),
     ...Array.from({ length: 10 }, (_, i): TruthtranceQuestion =>
       ({ ask: 'predicted-turn', turn: i + 1 })),
+    ...allLeaders().map((leader): TruthtranceQuestion => ({ ask: 'plan-leader-is', leader })),
+    { ask: 'plan-uses-cheap-hero' },
+    { ask: 'plan-has-weapon' },
+    { ask: 'plan-has-defence' },
+    ...classes.map((battleClass): TruthtranceQuestion =>
+      ({ ask: 'plan-weapon-of-class', battleClass })),
+    ...classes.map((battleClass): TruthtranceQuestion =>
+      ({ ask: 'plan-defence-of-class', battleClass })),
+    ...Array.from({ length: maxDial }, (_, i): TruthtranceQuestion =>
+      ({ ask: 'plan-dialled-at-least', amount: i + 1 })),
   ]
 }
 
 /** Which questions only the Bene Gesserit can be asked. */
 export const isPredictionQuestion = (q: TruthtranceQuestion) =>
   q.ask === 'predicted-faction' || q.ask === 'predicted-turn'
+
+/** Which questions read a committed battle plan, and so have a window. */
+export const isBattlePlanQuestion = (q: TruthtranceQuestion) => q.ask.startsWith('plan-')
 
 /**
  * Ask it.
@@ -238,6 +335,44 @@ export function askTruthtrance(input: {
     }
     if (q.turn < 1 || q.turn > 10 || !Number.isInteger(q.turn)) return no('turn-out-of-range')
     return answered(secrets.prediction.turn === q.turn)
+  }
+
+  if (isBattlePlanQuestion(q)) {
+    const battle = secrets.battle
+    if (!battle) return no('no-battle-in-progress')
+    if (battle.revealed) return no('plans-already-revealed')
+    if (!battle.combatants.includes(target)) return no('not-in-this-battle')
+    // EVERY combatant, not just the target. See the note on secrets.battle: the
+    // point is that nobody can still be writing a plan when this is answered.
+    if (!battle.combatants.every(c => battle.plans[c])) return no('plans-not-all-committed')
+    const plan = battle.plans[target]
+    if (!plan) return no('no-secret-for-seat')
+
+    /** The card in a slot, when there is one and the deck knows it. */
+    const inSlot = (id: string | null) => id === null ? undefined : cardById(id)
+
+    switch (q.ask) {
+      case 'plan-leader-is':
+        if (!allLeaders().includes(q.leader)) return no('no-such-leader')
+        return answered(plan.leader.kind === 'leader' && plan.leader.name === q.leader)
+      case 'plan-uses-cheap-hero':
+        return answered(plan.leader.kind === 'cheap-hero')
+      case 'plan-has-weapon':
+        return answered(inSlot(plan.weapon)?.kind === 'weapon')
+      case 'plan-has-defence':
+        return answered(inSlot(plan.defence)?.kind === 'defense')
+      case 'plan-weapon-of-class': {
+        const c = inSlot(plan.weapon)
+        return answered(c?.kind === 'weapon' && c.subtype === q.battleClass)
+      }
+      case 'plan-defence-of-class': {
+        const c = inSlot(plan.defence)
+        return answered(c?.kind === 'defense' && c.subtype === q.battleClass)
+      }
+      case 'plan-dialled-at-least':
+        if (!Number.isInteger(q.amount) || q.amount < 1) return no('amount-out-of-range')
+        return answered(plan.dialled >= q.amount)
+    }
   }
 
   switch (q.ask) {
@@ -279,4 +414,10 @@ export function askTruthtrance(input: {
       return answered(spice >= q.amount)
     }
   }
+
+  // Unreachable: the prediction and battle plan questions are handled above and
+  // the switch covers the rest. Present because the compiler can no longer see
+  // that, and because falling off the end of a function whose promise is a true
+  // answer should be a refusal rather than undefined.
+  return no('no-secret-for-seat')
 }
