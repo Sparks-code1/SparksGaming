@@ -6,7 +6,7 @@
 // the one no amount of playing the game would reveal, because a leak in the
 // carry looks exactly like a correct auction from every seat.
 import {
-  beginAuction, answerBid, silenceAnswers, MINIMUM_OPENING_BID,
+  beginAuction, answerBid, silenceAnswers, cardsOnOffer, MINIMUM_OPENING_BID,
 } from '@/lib/dune/bidding'
 import type { AuctionCarry, BidStep, BidOutcome } from '@/lib/dune/bidding'
 import { drawTreachery, discardUnsold } from '@/lib/dune/treacheryDeck'
@@ -28,8 +28,7 @@ const DEADLINE = 15_000
 
 const start = (over: Partial<Parameters<typeof beginAuction>[0]> = {}) =>
   beginAuction({
-    turn: 1, order: ORDER, hands: EMPTY, limits: LIMITS, cardCount: 4,
-    closesAt: DEADLINE, ...over,
+    turn: 1, order: ORDER, hands: EMPTY, limits: LIMITS, closesAt: DEADLINE, ...over,
   })
 
 /** The carry of a step that is waiting, or a loud failure. */
@@ -43,12 +42,85 @@ const askOf = (s: BidStep) => {
 }
 const stepOf = (o: BidOutcome) => o.step
 
+/**
+ * The awards and unsold list, whether the auction is still running or finished.
+ *
+ * A one-card auction settles the moment that card closes, so reading the carry
+ * throws. Shortening the row made three tests do exactly that — which is the
+ * rule working, not the tests being wrong, but it does mean "what has been won
+ * so far" has to be a question you can ask either way.
+ */
+const soFar = (s: BidStep) => isAwaiting(s)
+  ? { awards: s.carry.awards, unsold: s.carry.unsold }
+  : { awards: s.result.awards, unsold: s.result.unsold }
+
 /** Bid or pass without repeating the purse and the deadline every time. */
 const act = (s: BidStep, from: FactionId, answer: Parameters<typeof answerBid>[2], purse = 20) =>
   answerBid(carryOf(s), from, answer, purse, DEADLINE)
 const bid = (s: BidStep, from: FactionId, spice: number, purse = 20) =>
   act(s, from, { kind: 'bid', spice }, purse)
 const passes = (s: BidStep, from: FactionId) => act(s, from, { kind: 'pass' })
+
+// ── how many cards are auctioned ──────────────────────────────────────────
+// ONE PER PLAYER ALLOWED TO BID, not one per player in the game. A player at
+// their hand limit does not get a card auctioned on their behalf, so the row
+// shrinks. It was one-per-player at first, which is a different game: a full
+// table would have seen six cards offered to nobody and discarded.
+//
+// Derived rather than passed in. As an argument the rule lived in whoever
+// called the auction, and the first thing that happened was that it was wrong.
+{
+  const six: FactionId[] = ['atreides', 'emperor', 'spacing-guild', 'fremen', 'harkonnen', 'bene-gesserit']
+  const sixLimits = Object.fromEntries(six.map(f => [f, f === 'harkonnen' ? 8 : 4]))
+  const none = Object.fromEntries(six.map(f => [f, 0]))
+
+  check('six players, nobody full: six cards', cardsOnOffer(six, none, sixLimits), 6)
+  check('six players, two of them full: four cards',
+    cardsOnOffer(six, { ...none, atreides: 4, fremen: 4 }, sixLimits), 4)
+  check('everybody full: no cards at all, not cards offered to nobody',
+    cardsOnOffer(six, { ...none, atreides: 4, emperor: 4, 'spacing-guild': 4, fremen: 4, harkonnen: 8, 'bene-gesserit': 4 }, sixLimits), 0)
+  // The Harkonnen's eight is what makes them countable where anyone else is not.
+  check('a Harkonnen at five still counts, where a four-limit faction would not',
+    [cardsOnOffer(['harkonnen'], { harkonnen: 5 }, sixLimits),
+      cardsOnOffer(['atreides'], { atreides: 4 }, sixLimits)], [1, 0])
+  check('the auction offers what the rule counts',
+    carryOf(start()).cardCount, cardsOnOffer(ORDER, EMPTY, LIMITS))
+}
+
+// COUNTED ONCE, at the start. Hands grow as cards are won, and recounting per
+// card would make the size of the auction depend on its own outcome — buy a
+// card, shrink the row, and the card just bought may have been the last offered.
+{
+  let s = start({ hands: { ...EMPTY, atreides: 3 } })
+  check('four players, all under their limits: four cards', carryOf(s).cardCount, 4)
+  s = stepOf(bid(s, 'atreides', 1))
+  s = stepOf(passes(s, 'harkonnen'))
+  s = stepOf(passes(s, 'fremen'))
+  s = stepOf(passes(s, 'emperor'))
+  check('a player reaching their limit mid-auction is now full',
+    carryOf(s).hands.atreides, 4)
+  check('...but the row does not shrink under them', carryOf(s).cardCount, 4)
+  check('...they simply stop being asked', carryOf(s).toAct === 'atreides', false)
+}
+// The same rule again, asserted on what the auction DOES rather than on the
+// number it stored. A sabotage that recomputed the count each card left the
+// stored cardCount at four and ended the auction after two, so reading the
+// field agreed with itself while the row silently halved.
+//
+// Everybody one card short of full, everybody buys: four cards must actually
+// come up, even though each purchase fills the buyer.
+{
+  let s = start({ hands: { atreides: 3, harkonnen: 7, fremen: 3, emperor: 3 } })
+  check('four eligible players, so four cards', carryOf(s).cardCount, 4)
+  for (let i = 0; i < 40 && isAwaiting(s); i++) {
+    const c = carryOf(s)
+    s = stepOf(c.high ? passes(s, c.toAct) : bid(s, c.toAct, 1))
+  }
+  check('...and four are auctioned, however full the buyers get on the way',
+    soFar(s).awards.length, 4)
+  check('...one to each of them',
+    soFar(s).awards.map(a => a.winner), ['atreides', 'harkonnen', 'fremen', 'emperor'])
+}
 
 // ── who opens, and which way it goes round ─────────────────────────────────
 check('the first card opens with the storm-relative first player',
@@ -104,7 +176,8 @@ check('the opening minimum is one, not zero — a pass is the alternative',
   check('the only eligible player is not the head of the order', carryOf(s).toAct, 'harkonnen')
   s = stepOf(bid(s, 'harkonnen', 1))
   check('...and wins on the unanswerable-raise path',
-    carryOf(s).awards, [{ index: 0, winner: 'harkonnen', price: 1 }])
+    soFar(s).awards, [{ index: 0, winner: 'harkonnen', price: 1 }])
+  check('...which was the only card, so the auction is over', s.status, 'settled')
 }
 
 // ── the opener rotates one seat per card, and resets each turn ────────────
@@ -177,8 +250,11 @@ check('...with no faction lacking one',
 {
   const s = start({ hands: { atreides: 4, harkonnen: 8, fremen: 4, emperor: 4 } })
   check('with every hand full the auction settles at once', s.status, 'settled')
-  check('...and every card is unsold',
-    !isAwaiting(s) ? s.result.unsold : null, [0, 1, 2, 3])
+  // NOTHING is unsold, because nothing was offered. Under the old count this
+  // reported four discarded cards, which would have taken four real cards out
+  // of the deck and put them face up for nobody's benefit.
+  check('...with no cards offered rather than cards discarded',
+    !isAwaiting(s) ? [s.result.unsold, s.result.awards] : null, [[], []])
 }
 
 // ── a bid beyond your spice is refused, and refused PRIVATELY ─────────────
@@ -226,12 +302,13 @@ check('exactly the purse is allowed — the limit is "more than", not "as much a
 // card free because nobody could compete is not a rule anybody wrote.
 {
   const s = start({ hands: { atreides: 0, harkonnen: 8, fremen: 4, emperor: 4 } })
+  check('one eligible player means one card', carryOf(s).cardCount, 1)
   check('the only eligible player opens', carryOf(s).toAct, 'atreides')
   const won = stepOf(bid(s, 'atreides', 1))
   check('...and their opening bid wins immediately, nobody being left to raise',
-    carryOf(won).awards, [{ index: 0, winner: 'atreides', price: 1 }])
+    soFar(won).awards, [{ index: 0, winner: 'atreides', price: 1 }])
   const none = stepOf(passes(s, 'atreides'))
-  check('...while passing leaves the card unsold', carryOf(none).unsold, [0])
+  check('...while passing leaves the card unsold', soFar(none).unsold, [0])
 }
 
 // ── THE PRIVACY INVARIANT ─────────────────────────────────────────────────

@@ -118,6 +118,32 @@ export type BidOutcome =
   | { kind: 'ok'; step: BidStep }
   | { kind: 'refused'; refusal: BidRefusal; faction: FactionId; step: BidStep }
 
+/**
+ * How many cards this auction offers: one per player ALLOWED TO BID.
+ *
+ * Not one per player in the game. A player at their hand limit does not get a
+ * card auctioned on their behalf, so the row shrinks — six players with two of
+ * them full auctions four cards, and a table where everybody is full auctions
+ * none at all rather than offering cards nobody may take.
+ *
+ * COUNTED ONCE, AT THE START, and then fixed. Hands grow during the auction as
+ * cards are won, so a player under the limit when it begins can reach it partway
+ * through; they simply stop bidding on what is left. Recounting per card would
+ * make the size of the auction depend on its own outcome — buy a card, shrink
+ * the row, and the card you just bought may have been the last one offered.
+ *
+ * Exported because the caller needs it BEFORE the auction exists: it has to draw
+ * this many cards out of match_decks to put on offer. Deriving it here and
+ * having the caller derive it again would be two spellings of one rule.
+ */
+export function cardsOnOffer(
+  order: readonly FactionId[],
+  hands: Readonly<Record<string, number>>,
+  limits: Readonly<Record<string, number>>,
+): number {
+  return order.filter(f => (hands[f] ?? 0) < (limits[f] ?? 0)).length
+}
+
 /** A faction may bid only while it is under its hand limit. */
 const underLimit = (c: Pick<AuctionCarry, 'hands' | 'limits'>, f: FactionId) =>
   (c.hands[f] ?? 0) < (c.limits[f] ?? 0)
@@ -233,19 +259,15 @@ function closeCard(c: AuctionCarry, won: Award | null, closesAt: number): BidSte
  * job because the storm is the caller's to read, and an auction that re-derived
  * it would need the board.
  *
- * `cardCount` is one per player IN THE GAME, as the rule reads, not one per
- * player able to bid. In a table where most hands are full that means several
- * cards offered to nobody and discarded. Worth confirming against the rulebook
- * before this ships: the alternative reading — one card per player who can still
- * hold one — is equally sayable in English and changes how many cards a full
- * table sees.
+ * How many cards are on offer is DERIVED, not passed in — see cardsOnOffer. It
+ * was an argument at first, which put the rule in whoever called this rather
+ * than in the auction, and the first thing that happened was that it was wrong.
  */
 export function beginAuction(input: {
   turn: number
   order: readonly FactionId[]
   hands: Readonly<Record<string, number>>
   limits: Readonly<Record<string, number>>
-  cardCount: number
   closesAt: number
 }): BidStep {
   const carry: AuctionCarry = {
@@ -253,7 +275,7 @@ export function beginAuction(input: {
     order: [...input.order],
     hands: { ...input.hands },
     limits: { ...input.limits },
-    cardCount: input.cardCount,
+    cardCount: cardsOnOffer(input.order, input.hands, input.limits),
     index: 0,
     high: null,
     passed: [],
