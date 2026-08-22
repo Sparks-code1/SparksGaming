@@ -8,6 +8,13 @@
 // agree.
 
 // src/lib/stateView.ts
+var SECRET_DECK_KEYS = [
+  "territoryDeck",
+  "eventDeck",
+  "missionDeck",
+  "resourceDeck",
+  "coinDeck"
+];
 var activeCards = (state) => state.legacySnapshot?.activeGameCards ?? null;
 var legacyHands = (state) => activeCards(state)?.playerHands ?? {};
 var legacyMissions = (state) => activeCards(state)?.playerMissions ?? {};
@@ -25,14 +32,20 @@ function publicView(state) {
     // that only happens on the wire. Each seat's own entry is put back on
     // arrival, the same way players[].cards is.
     //
-    // NOTE the deck orders in this same object — territoryDeck, eventDeck,
-    // missionDeck, resourceDeck — are NOT touched here and are still public.
-    // They belong in match_decks, which nobody may read, and that is step 3.
-    // See the check in handprivacytest that names them.
     ...cards ? {
       legacySnapshot: {
         ...state.legacySnapshot,
-        activeGameCards: { ...cards, playerHands: {}, playerMissions: {} }
+        activeGameCards: {
+          ...cards,
+          playerHands: {},
+          playerMissions: {},
+          // Emptied rather than removed, for the same reason the hands are: the
+          // keys have a shape the app reads, and an absent key is a different
+          // thing for every consumer to handle. A length of zero is also
+          // honest — the client genuinely does not know how many are left,
+          // and pretending it does would be a smaller lie of the same kind.
+          ...Object.fromEntries(SECRET_DECK_KEYS.filter((k) => k in cards).map((k) => [k, []]))
+        }
       }
     } : {}
   };
@@ -46,6 +59,16 @@ function secretsFromState(state) {
     legacyHand: hands[p.id] ?? [],
     legacyMission: missions[p.id] ?? null
   }]));
+}
+function decksFromState(state) {
+  const cards = activeCards(state);
+  if (!cards) return {};
+  return Object.fromEntries(SECRET_DECK_KEYS.filter((k) => Array.isArray(cards[k])).map((k) => [k, cards[k]]));
+}
+function leaksDeckOrder(state) {
+  const cards = activeCards(state);
+  if (!cards) return false;
+  return SECRET_DECK_KEYS.some((k) => Array.isArray(cards[k]) && cards[k].length > 0);
 }
 function mergeOwnSecrets(view, seatId, secrets) {
   if (!secrets) return view;
@@ -65,7 +88,7 @@ function mergeOwnSecrets(view, seatId, secrets) {
     } : {}
   };
 }
-function hydrateState(view, secrets) {
+function hydrateState(view, secrets, decks) {
   const cards = activeCards(view);
   const restoredHands = { ...legacyHands(view) };
   const restoredMissions = { ...legacyMissions(view) };
@@ -78,7 +101,17 @@ function hydrateState(view, secrets) {
     ...cards ? {
       legacySnapshot: {
         ...view.legacySnapshot,
-        activeGameCards: { ...cards, playerHands: restoredHands, playerMissions: restoredMissions }
+        activeGameCards: {
+          ...cards,
+          playerHands: restoredHands,
+          playerMissions: restoredMissions,
+          // Only what the store actually returned. A deck missing from it is
+          // left as it stands in the row — which for a match written before
+          // this split is the real order, and for one written after is the
+          // empty array publicView left. Overwriting with [] either way would
+          // shuffle a live game's draw pile into nothing on its next action.
+          ...Object.fromEntries(Object.entries(decks).filter(([, v]) => Array.isArray(v)))
+        }
       }
     } : {},
     players: view.players.map((p) => {
@@ -108,8 +141,11 @@ function leaksOtherSeatsSecrets(state, seatId) {
   return Object.keys(hands).some((id) => id !== seatId && (hands[id]?.length ?? 0) > 0);
 }
 export {
+  SECRET_DECK_KEYS,
   SECRET_PLAYER_KEYS,
+  decksFromState,
   hydrateState,
+  leaksDeckOrder,
   leaksOtherSeatsSecrets,
   mergeOwnSecrets,
   publicView,

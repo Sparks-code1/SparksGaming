@@ -63,6 +63,31 @@ export interface SeatSecrets {
   legacyMission: string | null
 }
 
+/**
+ * The deck orders, which are nobody's secret and therefore everybody's problem.
+ *
+ * A hand belongs to a seat, and that seat may see it — which is what
+ * match_secrets is for. A DECK belongs to nobody. There is no player entitled
+ * to know the next territory card, so there is no seat to scope a policy to and
+ * match_secrets cannot hold them: a row there is readable by its owner, and
+ * every deck would need an owner.
+ *
+ * They go to match_decks instead, which has RLS on and no policy at all, so only
+ * the service role can reach it. The client never gets these back — unlike a
+ * hand, there is no half of a deck a seat is allowed to see.
+ *
+ * NOT IN HERE, on purpose:
+ *   territoryDiscard, eventDiscard   face up on the table; public by rule
+ *   sideboard                        the four face-up territory cards
+ *   currentMissionId                 the shared face-up mission
+ *
+ * coinDeck is the pre-rename alias of resourceDeck. Included because an old save
+ * can still carry it, and an alias holding the same order is the same leak.
+ */
+export const SECRET_DECK_KEYS = [
+  'territoryDeck', 'eventDeck', 'missionDeck', 'resourceDeck', 'coinDeck',
+] as const
+
 /** The legacy card block, if this state has one. Optional all the way down: it
  *  is absent on a fresh match and null between games. */
 const activeCards = (state: { legacySnapshot?: unknown }) =>
@@ -109,14 +134,22 @@ export function publicView(state: GameState): SeatState {
     // that only happens on the wire. Each seat's own entry is put back on
     // arrival, the same way players[].cards is.
     //
-    // NOTE the deck orders in this same object — territoryDeck, eventDeck,
-    // missionDeck, resourceDeck — are NOT touched here and are still public.
-    // They belong in match_decks, which nobody may read, and that is step 3.
-    // See the check in handprivacytest that names them.
     ...(cards ? {
       legacySnapshot: {
         ...(state.legacySnapshot as object),
-        activeGameCards: { ...cards, playerHands: {}, playerMissions: {} },
+        activeGameCards: {
+          ...cards,
+          playerHands: {},
+          playerMissions: {},
+          // Emptied rather than removed, for the same reason the hands are: the
+          // keys have a shape the app reads, and an absent key is a different
+          // thing for every consumer to handle. A length of zero is also
+          // honest — the client genuinely does not know how many are left,
+          // and pretending it does would be a smaller lie of the same kind.
+          ...Object.fromEntries(SECRET_DECK_KEYS
+            .filter(k => k in cards)
+            .map(k => [k, []])),
+        },
       },
     } : {}),
   } as SeatState
@@ -138,6 +171,35 @@ export function secretsFromState(state: GameState): Record<string, SeatSecrets> 
     legacyHand: hands[p.id] ?? [],
     legacyMission: missions[p.id] ?? null,
   }]))
+}
+
+/**
+ * What match_decks must hold for this match, keyed by deck name.
+ *
+ * One row per deck, which is what the table's (match_id, deck) key is shaped
+ * for. Only the keys this state actually has: a game that never had a coinDeck
+ * should not gain an empty one on its first write.
+ */
+export function decksFromState(state: GameState): Record<string, string[]> {
+  const cards = activeCards(state)
+  if (!cards) return {}
+  return Object.fromEntries(SECRET_DECK_KEYS
+    .filter(k => Array.isArray(cards[k]))
+    .map(k => [k, cards[k] as string[]]))
+}
+
+/**
+ * True when `state` still carries a deck order.
+ *
+ * Separate from leaksOtherSeatsSecrets because it is a different claim. That one
+ * asks "is somebody ELSE's secret here", which is answered per seat. A deck is
+ * nobody's, so there is no seat to ask about — its presence is a leak for every
+ * reader at once, including the one holding the state.
+ */
+export function leaksDeckOrder(state: SeatState): boolean {
+  const cards = activeCards(state)
+  if (!cards) return false
+  return SECRET_DECK_KEYS.some(k => Array.isArray(cards[k]) && (cards[k] as unknown[]).length > 0)
 }
 
 /**
@@ -190,7 +252,13 @@ export function mergeOwnSecrets(
  * only stops leaking once somebody takes a turn in it.
  */
 export function hydrateState(
-  view: SeatState, secrets: Record<string, SeatSecrets>,
+  view: SeatState,
+  secrets: Record<string, SeatSecrets>,
+  // REQUIRED, with no default. A default made forgetting it silent: the edge
+  // function kept reading the deck rows and quietly stopped passing them, the
+  // decks came back empty, and every check still passed. An argument you must
+  // supply is the cheapest possible guard against forgetting to.
+  decks: Record<string, string[]>,
 ): GameState {
   const cards = activeCards(view)
   // Rebuilt from the same secrets the players are, so the two copies of a hand
@@ -206,7 +274,17 @@ export function hydrateState(
     ...(cards ? {
       legacySnapshot: {
         ...(view.legacySnapshot as object),
-        activeGameCards: { ...cards, playerHands: restoredHands, playerMissions: restoredMissions },
+        activeGameCards: {
+          ...cards,
+          playerHands: restoredHands,
+          playerMissions: restoredMissions,
+          // Only what the store actually returned. A deck missing from it is
+          // left as it stands in the row — which for a match written before
+          // this split is the real order, and for one written after is the
+          // empty array publicView left. Overwriting with [] either way would
+          // shuffle a live game's draw pile into nothing on its next action.
+          ...Object.fromEntries(Object.entries(decks).filter(([, v]) => Array.isArray(v))),
+        },
       },
     } : {}),
     players: view.players.map(p => {

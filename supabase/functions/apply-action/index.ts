@@ -41,6 +41,7 @@ import {
 import {
   publicView,
   secretsFromState,
+  decksFromState,
   hydrateState,
   viewForSeat,
 } from '../_shared/stateView.gen.ts'
@@ -265,9 +266,18 @@ Deno.serve(async (req: Request) => {
   if (sErr) return json({ error: 'could not read hidden state', detail: sErr.message }, 500)
   const heldSecrets = Object.fromEntries((secretRows ?? []).map((r) => [r.player_id, r.data]))
 
+  // The decks, likewise. match_decks has no read policy at all, so only this —
+  // running as the service role — can see them. A read error is refused rather
+  // than shrugged off: an empty result and a failed query are the same value
+  // here, and the second one would deal from a pile the server could not load.
+  const { data: deckRows, error: dErr } = await admin
+    .from('match_decks').select('deck, cards').eq('match_id', matchId)
+  if (dErr) return json({ error: 'could not read deck state', detail: dErr.message }, 500)
+  const heldDecks = Object.fromEntries((deckRows ?? []).map((r) => [r.deck, r.cards]))
+
   let state
   try {
-    state = hydrateState(match.state, heldSecrets)
+    state = hydrateState(match.state, heldSecrets, heldDecks)
   } catch (e) {
     // Loud, and a refusal. Continuing here would run the reducer over a hand it
     // could not load and then write the result back, destroying it.
@@ -452,6 +462,7 @@ Deno.serve(async (req: Request) => {
     p_expected_version: match.version,
     p_state: publicView(nextState),
     p_secrets: secretsFromState(nextState),
+    p_decks: decksFromState(nextState),
   })
 
   // No row back means the CAS found a different version: somebody else's action

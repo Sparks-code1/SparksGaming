@@ -20,7 +20,7 @@
 // `cards` only for the seat receiving it, and `cardCount` for the rest.
 import {
   viewForSeat, publicView, secretsFromState, mergeOwnSecrets, hydrateState,
-  leaksOtherSeatsSecrets,
+  leaksOtherSeatsSecrets, leaksDeckOrder, decksFromState, SECRET_DECK_KEYS,
 } from '@/lib/stateView'
 import type { SeatState } from '@/lib/stateView'
 import type { GameState } from '@/types/game'
@@ -168,11 +168,19 @@ check('the source state still holds every hand after projecting',
           .map(k => [k, canonical((v as Record<string, unknown>)[k])]))
         : v
 
-  const rebuilt = hydrateState(publicView(state), secretsFromState(state))
-  check('publicView + secretsFromState + hydrateState returns the original state',
-    canonical(rebuilt), canonical(state))
-  // And the check above is only worth anything if the two sides differ before
-  // rehydration, or it would pass on a publicView that stripped nothing.
+  // The SEAT half of the round trip: hands back, decks deliberately not passed.
+  // This used to be the whole of it and used to return the original exactly.
+  // It no longer can, and that is the point — the decks are not in the row and
+  // not in the secrets, so nothing here can produce them. An incomplete
+  // rehydration that still matched would mean they never left.
+  const seatsOnly = hydrateState(publicView(state), secretsFromState(state), {})
+  check('the hands come back from the secrets alone',
+    (seatsOnly as unknown as { players: { cards: string[] }[] }).players.map(p => p.cards.length),
+    [2, 4, 0])
+  check('...but the decks do not, because they are not the seats\' to hold',
+    JSON.stringify(canonical(seatsOnly)) === JSON.stringify(canonical(state)), false)
+  // And the stripped row really was different, or a publicView that stripped
+  // nothing would satisfy everything above.
   check('...and the stripped row really was different',
     JSON.stringify(canonical(publicView(state))) === JSON.stringify(canonical(state)), false)
 }
@@ -186,7 +194,7 @@ check('the source state still holds every hand after projecting',
   const partial = secretsFromState(state)
   delete (partial as Record<string, unknown>).p2
   let threw = ''
-  try { hydrateState(shared, partial) } catch (e) { threw = String(e) }
+  try { hydrateState(shared, partial, {}) } catch (e) { threw = String(e) }
   check('hydrating without a seat throws rather than emptying its hand',
     /p2/.test(threw), true)
   check('...and says why', /unloaded|refusing/i.test(threw), true)
@@ -197,7 +205,7 @@ check('the source state still holds every hand after projecting',
 // hands inline; they are used as they stand, and the match writes the new shape
 // on its next action.
 {
-  const legacy = hydrateState(state as unknown as SeatState, {})
+  const legacy = hydrateState(state as unknown as SeatState, {}, {})
   check('a pre-split row hydrates from its inline hands',
     legacy.players.map(p => p.cards.length), [2, 4, 0])
 }
@@ -249,25 +257,85 @@ check('the source state still holds every hand after projecting',
     false)
 }
 
-// ── what is STILL public, said out loud ───────────────────────────────────
-// The deck orders sit in the same object as the hands and are not stripped.
-// They are not a per-seat secret — no player may see the order of the draw pile
-// — so they cannot go in match_secrets, which is read-your-own. They belong in
-// match_decks, which nobody may read, and moving them there is step 3.
+// ── the deck orders ───────────────────────────────────────────────────────
+// Nobody's secret, and therefore nobody may read them: there is no player
+// entitled to know the next territory card. So they cannot go in match_secrets,
+// which is read-your-own and would need an owner for each; they go to
+// match_decks, which has no read policy at all.
 //
-// Listed rather than asserted away, because the list IS the finding: when one
-// moves, this fails and reports the shorter list.
+// THE CONTROL COMES FIRST, and it is not a formality. The legacy hands got
+// through because this fixture had no legacySnapshot at all, so every claim
+// that a hand was absent was true of a state that never carried one. An
+// "is it gone" check on a fixture that never had it is not a weak check, it is
+// a check of nothing.
 {
-  const shared = publicView(state) as unknown as
-    { legacySnapshot: { activeGameCards: Record<string, unknown> } }
-  const cards = shared.legacySnapshot.activeGameCards
-  const stillPublic = ['territoryDeck', 'eventDeck', 'missionDeck', 'resourceDeck']
-    .filter(k => Array.isArray(cards[k]) && (cards[k] as unknown[]).length > 0)
-  check('deck orders are still in the shared row — step 3 moves them to match_decks',
-    stillPublic, ['territoryDeck', 'eventDeck', 'missionDeck', 'resourceDeck'])
-  // The discards genuinely are public — face up on the table — so they stay.
-  check('...while the discards are public by rule and stay',
-    Array.isArray(cards.territoryDiscard), true)
+  const cards = (v: unknown) =>
+    (v as { legacySnapshot?: { activeGameCards?: Record<string, unknown> } })
+      .legacySnapshot?.activeGameCards ?? {}
+
+  const seeded = SECRET_DECK_KEYS
+    .filter(k => Array.isArray(cards(state)[k]) && (cards(state)[k] as unknown[]).length > 0)
+  check('THE FIXTURE HOLDS DECKS to begin with',
+    seeded, ['territoryDeck', 'eventDeck', 'missionDeck', 'resourceDeck'])
+
+  const shared = publicView(state)
+  const left = SECRET_DECK_KEYS
+    .filter(k => Array.isArray(cards(shared)[k]) && (cards(shared)[k] as unknown[]).length > 0)
+  check('...and the shared row carries none of them', left, [])
+  // Emptied, not deleted. Removing the keys would make every reader of the
+  // legacy block handle an absence that happens only on the wire.
+  check('...the keys survive, holding nothing',
+    SECRET_DECK_KEYS.filter(k => k in cards(state)).every(k => Array.isArray(cards(shared)[k])), true)
+
+  // The discards are face up on the table. Stripping them would be a bug of the
+  // opposite kind, and one nothing else here would notice.
+  check('the discards stay public, because they are face up',
+    [(cards(shared).territoryDiscard as string[]).length > 0,
+      Array.isArray(cards(shared).sideboard)], [true, true])
+
+  // What goes to the store, and that it is the real order rather than a count.
+  check('every seeded deck is handed to the deck store',
+    Object.keys(decksFromState(state)).sort(),
+    ['eventDeck', 'missionDeck', 'resourceDeck', 'territoryDeck'])
+  check('...with the order intact',
+    decksFromState(state).territoryDeck, ['tc-next-1', 'tc-next-2'])
+  check('a state with no legacy block hands over no decks',
+    decksFromState({ players: [] } as unknown as GameState), {})
+
+  // The runtime assertion for decks is its own function, because it asks a
+  // different question. leaksOtherSeatsSecrets is per seat — "is somebody
+  // ELSE's secret here" — and a deck is nobody's, so its presence is a leak for
+  // every reader at once, including the one holding the state.
+  check('a deck order in the state is caught', leaksDeckOrder(state as unknown as SeatState), true)
+  check('...and the projected row is clean', leaksDeckOrder(shared), false)
+  check('...while the per-seat assertion never noticed it either way',
+    leaksOtherSeatsSecrets(state as unknown as SeatState, 'p1')
+      === leaksOtherSeatsSecrets(shared, 'p1'), false)
+}
+
+// ── the whole round trip, decks included ──────────────────────────────────
+// Strip to the row, hand the pieces to their two stores, put it all back. If
+// this is not exact the split silently rewrites the game, and a reshuffled draw
+// pile is the kind of wrong that looks like luck.
+{
+  const canonical = (v: unknown): unknown =>
+    Array.isArray(v) ? v.map(canonical)
+      : v && typeof v === 'object'
+        ? Object.fromEntries(Object.keys(v as object).sort()
+          .map(k => [k, canonical((v as Record<string, unknown>)[k])]))
+        : v
+
+  const rebuilt = hydrateState(publicView(state), secretsFromState(state), decksFromState(state))
+  check('public row + secrets + decks rebuilds the original exactly',
+    canonical(rebuilt), canonical(state))
+
+  // A match written before the decks moved still has them inline, and no rows
+  // in the store. Hydrating must leave them where they are rather than
+  // overwrite a live draw pile with nothing.
+  const legacyRow = hydrateState(state as unknown as SeatState, {}, {})
+  check('a pre-split row keeps its decks when the store has none',
+    (legacyRow as unknown as { legacySnapshot: { activeGameCards: { territoryDeck: string[] } } })
+      .legacySnapshot.activeGameCards.territoryDeck, ['tc-next-1', 'tc-next-2'])
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

@@ -68,6 +68,18 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
   check('the shared row is written through publicView', /publicView\(/.test(fn), true)
   check('...and the hands go to the secrets store instead',
     /secretsFromState\(/.test(fn), true)
+  check('...and the deck orders to the deck store',
+    /decksFromState\(/.test(fn), true)
+  // The server is the only thing that can read match_decks — it has no policy
+  // at all — so if it does not read them back, nothing can.
+  check('...which the server reads back before reducing',
+    /from\('match_decks'\)/.test(fn), true)
+  // Reading them and not USING them is silent: the decks come back empty and
+  // every other check still passes. hydrateState takes them as a required
+  // argument now, which catches it anywhere tsc looks — and tsc does not look at
+  // supabase/functions, so it is asserted here as well.
+  check('...and hands them to the rehydration rather than dropping them',
+    /hydrateState\([^)]*heldDecks/.test(fn), true)
   check('...in one transaction, not two writes that can half-fail',
     /apply_match_write/.test(fn), true)
   // The regression this forbids: the reducer output going straight into the
@@ -129,6 +141,24 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
       try { execSync('node scripts/build-edge-shared.mjs --check', { stdio: 'pipe' }); return true }
       catch { return false }
     })(), true)
+}
+
+// ── the write covers all three tables at once ──────────────────────────────
+// A state whose draw pile has been dealt from, committed without the pile it
+// dealt from, is a game that deals the same card twice. The hands made this
+// argument first and it does not get weaker for a table nobody can read.
+{
+  const sql = readFileSync('supabase/migrations/20260822010000_apply_match_write_decks.sql', 'utf8')
+  check('apply_match_write writes the decks too', /insert into match_decks/.test(sql), true)
+  check('...in the same function as the state and the secrets',
+    /insert into match_secrets[\s\S]*insert into match_decks/.test(sql), true)
+  // Overloading on arity would leave a four-argument call ambiguous, and the
+  // failure appears at the caller long after this migration reports success.
+  check('...and the old four-argument version is dropped, not left beside it',
+    /drop function if exists apply_match_write\(uuid, int, jsonb, jsonb\)/.test(sql), true)
+  check('...with the overload count asserted', /overloads/.test(sql), true)
+  check('...and no client role able to execute it',
+    /revoke all on function apply_match_write\(uuid, int, jsonb, jsonb, jsonb\) from authenticated/.test(sql), true)
 }
 
 // ── the deck store has to exist before anything can be dealt into it ───────
@@ -217,13 +247,45 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
     return rows
   }
 
+  /**
+   * The property NAMES of one object literal.
+   *
+   * Split on top-level commas and take the leading identifier of each part,
+   * rather than matching `name:`. Shorthand properties have no colon —
+   * `{ match_id: matchId, deck, cards }` supplies all three — and reading only
+   * the colon form reported two of them missing against a seed that was
+   * correct. A privacy suite that cries wolf teaches people to skip it.
+   */
+  const keysOf = (row: string): Set<string> => {
+    // Comments go first. A line comment sitting above a property makes that
+    // property's fragment begin with `//`, so its leading identifier is not the
+    // key and the column reads as missing — a false alarm against a seed that
+    // supplies it, which is how this was found.
+    const body = row
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '')
+      .replace(/^\s*\{/, '').replace(/\}\s*$/, '')
+    const parts: string[] = []
+    let depth = 0, start = 0
+    for (let i = 0; i < body.length; i++) {
+      const c = body[i]
+      if ('{[('.includes(c)) depth++
+      else if ('}])'.includes(c)) depth--
+      else if (c === ',' && depth === 0) { parts.push(body.slice(start, i)); start = i + 1 }
+    }
+    parts.push(body.slice(start))
+    return new Set(parts
+      .map(p => /^\s*(?:\.\.\.)?([A-Za-z_$][\w$]*)/.exec(p)?.[1])
+      .filter((k): k is string => !!k))
+  }
+
   for (const table of ['campaigns', 'matches', 'match_players', 'match_secrets', 'match_decks']) {
     const required = requiredColumns(table)
     const rows = rowsIn(insertBody(table))
     const missing = rows.length === 0
       ? ['<no insert found for this table>']
       : rows.flatMap((row, i) => {
-        const supplied = new Set([...row.matchAll(/(\w+)\s*:/g)].map(m => m[1]))
+        const supplied = keysOf(row)
         return required.filter(c => !supplied.has(c)).map(c => `row ${i}: ${c}`)
       })
     check(`the seed supplies every mandatory column of ${table}, in every row`, missing, [])

@@ -142,6 +142,7 @@ try {
   // distinctive strings so a hit in a payload is unambiguous.
   const SECRET_A = `${TAG}-A-onlyAmaySeeThis`
   const SECRET_B = `${TAG}-B-onlyBmaySeeThis`
+  const DECK_SECRET = `${TAG}-deck-nobodyMaySeeThis`
 
   // matches.campaign_id is NOT NULL and references campaigns(id), so there has
   // to be a campaign before there can be a match. Made fresh rather than
@@ -152,6 +153,14 @@ try {
   // a count, which is exactly what publicView produces. Written by hand here
   // because this script is plain node and cannot import the TypeScript.
   const board = probeState(RUN)
+  // The public half empties the decks as well as the hands, because that is
+  // what publicView now produces. The real order goes to match_decks below.
+  const boardDecks = {
+    territoryDeck: board.legacySnapshot.activeGameCards.territoryDeck,
+    eventDeck: board.legacySnapshot.activeGameCards.eventDeck,
+    missionDeck: board.legacySnapshot.activeGameCards.missionDeck,
+    resourceDeck: board.legacySnapshot.activeGameCards.resourceDeck,
+  }
   const publicHalf = {
     ...board,
     players: board.players.map(p => {
@@ -167,8 +176,21 @@ try {
         gameNumber: 1,
         playerHands: {},
         playerMissions: {},
-        territoryDeck: [], territoryDiscard: [], eventDeck: [], eventDiscard: [],
-        missionDeck: [], resourceDeck: [], sideboard: [],
+        // Emptied here like publicView leaves them; the order is seeded into
+        // match_decks instead.
+        territoryDeck: [], eventDeck: [], missionDeck: [], resourceDeck: [],
+        territoryDiscard: ['tc-face-up'], eventDiscard: [], sideboard: ['tc-sideboard'],
+        _unused: 0,
+        // A REAL order, so the server has something to move out. Empty arrays
+        // would make "no deck in the row" true before the server ran, which is
+        // the mistake the legacy hands made — asserting an absence against a
+        // fixture that never held the thing.
+        territoryDeck: [DECK_SECRET, 'tc-second'],
+        eventDeck: ['ev-' + DECK_SECRET],
+        missionDeck: ['mc-' + DECK_SECRET],
+        resourceDeck: ['res-' + DECK_SECRET],
+        // Face up, and must SURVIVE. Stripping these would be the opposite bug.
+        territoryDiscard: ['tc-face-up'], eventDiscard: [], sideboard: ['tc-sideboard'],
       },
     },
   }
@@ -230,9 +252,8 @@ try {
 
   // The deck store, if it exists yet. Absent before its migration is applied,
   // which is a red DECK-STORE rather than a crash.
-  const DECK_SECRET = `${TAG}-deck-nobodyMaySeeThis`
   const { error: dErr } = await admin.from('match_decks')
-    .insert({ match_id: matchId, deck: 'treachery', cards: [DECK_SECRET] })
+    .insert(Object.entries(boardDecks).map(([deck, cards]) => ({ match_id: matchId, deck, cards })))
   const deckStoreExists = !dErr
   if (dErr) console.log(`        (match_decks not seeded: ${dErr.message})`)
 
@@ -563,6 +584,29 @@ try {
         kept.includes(SECRET_A) && kept.includes(SECRET_B),
         `match_secrets after the write: ${kept.slice(0, 300)}`)
     }
+    // ── the decks ─────────────────────────────────────────────────────────
+    // Same squeeze as the hands. The row is seeded with empty piles and the
+    // real order lives in match_decks, so the server must read it back to run
+    // the reducer — it holds the order at the moment it writes. If it writes
+    // what it holds, the order lands in the row.
+    checkGiven(serverWrote, 'DECK-ORDER  the row the server wrote carries no draw order',
+      !rowJson.includes(DECK_SECRET),
+      () => `a deck order is in the shared row: ${rowJson.slice(0, 200)}`)
+    checkGiven(serverWrote, '...and the discard is still there, because it is face up',
+      rowJson.includes('tc-face-up'),
+      'the discard was stripped — it is public by rule and the board reads it')
+    {
+      const { data: decksAfter } = await admin.from('match_decks')
+        .select('deck, cards').eq('match_id', matchId)
+      const kept = JSON.stringify(decksAfter ?? [])
+      checkGiven(serverWrote, '...and the order is still in the deck store',
+        kept.includes(DECK_SECRET), `match_decks after the write: ${kept.slice(0, 300)}`)
+      // Stripped, not lost. A server that dropped the pile would also satisfy
+      // the first claim, and the game would deal from nothing.
+      checkGiven(serverWrote, '...with every pile still present',
+        (decksAfter ?? []).length >= 4, `only ${(decksAfter ?? []).length} deck row(s)`)
+    }
+
     // The response is the other copy, and it goes to a known seat, so it may
     // carry that seat's own hand and nobody else's.
     const replyJson = JSON.stringify(body?.state ?? null)
@@ -571,6 +615,11 @@ try {
     checkGiven(serverWrote, "SERVER-REPLY  ...and not B's",
       !replyJson.includes(SECRET_B),
       "B's hand came back in A's action response — a private channel is still a channel")
+    // Nobody may see a deck, including the seat that just acted. There is no
+    // half of a draw pile a player is entitled to.
+    checkGiven(serverWrote, 'SERVER-REPLY  ...and no deck order at all',
+      !replyJson.includes(DECK_SECRET),
+      'the draw order came back in the action response')
   }
 
 } catch (e) {
