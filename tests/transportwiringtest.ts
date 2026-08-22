@@ -534,6 +534,113 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
       toSecrets.filter(p => /SECRET_A/.test(p) && !/SPICE_A/.test(p))
         .map(p => p.slice(0, 60).replace(/\s+/g, ' ')), [])
 
+    // ── the calls are written in the shape the checker takes ──────────────
+    // controlledCheck is check(label, ok, detail) and checkGiven(control,
+    // label, ok, detail). The test suites are check(label, actual, expected).
+    // Writing the second shape here judges the ACTUAL for truthiness and puts
+    // the expected value where the detail goes — so the check passes for
+    // anything non-empty and fails for 0 and null.
+    //
+    // Six were written that way. Four passed whatever the server returned, and
+    // two FAILED against a server doing exactly the right thing: an emptied lot
+    // has length 0 and a cleared auction is null, both falsy. That cost a
+    // redeploy and two rounds of hunting a bug that was in the check.
+    //
+    // The rule is on `ok`: it must be an expression that produces a boolean.
+    // Checking `detail` instead cannot work — an expected value of 'atreides'
+    // is indistinguishable from a perfectly good detail string.
+    {
+      /** Split on top-level commas, skipping strings — labels contain commas,
+       *  and a splitter that only counts brackets tore them in half. */
+      const argsOf = (body: string): string[] => {
+        const out: string[] = []
+        let depth = 0, start = 0, quote = ''
+        for (let i = 0; i < body.length; i++) {
+          const c = body[i]
+          if (quote) {
+            if (c === '\\') i++
+            else if (c === quote) quote = ''
+            continue
+          }
+          if (c === "'" || c === '"' || c === '`') { quote = c; continue }
+          if ('([{'.includes(c)) depth++
+          else if (')]}'.includes(c)) depth--
+          else if (c === ',' && depth === 0) { out.push(body.slice(start, i)); start = i + 1 }
+        }
+        out.push(body.slice(start))
+        return out.map(a => a.trim())
+      }
+
+      // Comments quote the signature — "check(label, ok, detail)" — and a scan
+      // that reads them finds a call whose ok is the word "ok". Prose is not
+      // code, and two other guards in this file already learned that.
+      const code = stripComments(script)
+
+      const callsIn = (name: string): { args: string[] }[] => {
+        const out: { args: string[] }[] = []
+        const re = new RegExp('(?<![A-Za-z])' + name + '\\(', 'g')
+        let m: RegExpExecArray | null
+        while ((m = re.exec(code))) {
+          const open = m.index + m[0].length - 1
+          let depth = 0
+          for (let i = open; i < code.length; i++) {
+            if (code[i] === '(') depth++
+            else if (code[i] === ')' && --depth === 0) {
+              out.push({ args: argsOf(code.slice(open + 1, i)) })
+              break
+            }
+          }
+        }
+        return out
+      }
+
+      const BOOLEANISH = /===|!==|!=|==|>=|<=|>|<|!|&&|\|\||\.includes\(|\.some\(|\.every\(|Array\.isArray|\btrue\b|\bfalse\b|\.test\(|same\(/
+
+      /**
+       * The expression with everything inside brackets removed.
+       *
+       * What matters is the shape at the TOP level. `(...).find(d => d.deck ===
+       * 'x')?.cards.length` contains `===` deep inside an arrow and produces a
+       * number, and testing the raw text called it boolean — the one sabotage
+       * that walked past this guard.
+       */
+      const topLevel = (a: string): string => {
+        let out = '', depth = 0
+        for (const c of a) {
+          if ('([{'.includes(c)) { depth++; continue }
+          if (')]}'.includes(c)) { depth--; out += c === ')' ? '()' : ''; continue }
+          if (depth === 0) out += c
+        }
+        return out
+      }
+
+      /** Boolean if it says so, or if it names a binding whose value says so. */
+      const producesBoolean = (a: string): boolean => {
+        if (BOOLEANISH.test(topLevel(a))) return true
+        if (!/^[A-Za-z_$][\w$]*$/.test(a)) return false
+        // `let` too: realtimeWorks is one, and is perfectly boolean.
+        for (const kw of ['const ', 'let ']) {
+          const at = code.indexOf(kw + a + ' = ')
+          if (at >= 0 && BOOLEANISH.test(code.slice(at, code.indexOf('\n', at)))) return true
+        }
+        return false
+      }
+
+      const wrong: string[] = []
+      for (const [name, okAt] of [['check', 1], ['checkGiven', 2]] as const) {
+        for (const c of callsIn(name)) {
+          if (c.args.length <= okAt) continue
+          if (producesBoolean(c.args[okAt])) continue
+          wrong.push(`${name}: ok = ${c.args[okAt].replace(/\s+/g, ' ').slice(0, 44)}`)
+        }
+      }
+      // The guard has to be finding calls at all, or it passes on an empty set —
+      // which is this very bug, in the check written to prevent it.
+      check('the shape guard can see the script\'s checks',
+        callsIn('check').length + callsIn('checkGiven').length > 20, true)
+      check('every check asserts a boolean rather than a value', wrong, [])
+    }
+
     // The purses themselves have to be usable as evidence. Spice is a NUMBER,
     // so it cannot carry a tag the way a hand can — which makes two properties
     // load-bearing that would be obvious for a string.

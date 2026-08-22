@@ -105,6 +105,20 @@ if (!ANON) { console.error('missing SUPABASE_ANON_KEY'); process.exit(2) }
 // seconds later leaves nothing to look at.
 const KEEP = process.argv.includes('--keep')
 
+/**
+ * Deep equality, for the checks that compare a structure.
+ *
+ * controlledCheck takes a BOOLEAN — check(label, ok, detail) — where the test
+ * suites take check(label, actual, expected). Writing the second shape here
+ * puts the expected value in `detail` and judges the ACTUAL for truthiness,
+ * which passes for anything non-empty and fails for 0 and null. Six calls were
+ * written that way; two of them reported real failures against a server that
+ * was doing exactly the right thing, and four passed no matter what came back.
+ *
+ * So the comparison is explicit now, and this exists so it can be.
+ */
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+
 const TAG = 'privacy-check'
 // Per-run, because campaigns.id is a TEXT primary key: two runs sharing one id
 // would collide, and a crashed run leaves a row somebody has to find by hand.
@@ -777,7 +791,8 @@ try {
       opened.body?.auction?.carry?.cardCount === 1,
       () => `cardCount was ${JSON.stringify(opened.body?.auction?.carry?.cardCount)}`)
     checkGiven(auctionOpened, '...and the eligible seat opens it',
-      opened.body?.auction?.carry?.toAct, 'atreides')
+      opened.body?.auction?.carry?.toAct === 'atreides',
+      () => `the opener is ${JSON.stringify(opened.body?.auction?.carry?.toAct)}`)
     // THE CARD IS NOT IN THE PUBLIC STEP. The auction is card-blind, and this is
     // where that stops being a claim about a module and becomes one about the
     // bytes a client receives.
@@ -791,7 +806,8 @@ try {
       () => `${bid.status}: ${JSON.stringify(bid.body).slice(0, 300)}`
         + ' — not-your-turn here means the seat/faction mapping is wrong again')
     checkGiven(bidTaken, 'BIDDING  the bidder won at their own price',
-      bid.body?.awards, [{ index: 0, winner: 'atreides', price: 3 }])
+      same(bid.body?.awards, [{ index: 0, winner: 'atreides', price: 3 }]),
+      () => `the awards were ${JSON.stringify(bid.body?.awards)}`)
     checkGiven(bidTaken, '...and the response names no card either',
       !JSON.stringify(bid.body).includes(CARD_ON_OFFER),
       'the won card came back in the response')
@@ -808,13 +824,15 @@ try {
     checkGiven(dealt, 'AUCTION-LIVE  the card is in no other seat\'s row',
       !JSON.stringify(p2).includes(CARD_ON_OFFER))
     checkGiven(dealt, 'AUCTION-LIVE  ...and the winner paid for it',
-      p1.spice, 17)
+      p1.spice === 17,
+      () => `the winner holds ${JSON.stringify(p1.spice)}, expected 20 less the bid of 3`)
     // The card and the payment landed in the same write, which is the invariant
     // the whole settlement exists for. Both being right is the evidence.
     checkGiven(dealt, 'AUCTION-LIVE  ...so no card arrived without its payment',
       dealt && p1.spice === 17, true)
     checkGiven(dealt, 'AUCTION-LIVE  the seat that did not bid is untouched',
-      p2.spice, B_SPICE)
+      p2.spice === B_SPICE,
+      () => `the non-bidder holds ${JSON.stringify(p2.spice)}, expected ${B_SPICE}`)
 
     // The rest of the deck stays where nobody can read it, and A cannot.
     const { data: asAdminDecks } = await admin.from('match_decks')
@@ -830,7 +848,8 @@ try {
     // The lot is emptied by the same write that dealt it, so a retry cannot
     // deal the same card twice.
     checkGiven(dealt, 'AUCTION-LIVE  the lot is emptied once dealt',
-      ((asAdminDecks ?? []).find(d => d.deck === 'auction-lot')?.cards ?? []).length, 0)
+      ((asAdminDecks ?? []).find(d => d.deck === 'auction-lot')?.cards ?? []).length === 0,
+      () => `the lot still holds ${JSON.stringify((asAdminDecks ?? []).find(d => d.deck === 'auction-lot')?.cards)}`)
 
     const { data: after } = await asA.from('matches')
       .select('state').eq('id', duneMatchId).maybeSingle()
@@ -838,7 +857,8 @@ try {
       !JSON.stringify(after?.state ?? null).includes(CARD_ON_OFFER),
       'the won card is in matches.state, which every client receives')
     checkGiven(dealt, '...and the auction is closed out of it',
-      after?.state?.auction ?? null, null)
+      (after?.state?.auction ?? null) === null,
+      () => `state.auction is ${JSON.stringify(after?.state?.auction)}`)
   }
 
 } catch (e) {
