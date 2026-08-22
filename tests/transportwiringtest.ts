@@ -212,6 +212,18 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
       .map(l => l.split(/\s+/)[0])
   }
 
+  /**
+   * Source with its comments removed.
+   *
+   * BOTH helpers below read structure out of source text, and both were wrong
+   * about comments in the same way — one took a line comment's `//` for a
+   * property name, the other took the word "board" out of a sentence and
+   * resolved it as a variable. Prose is not code, and it is stripped once here
+   * rather than remembered twice.
+   */
+  const stripComments = (text: string) =>
+    text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+
   /** The object literal passed to the FIRST .insert() after .from(table). */
   const insertBody = (table: string): string => {
     const from = script.indexOf(`.from('${table}')`)
@@ -261,10 +273,7 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
     // property's fragment begin with `//`, so its leading identifier is not the
     // key and the column reads as missing — a false alarm against a seed that
     // supplies it, which is how this was found.
-    const body = row
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/\/\/[^\n]*/g, '')
-      .replace(/^\s*\{/, '').replace(/\}\s*$/, '')
+    const body = stripComments(row).replace(/^\s*\{/, '').replace(/\}\s*$/, '')
     const parts: string[] = []
     let depth = 0, start = 0
     for (let i = 0; i < body.length; i++) {
@@ -344,17 +353,20 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
   // ── the seed must write the shape the server writes ──────────────────────
   // The check seeds matches.state directly with the service role, which never
   // goes near publicView. So whatever shape the seed writes is the shape the
-  // check reads back, and if the seed puts hands in the row then PRIVATE-STATE
-  // fails against its own fixture — a hand-written legacy row the server would
-  // never produce.
+  // check reads back, and a seed that puts a secret in the row fails against its
+  // own fixture — a failure that looks exactly like the wiring being broken.
+  // That happened, twice: once with the hands and once with the deck orders.
   //
-  // That happened, and it was convincing: identical failure, identical message,
-  // before and after the wiring landed. A false negative that looks like a true
-  // one is worse than a false positive, because it sends somebody to debug
-  // working code.
+  // WHAT THIS RULE COVERS, AND WHAT IT CANNOT. It catches a secret written
+  // LITERALLY into a payload. It cannot see through a derivation — the seed
+  // passes `state: publicHalf`, and publicHalf now comes out of probeSeed, so
+  // there is no text here to search. Three sabotages walked past this guard for
+  // exactly that reason.
   //
-  // The rule is that no payload written to `matches` may contain either seat's
-  // secret. The hands belong in match_secrets and nowhere else.
+  // The derivation is covered instead by RUNNING it: probewritepathtest calls
+  // probeSeed and asserts that every pile handed to the deck store is empty in
+  // the row, which is the invariant a duplicated key breaks. A source guard and
+  // a behavioural one, each doing the half the other cannot.
   {
     /** Every object literal written to `table` by insert or update. */
     const payloadsTo = (table: string): string[] => {
@@ -372,55 +384,23 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
       return out
     }
 
-    /**
-     * A payload, plus the source of any `const` it names.
-     *
-     * The payload used to be a literal, so searching its text was enough. Then
-     * the seed grew a `state: publicHalf` variable and this guard went blind:
-     * the literal it was reading no longer contained anything, and the sabotage
-     * that puts hands back into the row walked straight past it.
-     *
-     * One level of indirection, which is all the seed uses. Deeper than that and
-     * this would want a parser rather than a regex — but a guard that silently
-     * stops looking is worse than one that admits a depth limit, so the limit is
-     * asserted below rather than assumed.
-     */
-    const withReferents = (payload: string): string => {
-      const names = new Set([...payload.matchAll(/\b([A-Za-z_$][\w$]*)\b/g)].map(m => m[1]))
-      let text = payload
-      for (const name of names) {
-        const at = script.indexOf(`const ${name} = `)
-        if (at < 0) continue
-        // To the end of the statement's outermost braces, or the line if it has
-        // none — enough to catch a mapped object literal.
-        const open = script.indexOf('{', at)
-        if (open < 0 || open > script.indexOf('\n', at)) { text += script.slice(at, script.indexOf('\n', at)); continue }
-        let depth = 0
-        for (let i = open; i < script.length; i++) {
-          if (script[i] === '{') depth++
-          else if (script[i] === '}' && --depth === 0) { text += script.slice(at, i + 1); break }
-        }
-      }
-      return text
-    }
-
-    const toMatches = payloadsTo('matches').map(withReferents)
+    const toMatches = payloadsTo('matches')
     // Without this the rule below is vacuous: no payloads found, nothing to
     // contain a secret, green forever. The script writes the row twice — once
     // seeding and once to provoke a frame.
     check('the guard can see what the seed writes to matches', toMatches.length >= 2, true)
-    // ...and can see THROUGH a variable, which is how it is written now. Without
-    // this the rule below reads an identifier and finds nothing in it.
-    check('...including the contents of a state it passes by name',
-      toMatches.some(p => p.includes('cardCount')), true)
-    check('no payload written to matches carries a seat secret',
-      toMatches.filter(p => /SECRET_A|SECRET_B/.test(p)).map(p => p.slice(0, 70).replace(/\s+/g, ' ')),
+    check('no payload written to matches carries a seat secret or a deck order',
+      toMatches.filter(p => /SECRET_A|SECRET_B|DECK_SECRET/.test(p))
+        .map(p => p.slice(0, 70).replace(/\s+/g, ' ')),
       [])
     // And the counterpart: the hands DO have to be written somewhere, or the
     // check is asserting the absence of something that was never seeded.
     const toSecrets = payloadsTo('match_secrets')
     check('the hands are written to match_secrets instead',
       toSecrets.some(p => /SECRET_A/.test(p)) && toSecrets.some(p => /SECRET_B/.test(p)), true)
+    // ...and the decks likewise, through the store's own insert.
+    check('the decks are written to match_decks',
+      payloadsTo('match_decks').length > 0, true)
   }
 
   // The seed is only half of it. Everything it creates hangs off the campaign,

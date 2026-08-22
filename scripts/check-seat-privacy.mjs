@@ -69,7 +69,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { createChecker } from './lib/controlledCheck.js'
 import { diagnoseRealtime } from './lib/diagnoseRealtime.js'
-import { probeState, PROBE_ACTION } from './lib/probeFixture.js'
+import { probeSeed, PROBE_ACTION } from './lib/probeFixture.js'
 
 const checker = createChecker()
 
@@ -152,48 +152,11 @@ try {
   // The public half of the probe board: the fixture with every hand replaced by
   // a count, which is exactly what publicView produces. Written by hand here
   // because this script is plain node and cannot import the TypeScript.
-  const board = probeState(RUN)
-  // The public half empties the decks as well as the hands, because that is
-  // what publicView now produces. The real order goes to match_decks below.
-  const boardDecks = {
-    territoryDeck: board.legacySnapshot.activeGameCards.territoryDeck,
-    eventDeck: board.legacySnapshot.activeGameCards.eventDeck,
-    missionDeck: board.legacySnapshot.activeGameCards.missionDeck,
-    resourceDeck: board.legacySnapshot.activeGameCards.resourceDeck,
-  }
-  const publicHalf = {
-    ...board,
-    players: board.players.map(p => {
-      const { cards: _c, missionCardId: _m, ...rest } = p
-      return { ...rest, cardCount: 1 }
-    }),
-    // Emptied here, like publicView leaves it. The HANDS go in match_secrets and
-    // the server merges them back — so if it writes what it merged rather than a
-    // projection of it, they reappear here and the check above catches it.
-    legacySnapshot: {
-      ...board.legacySnapshot,
-      activeGameCards: {
-        gameNumber: 1,
-        playerHands: {},
-        playerMissions: {},
-        // Emptied here like publicView leaves them; the order is seeded into
-        // match_decks instead.
-        territoryDeck: [], eventDeck: [], missionDeck: [], resourceDeck: [],
-        territoryDiscard: ['tc-face-up'], eventDiscard: [], sideboard: ['tc-sideboard'],
-        _unused: 0,
-        // A REAL order, so the server has something to move out. Empty arrays
-        // would make "no deck in the row" true before the server ran, which is
-        // the mistake the legacy hands made — asserting an absence against a
-        // fixture that never held the thing.
-        territoryDeck: [DECK_SECRET, 'tc-second'],
-        eventDeck: ['ev-' + DECK_SECRET],
-        missionDeck: ['mc-' + DECK_SECRET],
-        resourceDeck: ['res-' + DECK_SECRET],
-        // Face up, and must SURVIVE. Stripping these would be the opposite bug.
-        territoryDiscard: ['tc-face-up'], eventDiscard: [], sideboard: ['tc-sideboard'],
-      },
-    },
-  }
+  // Both halves come from probeSeed, which is tested by running it — see
+  // probewritepathtest. Built inline, this went wrong twice in one edit, and
+  // neither mistake was visible to a guard reading the source: both halves are
+  // derived, so the text says `boardCards.territoryDeck` and not a secret.
+  const { publicHalf, decks: boardDecks } = probeSeed(RUN, DECK_SECRET)
 
   campaignId = RUN
   const { error: cErr } = await admin.from('campaigns').insert({
