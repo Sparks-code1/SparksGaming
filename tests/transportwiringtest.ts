@@ -169,6 +169,56 @@ const callersOf = (name: string, definedIn: string) =>
     check(`the seed supplies every mandatory column of ${table}, in every row`, missing, [])
   }
 
+  // ── no absence is asserted without a control ─────────────────────────────
+  // The bug this exists to prevent, stated exactly: the script looked for B's
+  // secret in a set of realtime frames, received no frames at all, found
+  // nothing, and reported that as the secret being kept. Three checks passed by
+  // searching an empty array — including the one the whole script is for.
+  //
+  // The rule that fixes it is mechanical, so it is enforced mechanically.
+  // SECRET_B and DECK_SECRET are the values that must never be visible, and any
+  // claim about them is a claim about an ABSENCE. An absence found by a broken
+  // mechanism is indistinguishable from one found by a working one, so those
+  // two values may only be asserted through checkGiven, which takes a control
+  // and reports INCONCLUSIVE when the control fails.
+  //
+  // A's own values are the opposite case: asserting A CAN see them is what
+  // proves the mechanism works, so a bare check on SECRET_A is correct.
+  {
+    /** Every argument list of a `check(` that is not a `checkGiven(`. */
+    const bareChecks = (): string[] => {
+      const out: string[] = []
+      const re = /(?<!Given)\bcheck\(/g
+      let m: RegExpExecArray | null
+      while ((m = re.exec(script))) {
+        let depth = 0
+        for (let i = m.index + m[0].length - 1; i < script.length; i++) {
+          if (script[i] === '(') depth++
+          else if (script[i] === ')' && --depth === 0) { out.push(script.slice(m.index, i + 1)); break }
+        }
+      }
+      return out
+    }
+
+    const calls = bareChecks()
+    // The parser has to be finding calls at all, or the rule below is vacuous —
+    // which would be this very bug, in the check written to prevent it.
+    check('the guard can see the script\'s checks', calls.length > 5, true)
+    check('no uncontrolled check asserts that a foreign secret is absent',
+      calls.filter(c => /SECRET_B|DECK_SECRET/.test(c))
+        .map(c => c.slice(0, 60).replace(/\s+/g, ' ')), [])
+    // The control machinery itself lives in scripts/lib/controlledCheck.js and
+    // its BEHAVIOUR is tested in controlledchecktest — a source guard can see
+    // that a control is passed in, but not whether anything looks at it, which
+    // a sabotage proved by changing the branch to if(false) and staying green.
+    // What matters here is only that the script uses the shared checker instead
+    // of defining a weaker one of its own.
+    check('the script uses the shared, tested checker',
+      script.includes("from './lib/controlledCheck.js'"), true)
+    check('...and does not define a checker of its own beside it',
+      /const checkGiven\s*=/.test(script), false)
+  }
+
   // The seed is only half of it. Everything it creates hangs off the campaign,
   // so teardown deleting that is what makes the script safe to run twice.
   check('teardown deletes the campaign, which everything else cascades from',

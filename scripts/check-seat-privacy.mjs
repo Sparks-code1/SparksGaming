@@ -6,9 +6,17 @@
  * reads the wire rather than the app: what a client renders says only what it
  * chose to show, and the question is what crossed the network.
  *
- * WRITTEN TO FAIL FIRST. Run it before the wiring exists and PRIVATE-STATE and
- * DECK-STORE should both go red — that is the leak, reproduced on demand. A
- * check that has never failed has not been shown to catch anything.
+ * WRITTEN TO FAIL FIRST. Run it before the wiring exists and PRIVATE-STATE
+ * should be red — that is the leak, reproduced on demand. A check that has never
+ * failed has not been shown to catch anything.
+ *
+ * EVERY ABSENCE CHECK IS PAIRED WITH A CONTROL, and the controls are the reason
+ * this script is trustworthy. Looking for a secret in an empty result finds
+ * nothing and reports it as though the secret were being kept. The first version
+ * of this script did exactly that: it asserted over realtime frames, received
+ * none, and passed its three most important checks by searching `[]`. A control
+ * that fails makes its dependent check INCONCLUSIVE, which counts as a failure —
+ * the one outcome it must never produce is a pass.
  *
  * It needs credentials, and takes them only from the environment so they are
  * never written down here:
@@ -39,6 +47,9 @@
  *   node scripts/check-seat-privacy.mjs
  */
 import { createClient } from '@supabase/supabase-js'
+import { createChecker } from './lib/controlledCheck.js'
+
+const checker = createChecker()
 
 const need = name => {
   const v = process.env[name]
@@ -61,11 +72,10 @@ const TAG = 'privacy-check'
 const RUN = `${TAG}-${Date.now().toString(36)}`
 const admin = createClient(URL, SERVICE, { auth: { persistSession: false } })
 
-let failures = 0
-const check = (label, ok, detail = '') => {
-  if (!ok) failures++
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? `\n        ${detail}` : ''}`)
-}
+// The checker lives in its own module so its BEHAVIOUR can be tested — see
+// tests/controlledchecktest.ts. A guard that only reads this file can see that
+// a control is passed to checkGiven; it cannot see whether anything looks at it.
+const { check, checkGiven } = checker
 
 /** Wait for a condition, or give up. Realtime is asynchronous and a check that
  *  reads too early passes for the wrong reason. */
@@ -173,16 +183,41 @@ try {
   {
     const { data, error } = await asA.from('match_secrets').select('player_id, data').eq('match_id', matchId)
     const rows = data ?? []
-    check('SECRETS-RLS  A can read its own secrets row',
-      !error && rows.some(r => r.player_id === 'p1'), error?.message ?? `rows=${JSON.stringify(rows)}`)
-    check("SECRETS-RLS  A cannot read B's secrets row",
+    // The control: A's own row must come back. If it does not, A is simply
+    // seeing nothing at all and the two checks below would pass for that reason.
+    const canReadOwn = !error && rows.some(r => r.player_id === 'p1')
+    check('CONTROL  A can read its own secrets row',
+      canReadOwn, error?.message ?? `rows=${JSON.stringify(rows)}`)
+    checkGiven(canReadOwn, "SECRETS-RLS  A cannot read B's secrets row",
       !rows.some(r => r.player_id === 'p2'),
       `read ${rows.length} row(s): ${JSON.stringify(rows.map(r => r.player_id))}`)
-    check("SECRETS-RLS  B's value appears nowhere in what A can read",
+    checkGiven(canReadOwn, "SECRETS-RLS  B's value appears nowhere in what A can read",
       !JSON.stringify(rows).includes(SECRET_B))
   }
 
-  // ── 2. the realtime frame A receives ──────────────────────────────────────
+  // ── 2. the match row A can simply READ ────────────────────────────────────
+  // The most direct form of the question, and the one that depends on nothing
+  // but RLS. matches.state is one row shared by every seat, so whatever is in
+  // it is readable by all of them — no realtime, no timing, no subscription.
+  //
+  // This is where PRIVATE-STATE belongs. It was originally asserted only over
+  // the socket, which made the most important check in the script the one most
+  // easily rendered meaningless.
+  {
+    const { data, error } = await asA.from('matches').select('state').eq('id', matchId).maybeSingle()
+    const stateJson = JSON.stringify(data?.state ?? null)
+    const canReadMatch = !error && stateJson.includes(SECRET_A)
+    check('CONTROL  A can read the match row, and its own hand is in it',
+      canReadMatch,
+      error?.message ?? (data ? "read the row but A's own hand was not in it — the seed shape has drifted" : 'no row returned'))
+    checkGiven(canReadMatch, "PRIVATE-STATE  B's hand is absent from the match state A can read",
+      !stateJson.includes(SECRET_B),
+      stateJson.includes(SECRET_B)
+        ? "B's hand is in the row A reads — this is the leak, and it is what the wiring has to remove"
+        : '')
+  }
+
+  // ── 3. the realtime frame A receives ──────────────────────────────────────
   // The actual devtools question: what came down the socket. Anything reachable
   // here is reachable from the Network tab.
   {
@@ -195,9 +230,22 @@ try {
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'match_secrets', filter: `match_id=eq.${matchId}` },
         p => frames.push(p))
-    await new Promise(resolve => channel.subscribe(s => { if (s === 'SUBSCRIBED') resolve() }))
+    // Resolve on failure too. Waiting only for SUBSCRIBED means a channel error
+    // hangs the script instead of reporting itself.
+    const status = await new Promise(resolve =>
+      channel.subscribe((st, err) => {
+        if (st === 'SUBSCRIBED' || st === 'CHANNEL_ERROR' || st === 'TIMED_OUT' || st === 'CLOSED') {
+          resolve(err ? `${st}: ${err.message}` : st)
+        }
+      }))
+    check('CONTROL  A subscribed to the match channel', status === 'SUBSCRIBED', `status=${status}`)
 
-    // Touch both seats so a frame for each is produced.
+    // Touch BOTH seats. A's own row is touched so there is a frame that SHOULD
+    // reach A — without it there is no control for the secrets channel, only an
+    // absence that could mean anything.
+    await admin.from('match_secrets')
+      .update({ data: { hand: [SECRET_A], touched: 1 } })
+      .eq('match_id', matchId).eq('player_id', 'p1')
     await admin.from('match_secrets')
       .update({ data: { hand: [SECRET_B], touched: 1 } })
       .eq('match_id', matchId).eq('player_id', 'p2')
@@ -210,20 +258,31 @@ try {
       } })
       .eq('id', matchId)
 
-    await until(() => frames.length >= 1)
-    const wire = JSON.stringify(frames)
+    // Wait for the MATCH frame specifically. "At least one frame" was satisfied
+    // by whichever arrived first, and its result was discarded anyway.
+    const matchFrames = () => frames.filter(f => f.table === 'matches')
+    const arrived = await until(() => matchFrames().length > 0, 10000)
 
-    check("SECRETS-WIRE  no frame carries B's secrets row",
+    // The control. Realtime over a websocket in Node is the most fragile part
+    // of this script — it can fail on the socket, on the publication, or on RLS
+    // for subscribers — and every one of those failures looks like silence.
+    // Silence is not evidence that nothing leaked.
+    check('CONTROL  a frame for the match reached A',
+      arrived,
+      arrived ? '' : `no matches frame in 10s (${frames.length} frame(s) total: ${JSON.stringify(frames.map(f => f.table))}) — the socket, the publication or RLS-for-subscribers, not the app`)
+
+    const wire = JSON.stringify(frames)
+    checkGiven(arrived, "WIRE-STATE  B's hand is absent from the match frames A receives",
+      !wire.includes(SECRET_B),
+      wire.includes(SECRET_B) ? "B's hand crossed the wire to A" : '')
+    // Deliberately NOT gated on `arrived`: this one is about match_secrets, and
+    // its own control is that A received its own secrets frame. If neither
+    // arrived, say so rather than claim B's was kept away.
+    const ownSecretFrame = frames.some(f =>
+      f.table === 'match_secrets' && JSON.stringify(f.new ?? {}).includes(SECRET_A))
+    checkGiven(ownSecretFrame, "SECRETS-WIRE  no frame carries B's secrets row",
       !frames.some(f => f.table === 'match_secrets' && JSON.stringify(f.new ?? {}).includes(SECRET_B)),
       `${frames.length} frame(s) seen`)
-
-    // THE ONE THAT IS RED TODAY. Hands live in matches.state, and that row is
-    // delivered whole to every subscriber, so B's hand is on A's socket.
-    check("PRIVATE-STATE  B's hand is absent from the match state A receives",
-      !wire.includes(SECRET_B),
-      wire.includes(SECRET_B)
-        ? "B's hand crossed the wire to A — this is the leak, and it is what the wiring has to remove"
-        : '')
 
     await asA.removeChannel(channel)
   }
@@ -236,16 +295,26 @@ try {
     } else {
       // An error here is a PASS: with RLS on and no policy the table is not
       // reachable at all. Zero rows is equally good. Either way A learns nothing.
+      // The control, on the service role rather than on A: the row has to be
+      // THERE for A's inability to see it to mean anything. A missing row reads
+      // identical to a well-guarded one.
+      const { data: seeded } = await admin.from('match_decks')
+        .select('cards').eq('match_id', matchId)
+      const rowIsThere = JSON.stringify(seeded ?? []).includes(DECK_SECRET)
+      check('CONTROL  the deck row exists and the service role can read it',
+        rowIsThere, rowIsThere ? '' : 'nothing was seeded, so nothing being visible proves nothing')
+
       const rows = data ?? []
-      check('DECK-STORE  an authenticated client reads no deck rows',
+      checkGiven(rowIsThere, 'DECK-STORE  an authenticated client reads no deck rows',
         rows.length === 0, error ? `(refused: ${error.message})` : `read ${rows.length} row(s)`)
-      check('DECK-STORE  the deck order appears nowhere in what A can read',
+      checkGiven(rowIsThere, 'DECK-STORE  the deck order appears nowhere in what A can read',
         !JSON.stringify(rows).includes(DECK_SECRET))
     }
   }
 } catch (e) {
-  failures++
-  console.log(`FAIL  the check could not run\n        ${e.message}`)
+  // Through the checker, so a crash counts as a failure the same way a leak
+  // does. A script that dies mid-way must never exit 0.
+  check('the check could not run', false, e.message)
 } finally {
   // matches cascade from campaigns, and match_players, match_secrets and
   // match_decks all cascade from matches — so deleting the campaign removes
@@ -268,5 +337,6 @@ try {
   if (matchId || campaignId) console.log(`\n(torn down ${RUN})`)
 }
 
+const failures = checker.failures
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURE(S)`)
 process.exit(failures === 0 ? 0 : 1)
