@@ -94,6 +94,46 @@ export const PHASES: readonly GamePhase[] = [
  */
 export type ShieldWall = 'intact' | 'destroyed'
 
+/**
+ * A card in the spice deck.
+ *
+ * HERE rather than in lib/dune/spiceBlow, which is where it was and where it is
+ * still imported from. The public game state has to name it — a discard pile is
+ * face up, so it is state everyone can see — and a types module reaching into a
+ * lib module for the shape of its own field is backwards. spiceBlow re-exports
+ * it, so every existing import still reads the same.
+ */
+export type SpiceCard =
+  | { kind: 'territory'; territoryId: TerritoryId; name: string; spice: number; sector: SectorId }
+  | { kind: 'shai-hulud' }
+
+/**
+ * The spice deck as everyone may see it.
+ *
+ * THE COUNT IS PUBLISHED, NOT DERIVED. The deck's ORDER is a secret — it lives
+ * in match_decks, which has RLS on and no policy at all, so no client can read
+ * it — and `remaining` is the one fact about it that is safe to share. It is
+ * written into the shared row by whoever last touched the deck.
+ *
+ * It must not be reconstructed from the piles either. Cards leave the deck
+ * without landing on a discard: worms drawn on turn one are set aside, and an
+ * exhausted deck is rebuilt from the discard, which resets both numbers at once.
+ * `deckSize - discarded` is wrong on the first turn of the game and wrong again
+ * after every reshuffle.
+ *
+ * The piles themselves are carried whole because they are face up, and because
+ * the TOP CARD of each is load-bearing: Shai-Hulud devours the territory showing
+ * on the pile it was drawn into. See `showing` in lib/dune/spiceBlow.
+ */
+export interface SpiceDeckPublic {
+  /** Cards still face down. Published by the server; never derived by a client. */
+  remaining: number
+  /** The discard pile. The only one there is in the basic game. */
+  discardA: SpiceCard[]
+  /** The second pile. Advanced only — empty, and not drawn, in the basic game. */
+  discardB: SpiceCard[]
+}
+
 export interface DuneGameState {
   /**
    * Where the storm sits now. `number`, not `18` — a bare literal in a type
@@ -113,6 +153,13 @@ export interface DuneGameState {
    * SHIELD_WALL_PROTECTS in lib/dune/storm.ts.
    */
   shieldWall: ShieldWall
+  /**
+   * The spice deck: how much is left, and what is showing on the pile(s).
+   *
+   * Public on purpose, and safe: no card order, only a count and the face-up
+   * discards. See SpiceDeckPublic.
+   */
+  spiceDeck: SpiceDeckPublic
 }
 
 // ── Not here yet, and the reason ─────────────────────────────────────────────

@@ -46,6 +46,7 @@ export interface DuneMarker { id: string; x: number; y: number }
 export interface DuneSpiceMarker extends DuneMarker { territoryId: string | null; sectorId: string | null }
 /** A seat. Its sectorId is never null — the generator refuses a board whose
  *  seats do not each land in their own sector. */
+export interface DuneArea { x: number; y: number; width: number; height: number }
 export interface DunePlayerPosition extends DuneMarker { sectorId: string }
 
 /** The board circle, from the export's own rim circle. */
@@ -850,6 +851,22 @@ export const DUNE_SPICE_MARKERS: DuneSpiceMarker[] = [
   { id: 'spice-14', x: 363.6, y: 414.96, territoryId: 'territory-11', sectorId: 'sector-13' },
   { id: 'spice-15', x: 325.6, y: 171.96, territoryId: 'territory-42', sectorId: 'sector-12' },
 ]
+
+/**
+ * Where the spice deck and its discard pile(s) may be drawn.
+ *
+ * The printed board gives that box a fill and a label and nothing else. What
+ * goes inside changes every turn — the deck shrinks, the piles grow, and the
+ * advanced game has a second pile the basic game does not — so the cards are
+ * drawn as an overlay over these coordinates rather than generated into the
+ * board.
+ *
+ * NOT THE BOX'S BOUNDING BOX. The box is a wedge: the board's rim takes a
+ * curved bite out of the corner facing it, so its bbox is 351 x 214.98
+ * while the largest rectangle actually inside it is the one below. Laying
+ * cards out on the bbox puts most of them on the navy surround.
+ */
+export const DUNE_SPICE_DECK_AREA: DuneArea = { x: 789.6, y: 952.96, width: 174, height: 144 }
 
 /** The nine-stop track arcing above the board. Purpose not yet established. */
 export const DUNE_TRACK: DuneMarker[] = [

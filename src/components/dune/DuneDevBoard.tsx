@@ -19,6 +19,7 @@ import {
 } from '@/lib/dune/storm'
 import type { FactionId } from '@/types/Dune/Faction'
 import { SeatLayer, FACTION_LOOK } from './SeatLayer'
+import { SpiceDeckArea } from './SpiceDeckArea'
 import { LeaderDisc } from './LeaderDisc'
 import { TreacheryCardFace } from './TreacheryCardFace'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
@@ -26,7 +27,7 @@ import { EMPEROR, FREMEN, HARKONNEN } from '@/data/dune/factions'
 
 import {
   buildSpiceDeck, shuffle, resolveSpiceBlow, applyBlowToBoard,
-  beginDoubleSpiceBlow, placeFremenWorms,
+  beginDoubleSpiceBlow, placeFremenWorms, publicSpiceDeck,
 } from '@/lib/dune/spiceBlow'
 import type { SpiceCard, SpiceBlowAsk, SpiceBlowCarry, SpiceBlowStep } from '@/lib/dune/spiceBlow'
 import { isAwaiting } from '@/lib/dune/phase'
@@ -332,6 +333,14 @@ export default function DuneDevBoard() {
           {/* Who is sitting where. An overlay, not part of the board: the
               seating changes every game and the printed circles do not. */}
           <SeatLayer seating={seating} />
+
+          {/* The spice deck and its discards, in the box on the surround.
+              Through publicSpiceDeck rather than from the three arrays directly:
+              this view holds the real deck because it runs the rules locally,
+              and handing it straight to the overlay would make the one place
+              that must never see a card order the one place that does. */}
+          <SpiceDeckArea mode={mode}
+            deck={publicSpiceDeck({ deck, discardA, discardB })} />
 
           {/* A worm surfaced here this turn. */}
           {worms.map(id => {

@@ -1499,10 +1499,73 @@ for (const [i, stop] of trackStops.entries()) {
   labels.push(draw(stop.x, stop.y))
 }
 
-for (const o of offBoard) {
-  const b = bearing(o.c[0], o.c[1])
-  const tanks = b > 180                                    // 217° is the left box, 143° the right
-  const name = tanks ? 'Tleilaxu Tanks' : 'Spice Bank'
+/**
+ * The largest axis-aligned rectangle that fits INSIDE a shape.
+ *
+ * Not its bounding box. These two are wedges, not rectangles: the board's rim
+ * takes a curved bite out of the corner facing it, so the right-hand box
+ * measures 351 x 215 across but the largest rectangle actually inside it is
+ * 168 x 149. Laying cards out on the bbox puts most of them on the navy
+ * surround outside the box — which is exactly what happened, and it looked
+ * fine in every number I checked because the numbers all came from the bbox.
+ *
+ * Rasterise, then the standard largest-rectangle-in-a-histogram sweep down the
+ * rows. One unit per cell over a 350-unit box is 75k point-in-polygon tests,
+ * which costs nothing here and is exact enough to lay cards out on.
+ */
+function largestInscribedRect(poly) {
+  const [bx0, by0, bx1, by1] = bbox(poly)
+  const W = Math.floor(bx1 - bx0), H = Math.floor(by1 - by0)
+  const heights = new Int32Array(W)
+  let best = { area: 0, x: bx0, y: by0, width: 0, height: 0 }
+  for (let r = 0; r < H; r++) {
+    for (let c = 0; c < W; c++) {
+      heights[c] = inside([bx0 + c + 0.5, by0 + r + 0.5], poly) ? heights[c] + 1 : 0
+    }
+    const stack = []
+    for (let c = 0; c <= W; c++) {
+      const h = c === W ? 0 : heights[c]
+      let start = c
+      while (stack.length && stack[stack.length - 1].h >= h) {
+        const top = stack.pop()
+        const area = top.h * (c - top.c)
+        if (area > best.area) {
+          best = { area, x: bx0 + top.c, y: by0 + r + 1 - top.h, width: c - top.c, height: top.h }
+        }
+        start = top.c
+      }
+      stack.push({ c: start, h })
+    }
+  }
+  return best
+}
+
+/**
+ * The two boxes, measured once.
+ *
+ * Measured HERE rather than inside the drawing loop because the right-hand box
+ * is also exported, and the overlay that fills it has to land on the same
+ * shape the board prints. Two measurements of one shape is how a pile ends up
+ * half an inch off the box it is supposed to sit in.
+ */
+const offBoardBoxes = offBoard.map(o => {
+  const [x0, y0, x1, y1] = bbox(o.poly)
+  return { o, tanks: bearing(o.c[0], o.c[1]) > 180, x0, y0, x1, y1 }  // 217° left, 143° right
+})
+const spiceBox = offBoardBoxes.find(b => !b.tanks)
+if (!spiceBox) throw new Error('no right-hand off-board box: the spice deck has nowhere to sit')
+const spiceCards_area = largestInscribedRect(spiceBox.o.poly)
+
+for (const { o, tanks, x0, x1, y1 } of offBoardBoxes) {
+  // NOT 'Spice Bank' any more. The bank is not a place — spice paid leaves one
+  // purse and arrives in another, and the purses are per-seat and hidden. What
+  // physically sits here is the spice deck and its discard pile(s), so the box
+  // is labelled for what it holds.
+  //
+  // Only the LABEL is printed. The cards themselves are overlay state: they
+  // change every turn, and the board is generated once and is the same in every
+  // match. How many discard piles there even are depends on the game mode.
+  const name = tanks ? 'Tleilaxu Tanks' : 'Spice Deck'
   // Filled, so the dark ink reads — these sit on the navy surround, not the map.
   terrain.push(`<path d="${o.el.attrs.d}" fill="${DECOR.boxFill}"/>`)
   // Each group sits in its own outer bottom corner: the tanks bottom-left with
@@ -1510,12 +1573,17 @@ for (const o of offBoard) {
   // outward from the board. Anchored to the shape's own edges rather than
   // measured from a guessed text width — text-anchor does the aligning, which
   // survives a rename that a hand-estimated width would not.
-  const [x0, , x1, y1] = bbox(o.poly)
+  // BOTH labels now lead with the mark from the left edge. The spice box's used
+  // to sit in the opposite corner so the two read outward from the board, which
+  // was the nicer arrangement — but that corner is the only part of the wedge
+  // wide and tall enough to hold cards, and a label under them is a label
+  // nobody can read. The thin tail at the other end holds a label and nothing
+  // else, so that is where it goes.
   const pad = 26, cy = y1 - 26
-  const symX = tanks ? x0 + pad + 11 : x1 - pad - 11
-  const textX = tanks ? symX + 22 : symX - 22
+  const symX = x0 + pad + 11
+  const textX = symX + 22
   labels.push(`<text x="${round(textX)}" y="${round(cy)}" font-size="13" fill="${DECOR.ink}" `
-    + `text-anchor="${tanks ? 'start' : 'end'}" dominant-baseline="central" letter-spacing="1.2" `
+    + `text-anchor="start" dominant-baseline="central" letter-spacing="1.2" `
     + `font-family="Georgia, 'Times New Roman', serif">${esc(name.toUpperCase())}</text>`)
   labels.push(tanks ? tanksSymbol(symX, cy) : spiceSymbol(symX, cy))
 }
@@ -1652,6 +1720,7 @@ lines.push(`export interface DuneMarker { id: string; x: number; y: number }`)
 lines.push(`export interface DuneSpiceMarker extends DuneMarker { territoryId: string | null; sectorId: string | null }`)
 lines.push(`/** A seat. Its sectorId is never null — the generator refuses a board whose`)
 lines.push(` *  seats do not each land in their own sector. */`)
+lines.push(`export interface DuneArea { x: number; y: number; width: number; height: number }`)
 lines.push(`export interface DunePlayerPosition extends DuneMarker { sectorId: string }`)
 lines.push(``)
 lines.push(`/** The board circle, from the export's own rim circle. */`)
@@ -1713,6 +1782,24 @@ for (const s of spiceMarkers) {
   lines.push(`  { id: ${q(s.id)}, x: ${round(s.x)}, y: ${round(s.y)}, territoryId: ${q(s.territoryId)}, sectorId: ${s.sectorNumber ? q(`sector-${s.sectorNumber}`) : 'null'} },`)
 }
 lines.push(`]`)
+lines.push(``)
+lines.push(`/**`)
+lines.push(` * Where the spice deck and its discard pile(s) may be drawn.`)
+lines.push(` *`)
+lines.push(` * The printed board gives that box a fill and a label and nothing else. What`)
+lines.push(` * goes inside changes every turn — the deck shrinks, the piles grow, and the`)
+lines.push(` * advanced game has a second pile the basic game does not — so the cards are`)
+lines.push(` * drawn as an overlay over these coordinates rather than generated into the`)
+lines.push(` * board.`)
+lines.push(` *`)
+lines.push(` * NOT THE BOX'S BOUNDING BOX. The box is a wedge: the board's rim takes a`)
+lines.push(` * curved bite out of the corner facing it, so its bbox is ${round(spiceBox.x1 - spiceBox.x0)} x ${round(spiceBox.y1 - spiceBox.y0)}`)
+lines.push(` * while the largest rectangle actually inside it is the one below. Laying`)
+lines.push(` * cards out on the bbox puts most of them on the navy surround.`)
+lines.push(` */`)
+lines.push(`export const DUNE_SPICE_DECK_AREA: DuneArea = { `
+  + `x: ${round(spiceCards_area.x)}, y: ${round(spiceCards_area.y)}, `
+  + `width: ${round(spiceCards_area.width)}, height: ${round(spiceCards_area.height)} }`)
 lines.push(``)
 lines.push(`/** The nine-stop track arcing above the board. Purpose not yet established. */`)
 lines.push(`export const DUNE_TRACK: DuneMarker[] = [`)

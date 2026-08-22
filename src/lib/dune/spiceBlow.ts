@@ -19,13 +19,15 @@
  * the faction data, not under `advanced` — so it holds in both games.
  */
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
-import type { Force, GameMode, SectorId, TerritoryId } from '@/types/Dune/Game'
+import type {
+  Force, GameMode, SectorId, SpiceCard, SpiceDeckPublic, TerritoryId,
+} from '@/types/Dune/Game'
 import { awaiting, runToSettled, settled } from './phase'
 import type { Step } from './phase'
 
-export type SpiceCard =
-  | { kind: 'territory'; territoryId: TerritoryId; name: string; spice: number; sector: SectorId }
-  | { kind: 'shai-hulud' }
+// The card type lives in @/types/Dune/Game now, because the public game state
+// names it too. Re-exported so every `from '@/lib/dune/spiceBlow'` still works.
+export type { SpiceCard } from '@/types/Dune/Game'
 
 /** Six worms in the deck, matching the six cards the generator prints. */
 export const SHAI_HULUD_COUNT = 6
@@ -68,6 +70,29 @@ export function shuffle<T>(cards: readonly T[], rng: () => number): T[] {
  */
 export function showing(discard: readonly SpiceCard[]): SpiceCard | null {
   return discard.length ? discard[discard.length - 1] : null
+}
+
+/**
+ * What the shared row is told about the deck.
+ *
+ * ONE PLACE. The count has to be published because clients cannot read
+ * match_decks, and a number copied into the row by hand at each of the several
+ * places the deck changes is a number that will eventually be copied wrong —
+ * usually as `deck.length` from before a draw rather than after it.
+ *
+ * The deck goes IN and does not come out. That is the whole point: this is the
+ * boundary between what the server knows and what the table sees.
+ */
+export function publicSpiceDeck(input: {
+  deck: readonly SpiceCard[]
+  discardA: readonly SpiceCard[]
+  discardB?: readonly SpiceCard[]
+}): SpiceDeckPublic {
+  return {
+    remaining: input.deck.length,
+    discardA: [...input.discardA],
+    discardB: [...(input.discardB ?? [])],
+  }
 }
 
 export interface Devoured {
