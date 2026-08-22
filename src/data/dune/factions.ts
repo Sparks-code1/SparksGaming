@@ -34,6 +34,7 @@ export const ATREIDES: Faction = {
     starred: 0,
   },
   reservesHeld: 'off-planet',
+  handLimit: 4,
   freeRevivals: 2,
   abilities: {
     bidding:
@@ -82,6 +83,7 @@ export const EMPEROR: Faction = {
     starred: 5,                        // Sardaukar — see StartingForces.starred
   },
   reservesHeld: 'off-planet',
+  handLimit: 4,
   freeRevivals: 1,
   abilities: {
     bidding:
@@ -133,6 +135,7 @@ export const FREMEN: Faction = {
   // their shipment free and keeps them out of the Guild's income — see
   // ReserveLocation.
   reservesHeld: 'on-planet',
+  handLimit: 4,
   freeRevivals: 3,
   abilities: {
     shipment:
@@ -195,6 +198,7 @@ export const SPACING_GUILD: Faction = {
     starred: 0,
   },
   reservesHeld: 'off-planet',
+  handLimit: 4,
   freeRevivals: 1,
   abilities: {
     shipment:
@@ -248,6 +252,7 @@ export const BENE_GESSERIT: Faction = {
     starred: 0,
     },
     reservesHeld: 'off-planet',
+    handLimit: 4,
     freeRevivals: 1,
     abilities: {
       beforeGame:
@@ -325,6 +330,7 @@ export const HARKONNEN: Faction = {
     starred: 0,
     },
     reservesHeld: 'off-planet',
+    handLimit: 8,
     freeRevivals: 2,
     abilities: {
       traitors:

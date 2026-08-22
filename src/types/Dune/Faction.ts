@@ -171,6 +171,19 @@ export interface Faction {
    * default to the common case and quietly ship the Fremen for money.
    */
   reservesHeld: ReserveLocation
+  /**
+   * How many treachery cards this faction may hold.
+   *
+   * Four for everyone, eight for the Harkonnen. DATA, not prose: the rule is
+   * load-bearing in bidding — a faction at its limit MUST pass, which changes
+   * who opens a card and who may raise — and reading it out of
+   * `abilities.treachery` at that point would mean parsing an English sentence
+   * inside an auction. Same argument as reservesHeld above.
+   *
+   * Not optional, for the same reason: a faction added without one should fail
+   * to compile rather than default to four and quietly cap the Harkonnen.
+   */
+  handLimit: number
   /** Forces revived free each Revival phase, before paying for more. */
   freeRevivals: number
   abilities: FactionAbilities

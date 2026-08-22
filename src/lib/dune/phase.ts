@@ -66,7 +66,13 @@ export interface Awaiting<TAsk, TCarry> {
    * same reason: a window each client timed for itself would shut at six
    * different moments.
    *
-   * Absent on a required stop, which has no deadline: it ends when answered.
+   * A REQUIRED stop may carry one too — see `awaitingBy`. It used to be said
+   * here that it could not, and bidding is the counterexample: the phase is
+   * blocked on one player, and if they say nothing the clock passes for them.
+   * That is still a required stop, because the phase cannot proceed until an
+   * answer exists; the deadline only decides who supplies it.
+   *
+   * Absent means the stop ends when answered and not before.
    */
   closesAt?: number
   /**
@@ -106,6 +112,27 @@ export const offering = <TAsk, TCarry>(
   from: FactionId[], ask: TAsk, carry: TCarry, closesAt?: number,
 ): Awaiting<TAsk, TCarry> => ({ status: 'awaiting', need: 'optional', from, ask, carry, closesAt })
 
+/**
+ * A required stop with a deadline: blocked, but not forever.
+ *
+ * The phase cannot go on until `from` answers, AND if they have not answered by
+ * `closesAt` the caller answers for them with whatever the rule says silence
+ * means. Bidding is the case: a player who says nothing has passed.
+ *
+ * Distinct from `offering`, and the difference is what happens when the clock
+ * runs out. An offered window that nobody takes simply shuts and the phase moves
+ * on — nothing was owed. A required stop that times out still needs an answer,
+ * and the caller supplies the default one; the phase is never left without a
+ * decision, only without a decision anybody made.
+ *
+ * `closesAt` is stamped by the caller and never read from a clock here, the
+ * same rule offering follows: a deadline each client timed for itself would
+ * expire at six different moments.
+ */
+export const awaitingBy = <TAsk, TCarry>(
+  from: FactionId[], ask: TAsk, carry: TCarry, closesAt: number,
+): Awaiting<TAsk, TCarry> => ({ status: 'awaiting', need: 'required', from, ask, carry, closesAt })
+
 export const settled = <TResult>(result: TResult): Settled<TResult> =>
   ({ status: 'settled', result })
 
@@ -121,6 +148,21 @@ export function windowHasClosed<TAsk, TCarry>(
   step: Awaiting<TAsk, TCarry>, now: number,
 ): boolean {
   return step.need === 'optional' && step.closesAt != null && now >= step.closesAt
+}
+
+/**
+ * True when a deadlined stop of EITHER kind has run out.
+ *
+ * windowHasClosed asks only about offered windows, and answering "no" for a
+ * required stop that has plainly expired is the wrong answer to a reasonable
+ * question. Kept separate rather than widening that one, because callers of it
+ * are asking "may I stop waiting and move on", which is only ever true of an
+ * offer — a required stop needs an answer supplied, not skipped.
+ */
+export function deadlinePassed<TAsk, TCarry>(
+  step: Awaiting<TAsk, TCarry>, now: number,
+): boolean {
+  return step.closesAt != null && now >= step.closesAt
 }
 
 /** Narrowing helper, so callers can branch without repeating the string. */
