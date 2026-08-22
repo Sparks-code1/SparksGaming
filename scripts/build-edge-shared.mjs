@@ -1,14 +1,20 @@
-// Generate the Deno-side copy of the rules engine from the SAME source the
+// Generate the Deno-side copies of shared logic from the SAME source the
 // client uses.
 //
-// The edge function needs `gameReducer`, but Deno cannot resolve Vite's `@/`
+// The edge function needs `gameReducer`, and now also the state projections
+// that decide what may go in the shared row. Deno cannot resolve Vite's `@/`
 // alias and the repo is not published as a package. The obvious workaround is
-// to copy src/lib/gameReducer.ts into supabase/functions/_shared/ by hand — and
-// a hand-copied rules engine is a fork. The moment the two disagree the server
-// and the client are playing different games, which is the one failure this
-// whole architecture exists to prevent.
+// to copy the files into supabase/functions/_shared/ by hand — and a hand-copied
+// rules engine is a fork. The moment the two disagree the server and the client
+// are playing different games, which is the one failure this whole architecture
+// exists to prevent.
 //
-// So it is GENERATED. esbuild bundles the reducer and its handful of runtime
+// That argument applies twice over to the projections. If the server's idea of
+// what is public drifts from the client's, the client asserts against a rule the
+// server is no longer following, and the disagreement shows up as a privacy leak
+// rather than as a broken build.
+//
+// So they are GENERATED. esbuild bundles each entry and its handful of runtime
 // imports into one dependency-free ESM file. Type-only imports are erased, so
 // nothing from React/PixiJS/Supabase can leak in. Run it before deploying:
 //
@@ -22,60 +28,89 @@ import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const OUT = resolve(root, 'supabase/functions/_shared/gameReducer.gen.ts')
 
-const BANNER = `// AUTO-GENERATED — DO NOT EDIT.
+const TARGETS = [
+  {
+    entry: 'src/lib/gameReducer.ts',
+    out: 'supabase/functions/_shared/gameReducer.gen.ts',
+    what: 'rules engine',
+    // The server MUST run the same bytes: a divergence here is two machines
+    // playing different games while both believe they agree.
+    mustExport: /export\s*\{[^}]*gameReducer/,
+    exportName: 'gameReducer',
+  },
+  {
+    entry: 'src/lib/stateView.ts',
+    out: 'supabase/functions/_shared/stateView.gen.ts',
+    what: 'state projections',
+    // publicView decides what goes in the row every client can read. If the
+    // server stops applying it, every hand is public again.
+    mustExport: /export\s*\{[^}]*publicView/,
+    exportName: 'publicView',
+  },
+]
+
+const bannerFor = t => `// AUTO-GENERATED — DO NOT EDIT.
 //
-// Built from src/lib/gameReducer.ts by scripts/build-edge-shared.mjs.
+// Built from ${t.entry} by scripts/build-edge-shared.mjs.
 // Edit the source and re-run \`npm run build:edge\`.
 //
-// This is the exact rules engine the client runs. The server MUST run the same
-// bytes: a divergence here is two machines playing different games while both
-// believe they agree.
+// This is the exact ${t.what} the client runs. The server MUST run the same
+// bytes: a divergence here is two machines disagreeing while both believe they
+// agree.
 `
 
-const result = await build({
-  entryPoints: [resolve(root, 'src/lib/gameReducer.ts')],
-  bundle: true,
-  format: 'esm',
-  // 'neutral' so esbuild injects no Node or browser shims — the output has to
-  // run on Deno with nothing polyfilled.
-  platform: 'neutral',
-  target: 'es2022',
-  alias: { '@': resolve(root, 'src') },
-  write: false,
-  // Readable output: this is checked in, and a reviewer has to be able to see
-  // that the server's rules are the ones they reviewed.
-  minify: false,
-  legalComments: 'none',
-})
+// A bundle that quietly acquires a runtime dependency breaks at deploy time
+// rather than here, so the shapes that could cause it are refused up front.
+const FORBIDDEN = [/from ["']react/, /from ["']@supabase/, /from ["']pixi/, /require\(/, /process\.env/]
 
-const code = result.outputFiles[0].text
-writeFileSync(OUT, BANNER + '\n' + code)
+const check = process.argv.includes('--check')
+let stale = false
 
-// Guard against the bundle quietly acquiring a runtime dependency. The reducer
-// is meant to be pure; if someone imports Supabase or a browser API into it,
-// the edge function breaks at deploy time instead of here.
-const forbidden = [/from ["']react/, /from ["']@supabase/, /from ["']pixi/, /require\(/, /process\.env/]
-const offenders = forbidden.filter(re => re.test(code))
-if (offenders.length > 0) {
-  console.error('FAILED: the reducer bundle pulled in a runtime dependency:', offenders.map(String).join(', '))
-  process.exit(1)
-}
-if (!/export\s*\{[^}]*gameReducer/.test(code)) {
-  console.error('FAILED: gameReducer is not exported from the bundle')
-  process.exit(1)
-}
+for (const t of TARGETS) {
+  const outPath = resolve(root, t.out)
+  const result = await build({
+    entryPoints: [resolve(root, t.entry)],
+    bundle: true,
+    format: 'esm',
+    // 'neutral' so esbuild injects no Node or browser shims — the output has to
+    // run on Deno with nothing polyfilled.
+    platform: 'neutral',
+    target: 'es2022',
+    alias: { '@': resolve(root, 'src') },
+    write: false,
+    // Readable output: this is checked in, and a reviewer has to be able to see
+    // that the server's rules are the ones they reviewed.
+    minify: false,
+    legalComments: 'none',
+  })
 
-const lines = code.split('\n').length
-console.log(`wrote ${OUT.replace(root + '\\', '').replace(/\\/g, '/')} — ${lines} lines, no runtime deps`)
+  const code = result.outputFiles[0].text
+  const contents = bannerFor(t) + '\n' + code
 
-// `--check` mode for CI / pre-deploy: fail if the checked-in copy is stale.
-if (process.argv.includes('--check')) {
-  const onDisk = readFileSync(OUT, 'utf8')
-  if (onDisk !== BANNER + '\n' + code) {
-    console.error('FAILED: the checked-in bundle is stale. Run `npm run build:edge`.')
+  const offenders = FORBIDDEN.filter(re => re.test(code))
+  if (offenders.length > 0) {
+    console.error(`FAILED: ${t.entry} pulled in a runtime dependency:`, offenders.map(String).join(', '))
     process.exit(1)
   }
-  console.log('bundle is up to date')
+  if (!t.mustExport.test(code)) {
+    console.error(`FAILED: ${t.exportName} is not exported from the ${t.entry} bundle`)
+    process.exit(1)
+  }
+
+  if (check) {
+    const onDisk = readFileSync(outPath, 'utf8')
+    if (onDisk !== contents) {
+      console.error(`FAILED: ${t.out} is stale. Run \`npm run build:edge\`.`)
+      stale = true
+    } else {
+      console.log(`${t.out} is up to date`)
+    }
+    continue
+  }
+
+  writeFileSync(outPath, contents)
+  console.log(`wrote ${t.out} — ${code.split('\n').length} lines, no runtime deps`)
 }
+
+if (stale) process.exit(1)

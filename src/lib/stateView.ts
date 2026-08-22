@@ -40,6 +40,108 @@ export interface ViewOptions {
   online: boolean
 }
 
+/** What a seat keeps in its own match_secrets row. */
+export interface SeatSecrets {
+  cards: string[]
+  missionCardId: string | null
+}
+
+/**
+ * A player with their secrets removed and a count left in their place.
+ *
+ * Rebuilt without the secret keys rather than set to undefined: a key present
+ * with an undefined value still serialises into the payload as `"cards": null`
+ * through some paths, and the requirement is ABSENCE.
+ */
+const withoutSecrets = (p: Player): SeatPlayer => {
+  const { cards: _cards, missionCardId: _mission, ...rest } = p
+  return { ...rest, cardCount: p.cards.length }
+}
+
+/**
+ * The state the SHARED ROW may carry: nobody's hand, everybody's count.
+ *
+ * This is the one that closes the leak, and it is not viewForSeat with a
+ * different argument. `matches.state` is a single row delivered whole to every
+ * subscriber by the changefeed — there is no per-seat version of it — so the
+ * only state that can safely live there is state with NO seat's secrets in it.
+ * A projection that kept one seat's cards would be correct for exactly one
+ * reader and wrong for all the others receiving the same bytes.
+ *
+ * Each seat gets its own hand back from match_secrets, which is RLS'd to that
+ * seat, and merges it on arrival.
+ */
+export function publicView(state: GameState): SeatState {
+  return { ...state, players: state.players.map(withoutSecrets) }
+}
+
+/**
+ * What each seat's match_secrets row must hold, keyed by seat id.
+ *
+ * Derived from the state rather than tracked alongside it, so the hand in the
+ * secrets store and the count in the public row are always two views of one
+ * fact and cannot drift.
+ */
+export function secretsFromState(state: GameState): Record<string, SeatSecrets> {
+  return Object.fromEntries(state.players.map(p =>
+    [p.id, { cards: p.cards, missionCardId: p.missionCardId }]))
+}
+
+/**
+ * Put a seat's own hand back into the public state it just received.
+ *
+ * The client half of the split. Only ever this seat's — the others are not
+ * withheld here, they were never sent.
+ */
+export function mergeOwnSecrets(
+  view: SeatState, seatId: string, secrets: SeatSecrets | null,
+): SeatState {
+  if (!secrets) return view
+  return {
+    ...view,
+    players: view.players.map(p => p.id === seatId
+      ? { ...p, cards: secrets.cards, missionCardId: secrets.missionCardId }
+      : p),
+  }
+}
+
+/**
+ * Rebuild whole state from the public row plus every seat's secrets.
+ *
+ * The SERVER half. The reducer needs real hands to run, and the row no longer
+ * carries them, so they are read back out of match_secrets and put in.
+ *
+ * A missing secrets row is an ERROR, never an empty hand. "This player holds no
+ * cards" and "this player's cards were not loaded" are the same value and
+ * completely different facts, and the second one silently destroys a hand on
+ * the next write.
+ *
+ * The one exception is a row written BEFORE this split existed, which still has
+ * the hands inline. Those are accepted and used, so deploying this does not
+ * break a game already in progress: the first action in such a match reads the
+ * legacy shape, writes the new one, and the match is clean from then on. No
+ * backfill, no downtime — but the legacy branch is also the leak, so a match
+ * only stops leaking once somebody takes a turn in it.
+ */
+export function hydrateState(
+  view: SeatState, secrets: Record<string, SeatSecrets>,
+): GameState {
+  return {
+    ...view,
+    players: view.players.map(p => {
+      const { cardCount: _n, ...rest } = p
+      const held = secrets[p.id]
+      if (held) return { ...rest, cards: held.cards, missionCardId: held.missionCardId } as Player
+      // Legacy row: the hand is still inline. `cards` present is the marker,
+      // and it is checked rather than inferred from the absence of a secrets
+      // row, because those two can both be true at once.
+      if (p.cards) return { ...rest, cards: p.cards, missionCardId: p.missionCardId ?? null } as Player
+      throw new Error(
+        `no secrets for seat ${p.id}: refusing to treat an unloaded hand as an empty one`)
+    }),
+  }
+}
+
 /**
  * Project `state` down to what `seatId` may see.
  *
@@ -57,15 +159,8 @@ export function viewForSeat(state: GameState, seatId: string, opts: ViewOptions)
 
   return {
     ...state,
-    players: state.players.map((p): SeatPlayer => {
-      const cardCount = p.cards.length
-      if (p.id === seatId) return { ...p, cardCount }
-      // Rebuilt without the secret keys rather than set to undefined: a key
-      // present with an undefined value still serialises into the payload as
-      // `"cards": null` through some paths, and the requirement is absence.
-      const { cards: _cards, missionCardId: _mission, ...rest } = p
-      return { ...rest, cardCount }
-    }),
+    players: state.players.map((p): SeatPlayer =>
+      p.id === seatId ? { ...p, cardCount: p.cards.length } : withoutSecrets(p)),
   }
 }
 

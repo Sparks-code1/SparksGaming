@@ -7317,6 +7317,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
    */
   const { status: liveStatus, sync: matchSync } = useMatchSync(
     onlineMatch?.matchId ?? null,
+    // Which seat this client sits at. It selects the match_secrets row whose
+    // hand gets merged back into the public state, so it has to be the seat
+    // identity the server keyed those secrets on, not the user id.
+    localSeatId,
     {
       onState: (state, version) => {
         gameStateRef.current = state

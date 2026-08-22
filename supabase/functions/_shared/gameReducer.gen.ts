@@ -4,8 +4,8 @@
 // Edit the source and re-run `npm run build:edge`.
 //
 // This is the exact rules engine the client runs. The server MUST run the same
-// bytes: a divergence here is two machines playing different games while both
-// believe they agree.
+// bytes: a divergence here is two machines disagreeing while both believe they
+// agree.
 
 // src/types/game.ts
 function initialTurnState() {

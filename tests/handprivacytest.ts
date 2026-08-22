@@ -18,7 +18,11 @@
 //
 // Today every frame carries every seat's hand. After step 3, a frame must show
 // `cards` only for the seat receiving it, and `cardCount` for the rest.
-import { viewForSeat } from '@/lib/stateView'
+import {
+  viewForSeat, publicView, secretsFromState, mergeOwnSecrets, hydrateState,
+  leaksOtherSeatsSecrets,
+} from '@/lib/stateView'
+import type { SeatState } from '@/lib/stateView'
 import type { GameState } from '@/types/game'
 import type { Player } from '@/types/player'
 
@@ -82,6 +86,94 @@ check('hotseat keeps every mission', hot.map(p => p.missionCardId),
 // place, the seat projected first would strip the hands for everyone after.
 check('the source state still holds every hand after projecting',
   state.players.map(p => p.cards.length), [2, 4, 0])
+
+// ── the shared row: nobody's hand, everybody's count ───────────────────────
+// The projection the leak actually turns on. matches.state is ONE record
+// delivered whole to every subscriber, so the only safe content is content with
+// no seat's secrets in it at all — including the seat that happens to be first
+// in the list, which is where an off-by-one in a per-seat projection would hide.
+{
+  const shared = publicView(state)
+  check('the shared row carries no hand at all',
+    shared.players.map(p => p.cards), [undefined, undefined, undefined])
+  check('...and no secret mission either',
+    shared.players.map(p => p.missionCardId), [undefined, undefined, undefined])
+  check('...while every count survives',
+    shared.players.map(p => p.cardCount), [2, 4, 0])
+  // Said from the other end, with the function the client asserts with. If this
+  // ever disagrees with the three above, one of them is wrong about what a
+  // secret is.
+  check('and no seat can find a foreign secret in it',
+    ['p1', 'p2', 'p3'].map(id => leaksOtherSeatsSecrets(shared, id)), [false, false, false])
+  check('the source state is not mutated by projecting it',
+    state.players.map(p => p.cards.length), [2, 4, 0])
+}
+
+// ── strip and rehydrate is the identity ────────────────────────────────────
+// The server writes publicView to the row and secretsFromState to the store,
+// then rebuilds the reducer's input from both. If that round trip is not exact,
+// the split silently rewrites the game — a lost card looks like a legal move.
+{
+  // Key ORDER changes across the round trip (the secrets are re-attached last),
+  // and key order is not meaning. Compared canonically so a reordering does not
+  // read as a difference, and a real difference still does.
+  const canonical = (v: unknown): unknown =>
+    Array.isArray(v) ? v.map(canonical)
+      : v && typeof v === 'object'
+        ? Object.fromEntries(Object.keys(v as object).sort()
+          .map(k => [k, canonical((v as Record<string, unknown>)[k])]))
+        : v
+
+  const rebuilt = hydrateState(publicView(state), secretsFromState(state))
+  check('publicView + secretsFromState + hydrateState returns the original state',
+    canonical(rebuilt), canonical(state))
+  // And the check above is only worth anything if the two sides differ before
+  // rehydration, or it would pass on a publicView that stripped nothing.
+  check('...and the stripped row really was different',
+    JSON.stringify(canonical(publicView(state))) === JSON.stringify(canonical(state)), false)
+}
+
+// ── a missing secrets row is an error, never an empty hand ─────────────────
+// The failure this refuses: "holds no cards" and "cards were not loaded" are
+// the same value and completely different facts, and the second one destroys a
+// hand on the next write.
+{
+  const shared = publicView(state)
+  const partial = secretsFromState(state)
+  delete (partial as Record<string, unknown>).p2
+  let threw = ''
+  try { hydrateState(shared, partial) } catch (e) { threw = String(e) }
+  check('hydrating without a seat throws rather than emptying its hand',
+    /p2/.test(threw), true)
+  check('...and says why', /unloaded|refusing/i.test(threw), true)
+}
+
+// ── a match written before the split still works ──────────────────────────
+// Deploying this must not break a game in progress. Those rows still carry the
+// hands inline; they are used as they stand, and the match writes the new shape
+// on its next action.
+{
+  const legacy = hydrateState(state as unknown as SeatState, {})
+  check('a pre-split row hydrates from its inline hands',
+    legacy.players.map(p => p.cards.length), [2, 4, 0])
+}
+
+// ── the client puts back its own, and only its own ────────────────────────
+{
+  const shared = publicView(state)
+  const mine = { cards: ['tc-ural', 'tc-peru'], missionCardId: 'mc-6-cities' }
+  const merged = mergeOwnSecrets(shared, 'p1', mine)
+  check('the seat gets its own hand back', merged.players[0].cards, ['tc-ural', 'tc-peru'])
+  check('...and its own mission', merged.players[0].missionCardId, 'mc-6-cities')
+  check('...while the others stay absent',
+    merged.players.slice(1).map(p => p.cards), [undefined, undefined])
+  check('...so the merged state still leaks nothing',
+    leaksOtherSeatsSecrets(merged, 'p1'), false)
+  // Before the secrets arrive there is simply nothing to merge, and the board
+  // has to render anyway rather than wait.
+  check('no secrets yet is the public state unchanged',
+    JSON.stringify(mergeOwnSecrets(shared, 'p1', null)), JSON.stringify(shared))
+}
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 

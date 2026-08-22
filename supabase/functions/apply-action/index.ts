@@ -38,6 +38,12 @@ import {
   spectatorMissileRefusal,
   type Action,
 } from '../_shared/gameReducer.gen.ts'
+import {
+  publicView,
+  secretsFromState,
+  hydrateState,
+  viewForSeat,
+} from '../_shared/stateView.gen.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -248,7 +254,25 @@ Deno.serve(async (req: Request) => {
   const mySlot = seats.find((r) => r.user_id === user.id)
   if (!mySlot) return json({ error: 'not a participant', code: 'not-participant' }, 403)
 
-  const state = match.state
+  // ── the two halves of the state ────────────────────────────────────────────
+  // matches.state carries nobody's hand any more, so the reducer's input is
+  // rebuilt from the public row plus every seat's secrets. A missing secrets
+  // row is an error inside hydrateState rather than an empty hand — see the
+  // note there — except for a match written before the split, whose hands are
+  // still inline and are used as they stand.
+  const { data: secretRows, error: sErr } = await admin
+    .from('match_secrets').select('player_id, data').eq('match_id', matchId)
+  if (sErr) return json({ error: 'could not read hidden state', detail: sErr.message }, 500)
+  const heldSecrets = Object.fromEntries((secretRows ?? []).map((r) => [r.player_id, r.data]))
+
+  let state
+  try {
+    state = hydrateState(match.state, heldSecrets)
+  } catch (e) {
+    // Loud, and a refusal. Continuing here would run the reducer over a hand it
+    // could not load and then write the result back, destroying it.
+    return json({ error: 'hidden state is incomplete', code: 'secrets-missing', detail: String(e) }, 500)
+  }
   const currentPlayerId: string | undefined = state?.players?.[state.currentPlayerIndex]?.id
 
   // ── Authorization ─────────────────────────────────────────────────────────
@@ -417,19 +441,22 @@ Deno.serve(async (req: Request) => {
   // `.eq('version', match.version)` is the lost-update guard: if another action
   // was applied between the SELECT above and this UPDATE, zero rows match and
   // this one is rejected rather than silently overwriting it.
-  const { data: updated, error: uErr } = await admin
-    .from('matches')
-    .update({
-      state: nextState,
-      version: match.version + 1,
-      action_seq: match.action_seq + 1,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', matchId)
-    .eq('version', match.version)
-    .select()
-    .maybeSingle()
+  // ONE transaction for the public row and every seat's hand. Done as separate
+  // statements this is two unsynchronised writes, and a failure between them
+  // leaves the counts in the row disagreeing with the hands in the store —
+  // silently, because each half is valid on its own. apply_match_write performs
+  // the same compare-and-swap this used to do inline, and the upserts, or
+  // neither.
+  const { data: written, error: uErr } = await admin.rpc('apply_match_write', {
+    p_match_id: matchId,
+    p_expected_version: match.version,
+    p_state: publicView(nextState),
+    p_secrets: secretsFromState(nextState),
+  })
 
+  // No row back means the CAS found a different version: somebody else's action
+  // committed in between. Unchanged behaviour, unchanged response.
+  const updated = Array.isArray(written) ? written[0] : written
   if (uErr || !updated) {
     const { data: now } = await admin.from('matches').select('version, state').eq('id', matchId).single()
     return json({ error: 'version conflict (raced)', code: 'stale', currentVersion: now?.version, state: now?.state }, 409)
@@ -456,5 +483,15 @@ Deno.serve(async (req: Request) => {
   // echo of this same action is recognised as already-applied and dropped —
   // effects are not idempotent, and a double-fired capture queues two card
   // draws.
-  return json({ state: nextState, effects, version: updated.version, seq: match.action_seq })
+  // PROJECTED, like the row. This response is a second copy of the whole state
+  // travelling to one client, and returning nextState here would hand the actor
+  // every other seat's hand however carefully the row was stripped — a private
+  // channel is still a channel. viewForSeat rather than publicView because this
+  // one goes to a known seat, which may see its own.
+  return json({
+    state: viewForSeat(nextState, mySlot.player_id, { online: true }),
+    effects,
+    version: updated.version,
+    seq: match.action_seq,
+  })
 })

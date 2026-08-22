@@ -1,24 +1,30 @@
-// The transport is BUILT BUT NOT PLUGGED IN, and this suite says so out loud.
+// The transport, and whether it is actually plugged in.
 //
-// Three pieces exist and are correct in isolation:
-//   viewForSeat        strips other seats' hands  — proved by handprivacytest
-//   startSecretsSync   subscribes a seat to its own secrets — proved by secretssynctest
-//   match_secrets      RLS'd read-your-own, no client writes — proved by its migration
+// WAS RED ON PURPOSE. It was written before the wiring, when viewForSeat and
+// startSecretsSync were both finished, both correct, both proved by their own
+// suites — and neither had a caller. Every unit test passed and every hand
+// still travelled in matches.state, because a projection nothing applies and a
+// channel nothing opens change nothing about what crosses the wire. That gap is
+// invisible to a unit test and is the whole reason this file exists.
 //
-// None of them has a caller. A projection nothing applies and a channel nothing
-// opens leave the leak exactly where it was: every hand still travels in
-// matches.state, which the changefeed delivers whole to every subscriber. The
-// unit tests above all pass, and the running app is still wrong, which is the
-// precise gap a call-graph assertion closes and a unit test cannot.
+// It is green now, and it stays honest by asserting the WIRING rather than the
+// behaviour: that the server writes through publicView, that the hands go to
+// the secrets store in the same transaction, that the response is projected,
+// that the client subscribes and merges and asserts. Whether those things are
+// CORRECT is handprivacytest, secretssynctest and
+// scripts/check-seat-privacy.mjs; whether they RUN AT ALL is only this.
 //
-// WRITTEN TO FAIL. This suite is red today on purpose and goes green when the
-// wiring lands, not before. A check that has never failed has not been shown to
-// catch anything.
+// Live equivalent, on the joiner's machine with a match open. Read the WIRE,
+// not the app — inspecting React state only says what the client was handed to
+// render, and the question is what crossed the network:
 //
-// It does not claim the wiring is CORRECT — that is what handprivacytest,
-// secretssynctest and scripts/check-seat-privacy.mjs are for. It claims only
-// that it exists, which is the one thing those three cannot see.
+//   devtools -> Network -> WS -> the realtime socket -> Messages
+//   search a frame for "cards"
+//
+// A frame must now show "cards" only for the seat receiving it, and
+// "cardCount" for everyone else.
 import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { execSync } from 'node:child_process'
 import { join } from 'node:path'
 
 let pass = true
@@ -28,47 +34,101 @@ const check = (label: string, actual: unknown, expected: unknown) => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}\n        got=${JSON.stringify(actual)} want=${JSON.stringify(expected)}`)
 }
 
-/** Every .ts/.tsx under src, with its text. */
-function sources(dir = 'src'): { path: string; text: string }[] {
+/**
+ * Every .ts/.tsx under a directory.
+ *
+ * Generated bundles are skipped. _shared/stateView.gen.ts is a copy of the
+ * projections, so it CONTAINS every one of these names — counting it as a
+ * caller would let the check pass on a file nothing imports.
+ */
+function sources(dir: string): { path: string; text: string }[] {
   const out: { path: string; text: string }[] = []
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry)
     if (statSync(full).isDirectory()) { out.push(...sources(full)); continue }
+    if (/\.gen\.tsx?$/.test(entry)) continue
     if (/\.tsx?$/.test(entry)) out.push({ path: full.replace(/\\/g, '/'), text: readFileSync(full, 'utf8') })
   }
   return out
 }
 
-const SRC = sources()
+// The server half lives in supabase/functions, not src. Scanning only src said
+// "nothing applies viewForSeat" while the edge function was applying it on
+// every write — the projection that matters most runs where the state is
+// authored, which is not in the client tree at all.
+const SRC = [...sources('src'), ...sources('supabase/functions')]
 
-/**
- * Files that CALL `name`, excluding the file that defines it.
- *
- * Looks for the call rather than the import: an import that nothing invokes is
- * exactly the state being tested against, and would otherwise satisfy the check
- * without changing what the app does.
- */
-const callersOf = (name: string, definedIn: string) =>
-  SRC.filter(f => f.path !== definedIn && new RegExp(`\\b${name}\\s*\\(`).test(f.text))
-    .map(f => f.path)
-    .sort()
-
-// ── the projection has to be applied somewhere ─────────────────────────────
+// ── the server strips every hand out of the shared row ─────────────────────
+// The row is one record delivered whole to every subscriber, so this is the
+// check the leak actually turns on. Everything else is a consequence.
 {
-  const callers = callersOf('viewForSeat', 'src/lib/stateView.ts')
-  check('something applies viewForSeat', callers.length > 0, true)
-  // Named, not just counted, so the failure says what is missing and a later
-  // reader can see where the wiring went.
-  check('...and it is reachable from the sync path',
-    callers.length === 0 ? 'NOTHING CALLS IT' : 'called', 'called')
+  const server = 'supabase/functions/apply-action/index.ts'
+  const fn = SRC.find(f => f.path === server)?.text ?? ''
+  check('the write path exists to be checked', fn.length > 0, true)
+  check('the shared row is written through publicView', /publicView\(/.test(fn), true)
+  check('...and the hands go to the secrets store instead',
+    /secretsFromState\(/.test(fn), true)
+  check('...in one transaction, not two writes that can half-fail',
+    /apply_match_write/.test(fn), true)
+  // The regression this forbids: the reducer output going straight into the
+  // row, which is what it did before and what an innocent-looking edit restores.
+  //
+  // Anchored on the WRITE argument rather than on the text `state: nextState`.
+  // That phrase also appears in the destructuring of the reducer's result, where
+  // it is entirely correct, and matching it there failed this check against
+  // working code — a false alarm in a privacy suite is a good way to teach
+  // somebody to ignore it.
+  check('the raw state is never written into the row',
+    /p_state:\s*nextState\b/.test(fn), false)
+  check('...nor written around apply_match_write by a direct update',
+    /from\('matches'\)[\s\S]{0,120}\.update\(\{[\s\S]{0,60}state:/.test(fn), false)
+  // The response is a second copy of the whole state going to one client. A
+  // private channel is still a channel.
+  check('the action response is projected for the seat that asked',
+    /viewForSeat\(nextState/.test(fn), true)
+  // And the row no longer holds hands, so the reducer's input has to be rebuilt.
+  check('the reducer input is rehydrated from the secrets store',
+    /hydrateState\(/.test(fn), true)
 }
 
-// ── a seat has to subscribe to its own secrets ─────────────────────────────
+// ── the client puts its own hand back, and checks what it was sent ─────────
 {
-  const callers = callersOf('startSecretsSync', 'src/lib/secretsSync.ts')
-  check('something calls startSecretsSync', callers.length > 0, true)
-  check('...and it is reachable from the sync path',
-    callers.length === 0 ? 'NOTHING CALLS IT' : 'called', 'called')
+  const callers = (name: string, definedIn: string) =>
+    SRC.filter(f => f.path !== definedIn && new RegExp(`\\b${name}\\s*\\(`).test(f.text)).map(f => f.path)
+
+  check('something calls startSecretsSync',
+    callers('startSecretsSync', 'src/lib/secretsSync.ts').length > 0, true)
+  check('something merges this seat\'s own hand back',
+    callers('mergeOwnSecrets', 'src/lib/stateView.ts').length > 0, true)
+  // The assertion, at the only place that can tell absent from hidden.
+  check('leaksOtherSeatsSecrets is asserted where state arrives from the wire',
+    callers('leaksOtherSeatsSecrets', 'src/lib/stateView.ts')
+      .some(p => p.includes('useMatchSync') || p.includes('matchSync')), true)
+}
+
+// ── the two copies of the projection cannot drift ──────────────────────────
+// The edge function runs a GENERATED copy of stateView. If it is stale, the
+// server is applying a different rule from the one the client asserts against,
+// and the disagreement surfaces as a privacy leak rather than a broken build.
+{
+  const gen = 'supabase/functions/_shared/stateView.gen.ts'
+  check('the projections are shared with the server, not re-implemented',
+    readFileSync(gen, 'utf8').includes('publicView'), true)
+  check('...and generated rather than hand-copied',
+    /AUTO-GENERATED/.test(readFileSync(gen, 'utf8')), true)
+  check('...from the file the client uses',
+    readFileSync(gen, 'utf8').includes('src/lib/stateView.ts'), true)
+  // AND CURRENT. The bundle is checked in and deployed from the working tree,
+  // so editing the source without regenerating leaves the server applying the
+  // OLD rule while the client asserts against the new one. That disagreement
+  // surfaces as a privacy leak rather than as a broken build, which is the
+  // worst way for it to surface. Sabotage found this: changing publicView
+  // without running build:edge left the whole suite green.
+  check('...and regenerated since stateView last changed',
+    (() => {
+      try { execSync('node scripts/build-edge-shared.mjs --check', { stdio: 'pipe' }); return true }
+      catch { return false }
+    })(), true)
 }
 
 // ── the deck store has to exist before anything can be dealt into it ───────
