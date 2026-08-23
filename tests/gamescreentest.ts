@@ -395,8 +395,15 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   const boardSrc = readFileSync('src/components/dune/DuneBoard.tsx', 'utf8')
   check('...and so is the board image it sits on',
     boardSrc.includes('width="100%" height="100%"'), true)
+  // Read from the board root's OWN style block, not from the file at large:
+  // the inner image div is pinned too, so looking anywhere passed on a root
+  // that had gone back to being a floating, content-sized box. Matched on the
+  // properties rather than the exact line, which broke the moment the line was
+  // reflowed to take another rule.
+  const rootAt = boardSrc.indexOf('data-layer="board"')
+  const boardRoot = boardSrc.slice(rootAt, rootAt + boardSrc.slice(rootAt).indexOf('}}>'))
   check('...both pinned to the column, so the percentages resolve',
-    boardSrc.includes('<div data-layer="board" style={{ position: \'absolute\', inset: 0 }}>'), true)
+    /position: 'absolute'/.test(boardRoot) && /inset: 0/.test(boardRoot), true)
 
   // The tray's box IS the board's column: its margins are the two side panels.
   // Any other number here centres it on something that is not the board.
@@ -432,6 +439,75 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     renderToStaticMarkup(createElement(ChatPanel, {
       messages: [], collapsed: true, onToggle: () => {},
     })).includes(`width:${CHAT_SHUT_WIDTH}px`), true)
+}
+// ── a board is not a document ────────────────────────────────────────────
+// Dragging across the board caught the territory names and lit them up like
+// something you were about to copy — which is what a player does while
+// reaching for a stack. The same went for the tray, the HUD and the auction
+// panel: names and tallies, none of it copy.
+//
+// Two things stay selectable ON PURPOSE, and both are checked, because a
+// blanket rule is exactly how they would be lost:
+//
+//   The bid field. `user-select: none` on an ancestor reaches into a text
+//   input and takes select-all and drag-select with it, which turns fixing a
+//   mistyped bid into deleting it a character at a time, against a clock.
+//
+//   The faction and alliance cards. The only prose on the screen anyone would
+//   want to quote, and they open in panels you ask for rather than sitting
+//   under a cursor reaching for the map.
+{
+  // Its own auction fixture: the one below is block-scoped to its own section.
+  const full = draw({ bidding: {
+    ask: { kind: 'treachery-bid', index: 0, cardCount: 4, high: null, minimum: 1,
+           hands: { atreides: 3, harkonnen: 2, emperor: 2, fremen: 2 } },
+    order: ['atreides', 'harkonnen', 'emperor', 'fremen'],
+    toAct: 'atreides', passed: [], closesAt: 15_000,
+    onBid: () => {}, onPass: () => {},
+  } })
+  const between = (from: string, to?: string) => {
+    const a = full.indexOf(from)
+    const b = to ? full.indexOf(to, a) : full.length
+    return a < 0 ? '' : full.slice(a, b < 0 ? full.length : b)
+  }
+
+  for (const [what, layer] of [
+    ['the board', 'data-layer="board"'],
+    ['the HUD', 'data-layer="player-hud"'],
+    ['the tray', 'data-layer="own-strip"'],
+  ] as const) {
+    const at = full.indexOf(layer)
+    check(`${what} is on the screen to be checked`, at > 0, true)
+    // The rule has to be on the layer's own element, so it inherits into
+    // everything drawn inside it — which for the board is the whole inlined
+    // SVG, where nearly all the text is.
+    check(`...and its text cannot be selected`,
+      /user-select:none/.test(full.slice(at, full.indexOf('>', at))), true)
+  }
+
+  // The auction panel, which has the same problem and is not part of either.
+  const scrim = full.indexOf('background:#000000a8')
+  check('the auction panel is up', scrim > 0, true)
+  check('...and is not selectable either',
+    /user-select:none/.test(full.slice(scrim - 200, full.indexOf('>', scrim))), true)
+
+  // THE TWO EXCEPTIONS.
+  const bidField = between('id="dune-bid"', '/>')
+  check('the bid field can still be selected',
+    /user-select:text/.test(bidField), true)
+
+  const card = renderToStaticMarkup(createElement(FactionCard, {
+    faction: factionById('atreides')!, mode: 'advanced' as const,
+  }))
+  check('the faction card is prose, and stays selectable',
+    /user-select:text/.test(card), true)
+
+  // The chat is nobody's chrome — people quote each other. Left alone.
+  const chat = renderToStaticMarkup(createElement(ChatPanel, {
+    messages: [{ id: 'm', faction: 'fremen' as FactionId, text: 'Water', at: 0 }],
+    collapsed: false, onToggle: () => {},
+  }))
+  check('the chat is left selectable', /user-select:none/.test(chat), false)
 }
 // ── the drawer is wired to the enlarged card ─────────────────────────────
 // READ FROM THE SOURCE, like transportwiringtest reads the edge functions, and

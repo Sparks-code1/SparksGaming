@@ -18,7 +18,7 @@
 import { useEffect, useState } from 'react'
 import {
   DUNE_BOARD, DUNE_PLAYER_POSITIONS, DUNE_SECTORS, DUNE_STORM_RING, DUNE_TERRITORIES,
-  DUNE_TRACK,
+  DUNE_TRACK, DUNE_TURN_DIAL,
 } from '@/data/dune/boardData'
 import { DUNE_PHASES } from '@/types/Dune/Game'
 import type { FactionId } from '@/types/Dune/Faction'
@@ -97,6 +97,15 @@ export interface DuneBoardProps {
    * say it worse.
    */
   phase?: GamePhase | null
+  /**
+   * Which turn it is, 1–10, marked on the dial the board prints top left.
+   *
+   * The dial has the ten numbers on it and no way of saying which one you are
+   * on, which is a countdown you cannot read. Same argument as the phase track:
+   * the board already draws the thing, so mark it there rather than printing a
+   * second copy somewhere else.
+   */
+  turn?: number | null
   /** The board takes clicks only when a caller wants them. */
   interactive?: boolean
   children?: React.ReactNode
@@ -123,6 +132,51 @@ function PhaseMark({ phase }: { phase: GamePhase }) {
       <title>{`Phase ${at + 1} — ${phase}`}</title>
       <circle cx={stop.x} cy={stop.y} r={18.5} fill={WAITING} fillOpacity={0.28} />
       <circle cx={stop.x} cy={stop.y} r={21} fill="none" stroke={WAITING} strokeWidth={2.6} />
+    </g>
+  )
+}
+
+/** How many wedges the dial is divided into — a game is ten turns. */
+export const DIAL_WEDGES = 10
+
+/**
+ * The wedge for one turn, as a pie slice of the dial.
+ *
+ * CLOCKWISE FROM THE TOP, 36 degrees each: turn N spans (N-1)*36 to N*36. See
+ * DUNE_TURN_DIAL for where that reading comes from — it is derived from the
+ * artwork's own wedge arcs and confirmed against the printed numerals, not
+ * guessed from the picture.
+ */
+export function turnWedgePath(turn: number): string | null {
+  if (!Number.isInteger(turn) || turn < 1 || turn > DIAL_WEDGES) return null
+  const { x, y, r } = DUNE_TURN_DIAL
+  const span = 360 / DIAL_WEDGES
+  const at = (deg: number, rad: number): [number, number] => {
+    const a = ((deg - 90) * Math.PI) / 180
+    return [x + rad * Math.cos(a), y + rad * Math.sin(a)]
+  }
+  // Just inside the printed rim, so the highlight does not sit on the ring.
+  const rr = r * 0.955
+  const [x1, y1] = at((turn - 1) * span, rr)
+  const [x2, y2] = at(turn * span, rr)
+  return `M ${x} ${y} L ${x1} ${y1} A ${rr} ${rr} 0 0 1 ${x2} ${y2} Z`
+}
+
+/**
+ * The turn, marked on the dial.
+ *
+ * A TINT AND AN EDGE, like the phase medallion: the number printed in the wedge
+ * is what says which turn it is, so covering it to point at it would be an odd
+ * way round.
+ */
+function TurnMark({ turn }: { turn: number }) {
+  const d = turnWedgePath(turn)
+  if (!d) return null
+  return (
+    <g data-layer="turn-dial" data-turn={turn} pointerEvents="none">
+      <title>{`Turn ${turn} of ${DIAL_WEDGES}`}</title>
+      <path d={d} fill={WAITING} fillOpacity={0.3} stroke={WAITING} strokeWidth={2}
+        strokeLinejoin="round" />
     </g>
   )
 }
@@ -156,7 +210,7 @@ function AwaitingMark({ faction, seating }: {
 
 export function DuneBoard({
   storm, stacks, spice, seating, deck, mode,
-  worms = [], awaiting = null, phase = null, interactive = false, children,
+  worms = [], awaiting = null, phase = null, turn = null, interactive = false, children,
 }: DuneBoardProps) {
   const [svg, setSvg] = useState<string | null>(null)
 
@@ -187,7 +241,15 @@ export function DuneBoard({
     // PINNED, not sized. Both layers fill the positioned box they are given and
     // scale themselves down to fit it — a percentage height resolves here
     // because `inset: 0` is a definite box however the parent lays out.
-    <div data-layer="board" style={{ position: 'absolute', inset: 0 }}>
+    <div data-layer="board" style={{
+      position: 'absolute', inset: 0,
+      // A BOARD IS NOT A DOCUMENT. Dragging across it caught the territory names
+      // and lit them up like something you were about to copy, which is exactly
+      // what a player does while reaching for a stack. It inherits into the
+      // inlined board SVG as well, which is where nearly all the text is.
+      // Risk's map does the same — see SVGMapLayer.
+      userSelect: 'none', WebkitUserSelect: 'none',
+    }}>
       {svg
         ? <div style={{ position: 'absolute', inset: 0 }}
             dangerouslySetInnerHTML={{ __html: svg }} />
@@ -226,6 +288,7 @@ export function DuneBoard({
         })}
 
         {phase && <PhaseMark phase={phase} />}
+        {turn != null && <TurnMark turn={turn} />}
 
         {/* Who is sitting where. An overlay, not part of the board: the seating
             changes every game and the printed circles do not. */}

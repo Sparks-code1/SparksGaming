@@ -89,6 +89,8 @@ export function PlayerHud({ rows, awaiting, seat, turn }: PlayerHudProps) {
       style={{
         width: HUD_WIDTH, flex: '0 0 auto', background: '#131c2e', color: PALE,
         borderLeft: '1px solid #ffffff1f', overflowY: 'auto',
+        // Faction names and three counters. Nothing here is copy.
+        userSelect: 'none', WebkitUserSelect: 'none',
       }}>
       <h2 style={{
         margin: 0, padding: '7px 10px', borderBottom: '1px solid #ffffff1f',

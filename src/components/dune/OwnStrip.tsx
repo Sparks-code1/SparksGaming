@@ -159,8 +159,13 @@ export function FactionCard({ faction, mode }: { faction: Faction; mode: GameMod
       borderLeft: `4px solid ${look.colour}`, paddingLeft: 9,
     }}>
       {/* In a panel now, so it takes the room the panel has rather than fighting
-          a strip for it. The player sizes that panel themselves. */}
-      <div style={{ fontSize: 13, lineHeight: 1.45 }}>
+          a strip for it. The player sizes that panel themselves.
+
+          SELECTABLE, against the tray's blanket rule. This and the ally's card
+          are the only prose on the screen — a paragraph of rules somebody might
+          reasonably want to quote — and they sit in panels opened deliberately
+          rather than under a cursor reaching for the board. */}
+      <div style={{ fontSize: 13, lineHeight: 1.45, userSelect: 'text', WebkitUserSelect: 'text' }}>
         {[...rules, ...extra].map(([phase, text]) => (
           <p key={phase + text.slice(0, 12)} style={{ margin: '0 0 5px' }}>
             <span style={{ opacity: 0.5, letterSpacing: 0.6 }}>{phase.toUpperCase()} </span>
@@ -314,7 +319,14 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
 
   return (
     <footer data-layer="own-strip" data-seat={seat}
-      style={{ background: '#131c2e', color: PALE, borderTop: '1px solid #ffffff1f' }}>
+      style={{
+        background: '#131c2e', color: PALE, borderTop: '1px solid #ffffff1f',
+        // Labels, tallies, card faces and leader discs. The two exceptions are
+        // re-enabled where they are drawn: the faction card and the ally's card
+        // are the only prose on this screen anybody would want to copy, and they
+        // open in panels you have to ask for.
+        userSelect: 'none', WebkitUserSelect: 'none',
+      }}>
 
       {/* The private view, above the strip so it does not push the board. Only
           ever RENDERED when asked for — a hand hidden with CSS is still in the
@@ -414,7 +426,10 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
           accentColor={FACTION_LOOK[allyFaction.id].colour}
           width={380} storageKey={`dune-alliance-${seat}`} initialTop={150} initialRight={60}
           onClose={() => setShowAlliance(false)}>
-          <p style={{ margin: 0, fontSize: 13, lineHeight: 1.45 }}>{allyFaction.alliance}</p>
+          <p style={{
+            margin: 0, fontSize: 13, lineHeight: 1.45,
+            userSelect: 'text', WebkitUserSelect: 'text',
+          }}>{allyFaction.alliance}</p>
         </DraggableResizable>
       )}
 

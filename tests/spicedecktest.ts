@@ -9,6 +9,7 @@
 // decoration, because Shai-Hulud devours the territory showing on the pile.
 import { readFileSync } from 'node:fs'
 import { execSync } from 'node:child_process'
+import { flattenPath, inPolygon } from './lib/svgPath'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { SpiceDeckArea, slotLayout } from '@/components/dune/SpiceDeckArea'
@@ -39,44 +40,6 @@ function spiceBoxPolygon(side: 'right' | 'left' = 'right'): [number, number][] {
     : p.every(([px]) => px < 485)) ?? []
 }
 
-function flattenPath(d: string, steps = 24): [number, number][] {
-  const pts: [number, number][] = []
-  let cx = 0, cy = 0, sx = 0, sy = 0
-  for (const m of d.matchAll(/([MLHVCZmlhvcz])([^MLHVCZmlhvcz]*)/g)) {
-    const a = (m[2].match(/-?\d*\.?\d+(?:e-?\d+)?/g) ?? []).map(Number)
-    switch (m[1]) {
-      case 'M': cx = a[0]; cy = a[1]; sx = cx; sy = cy; pts.push([cx, cy]); break
-      case 'L': for (let i = 0; i < a.length; i += 2) { cx = a[i]; cy = a[i + 1]; pts.push([cx, cy]) } break
-      case 'H': for (const v of a) { cx = v; pts.push([cx, cy]) } break
-      case 'V': for (const v of a) { cy = v; pts.push([cx, cy]) } break
-      case 'C':
-        for (let i = 0; i < a.length; i += 6) {
-          const [x1, y1, x2, y2, x3, y3] = a.slice(i, i + 6)
-          for (let k = 1; k <= steps; k++) {
-            const t = k / steps, u = 1 - t
-            pts.push([
-              u * u * u * cx + 3 * u * u * t * x1 + 3 * u * t * t * x2 + t * t * t * x3,
-              u * u * u * cy + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t * y3,
-            ])
-          }
-          cx = x3; cy = y3
-        }
-        break
-      case 'Z': case 'z': pts.push([sx, sy]); break
-    }
-  }
-  return pts
-}
-
-/** Ray casting. */
-function inPolygon([px, py]: [number, number], poly: readonly [number, number][]): boolean {
-  let hit = false
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const [xi, yi] = poly[i], [xj, yj] = poly[j]
-    if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) hit = !hit
-  }
-  return hit
-}
 
 let pass = true
 const check = (label: string, actual: unknown, expected: unknown) => {

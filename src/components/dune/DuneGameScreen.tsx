@@ -127,7 +127,7 @@ export function DuneGameScreen({
           <DuneBoard
             storm={state.storm} stacks={stacks} spice={state.spiceOnBoard}
             seating={seating} deck={state.spiceDeck} mode={state.mode}
-            awaiting={state.awaiting} phase={state.phase} />
+            awaiting={state.awaiting} phase={state.phase} turn={state.turn} />
 
           {/* The auction, over the WHOLE middle column rather than over the
               board's own box. The box is only as wide as the board is tall —

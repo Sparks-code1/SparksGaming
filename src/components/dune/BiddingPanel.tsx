@@ -168,6 +168,7 @@ export function BiddingBar(
       padding: '8px 12px', background: INK, color: SAND,
       borderTop: `1px solid ${SAND}44`, boxShadow: '0 -10px 30px #0009',
       font: '14px Georgia, "Times New Roman", serif',
+      userSelect: 'none', WebkitUserSelect: 'none',
     }}>
       <button type="button" onClick={onOpen} aria-expanded={false}
         aria-label="Open the bidding panel"
@@ -219,6 +220,11 @@ export function BiddingPanel(props: BiddingPanelProps) {
         style={{
           width: 72, background: '#ffffff12', color: SAND,
           border: `1px solid ${SAND}44`, borderRadius: 4, padding: '4px 6px',
+          // AN INPUT MUST STAY SELECTABLE. `user-select: none` on an ancestor
+          // reaches into a text field and takes select-all and drag-select with
+          // it, which turns correcting a mistyped bid into deleting it one
+          // character at a time — against a fifteen-second clock.
+          userSelect: 'text', WebkitUserSelect: 'text',
         }} />
       <button type="button" onClick={() => onBid(amount)}
         style={{ padding: '5px 14px', borderRadius: 4, border: 'none', cursor: 'pointer' }}>
@@ -254,6 +260,9 @@ export function BiddingPanel(props: BiddingPanelProps) {
       // it does not shrink the panel, it puts half of it outside the board area
       // and over the chat.
       overflow: 'auto', padding: 8,
+      // Same reason as the board underneath it: faction names and numbers, and
+      // a player clicking Bid in a hurry should not paint half the panel blue.
+      userSelect: 'none', WebkitUserSelect: 'none',
     }}>
       <div role="dialog" aria-label="treachery bidding" style={{
         background: INK, color: SAND, border: `1px solid ${SAND}44`, borderRadius: 10,

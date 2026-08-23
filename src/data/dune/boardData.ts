@@ -47,6 +47,7 @@ export interface DuneSpiceMarker extends DuneMarker { territoryId: string | null
 /** A seat. Its sectorId is never null — the generator refuses a board whose
  *  seats do not each land in their own sector. */
 export interface DuneArea { x: number; y: number; width: number; height: number }
+export interface DuneDial { x: number; y: number; r: number }
 export interface DunePlayerPosition extends DuneMarker { sectorId: string }
 
 /** The board circle, from the export's own rim circle. */
@@ -867,6 +868,22 @@ export const DUNE_SPICE_MARKERS: DuneSpiceMarker[] = [
  * cards out on the bbox puts most of them on the navy surround.
  */
 export const DUNE_SPICE_DECK_AREA: DuneArea = { x: 789.6, y: 952.96, width: 174, height: 144 }
+
+/**
+ * The turn dial, top left: ten numbered wedges.
+ *
+ * Taken from the export's own circle rather than measured off the picture —
+ * the same circle the moon is mirrored from.
+ *
+ * THE WEDGES RUN CLOCKWISE FROM THE TOP, 36 degrees each, so turn N spans
+ * (N-1)*36 to N*36 bearing. That is derived, not assumed: the ten wedge arcs
+ * in the artwork sit at bearings whose two unskewed members land exactly on
+ * 90 and 270 — the centres of the third and eighth wedges under this reading —
+ * and the printed 1 sits at bearing 18, dead centre of the first, with the 1
+ * of the 10 at 332, inside the last. See turndialtest, which checks both
+ * glyphs against the wedge they are supposed to fall in.
+ */
+export const DUNE_TURN_DIAL: DuneDial = { x: 90.89, y: 108.51, r: 82.73 }
 
 /** The nine-stop track arcing above the board. Purpose not yet established. */
 export const DUNE_TRACK: DuneMarker[] = [
