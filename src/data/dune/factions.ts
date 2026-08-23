@@ -50,9 +50,8 @@ export const ATREIDES: Faction = {
   advanced: {
     karama:
       "You may use a Karama Card to look at any one player's entire Battle Plan.",
-    general:
-      'If you are playing the advanced game, Kwisatz Haderach is in play. If you are the Atreides, use the '
-      + 'Kwisatz Haderach card and counter token to secretly keep track of force losses. Once you have lost 7 or '
+    kwisatzHaderach:
+      'Use the Kwisatz Haderach card and counter token to secretly keep track of force losses. Once you have lost 7 or '
       + 'more forces in a battle or battles, the Kwisatz Haderach card becomes active for the rest of the game and '
       + 'may be used as follows: it cannot be used alone in battle but may add its +2 strength to leaders or cheap '
       + 'heroes in one territory per turn. If the leader or cheap hero is killed, the Kwisatz Haderach has no effect '

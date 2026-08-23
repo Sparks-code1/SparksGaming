@@ -25,7 +25,8 @@ import { DUNE_PHASES, KWISATZ_HADERACH_AT } from '@/types/Dune/Game'
 import type { DuneGameState, DunePlayerPublic, Force } from '@/types/Dune/Game'
 import type { DuneSecrets } from '@/lib/dune/charity'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
-import { factionById } from '@/data/dune/factions'
+import { factionById, findLeader } from '@/data/dune/factions'
+import { TraitorCard, TraitorCardBack, TRAITOR_RULES } from '@/components/dune/TraitorCard'
 import { FACTION_LOOK } from '@/components/dune/SeatLayer'
 import type { FactionId } from '@/types/Dune/Faction'
 
@@ -327,7 +328,7 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   check('...and the faction mark, beside the name',
     card.includes('<title>Atreides</title>'), true)
   check('...and nothing from the advanced game',
-    card.includes(atreides.advanced.general!.slice(0, 60))
+    card.includes(atreides.advanced.kwisatzHaderach!.slice(0, 60))
       || card.includes('use a Karama Card to look at'), false)
   check('...marked as the front', card.includes('data-face="front"'), true)
 
@@ -511,6 +512,67 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   check('...and the alliance card too', /showAlliance && allyFaction && \(/.test(src), true)
 }
 
+// ── a traitor is a card, not a counter ──────────────────────────────────
+// A disc is what a leader is ON THE BOARD: a counter you move and put in the
+// tanks. A traitor is a card in your hand, and it has to carry four sentences
+// that decide a battle — which is the whole reason it cannot stay a disc.
+{
+  const found = findLeader(SECRET_TRAITOR)!
+  const card = renderToStaticMarkup(createElement(TraitorCard, {
+    leader: found.leader, faction: found.faction,
+  }))
+  check('the card names the leader', card.includes(SECRET_TRAITOR), true)
+  check("...and whose leader they are", card.includes('HARKONNEN'), true)
+  // The strength is what you are PAID in spice when they turn, so it is a
+  // number the card has to carry rather than a decoration.
+  check('...and their fighting strength',
+    card.includes(`data-strength="${found.leader.strength}"`), true)
+  // THE FRONT IS THE FACE. Fitting the rules on it too left the portrait a
+  // nineteen percent band with the top of a head in it — cropped past the point
+  // where one leader can be told from another, which is the only job the front
+  // has. They are on the back, which has the whole card for them.
+  check('the front does not try to carry the rules as well',
+    TRAITOR_RULES.some(line => card.includes(line.slice(0, 40))), false)
+  check('...and shows the whole portrait rather than a crop of it',
+    card.includes('object-fit:contain'), true)
+
+  // The back, rendered on its own — it only exists after a click, and a claim
+  // about what a card says is worth nothing if the side saying it is unreachable.
+  const rules = renderToStaticMarkup(createElement(TraitorCardBack, {
+    faction: found.faction,
+  }))
+  check('every line of what happens when they turn is on the back',
+    TRAITOR_RULES.filter(line => !rules.includes(line.slice(0, 40))), [])
+
+  // A leader with no portrait yet still gets a card rather than a broken image.
+  const noArt = renderToStaticMarkup(createElement(TraitorCard, {
+    leader: { name: 'Nobody At All', strength: 3 }, faction: 'atreides' as FactionId,
+  }))
+  check('a leader with no portrait still gets a card',
+    noArt.includes('Nobody At All') && !noArt.includes('<img'), true)
+}
+
+// ── both hands travel, and the ally's card is his own ───────────────────
+// Read from the source: these open on internal state, which no static render
+// reaches. Same argument as the enlarged card above.
+{
+  const src = readFileSync('src/components/dune/OwnStrip.tsx', 'utf8')
+  // MOVABLE. A hand you can only read in a drawer pinned to the bottom of a
+  // column is a hand you cannot hold beside the territory you are thinking
+  // about, and these two are what a player reads WHILE looking at the board.
+  check('the treachery hand opens into a panel that moves',
+    /open === 'treachery' && \([\s\S]{0,200}<DraggableResizable/.test(src), true)
+  check('...and so does the traitor hand',
+    /open === 'traitors' && \([\s\S]{0,200}<DraggableResizable/.test(src), true)
+  check('...each remembering its own place',
+    src.includes('dune-hand-') && src.includes('dune-traitors-'), true)
+
+  // The ally's card carries the ALLY's mark, not this seat's — it is their
+  // card, and the whole point of it is that it is somebody else's.
+  check("the alliance card carries the ally's own mark",
+    /showAlliance && allyFaction && \([\s\S]{0,900}SeatMark faction=\{allyFaction\.id\}/.test(src),
+    true)
+}
 // ── the leader discs are readable ────────────────────────────────────────
 // Every battle in Dune is a leader and a number, and the number is on the disc.
 // At 28px across it was a smudge; this is the room the faction card gave back.

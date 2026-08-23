@@ -97,6 +97,14 @@ export interface FactionAbilities {
 export interface AdvancedRules extends FactionAbilities {
   /** For factions whose advanced rules are one block of prose. */
   general?: string
+  /**
+   * The Kwisatz Haderach, which is the Atreides' whole advanced game.
+   *
+   * ITS OWN KEY rather than a paragraph in `general`, because the card that
+   * shows these labels each entry with the key it came from, and GENERAL says
+   * nothing. A named rule labels itself.
+   */
+  kwisatzHaderach?: string
   /** Rules about the forces themselves, such as what an elite force is worth. */
   forces?: string
   /** Bene Gesserit forces have two modes; each needs its own rules text. */

@@ -41,6 +41,7 @@ import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import type { TreacheryCard } from '@/types/Dune/Treachery'
 import { FACTION_LOOK, SeatMark, SeatFilters } from './SeatLayer'
 import { LeaderDisc } from './LeaderDisc'
+import { TraitorCard } from './TraitorCard'
 import { TreacheryCardFace, TreacheryCardBack } from './TreacheryCardFace'
 
 const PALE = '#f0e2bb'
@@ -328,20 +329,15 @@ export function PrivateView(
             </button>
           ))
         : <p style={{ opacity: 0.6, margin: 0, fontSize: 12 }}>No treachery cards.</p>)}
+      {/* CARDS, not discs. A disc is what a leader is on the BOARD — a counter
+          you move and put in the tanks. A traitor is a card in your hand, and it
+          has to carry four sentences of rules that decide a battle, which do not
+          go on a counter. */}
       {kind === 'traitors' && (traitors.length
         ? traitors.map(name => {
             const found = findLeader(name)
             if (!found) return <span key={name} style={{ fontSize: 12 }}>{name}</span>
-            return (
-              <div key={name} style={{ textAlign: 'center' }}>
-                <svg viewBox="-52 -52 104 104" width={92} height={92} style={{ display: 'block' }}>
-                  <LeaderDisc leader={found.leader} faction={found.faction} r={48} />
-                </svg>
-                <span style={{ fontSize: 9.5, opacity: 0.6 }}>
-                  {FACTION_LOOK[found.faction].name}
-                </span>
-              </div>
-            )
+            return <TraitorCard key={name} leader={found.leader} faction={found.faction} />
           })
         : <p style={{ opacity: 0.6, margin: 0, fontSize: 12 }}>No traitors dealt.</p>)}
     </div>
@@ -382,12 +378,31 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
         userSelect: 'none', WebkitUserSelect: 'none',
       }}>
 
-      {/* The private view, above the strip so it does not push the board. Only
-          ever RENDERED when asked for — a hand hidden with CSS is still in the
-          markup, and the markup is what a screenshot over somebody's shoulder
-          has in it. */}
-      {open && <PrivateView kind={open} hand={hand} traitors={traitors}
-        onOpenCard={setZoom} />}
+      {/* MOVABLE, like the faction card. A hand you can only see in a drawer
+          pinned to the bottom of a column is a hand you cannot hold next to the
+          territory you are thinking about — and these two are what a player
+          reads WHILE looking at the board, not instead of it.
+
+          Only ever RENDERED when asked for. A hand hidden with CSS is still in
+          the markup, and the markup is what a screenshot over somebody's
+          shoulder has in it. */}
+      {open === 'treachery' && (
+        <DraggableResizable title="Your treachery cards" accentColor={look.colour}
+          width={430} storageKey={`dune-hand-${seat}`} initialTop={70} initialRight={470}
+          onClose={() => setOpen(null)}>
+          <PrivateView kind="treachery" hand={hand} traitors={traitors}
+            onOpenCard={setZoom} />
+        </DraggableResizable>
+      )}
+      {open === 'traitors' && (
+        <DraggableResizable title="Your traitor cards" accentColor={look.colour}
+          // Wide enough for two cards side by side, which is the common hand.
+          width={500} storageKey={`dune-traitors-${seat}`} initialTop={120} initialRight={420}
+          onClose={() => setOpen(null)}>
+          <PrivateView kind="traitors" hand={hand} traitors={traitors}
+            onOpenCard={setZoom} />
+        </DraggableResizable>
+      )}
 
       {/* A COLUMN, not a strip. It moved out from under the board and into the
           right-hand column, because the board is bound by height and everything
@@ -469,6 +484,17 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
           accentColor={FACTION_LOOK[allyFaction.id].colour}
           width={380} storageKey={`dune-alliance-${seat}`} initialTop={150} initialRight={60}
           onClose={() => setShowAlliance(false)}>
+          {/* The ally's own mark, the same one on their seat and their HUD
+              bubble, so whose card this is reads before the words do. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+            <svg width={28} height={28} viewBox="-14 -14 28 28" style={{ display: 'block' }}>
+              <SeatFilters />
+              <SeatMark faction={allyFaction.id} x={0} y={0} r={13} />
+            </svg>
+            <b style={{ fontFamily: SERIF, fontSize: 15, letterSpacing: 0.4 }}>
+              {FACTION_LOOK[allyFaction.id].name}
+            </b>
+          </div>
           <p style={{
             margin: 0, fontSize: 13, lineHeight: 1.45,
             userSelect: 'text', WebkitUserSelect: 'text',

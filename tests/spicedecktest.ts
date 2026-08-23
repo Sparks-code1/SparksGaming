@@ -96,14 +96,14 @@ const draw = (over: Partial<SpiceDeckAreaProps> = {}) =>
   // Deliberately incoherent: 4 left with 9 discarded adds up to nothing in a
   // 21-card deck. The number shown must be the one that was published.
   const odd = draw({ deck: { remaining: 4, discardA: Array(9).fill(terr('Old Gap')), discardB: [] } })
-  check('the published count is what appears', />4</.test(odd), true)
+  check('the published count is what appears', odd.includes('>4 LEFT<'), true)
   check('...and no arithmetic on the piles appears instead',
-    />(?:12|17|21)</.test(odd), false)
+    /\b(?:12|17|21) LEFT\b/.test(odd), false)
 
   // Zero is falsy, and this codebase has shipped `{n && ...}` before. An empty
   // deck must read as 0, not vanish.
   check('an empty deck shows 0 rather than nothing',
-    />0</.test(draw({ deck: { remaining: 0, discardA: [], discardB: [] } })), true)
+    draw({ deck: { remaining: 0, discardA: [], discardB: [] } }).includes('>0 LEFT<'), true)
 }
 
 // ── the top card is the one showing ───────────────────────────────────────
@@ -146,10 +146,15 @@ const draw = (over: Partial<SpiceDeckAreaProps> = {}) =>
   const adv = draw({ mode: 'advanced' })
   check('basic play draws one pile', [/PILE A/.test(basic), /PILE B/.test(basic)], [false, false])
   check('...labelled simply DISCARD, there being no other', basic.includes('DISCARD'), true)
-  // Lettered rather than spelled out: the labels sit beside the cards now, in
-  // a column that is 26 wide.
-  check('advanced play draws both, named',
-    [/>A</.test(adv), />B</.test(adv)], [true, true])
+  // UNLETTERED, deliberately: two cards stacked beside a deck are the two
+  // discard piles without being told so. They keep a name for the title and for
+  // anything reading the markup — a pile that cannot be told from the other is
+  // a different problem from a pile that is not labelled on screen.
+  check('advanced play draws both piles',
+    [/data-pile="Discard pile A"/.test(adv), /data-pile="Discard pile B"/.test(adv)],
+    [true, true])
+  check('...without printing a letter beside either',
+    [/>A</.test(adv), />B</.test(adv)], [false, false])
 
   // A basic game handed a stale B pile must not grow a second pile. The mode is
   // the authority on how many there are, not whether the array happens to be

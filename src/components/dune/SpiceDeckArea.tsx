@@ -46,13 +46,14 @@ const GAP = 6
 /** Caption height beneath a slot that has one. */
 const CAPTION = 12
 /**
- * Room for a stacked pile's label, which sits BESIDE it rather than under it.
+ * Room for a label beside a stacked pile rather than under it.
  *
- * Only the advanced game pays this. Two piles stacked are short of height and
- * flush with width, so a caption under each would come straight off the cards;
- * one pile has height to spare and is captioned underneath like the deck.
+ * Zero, because the stacked piles carry no label: two cards one above the other
+ * beside a deck say what they are without being told. Kept as a named constant
+ * rather than deleted because the geometry still has an opinion about it — a
+ * pile that ever needs a word again needs this width back with it.
  */
-const SIDE_LABEL_W = 26
+const SIDE_LABEL_W = 0
 
 /**
  * The spice spiral, the same curve the board's own marks are drawn from.
@@ -165,7 +166,14 @@ function CardBack({ x, y, w, h }: { x: number; y: number; w: number; h: number }
       <rect x={x} y={y} width={w} height={h} rx={5} fill={NAVY} stroke={SAND} strokeWidth={1.2} />
       <rect x={x + 5} y={y + 5} width={w - 10} height={h - 10} rx={3}
         fill="none" stroke={SAND} strokeWidth={0.7} opacity={0.55} />
-      <SpiceSpiral x={x + w / 2} y={y + h / 2} r={w * 0.26} stroke={SAND} width={1.4} />
+      {/* NAMED. The back is otherwise a spiral, and a spiral is the mark for
+          spice everywhere on this board — on blow markers, on the phase track,
+          on a territory card's own value. Saying which deck this is takes one
+          word and removes the guess. */}
+      <text x={x + w / 2} y={y + h * 0.2} fontSize={w * 0.17} fill={SAND}
+        textAnchor="middle" dominantBaseline="central" letterSpacing={w * 0.02}
+        fontFamily={SERIF}>SPICE</text>
+      <SpiceSpiral x={x + w / 2} y={y + h * 0.58} r={w * 0.26} stroke={SAND} width={1.4} />
     </g>
   )
 }
@@ -263,15 +271,24 @@ function Depth({ x, y, w, count }: { x: number; y: number; w: number; count: num
  * The depth marks are drawn BEHIND and offset, which is the only way a pile of
  * one and a pile of nine look different when only the top card is ever visible.
  */
-function Pile({ cards, x, y, w, h, caption, sideLabel }: {
+function Pile({ cards, x, y, w, h, caption, name, sideLabel }: {
   cards: readonly SpiceCard[]; x: number; y: number; w: number; h: number
+  /** What is printed beside or under the card. Empty draws nothing. */
   caption: string
+  /**
+   * What the pile IS, for the title and for anything reading the markup.
+   *
+   * Separate from the caption because the advanced game stopped printing A and
+   * B — two cards stacked beside a deck say what they are — but a pile with no
+   * name at all is one a screen reader, and a test, cannot tell from the other.
+   */
+  name: string
   /** Beside the card rather than under it, where height is the scarce axis. */
   sideLabel?: boolean
 }) {
   const top = showing(cards)
   return (
-    <g>
+    <g data-pile={name}>
       {top && Array.from({ length: Math.min(cards.length - 1, 3) }, (_, i) => (
         <rect key={i} x={x - (i + 1) * 1.8} y={y + (i + 1) * 1.8} width={w} height={h} rx={5}
           fill={SAND} stroke={INK} strokeWidth={0.8} opacity={0.45} />
@@ -280,7 +297,7 @@ function Pile({ cards, x, y, w, h, caption, sideLabel }: {
         ? <CardFace card={top} x={x} y={y} w={w} h={h} />
         : <EmptySlot x={x} y={y} w={w} h={h} />}
       <Depth x={x} y={y} w={w} count={cards.length} />
-      {sideLabel
+      {caption === '' ? null : sideLabel
         ? <text x={x + w + 4} y={y + h / 2} fontSize={Math.min(10, w * 0.26)} fill={INK}
             dominantBaseline="central" letterSpacing={0.8} fontFamily={SERIF} opacity={0.85}>
             {caption}
@@ -288,9 +305,9 @@ function Pile({ cards, x, y, w, h, caption, sideLabel }: {
         : <Caption x={x} y={y + h + 4} w={w} text={caption} />}
       <title>
         {top
-          ? `${caption}: showing ${top.kind === 'shai-hulud' ? 'Shai-Hulud' : top.name}`
+          ? `${name}: showing ${top.kind === 'shai-hulud' ? 'Shai-Hulud' : top.name}`
             + ` (${cards.length} card${cards.length === 1 ? '' : 's'})`
-          : `${caption}: empty`}
+          : `${name}: empty`}
       </title>
     </g>
   )
@@ -320,28 +337,29 @@ export function SpiceDeckArea({ deck, mode }: SpiceDeckAreaProps) {
           much of it is left. */}
       <g>
         <CardBack x={L.deckX} y={L.deckY} w={L.deckW} h={L.deckH} />
-        {/* The count rides on the back rather than in the caption: it is the
-            reason the deck is drawn at all, and it changes every turn. */}
-        <circle cx={L.deckX + L.deckW / 2} cy={L.deckY + L.deckH * 0.78} r={L.deckW * 0.16}
-          fill={SAND} stroke={INK} strokeWidth={1} />
-        <text x={L.deckX + L.deckW / 2} y={L.deckY + L.deckH * 0.78} fontSize={L.deckW * 0.2}
-          fill={INK} textAnchor="middle" dominantBaseline="central" fontWeight="bold"
-          fontFamily={SERIF}>
-          {deck.remaining}
-        </text>
-        <Caption x={L.deckX} y={L.deckY + L.deckH + 3} w={L.deckW} text="DECK" />
+        {/* UNDER THE CARD, not on it. A badge over the back covered the mark
+            that says which deck this is, to report a number that changes every
+            turn — the two were competing for the same square inch. */}
+        <Caption x={L.deckX} y={L.deckY + L.deckH + 3} w={L.deckW}
+          text={`${deck.remaining} LEFT`} />
         <title>{`Spice deck: ${deck.remaining} card${deck.remaining === 1 ? '' : 's'} face down`}</title>
       </g>
 
+      {/* NO LETTER on the stacked piles. Two cards one above the other beside a
+          deck are self-evidently the two discard piles; an A and a B beside them
+          label what the arrangement already says, and cost width the cards
+          could have. The single pile keeps its word, because one pile beside a
+          deck is not self-evidently a discard. */}
       <Pile cards={deck.discardA} x={L.pileX} y={L.pileY} w={L.pileW} h={L.pileH}
-        caption={advanced ? 'A' : 'DISCARD'} sideLabel={L.sideLabels} />
+        name={advanced ? 'Discard pile A' : 'Discard pile'}
+        caption={advanced ? '' : 'DISCARD'} sideLabel={L.sideLabels} />
 
       {/* Pile B exists only in the advanced game. Not drawn empty in the basic
           one — an empty slot on the board says "nothing here yet", which is a
           different and wrong thing from "this pile is not in this game". */}
       {advanced && (
         <Pile cards={deck.discardB} x={L.pileX} y={L.pileY + L.pileStep}
-          w={L.pileW} h={L.pileH} caption="B" sideLabel={L.sideLabels} />
+          w={L.pileW} h={L.pileH} name="Discard pile B" caption="" sideLabel={L.sideLabels} />
       )}
     </g>
   )
