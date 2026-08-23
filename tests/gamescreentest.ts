@@ -299,45 +299,51 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   check('with nobody awaited, nothing is ringed', idle.includes('data-layer="awaiting"'), false)
 }
 
-// ── the faction card carries advantages, not an essay ────────────────────
-// `advanced.general` is the prose bucket — the block a faction gets when its
-// advanced rules are one lump of rulebook rather than a rule per phase. The
-// Atreides' runs to 854 characters about the Kwisatz Haderach, duplicating a
-// tracker sitting on the same strip.
+// ── the faction card has two faces ──────────────────────────────────────
+// FRONT: the advantages every game has, plus the two numbers a player asks for
+// every turn. BACK: everything the advanced game adds, behind a control that
+// says so.
+//
+// The split is the point. The Atreides' advanced prose runs to 854 characters
+// about the Kwisatz Haderach and used to drown the three advantages above it;
+// the Karama power is not a standing advantage at all but a thing you may spend
+// a card on. Neither belongs in front of somebody reading their basic
+// advantages mid-turn, and both are worth having.
 {
   const atreides = factionById('atreides')!
-  const card = (mode: 'basic' | 'advanced') =>
-    renderToStaticMarkup(createElement(FactionCard, { faction: atreides, mode }))
+  const card = renderToStaticMarkup(createElement(FactionCard, { faction: atreides }))
 
-  check('the fixture still has an essay to leave out',
-    (atreides.advanced.general ?? '').length > 400, true)
-  check('the card does not carry it',
-    card('advanced').includes(atreides.advanced.general!.slice(0, 60)), false)
-  check('...nor label a section GENERAL', card('advanced').includes('GENERAL'), false)
+  // The front.
+  check('the front carries the advantages every game has',
+    card.includes(atreides.abilities.bidding!), true)
+  check('...says how many free revivals the faction gets',
+    card.includes(`data-free-revivals="${atreides.freeRevivals}"`), true)
+  // The NUMBER, not just the attribute — an attribute nothing renders beside it
+  // is a fact only a test can see.
+  check('...in words a player can read',
+    new RegExp(`${atreides.freeRevivals} free revival`).test(card), true)
+  check('...and what the faction brings to an alliance',
+    card.includes(atreides.alliance.slice(0, 40)), true)
+  check('...and the faction mark, beside the name',
+    card.includes('<title>Atreides</title>'), true)
+  check('...and nothing from the advanced game',
+    card.includes(atreides.advanced.general!.slice(0, 60))
+      || card.includes('use a Karama Card to look at'), false)
+  check('...marked as the front', card.includes('data-face="front"'), true)
 
-  // The phase-keyed advantages all stay, advanced ones included. Cutting the
-  // essay by cutting the whole advanced block would take a real advantage with
-  // it — the Atreides' Karama power is one.
-  check('the advantages stay', card('advanced').includes(atreides.abilities.bidding!), true)
-  // KARAMA IS OFF THE CARD TOO. It is not a standing faction advantage — it is
-  // what this faction may spend a Karama CARD on, which is a thing you do when
-  // you hold one. Matched on a fragment with no apostrophe in it: the rules text
-  // has one and renderToStaticMarkup escapes it to &#x27;.
-  const KARAMA = 'use a Karama Card to look at'
-  check('the fixture fragment is really in the rule',
-    atreides.advanced.karama!.includes(KARAMA), true)
-  check('...and the card does not carry it', card('advanced').includes(KARAMA), false)
+  // The way through to the back has to SAY what is on it. A bare arrow is a
+  // gesture; this is a promise about the other side.
+  check('the front offers the advanced advantages',
+    card.includes('See advanced game advantages'), true)
+  check('...naming the faction for a screen reader',
+    card.includes('aria-label="Atreides advanced game advantages"'), true)
 
-  // The OTHER advanced entries stay — those are real advantages, keyed to the
-  // phase they apply in. Cutting karama by cutting the whole advanced block
-  // would take them with it.
-  const fremen = factionById('fremen')!
-  const fremenCard = (mode: 'basic' | 'advanced') =>
-    renderToStaticMarkup(createElement(FactionCard, { faction: fremen, mode }))
-  check('the advanced game still shows the rules that name a phase',
-    fremenCard('advanced').includes(fremen.advanced.storm!.slice(0, 40)), true)
-  check('...which the basic game leaves out',
-    fremenCard('basic').includes(fremen.advanced.storm!.slice(0, 40)), false)
+  // The back. Only reachable through a click, so it is rendered on its own —
+  // the same argument as PrivateView: a claim about what is hidden is worth
+  // nothing unless the thing it hides can be shown.
+  const back = renderToStaticMarkup(createElement(FactionCard, { faction: atreides }))
+  check('the front is what renders before anything is clicked',
+    back.includes('data-face="advanced"'), false)
 }
 
 // ── the two cards open as panels rather than sitting in the strip ─────────
@@ -454,29 +460,6 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   check('the tray no longer spans the window under the panels',
     /margin-left:\d+px;margin-right:\d+px/.test(full), false)
 
-}
-
-// ── what the faction card tells you now ──────────────────────────────────
-// Two things a player asks for every turn and could not read here. Free
-// revivals come up in the Revival phase and are a number nobody remembers;
-// what you bring to an alliance comes up whenever one is proposed, and was
-// only readable from your ALLY's side of the table.
-{
-  const atreides = factionById('atreides')!
-  const card = renderToStaticMarkup(createElement(FactionCard, {
-    faction: atreides, mode: 'advanced' as const,
-  }))
-  check('the card says how many free revivals the faction gets',
-    card.includes(`data-free-revivals="${atreides.freeRevivals}"`), true)
-  // The NUMBER, not just the attribute — an attribute nothing renders beside it
-  // is a fact only a test can see.
-  check('...in words a player can read',
-    new RegExp(`${atreides.freeRevivals} free revival`).test(card), true)
-  check('...and what the faction brings to an alliance',
-    card.includes(atreides.alliance.slice(0, 40)), true)
-
-  // The faction's own mark, the same one on its seat and its HUD bubble.
-  check('the card carries the faction mark', card.includes('<title>Atreides</title>'), true)
 }
 
 // ── the HUD is bubbles, and says why one is red ──────────────────────────

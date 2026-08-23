@@ -31,7 +31,7 @@ const check = (label: string, actual: unknown, expected: unknown) => {
 }
 
 const svg = readFileSync('public/dune-board.svg', 'utf8')
-const { x: CX, y: CY, r: R } = DUNE_TURN_DIAL
+const { x: CX, y: CY, r: R, rInner: RI } = DUNE_TURN_DIAL
 
 const bearing = (x: number, y: number) => {
   const b = (Math.atan2(x - CX, -(y - CY)) * 180) / Math.PI
@@ -114,19 +114,43 @@ const wedgeAt = (deg: number) => Math.floor(((deg % 360) + 360) % 360 / (360 / D
     [turnWedgePath(0), turnWedgePath(DIAL_WEDGES + 1), turnWedgePath(1.5)],
     [null, null, null])
 
-  // Each wedge starts where the last one ended, and the tenth closes the circle.
+  // AN ANNULAR SECTOR, which is the shape the printed wedges are. It was a cone
+  // struck from the dial's centre, which covered a hub the wedges stop short of
+  // and was simply a different shape from the thing it was marking.
+  //
+  //   M outer-start  A outer  outer-end  L inner-end  A inner  inner-start  Z
+  const SHAPE = /^M (\S+) (\S+) A (\S+) \S+ 0 0 1 (\S+) (\S+) L (\S+) (\S+) A (\S+) \S+ 0 0 0 (\S+) (\S+) Z$/
+  const parts = (turn: number) => turnWedgePath(turn)!.match(SHAPE)
+
+  check('every wedge is drawn as an annular sector',
+    Array.from({ length: DIAL_WEDGES }, (_, i) => parts(i + 1) === null).filter(Boolean), [])
+
   const startOf = (turn: number) => {
-    const d = turnWedgePath(turn)!
-    const n = (d.match(/-?\d*\.?\d+/g) ?? []).map(Number)
-    return Math.round(bearing(n[2], n[3]))          // the first L, after the M
+    const p = parts(turn)!
+    return Math.round(bearing(Number(p[1]), Number(p[2])))
   }
   check('the wedges start where the turn number says',
     Array.from({ length: DIAL_WEDGES }, (_, i) => startOf(i + 1)),
     [0, 36, 72, 108, 144, 180, 216, 252, 288, 324])
-  // Struck from the dial's own centre, so it sits on the printed wedge rather
-  // than beside it.
-  check('...and are struck from the dial centre',
-    turnWedgePath(1)!.startsWith(`M ${CX} ${CY} `), true)
+
+  // The two radii are the dial's own, not invented: inside the printed rim and
+  // outside the hub, so the mark sits within its wedge rather than over the
+  // lines either side of it.
+  {
+    const p = parts(1)!
+    const outer = Number(p[3]), inner = Number(p[8])
+    check('the outer edge is just inside the rim', outer > R * 0.9 && outer < R, true)
+    check('the inner edge is just outside the hub',
+      inner > RI && inner < RI * 1.25, true)
+    // Every corner lands on one of those two radii — a wedge with one corner at
+    // the centre is the cone this replaced.
+    const at = (i: number) => Math.hypot(Number(p[i]) - CX, Number(p[i + 1]) - CY)
+    check('...and all four corners sit on them',
+      [at(1), at(4), at(6), at(9)].map(v => Math.round(v)),
+      [Math.round(outer), Math.round(outer), Math.round(inner), Math.round(inner)])
+    check('...so none of them is the dial centre',
+      [at(1), at(4), at(6), at(9)].some(v => v < 1), false)
+  }
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

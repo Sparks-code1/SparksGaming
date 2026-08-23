@@ -103,7 +103,12 @@ export default function DuneGameScreenPreview() {
     return () => clearInterval(t)
   }, [])
 
-  const mode = (q.get('mode') === 'basic' ? 'basic' : 'advanced') as GameMode
+  // A TOGGLE, not just a query string. The basic and advanced games lay the
+  // spice deck out differently — one discard pile beside the deck against two
+  // stacked to its right — and the only way to judge that is to switch between
+  // them and watch, rather than to reload with a different URL and remember.
+  const [mode, setMode] = useState<GameMode>(
+    q.get('mode') === 'basic' ? 'basic' : 'advanced')
   const seat = q.get('seat') === 'none' ? null : ((q.get('seat') ?? 'atreides') as FactionId)
 
   // THE AUCTION ANSWERS. It used to be a constant with stubbed callbacks, so
@@ -134,6 +139,19 @@ export default function DuneGameScreenPreview() {
             }
           : null}
         now={now} />
+      {/* The two games, side by side in time. */}
+      <label style={{
+        position: 'fixed', left: 12, bottom: 10, zIndex: 5,
+        display: 'flex', alignItems: 'center', gap: 6,
+        background: '#1b2337', color: '#f0e2bb', border: '1px solid #f0e2bb55',
+        borderRadius: 4, padding: '5px 10px', cursor: 'pointer',
+        font: '12px Georgia, "Times New Roman", serif',
+      }}>
+        <input type="checkbox" checked={mode === 'basic'}
+          onChange={e => setMode(e.target.checked ? 'basic' : 'advanced')} />
+        basic game (one discard pile)
+      </label>
+
       {/* A way back in, since the fixture has no phase that would reopen one. */}
       {!running && (
         <button type="button" onClick={() => setCard(0)}

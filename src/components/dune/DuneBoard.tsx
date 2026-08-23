@@ -149,17 +149,25 @@ export const DIAL_WEDGES = 10
  */
 export function turnWedgePath(turn: number): string | null {
   if (!Number.isInteger(turn) || turn < 1 || turn > DIAL_WEDGES) return null
-  const { x, y, r } = DUNE_TURN_DIAL
+  const { x, y, r, rInner } = DUNE_TURN_DIAL
   const span = 360 / DIAL_WEDGES
   const at = (deg: number, rad: number): [number, number] => {
     const a = ((deg - 90) * Math.PI) / 180
     return [x + rad * Math.cos(a), y + rad * Math.sin(a)]
   }
-  // Just inside the printed rim, so the highlight does not sit on the ring.
-  const rr = r * 0.955
-  const [x1, y1] = at((turn - 1) * span, rr)
-  const [x2, y2] = at(turn * span, rr)
-  return `M ${x} ${y} L ${x1} ${y1} A ${rr} ${rr} 0 0 1 ${x2} ${y2} Z`
+  // AN ANNULAR SECTOR, which is the shape the numbers actually sit in. It was a
+  // cone struck from the dial's centre, which is a different shape from the
+  // wedge it was marking and covered a hub the wedges stop short of. Both radii
+  // are pulled a hair inside the printed edges so the mark sits within its
+  // wedge rather than on the lines either side of it.
+  const ro = r * 0.965
+  const ri = rInner * 1.06
+  const [ox1, oy1] = at((turn - 1) * span, ro)
+  const [ox2, oy2] = at(turn * span, ro)
+  const [ix2, iy2] = at(turn * span, ri)
+  const [ix1, iy1] = at((turn - 1) * span, ri)
+  return `M ${ox1} ${oy1} A ${ro} ${ro} 0 0 1 ${ox2} ${oy2} `
+    + `L ${ix2} ${iy2} A ${ri} ${ri} 0 0 0 ${ix1} ${iy1} Z`
 }
 
 /**

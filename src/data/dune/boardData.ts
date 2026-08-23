@@ -47,7 +47,7 @@ export interface DuneSpiceMarker extends DuneMarker { territoryId: string | null
 /** A seat. Its sectorId is never null — the generator refuses a board whose
  *  seats do not each land in their own sector. */
 export interface DuneArea { x: number; y: number; width: number; height: number }
-export interface DuneDial { x: number; y: number; r: number }
+export interface DuneDial { x: number; y: number; r: number; rInner: number }
 export interface DunePlayerPosition extends DuneMarker { sectorId: string }
 
 /** The board circle, from the export's own rim circle. */
@@ -877,13 +877,16 @@ export const DUNE_SPICE_DECK_AREA: DuneArea = { x: 789.6, y: 952.96, width: 174,
  *
  * THE WEDGES RUN CLOCKWISE FROM THE TOP, 36 degrees each, so turn N spans
  * (N-1)*36 to N*36 bearing. That is derived, not assumed: the ten wedge arcs
- * in the artwork sit at bearings whose two unskewed members land exactly on
- * 90 and 270 — the centres of the third and eighth wedges under this reading —
- * and the printed 1 sits at bearing 18, dead centre of the first, with the 1
- * of the 10 at 332, inside the last. See turndialtest, which checks both
- * glyphs against the wedge they are supposed to fall in.
+ * in the artwork each BEGIN on the rim at their own leading edge, so those
+ * ten points are the ten boundaries exactly — 0, 36, 72 and so on to 324.
+ * The printed 1 then falls in the first wedge and the 1 of the 10 in the
+ * last, which is what fixes the direction. See turndialtest.
+ *
+ * `rInner` is the hub the wedges stop short of: they are ANNULAR SECTORS,
+ * not slices of pie, and a mark struck from the centre is a different shape
+ * from the wedge it is marking.
  */
-export const DUNE_TURN_DIAL: DuneDial = { x: 90.89, y: 108.51, r: 82.73 }
+export const DUNE_TURN_DIAL: DuneDial = { x: 90.89, y: 108.51, r: 82.73, rInner: 24.98 }
 
 /** The nine-stop track arcing above the board. Purpose not yet established. */
 export const DUNE_TRACK: DuneMarker[] = [

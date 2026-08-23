@@ -915,6 +915,30 @@ const dialCircle = uniqCircles.find(e => {
   return r > 50 && Math.abs(r - RIM) > 1
 })
 if (!dialCircle) throw new Error('turn dial circle not found — it is the only large circle that is not the board rim')
+
+/**
+ * The dial's hub: how far from the centre its numbered wedges begin.
+ *
+ * The wedges are ANNULAR sectors, not slices of pie — they stop short of the
+ * middle, and a highlight drawn as a cone from the centre is a different shape
+ * from the thing it is highlighting. Measured off the wedge paths themselves:
+ * each runs along the rim and back across the hub, so the smallest radius any
+ * of their points reaches IS the hub.
+ */
+const dialCentre = [parseFloat(dialCircle.attrs.cx), parseFloat(dialCircle.attrs.cy)]
+const dialR = parseFloat(dialCircle.attrs.r)
+const dialRadius = (x, y) => Math.hypot(x - dialCentre[0], y - dialCentre[1])
+const dialWedges = paths
+  .map(e => flatten(e.attrs.d))
+  .filter(pts => pts.length > 3 && pts.every(([x, y]) => dialRadius(x, y) < dialR * 1.05))
+  .filter(pts => Math.max(...pts.map(([x, y]) => dialRadius(x, y))) > dialR * 0.95)
+if (dialWedges.length < 10) {
+  throw new Error(`turn dial: expected at least ten wedge paths, found ${dialWedges.length}`)
+}
+const dialHub = Math.min(...dialWedges.map(pts => Math.min(...pts.map(([x, y]) => dialRadius(x, y)))))
+if (!(dialHub > 5 && dialHub < dialR * 0.6)) {
+  throw new Error(`turn dial: hub radius ${dialHub} is not a plausible inner radius`)
+}
 const fills = new Map([[dialCircle, DECOR.sand.fill]])
 for (const s of trackStops) fills.set(s.el, DECOR.sand.fill)
 for (const p of playerPositions) fills.set(p.el, DECOR.boxFill)
@@ -1724,6 +1748,7 @@ lines.push(`export interface DuneSpiceMarker extends DuneMarker { territoryId: s
 lines.push(`/** A seat. Its sectorId is never null — the generator refuses a board whose`)
 lines.push(` *  seats do not each land in their own sector. */`)
 lines.push(`export interface DuneArea { x: number; y: number; width: number; height: number }`)
+lines.push(`export interface DuneDial { x: number; y: number; r: number; rInner: number }`)
 lines.push(`export interface DunePlayerPosition extends DuneMarker { sectorId: string }`)
 lines.push(``)
 lines.push(`/** The board circle, from the export's own rim circle. */`)
@@ -1803,6 +1828,27 @@ lines.push(` */`)
 lines.push(`export const DUNE_SPICE_DECK_AREA: DuneArea = { `
   + `x: ${round(spiceCards_area.x)}, y: ${round(spiceCards_area.y)}, `
   + `width: ${round(spiceCards_area.width)}, height: ${round(spiceCards_area.height)} }`)
+lines.push(``)
+lines.push(`/**`)
+lines.push(` * The turn dial, top left: ten numbered wedges.`)
+lines.push(` *`)
+lines.push(` * Taken from the export's own circle rather than measured off the picture —`)
+lines.push(` * the same circle the moon is mirrored from.`)
+lines.push(` *`)
+lines.push(` * THE WEDGES RUN CLOCKWISE FROM THE TOP, 36 degrees each, so turn N spans`)
+lines.push(` * (N-1)*36 to N*36 bearing. That is derived, not assumed: the ten wedge arcs`)
+lines.push(` * in the artwork each BEGIN on the rim at their own leading edge, so those`)
+lines.push(` * ten points are the ten boundaries exactly — 0, 36, 72 and so on to 324.`)
+lines.push(` * The printed 1 then falls in the first wedge and the 1 of the 10 in the`)
+lines.push(` * last, which is what fixes the direction. See turndialtest.`)
+lines.push(` *`)
+lines.push(` * \`rInner\` is the hub the wedges stop short of: they are ANNULAR SECTORS,`)
+lines.push(` * not slices of pie, and a mark struck from the centre is a different shape`)
+lines.push(` * from the wedge it is marking.`)
+lines.push(` */`)
+lines.push(`export const DUNE_TURN_DIAL: DuneDial = { `
+  + `x: ${round(dialCentre[0])}, y: ${round(dialCentre[1])}, `
+  + `r: ${round(dialR)}, rInner: ${round(dialHub)} }`)
 lines.push(``)
 lines.push(`/** The nine-stop track arcing above the board. Purpose not yet established. */`)
 lines.push(`export const DUNE_TRACK: DuneMarker[] = [`)

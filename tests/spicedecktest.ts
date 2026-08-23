@@ -41,6 +41,11 @@ function spiceBoxPolygon(side: 'right' | 'left' = 'right'): [number, number][] {
 }
 
 
+/** What a caption needs beneath a card — CAPTION in the component. */
+const CAPTION_ROOM = 12
+/** The component's own PAD, which the cards and their captions sit inside. */
+const PAD_ROOM = 8
+
 let pass = true
 const check = (label: string, actual: unknown, expected: unknown) => {
   const ok = JSON.stringify(actual) === JSON.stringify(expected)
@@ -141,7 +146,10 @@ const draw = (over: Partial<SpiceDeckAreaProps> = {}) =>
   const adv = draw({ mode: 'advanced' })
   check('basic play draws one pile', [/PILE A/.test(basic), /PILE B/.test(basic)], [false, false])
   check('...labelled simply DISCARD, there being no other', basic.includes('DISCARD'), true)
-  check('advanced play draws both, named', [/PILE A/.test(adv), /PILE B/.test(adv)], [true, true])
+  // Lettered rather than spelled out: the labels sit beside the cards now, in
+  // a column that is 26 wide.
+  check('advanced play draws both, named',
+    [/>A</.test(adv), />B</.test(adv)], [true, true])
 
   // A basic game handed a stale B pile must not grow a second pile. The mode is
   // the authority on how many there are, not whether the array happens to be
@@ -171,53 +179,78 @@ const draw = (over: Partial<SpiceDeckAreaProps> = {}) =>
 // A rectangle cannot be checked against another rectangle here. It has to be
 // checked against the path the board actually draws.
 {
-  const { x, y, width, height } = DUNE_SPICE_DECK_AREA
   const poly = spiceBoxPolygon()
   check('the printed box can be found and flattened', poly.length > 20, true)
 
-  for (const slots of [2, 3]) {
+  /** Every corner of every card the layout places. */
+  const corners = (L: ReturnType<typeof slotLayout>, piles: number): [number, number][] => {
+    const out: [number, number][] = []
+    const box = (x: number, y: number, w: number, h: number) =>
+      out.push([x, y], [x + w, y], [x, y + h], [x + w, y + h])
+    box(L.deckX, L.deckY, L.deckW, L.deckH)
+    for (let i = 0; i < piles; i++) box(L.pileX, L.pileY + i * L.pileStep, L.pileW, L.pileH)
+    return out
+  }
+
+  for (const [slots, piles] of [[2, 1], [3, 2]] as const) {
     const L = slotLayout(slots)
-    const right = L.left + L.cardW * slots + 12 * (slots - 1)
-    check(`${slots} slots start inside the area`, L.left >= x - 0.01 && L.top >= y - 0.01, true)
-    check(`...and end inside it`, right <= x + width + 0.01, true)
-    check(`...and inside its height, captions included`,
-      L.top + L.cardH + 12 <= y + height + 0.01, true)
-    // Every corner of every card, in the shape itself.
-    const corners: [number, number][] = []
-    for (let i = 0; i < slots; i++) {
-      const cx0 = L.left + i * L.step
-      corners.push([cx0, L.top], [cx0 + L.cardW, L.top],
-        [cx0, L.top + L.cardH], [cx0 + L.cardW, L.top + L.cardH])
-    }
-    check(`...with every card corner inside the printed box`,
-      corners.filter(p => !inPolygon(p, poly)).length, 0)
-    check(`...with cards big enough to read`, L.cardW > 40, true)
+    check(`${piles} pile(s): every card corner is inside the printed box`,
+      corners(L, piles).filter(p => !inPolygon(p, poly)).length, 0)
+    // The captions and side labels have to land in there too.
+    check(`...and the deck's caption below it`,
+      inPolygon([L.deckX + L.deckW / 2, L.deckY + L.deckH + CAPTION_ROOM], poly), true)
+    check(`...with cards big enough to read`, L.deckW > 40 && L.pileW > 40, true)
+  }
+
+  // THE ARRANGEMENT, which is different per game and deliberately so.
+  {
+    const basic = slotLayout(2)
+    check('one pile sits beside the deck, not under it',
+      Math.abs(basic.pileY - basic.deckY) < 0.01 && basic.pileX > basic.deckX, true)
+    check('...and is captioned underneath, like the deck', basic.sideLabels, false)
+
+    const adv = slotLayout(3)
+    check('two piles stack to the right of the deck',
+      adv.pileX > adv.deckX + adv.deckW && adv.pileStep > adv.pileH * 0.9, true)
+    check('...labelled beside themselves, since height is what they are short of',
+      adv.sideLabels, true)
+    // THE POINT OF THE REARRANGEMENT. Three cards abreast were bound by the
+    // box's width and left 60 of its 144 unused; standing the deck up takes it
+    // from 46 wide to 82 without costing the piles anything to speak of.
+    check('the stacked arrangement makes the deck much bigger',
+      adv.deckW > 75, true)
+    check('...without shrinking the piles much', adv.pileW > 42, true)
   }
 
   // THE WIDTH HALF OF THE FIT. The printed box is short and wide, so its height
-  // binds first and no change to the width term can push a card outside it —
-  // the bounds check above passes on a layout with the width constraint removed
-  // altogether. A narrow box is the only way to make that half do anything.
-  const narrow = { x: 0, y: 0, width: 120, height: 400 }
-  for (const slots of [2, 3]) {
-    const L = slotLayout(slots, narrow)
-    const row = L.cardW * slots + 12 * (slots - 1)
-    check(`${slots} slots fit a narrow box across`,
-      L.left >= narrow.x - 0.01 && L.left + row <= narrow.x + narrow.width + 0.01, true)
-    check(`...by shrinking rather than overflowing`, L.cardH < narrow.height, true)
+  // binds first and no change to the width term can push a card outside it. A
+  // narrow box is the only way to make that half do anything.
+  {
+    const narrow = { x: 0, y: 0, width: 120, height: 400 }
+    for (const [slots, piles] of [[2, 1], [3, 2]] as const) {
+      const L = slotLayout(slots, narrow)
+      const inside = corners(L, piles).every(([px, py]) =>
+        px >= narrow.x - 0.01 && px <= narrow.x + narrow.width + 0.01
+        && py >= narrow.y - 0.01 && py <= narrow.y + narrow.height + 0.01)
+      check(`${piles} pile(s) fit a narrow box`, inside, true)
+    }
   }
 
-  // AND THE HEIGHT HALF, for the same reason in the other direction. The
-  // printed box is wide enough that its width always binds first, so the height
-  // term is dead against it — a layout with the height cap removed altogether
-  // lays out identically and every check above still passes. A short box is
-  // what makes that term do anything.
-  const short = { x: 0, y: 0, width: 400, height: 90 }
-  for (const slots of [2, 3]) {
-    const L = slotLayout(slots, short)
-    check(`${slots} slots fit a short box down`,
-      L.top + L.cardH + 12 <= short.y + short.height + 0.01, true)
-    check(`...by shrinking rather than overflowing`, L.cardW < short.width, true)
+  // AND THE HEIGHT HALF, in the other direction.
+  {
+    const short = { x: 0, y: 0, width: 400, height: 90 }
+    for (const [slots, piles] of [[2, 1], [3, 2]] as const) {
+      const L = slotLayout(slots, short)
+      const inside = corners(L, piles).every(([, py]) =>
+        py >= short.y - 0.01 && py <= short.y + short.height + 0.01)
+      check(`${piles} pile(s) fit a short box`, inside, true)
+      // AND LEAVE ROOM FOR THE CAPTION inside the padding, which is the only
+      // condition under which the caption term in the fit does anything at all:
+      // against the printed box the width binds, so dropping it changes nothing
+      // and a sabotage of it came back clean.
+      check(`...with room for the caption inside the padding`,
+        L.deckH + CAPTION_ROOM <= short.height - PAD_ROOM * 2 + 0.01, true)
+    }
   }
 }
 

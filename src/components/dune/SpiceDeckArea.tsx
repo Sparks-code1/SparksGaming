@@ -41,10 +41,18 @@ const CARD_RATIO = 7 / 5
 // The printed SPICE DECK label is not a concern here. It sits in the thin tail
 // of the wedge, which is outside this rectangle — the generator puts it there
 // precisely because that is the part of the box no card can occupy.
-const PAD = 10
-const GAP = 8
-/** Caption height beneath each slot — DECK, DISCARD, PILE A. */
+const PAD = 8
+const GAP = 6
+/** Caption height beneath a slot that has one. */
 const CAPTION = 12
+/**
+ * Room for a stacked pile's label, which sits BESIDE it rather than under it.
+ *
+ * Only the advanced game pays this. Two piles stacked are short of height and
+ * flush with width, so a caption under each would come straight off the cards;
+ * one pile has height to spare and is captioned underneath like the deck.
+ */
+const SIDE_LABEL_W = 26
 
 /**
  * The spice spiral, the same curve the board's own marks are drawn from.
@@ -90,31 +98,63 @@ function wrap(text: string, perLine: number): string[] {
 }
 
 /**
- * Where each slot sits, given how many there are.
+ * Where the deck and the discard pile(s) sit.
  *
- * The box is a PARAMETER, defaulting to the printed one. Not for flexibility —
- * there is one box — but because the real box is short and wide enough that its
- * height always binds first, so with it alone the width constraint below can
- * never be shown to do anything. A caller passing a narrow box is how that half
- * of the fit gets tested at all.
+ * TWO ARRANGEMENTS, because the two games want different ones.
+ *
+ * The advanced game has two piles. Three cards abreast in a box this shape are
+ * bound by its width and none of them can use its height — the deck came out 46
+ * wide with 60 of the box's 144 going spare beneath it. Standing the deck up on
+ * its own down the left and stacking the two piles beside it takes the deck to
+ * 78 wide and leaves the piles about where they were.
+ *
+ * The basic game has one pile, and side by side is the best it can do. Stacking
+ * a single pile gives it height it cannot use and takes the width off the deck,
+ * which is what a first attempt at this did: a 91-wide discard beside a 31-wide
+ * deck. The arithmetic said it was fine; the two numbers said it was not.
+ *
+ * The box is a PARAMETER, defaulting to the printed one — the real box is short
+ * and wide enough that its height always binds, so with it alone the width term
+ * can never be shown to do anything.
  */
 export function slotLayout(slots: number, area: DuneArea = DUNE_SPICE_DECK_AREA) {
   const { x, y, width, height } = area
+  const piles = Math.max(1, slots - 1)
   const usableW = width - PAD * 2
   const usableH = height - PAD * 2
-  // Constrained by BOTH: three cards run out of width first, two run out of
-  // height. Taking only the width fit made the basic game's two cards taller
-  // than the box and they ran down over the label.
-  const byWidth = ((usableW - GAP * (slots - 1)) / slots) * CARD_RATIO
-  const cardH = Math.min(usableH - CAPTION, byWidth)
-  const cardW = cardH / CARD_RATIO
-  const rowW = cardW * slots + GAP * (slots - 1)
+  const left = x + PAD
+
+  if (piles < 2) {
+    // Side by side, both captioned underneath.
+    const colW = (usableW - GAP) / 2
+    const cardH = Math.min(usableH - CAPTION, colW * CARD_RATIO)
+    const cardW = cardH / CARD_RATIO
+    const top = y + (height - cardH - CAPTION) / 2
+    return {
+      deckW: cardW, deckH: cardH, deckX: left, deckY: top,
+      pileW: cardW, pileH: cardH, pileX: left + cardW + GAP, pileY: top,
+      pileStep: 0, sideLabels: false,
+      cardW, cardH, top, left,
+    }
+  }
+
+  // Stacked: the piles' height is fixed by how many there are, their width
+  // follows from that, and the deck takes what is left across.
+  // Bound by BOTH axes. Sized by the stack's height alone, a tall narrow box
+  // gave piles 135 wide inside 104 of usable width — the same class of mistake
+  // as the row of three, in the other direction.
+  const slotH = (usableH - GAP * (piles - 1)) / piles
+  const pileW = Math.min(slotH / CARD_RATIO, (usableW - GAP - SIDE_LABEL_W) * 0.45)
+  const pileH = pileW * CARD_RATIO
+  const deckW = Math.min(usableW - GAP - pileW - SIDE_LABEL_W, (usableH - CAPTION) / CARD_RATIO)
+  const deckH = deckW * CARD_RATIO
   return {
-    cardW,
-    cardH,
-    top: y + PAD,
-    left: x + (width - rowW) / 2,
-    step: cardW + GAP,
+    deckW, deckH, deckX: left, deckY: y + (height - deckH - CAPTION) / 2,
+    pileW, pileH, pileX: x + width - PAD - pileW - SIDE_LABEL_W, pileY: y + PAD,
+    pileStep: pileH + GAP, sideLabels: true,
+    // Kept so a caller can speak of "a card" without knowing which it is.
+    cardW: Math.min(deckW, pileW), cardH: Math.min(deckH, pileH),
+    top: y + PAD, left,
   }
 }
 
@@ -223,8 +263,11 @@ function Depth({ x, y, w, count }: { x: number; y: number; w: number; count: num
  * The depth marks are drawn BEHIND and offset, which is the only way a pile of
  * one and a pile of nine look different when only the top card is ever visible.
  */
-function Pile({ cards, x, y, w, h, caption }: {
-  cards: readonly SpiceCard[]; x: number; y: number; w: number; h: number; caption: string
+function Pile({ cards, x, y, w, h, caption, sideLabel }: {
+  cards: readonly SpiceCard[]; x: number; y: number; w: number; h: number
+  caption: string
+  /** Beside the card rather than under it, where height is the scarce axis. */
+  sideLabel?: boolean
 }) {
   const top = showing(cards)
   return (
@@ -237,7 +280,12 @@ function Pile({ cards, x, y, w, h, caption }: {
         ? <CardFace card={top} x={x} y={y} w={w} h={h} />
         : <EmptySlot x={x} y={y} w={w} h={h} />}
       <Depth x={x} y={y} w={w} count={cards.length} />
-      <Caption x={x} y={y + h + 4} w={w} text={caption} />
+      {sideLabel
+        ? <text x={x + w + 4} y={y + h / 2} fontSize={Math.min(10, w * 0.26)} fill={INK}
+            dominantBaseline="central" letterSpacing={0.8} fontFamily={SERIF} opacity={0.85}>
+            {caption}
+          </text>
+        : <Caption x={x} y={y + h + 4} w={w} text={caption} />}
       <title>
         {top
           ? `${caption}: showing ${top.kind === 'shai-hulud' ? 'Shai-Hulud' : top.name}`
@@ -265,34 +313,35 @@ export interface SpiceDeckAreaProps {
 
 export function SpiceDeckArea({ deck, mode }: SpiceDeckAreaProps) {
   const advanced = mode === 'advanced'
-  const { cardW, cardH, top, left, step } = slotLayout(advanced ? 3 : 2)
+  const L = slotLayout(advanced ? 3 : 2)
   return (
-    <g data-layer="spice-deck">
+    <g data-layer="spice-deck" data-mode={mode}>
       {/* The deck itself: face down, and the only thing said about it is how
           much of it is left. */}
       <g>
-        <CardBack x={left} y={top} w={cardW} h={cardH} />
+        <CardBack x={L.deckX} y={L.deckY} w={L.deckW} h={L.deckH} />
         {/* The count rides on the back rather than in the caption: it is the
             reason the deck is drawn at all, and it changes every turn. */}
-        <circle cx={left + cardW / 2} cy={top + cardH * 0.78} r={cardW * 0.16}
+        <circle cx={L.deckX + L.deckW / 2} cy={L.deckY + L.deckH * 0.78} r={L.deckW * 0.16}
           fill={SAND} stroke={INK} strokeWidth={1} />
-        <text x={left + cardW / 2} y={top + cardH * 0.78} fontSize={cardW * 0.2} fill={INK}
-          textAnchor="middle" dominantBaseline="central" fontWeight="bold" fontFamily={SERIF}>
+        <text x={L.deckX + L.deckW / 2} y={L.deckY + L.deckH * 0.78} fontSize={L.deckW * 0.2}
+          fill={INK} textAnchor="middle" dominantBaseline="central" fontWeight="bold"
+          fontFamily={SERIF}>
           {deck.remaining}
         </text>
-        <Caption x={left} y={top + cardH + 4} w={cardW} text="DECK" />
+        <Caption x={L.deckX} y={L.deckY + L.deckH + 3} w={L.deckW} text="DECK" />
         <title>{`Spice deck: ${deck.remaining} card${deck.remaining === 1 ? '' : 's'} face down`}</title>
       </g>
 
-      <Pile cards={deck.discardA} x={left + step} y={top} w={cardW} h={cardH}
-        caption={advanced ? 'PILE A' : 'DISCARD'} />
+      <Pile cards={deck.discardA} x={L.pileX} y={L.pileY} w={L.pileW} h={L.pileH}
+        caption={advanced ? 'A' : 'DISCARD'} sideLabel={L.sideLabels} />
 
       {/* Pile B exists only in the advanced game. Not drawn empty in the basic
           one — an empty slot on the board says "nothing here yet", which is a
           different and wrong thing from "this pile is not in this game". */}
       {advanced && (
-        <Pile cards={deck.discardB} x={left + step * 2} y={top} w={cardW} h={cardH}
-          caption="PILE B" />
+        <Pile cards={deck.discardB} x={L.pileX} y={L.pileY + L.pileStep}
+          w={L.pileW} h={L.pileH} caption="B" sideLabel={L.sideLabels} />
       )}
     </g>
   )

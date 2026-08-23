@@ -116,28 +116,15 @@ function Tally({ value, word, title }: { value: number | string; word: string; t
 }
 
 /**
- * The prose bucket, which the card does not carry.
+ * The card has a back, and everything the advanced game adds is on it.
  *
- * `advanced.general` is where a faction's advanced rules go when they are one
- * block of essay rather than a rule per phase — see AdvancedRules. Two factions
- * have one, and the Atreides' runs to 854 characters of Kwisatz Haderach
- * exposition. That is the rulebook, not a reference card: it drowned the three
- * advantages above it, and its subject already has its own tracker on this same
- * strip.
- *
- * Everything KEYED BY PHASE stays, advanced ones included. Those are advantages
- * you act on at a known moment, which is what a faction card is for.
+ * Two entries used to be dropped outright: the Karama power, because it is
+ * what you may spend a Karama CARD on rather than a standing advantage, and
+ * `advanced.general`, the prose bucket a faction gets when its advanced rules
+ * are one lump of rulebook — the Atreides' runs to 854 characters about the
+ * Kwisatz Haderach. Both are worth having and neither belonged in front of a
+ * player reading their basic advantages mid-turn. The back is where they go.
  */
-const STRATEGY_PROSE = 'general'
-
-/**
- * The Karama entry, which the card does not carry either.
- *
- * It is not a faction advantage — it is what this faction may spend a Karama
- * CARD on, which is a thing you do when you hold one, not a standing power.
- * It belongs with the card, not on the reference for the faction.
- */
-const KARAMA_POWER = 'karama'
 
 /**
  * The faction card: who you are and what that lets you do.
@@ -147,14 +134,25 @@ const KARAMA_POWER = 'karama'
  * is a rule you can act on, where the same sentence without its phase is a
  * rule you have to remember to look for.
  */
-export function FactionCard({ faction, mode }: { faction: Faction; mode: GameMode }) {
+/**
+ * The faction card, which turns over.
+ *
+ * FRONT: the advantages every game has, plus the two numbers a player asks for
+ * every turn — free revivals, and what this faction brings to an alliance.
+ *
+ * BACK: the advanced game's advantages, behind a control that says so. That is
+ * where the Karama power and the long Kwisatz Haderach passage went: both are
+ * advanced-game rules, both are worth having, and neither belongs in front of a
+ * player reading their basic advantages mid-turn. A card with a back is how a
+ * real reference card holds twice as much without being twice as much to read.
+ */
+export function FactionCard({ faction }: { faction: Faction }) {
+  const [back, setBack] = useState(false)
   const look = FACTION_LOOK[faction.id]
   const rules = Object.entries(faction.abilities) as [string, string][]
-  // Advanced rules are ADDITIONAL, and shown only in the game that has them.
-  const extra = mode === 'advanced'
-    ? (Object.entries(faction.advanced) as [string, string][])
-      .filter(([key]) => key !== STRATEGY_PROSE && key !== KARAMA_POWER)
-    : []
+  // EVERY advanced entry, including the two the front deliberately leaves out.
+  // On this side they are the subject rather than an interruption.
+  const advanced = Object.entries(faction.advanced) as [string, string][]
   return (
     <div style={{
       display: 'flex', flexDirection: 'column', minWidth: 0,
@@ -177,8 +175,21 @@ export function FactionCard({ faction, mode }: { faction: Faction; mode: GameMod
           are the only prose on the screen — a paragraph of rules somebody might
           reasonably want to quote — and they sit in panels opened deliberately
           rather than under a cursor reaching for the board. */}
-      <div style={{ fontSize: 13, lineHeight: 1.45, userSelect: 'text', WebkitUserSelect: 'text' }}>
-        {[...rules, ...extra].map(([phase, text]) => (
+      <div data-face={back ? 'advanced' : 'front'}
+        style={{ fontSize: 13, lineHeight: 1.45, userSelect: 'text', WebkitUserSelect: 'text' }}>
+        {back ? (
+          advanced.length === 0
+            ? <p style={{ margin: 0, opacity: 0.6 }}>
+                This faction has no separate advanced advantages.
+              </p>
+            : advanced.map(([key, text]) => (
+                <p key={key + text.slice(0, 12)} style={{ margin: '0 0 6px' }}>
+                  <span style={{ opacity: 0.5, letterSpacing: 0.6 }}>{key.toUpperCase()} </span>
+                  <span style={{ opacity: 0.9 }}>{text}</span>
+                </p>
+              ))
+        ) : (<>
+        {[...rules].map(([phase, text]) => (
           <p key={phase + text.slice(0, 12)} style={{ margin: '0 0 5px' }}>
             <span style={{ opacity: 0.5, letterSpacing: 0.6 }}>{phase.toUpperCase()} </span>
             <span style={{ opacity: 0.9 }}>{text}</span>
@@ -201,7 +212,20 @@ export function FactionCard({ faction, mode }: { faction: Faction; mode: GameMod
           <span style={{ opacity: 0.5, letterSpacing: 0.6 }}>ALLIANCE </span>
           <span style={{ opacity: 0.9 }}>{faction.alliance}</span>
         </p>
+        </>)}
       </div>
+
+      {/* The turn. Named for what is on the other side rather than for the
+          gesture, so it says what you get rather than what it does. */}
+      <button type="button" onClick={() => setBack(v => !v)} aria-pressed={back}
+        aria-label={back ? 'Back to the faction advantages' : `${look.name} advanced game advantages`}
+        style={{
+          marginTop: 8, alignSelf: 'flex-start', cursor: 'pointer',
+          background: 'transparent', color: PALE, border: `1px solid ${look.colour}`,
+          borderRadius: 4, padding: '4px 9px', fontFamily: SERIF, fontSize: 11.5,
+        }}>
+        {back ? '↩ Faction advantages' : 'See advanced game advantages ↪'}
+      </button>
     </div>
   )
 }
@@ -414,7 +438,6 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
           <HiddenStack label="Treachery cards" count={hand.length}
             open={open === 'treachery'}
             onToggle={() => setOpen(o => (o === 'treachery' ? null : 'treachery'))} />
-          <span style={{ fontSize: 9.5, opacity: 0.5 }}>limit {faction.handLimit}</span>
         </Panel>
 
         <Panel label="TRAITORS">
@@ -437,7 +460,7 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
         <DraggableResizable title={`${look.name} — faction card`} accentColor={look.colour}
           width={420} storageKey={`dune-faction-${seat}`} initialTop={90} initialRight={280}
           onClose={() => setShowFaction(false)}>
-          <FactionCard faction={faction} mode={mode} />
+          <FactionCard faction={faction} />
         </DraggableResizable>
       )}
 
