@@ -21,6 +21,16 @@ import { FACTION_LOOK } from './SeatLayer'
 
 const PALE = '#f0e2bb'
 
+/**
+ * How wide the panel is, open and shut.
+ *
+ * Exported because the tray below has to line up with the BOARD, and where the
+ * board starts is this width. Two copies of the number is how a tray ends up
+ * centred on nothing in particular the first time one of them changes.
+ */
+export const CHAT_WIDTH = 250
+export const CHAT_SHUT_WIDTH = 34
+
 export interface ChatMessage {
   id: string
   /** Whose it is. Null for the game's own announcements. */
@@ -57,7 +67,7 @@ export function ChatPanel({ messages, collapsed, onToggle, onSend, unread = 0 }:
       <button data-layer="chat" data-collapsed="true" onClick={onToggle}
         aria-label={unread ? `Open chat, ${unread} unread` : 'Open chat'}
         style={{
-          width: 34, flex: '0 0 auto', cursor: 'pointer',
+          width: CHAT_SHUT_WIDTH, flex: '0 0 auto', cursor: 'pointer',
           background: '#131c2e', color: PALE, border: 'none',
           borderRight: '1px solid #ffffff1f', display: 'flex',
           flexDirection: 'column', alignItems: 'center', gap: 10, paddingTop: 12,
@@ -80,7 +90,7 @@ export function ChatPanel({ messages, collapsed, onToggle, onSend, unread = 0 }:
   return (
     <section data-layer="chat" data-collapsed="false" aria-label="Chat"
       style={{
-        width: 250, flex: '0 0 auto', display: 'flex', flexDirection: 'column',
+        width: CHAT_WIDTH, flex: '0 0 auto', display: 'flex', flexDirection: 'column',
         background: '#131c2e', borderRight: '1px solid #ffffff1f', color: PALE,
       }}>
       <header style={{

@@ -325,16 +325,20 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
 
       <div style={{
         display: 'flex', alignItems: 'stretch',
-        // A DEFINITE HEIGHT, scaled to the window. Without one the faction card
-        // sizes the strip to fit all its prose — 260px of a 405px window, taken
-        // straight out of the board's column. Bounded, the card scrolls inside
-        // it instead, which is what its own overflow is for.
-        height: 'clamp(118px, 21vh, 190px)',
-        // A backstop, not the plan. The panels below shrink first; this is what
-        // stops the last one being clipped off the edge rather than reachable
-        // when the window is genuinely too narrow for all of them.
-        overflowX: 'auto',
+        // A DEFINITE HEIGHT, scaled to the window, and a modest one. Every pixel
+        // here comes straight off the board directly above it — the board is
+        // taller than it is wide and is bound by the height it is given, so the
+        // tray and the map are in direct competition for it.
+        height: 'clamp(104px, 15vh, 152px)',
+        // CENTRED, AND SPILLING BOTH WAYS when it does not fit. justify-content
+        // rather than an auto margin precisely because of the overflow: an auto
+        // margin resolves to zero once there is no free space, which drops the
+        // row against its left edge — off the board it is supposed to sit under.
+        // Centred, the spill is even, and what it spills into is the empty band
+        // beneath the side panels.
+        justifyContent: 'center',
       }}>
+        <div style={{ display: 'flex', alignItems: 'stretch' }}>
         <Panel label="CARDS">
           <button type="button" onClick={() => setShowFaction(v => !v)}
             aria-expanded={showFaction} aria-label="Faction card"
@@ -392,6 +396,7 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
             <KwisatzTracker battleLosses={player.battleLosses ?? 0} />
           </Panel>
         )}
+        </div>
       </div>
 
       {/* Floating, and outside the strip's flow — DraggableResizable positions

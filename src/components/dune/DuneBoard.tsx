@@ -167,9 +167,16 @@ export function DuneBoard({
       // viewBox alone. Left in place it renders at its natural 970px, overflows,
       // and the overlay — which IS sized to the container — stops lining up with
       // it. The two must share one coordinate system or every marker is wrong.
+      // WIDTH AND HEIGHT BOTH 100%. With width alone the board sized itself
+      // off the column's width and took whatever height that implied, which is
+      // why it sat in a column half again as tall as it was using. Given both,
+      // its own viewBox and the default preserveAspectRatio scale it to the
+      // largest size that fits and centre it — and the overlay below, given the
+      // same box and the same rule, letterboxes to exactly the same rectangle,
+      // which is what keeps every marker on its territory.
       .then(t => t.replace(/<svg([^>]*)>/, (_m, attrs: string) =>
         '<svg' + attrs.replace(/\s(width|height)="[^"]*"/g, '') +
-        ' width="100%" style="display:block">'))
+        ' width="100%" height="100%" style="display:block">'))
       .then(setSvg)
       .catch(() => setSvg(null))
   }, [])
@@ -177,12 +184,16 @@ export function DuneBoard({
   const wedge = stormWedge(storm)
 
   return (
-    <div data-layer="board" style={{ position: 'relative', width: '100%' }}>
+    // PINNED, not sized. Both layers fill the positioned box they are given and
+    // scale themselves down to fit it — a percentage height resolves here
+    // because `inset: 0` is a definite box however the parent lays out.
+    <div data-layer="board" style={{ position: 'absolute', inset: 0 }}>
       {svg
-        ? <div dangerouslySetInnerHTML={{ __html: svg }} />
+        ? <div style={{ position: 'absolute', inset: 0 }}
+            dangerouslySetInnerHTML={{ __html: svg }} />
         : <p style={{ color: PALE }}>loading /dune-board.svg…</p>}
       <svg viewBox={DUNE_BOARD.viewBox} style={{
-        position: 'absolute', inset: 0, width: '100%',
+        position: 'absolute', inset: 0, width: '100%', height: '100%',
         pointerEvents: interactive ? 'auto' : 'none',
       }}>
         {wedge && <path d={wedge} fill="#c9542a" fillOpacity="0.55" stroke="#f2d9a0" strokeWidth="2" />}

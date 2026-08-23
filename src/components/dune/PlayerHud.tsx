@@ -25,6 +25,9 @@ import { FACTION_LOOK } from './SeatLayer'
 const PALE = '#f0e2bb'
 const WAITING = '#c9542a'
 
+/** How wide the HUD is. Exported for the same reason as CHAT_WIDTH. */
+export const HUD_WIDTH = 236
+
 export interface PlayerHudProps {
   rows: readonly HudRow[]
   /** Whose decision the table is waiting on. Public — see DuneGameState. */
@@ -84,7 +87,7 @@ export function PlayerHud({ rows, awaiting, seat, turn }: PlayerHudProps) {
   return (
     <aside data-layer="player-hud" aria-label="Players"
       style={{
-        width: 236, flex: '0 0 auto', background: '#131c2e', color: PALE,
+        width: HUD_WIDTH, flex: '0 0 auto', background: '#131c2e', color: PALE,
         borderLeft: '1px solid #ffffff1f', overflowY: 'auto',
       }}>
       <h2 style={{

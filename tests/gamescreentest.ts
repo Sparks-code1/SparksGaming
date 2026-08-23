@@ -18,7 +18,8 @@ import type { DuneGameScreenProps } from '@/components/dune/DuneGameScreen'
 import { PlayerHud } from '@/components/dune/PlayerHud'
 import { OwnStrip, PrivateView, FactionCard } from '@/components/dune/OwnStrip'
 import { CARD_THUMB, CARD_ZOOM } from '@/components/dune/OwnStrip'
-import { ChatPanel } from '@/components/dune/ChatPanel'
+import { ChatPanel, CHAT_WIDTH, CHAT_SHUT_WIDTH } from '@/components/dune/ChatPanel'
+import { HUD_WIDTH } from '@/components/dune/PlayerHud'
 import { hudRows, pairAllies, allyOf, strongholdsHeld } from '@/lib/dune/hud'
 import { DUNE_TRACK } from '@/data/dune/boardData'
 import { DUNE_PHASES, KWISATZ_HADERACH_AT } from '@/types/Dune/Game'
@@ -372,6 +373,66 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     CARD_ZOOM >= CARD_THUMB * 2, true)
 }
 
+// ── the board fills the column, and the tray sits under the board ────────
+// Neither of these is visible to a static render — they are questions about
+// LAYOUT, and renderToStaticMarkup does no layout. What CAN be checked is the
+// arithmetic they rest on, which is where both of them went wrong:
+//
+//   The board was given a width and left to work its height out from it, so it
+//   sized itself off the column's width and spilled to 174% of the column's
+//   height. Given both, its own viewBox scales it to the largest size that fits.
+//
+//   The tray was laid under the whole window while the board sat in a column
+//   between two panels, so its centre and the board's were 530px apart at 1920
+//   — and further whenever the chat was shut, because the window's centre does
+//   not move when the board's does.
+{
+  const full = draw()
+  // Both layers of the board get BOTH dimensions. One without the other is what
+  // makes an SVG size itself off its viewBox instead of fitting its box.
+  check('the board overlay is given both dimensions',
+    /position:absolute;inset:0;width:100%;height:100%/.test(full), true)
+  const boardSrc = readFileSync('src/components/dune/DuneBoard.tsx', 'utf8')
+  check('...and so is the board image it sits on',
+    boardSrc.includes('width="100%" height="100%"'), true)
+  check('...both pinned to the column, so the percentages resolve',
+    boardSrc.includes('<div data-layer="board" style={{ position: \'absolute\', inset: 0 }}>'), true)
+
+  // The tray's box IS the board's column: its margins are the two side panels.
+  // Any other number here centres it on something that is not the board.
+  check('the tray is inset by the chat and the HUD',
+    full.includes(`margin-left:${CHAT_WIDTH}px;margin-right:${HUD_WIDTH}px`), true)
+  // Scoped to the tray. The board column above it is centred as well, so
+  // looking for the rule anywhere in the page passed on a tray that had gone
+  // back to flex-start.
+  const trayMarkup = full.slice(full.indexOf('data-layer="own-strip"'))
+  check('...and centres its contents in that box',
+    /justify-content:center/.test(trayMarkup), true)
+  check('...which is a claim about the tray, not the column above it',
+    /justify-content:center/.test(full.slice(0, full.indexOf('data-layer="own-strip"'))), true)
+
+  // The panels have to be the widths the tray was told they are. A second copy
+  // of either number is how the tray ends up centred on nothing in particular.
+  const chat = renderToStaticMarkup(createElement(ChatPanel, {
+    messages: [], collapsed: false, onToggle: () => {},
+  }))
+  check('the chat really is that wide', chat.includes(`width:${CHAT_WIDTH}px`), true)
+  const hud = renderToStaticMarkup(createElement(PlayerHud, {
+    rows: hudRows(state), awaiting: null, seat: null,
+  }))
+  check('...and the HUD', hud.includes(`width:${HUD_WIDTH}px`), true)
+
+  // Shutting the chat moves the board without moving the window's centre, which
+  // is the case a window-centred tray gets visibly wrong. The shut state only
+  // exists after a click, so the arithmetic is read from the source.
+  const screenSrc = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
+  check('the tray follows the board when the chat is shut',
+    screenSrc.includes('chatShut ? CHAT_SHUT_WIDTH : CHAT_WIDTH'), true)
+  check('...to the width the shut chat actually is',
+    renderToStaticMarkup(createElement(ChatPanel, {
+      messages: [], collapsed: true, onToggle: () => {},
+    })).includes(`width:${CHAT_SHUT_WIDTH}px`), true)
+}
 // ── the drawer is wired to the enlarged card ─────────────────────────────
 // READ FROM THE SOURCE, like transportwiringtest reads the edge functions, and
 // for the same reason. Both claims below are about state that only exists after

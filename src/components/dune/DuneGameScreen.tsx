@@ -31,9 +31,9 @@ import type { FactionId } from '@/types/Dune/Faction'
 import type { DuneGameState } from '@/types/Dune/Game'
 import type { DuneSecrets } from '@/lib/dune/charity'
 import { hudRows, allyOf } from '@/lib/dune/hud'
-import { ChatPanel } from './ChatPanel'
+import { ChatPanel, CHAT_WIDTH, CHAT_SHUT_WIDTH } from './ChatPanel'
 import type { ChatMessage } from './ChatPanel'
-import { PlayerHud } from './PlayerHud'
+import { PlayerHud, HUD_WIDTH } from './PlayerHud'
 import { OwnStrip } from './OwnStrip'
 import { DuneBoard } from './DuneBoard'
 import { BiddingPanel } from './BiddingPanel'
@@ -104,27 +104,30 @@ export function DuneGameScreen({
         <ChatPanel messages={chat} collapsed={chatShut} onSend={onSend}
           onToggle={() => setChatShut(c => !c)} />
 
-        {/* The board and anything that floats over it share one positioned
-            box, so the auction's scrim covers the board and nothing else —
-            the phase strip and the HUD stay readable while bidding runs. */}
+        {/* THE BOARD AND THE TRAY SHARE A COLUMN, between the chat and the HUD.
+            The tray used to span the whole window under all three, which put its
+            contents against the left edge while the board sat in the middle of
+            what was left — 530px apart at 1920 wide, and further still whenever
+            the chat was collapsed, because the window's centre and the board's
+            are not the same point. In here it is centred on the board by
+            construction rather than by arithmetic that goes stale.
+
+            It also gives the chat and the HUD the full height of the window,
+            which they were previously cut short of by the tray's 190px. */}
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <main style={{
-          flex: 1, minWidth: 0, position: 'relative',
+          flex: 1, minHeight: 0, minWidth: 0, position: 'relative',
           display: 'flex', justifyContent: 'center', alignItems: 'center',
-          overflow: 'hidden', padding: 10,
+          overflow: 'hidden', padding: 4,
         }}>
-          {/* The aspect ratio is the board's own, so this box is as tall as the
-              column allows and exactly as wide as that height requires. The
-              overlay inside it is sized in the same coordinates, which is what
-              keeps every marker on the territory it belongs to. */}
-          <div style={{
-            position: 'relative', height: '100%',
-            aspectRatio: '970 / 1099', maxWidth: '100%',
-          }}>
-            <DuneBoard
-              storm={state.storm} stacks={stacks} spice={state.spiceOnBoard}
-              seating={seating} deck={state.spiceDeck} mode={state.mode}
-              awaiting={state.awaiting} phase={state.phase} />
-          </div>
+          {/* The board pins itself to this column and scales to the largest
+              size that fits, centred; the overlay letterboxes to the same
+              rectangle. Sizing a box to the board's aspect ratio instead was
+              what left the column's height unused. */}
+          <DuneBoard
+            storm={state.storm} stacks={stacks} spice={state.spiceOnBoard}
+            seating={seating} deck={state.spiceDeck} mode={state.mode}
+            awaiting={state.awaiting} phase={state.phase} />
 
           {/* The auction, over the WHOLE middle column rather than over the
               board's own box. The box is only as wide as the board is tall —
@@ -145,14 +148,33 @@ export function DuneGameScreen({
           )}
         </main>
 
+        </div>
+
         <PlayerHud rows={rows} awaiting={state.awaiting} seat={seat} turn={state.turn} />
       </div>
 
-      {/* A spectator has no strip: there is nothing private to show them, and
-          an empty one implies a hand they might be holding. */}
+      {/* ALIGNED TO THE BOARD'S COLUMN, not to the window. The margins are the
+          widths of the two side panels, so this box IS the column and its centre
+          IS the board's — including when the chat is shut, which moves the board
+          108px right of the window's centre and is where a window-centred tray
+          goes visibly wrong.
+
+          It sits under the full width rather than inside the column because it
+          needs more width than the column has at 1024 and below. Confined, it
+          overflowed and its centring collapsed to the left edge; out here it
+          spills evenly past the column into the space under the side panels,
+          which is empty at this height, and stays centred on the board.
+
+          A spectator has no tray: there is nothing private to show them, and an
+          empty one implies a hand they might be holding. */}
       {seat && mine && myRow && (
-        <OwnStrip seat={seat} mode={state.mode} own={own} player={myRow}
-          ally={allyOf(state.players, mine)} />
+        <div style={{
+          marginLeft: chatShut ? CHAT_SHUT_WIDTH : CHAT_WIDTH,
+          marginRight: HUD_WIDTH,
+        }}>
+          <OwnStrip seat={seat} mode={state.mode} own={own} player={myRow}
+            ally={allyOf(state.players, mine)} />
+        </div>
       )}
     </div>
   )
