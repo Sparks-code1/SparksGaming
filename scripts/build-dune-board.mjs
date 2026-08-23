@@ -1573,17 +1573,20 @@ for (const { o, tanks, x0, x1, y1 } of offBoardBoxes) {
   // outward from the board. Anchored to the shape's own edges rather than
   // measured from a guessed text width — text-anchor does the aligning, which
   // survives a rename that a hand-estimated width would not.
-  // BOTH labels now lead with the mark from the left edge. The spice box's used
-  // to sit in the opposite corner so the two read outward from the board, which
-  // was the nicer arrangement — but that corner is the only part of the wedge
-  // wide and tall enough to hold cards, and a label under them is a label
-  // nobody can read. The thin tail at the other end holds a label and nothing
-  // else, so that is where it goes.
+  // EACH LABEL SITS IN ITS OWN WEDGE'S TAIL, which is the thin end the rim
+  // curves through — the only part of either box that cannot hold cards. The
+  // two boxes are mirror images, so their tails are on opposite sides: the
+  // spice deck's is at its left, the tanks' at its right. Both labels therefore
+  // sit toward the middle of the board's lower edge, flanking it, rather than
+  // one of them being marooned in the far corner.
+  //
+  // The mark leads the text on the left-hand label and trails it on the
+  // right-hand one, so each reads inward from its own end.
   const pad = 26, cy = y1 - 26
-  const symX = x0 + pad + 11
-  const textX = symX + 22
+  const symX = tanks ? x1 - pad - 11 : x0 + pad + 11
+  const textX = tanks ? symX - 22 : symX + 22
   labels.push(`<text x="${round(textX)}" y="${round(cy)}" font-size="13" fill="${DECOR.ink}" `
-    + `text-anchor="start" dominant-baseline="central" letter-spacing="1.2" `
+    + `text-anchor="${tanks ? 'end' : 'start'}" dominant-baseline="central" letter-spacing="1.2" `
     + `font-family="Georgia, 'Times New Roman', serif">${esc(name.toUpperCase())}</text>`)
   labels.push(tanks ? tanksSymbol(symX, cy) : spiceSymbol(symX, cy))
 }

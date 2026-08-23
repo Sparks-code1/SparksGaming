@@ -24,17 +24,19 @@ import type { SpiceCard } from '@/types/Dune/Game'
  * whole point is that the shape is NOT a rectangle. Only the commands the
  * generator's export actually uses are handled — M, L, H, V, C, Z.
  */
-function spiceBoxPolygon(): [number, number][] {
+function spiceBoxPolygon(side: 'right' | 'left' = 'right'): [number, number][] {
   const svg = readFileSync('public/dune-board.svg', 'utf8')
-  // The two off-board boxes are the only paths filled with the box colour; the
-  // right-hand one is the one whose points lie right of the board's centre.
+  // The two off-board boxes are the only paths filled with the box colour, and
+  // they sit either side of the board's centre line.
   const paths = [...svg.matchAll(/<path d="([^"]+)" fill="#c2bd9e"\/>/g)].map(x => x[1])
   // NOT `paths.map(flattenPath)`: map passes (value, index, array), so the
   // second argument arrives as the array index and every curve flattens to 0 or
   // 1 steps — which turns the wedge back into the rectangle this is here to
   // disprove.
   const flat = paths.map(d => flattenPath(d))
-  return flat.find(p => p.every(([px]) => px > 485)) ?? []
+  return flat.find(p => side === 'right'
+    ? p.every(([px]) => px > 485)
+    : p.every(([px]) => px < 485)) ?? []
 }
 
 function flattenPath(d: string, steps = 24): [number, number][] {
@@ -293,6 +295,27 @@ const draw = (over: Partial<SpiceDeckAreaProps> = {}) =>
   // The tanks box is the other one and keeps its own label — a rename that
   // caught both boxes would leave the tanks holding cards.
   check('the tanks box is untouched', svg.includes('TLEILAXU TANKS'), true)
+
+  // MIRRORED. The two boxes are mirror images, so their thin tails are on
+  // opposite sides: the spice deck's at its left, the tanks' at its right. Each
+  // label sits in its own tail, which puts them either side of the board's
+  // lower centre instead of one being marooned in the far corner. Anchored from
+  // the opposite end, so each reads inward.
+  const tanks = svg.match(
+    /<text x="([\d.]+)" y="([\d.]+)"[^>]*text-anchor="([a-z]+)"[^>]*>TLEILAXU TANKS<\/text>/)
+  check('the tanks label can be located', tanks !== null, true)
+  if (tanks && m) {
+    const box = spiceBoxPolygon('left')
+    const bx1 = Math.max(...box.map(p => p[0])), by1 = Math.max(...box.map(p => p[1]))
+    check('...at the right-hand end of its own box',
+      Math.abs(+tanks[1] - (bx1 - 59)) < 0.5, true)
+    check('...on the same baseline as the spice deck\'s',
+      Math.abs(+tanks[2] - (by1 - 26)) < 0.5, true)
+    check('...anchored from that end, so it reads inward', tanks[3], 'end')
+    // Both toward the middle, flanking it. Board centre is 483.
+    check('...and the two labels flank the board\'s centre',
+      +tanks[1] < 483 && +m[1] > 483, true)
+  }
 
   // The label lives in the wedge's thin tail, which is where it was moved TO:
   // the fat corner is the only part of the box that holds cards, and a label

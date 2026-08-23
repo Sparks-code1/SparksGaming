@@ -94,6 +94,28 @@ export const LEADER_PORTRAITS: Record<string, Portrait> = {
   'Piter De Vries': { src: '/dune-leaders/Piter_De_Vries.png', w: 400, h: 400, focusY: 0.5 },
   'Captain Iakin Nefud': { src: '/dune-leaders/Captain_IakinNefud.png', w: 400, h: 533, focusY: 0.46 },
   'Umman Kudu': { src: '/dune-leaders/UmmanKudu.png', w: 400, h: 534, focusY: 0.44 },
+
+  // Atreides. All five. The artwork had been sitting in public/dune-leaders for
+  // a while with nothing pointing at it, which is why the Atreides — the seat
+  // the game screen opens on — showed five blank discs while the traitor panel
+  // beside them showed portraits. Nothing referenced this table from a test, so
+  // nothing said so. See tests/leaderportraittest.
+  'Lady Jessica': { src: '/dune-leaders/Lady_Jessica.png', w: 400, h: 500, focusY: 0.49 },
+  'Thufir Hawat': { src: '/dune-leaders/Thufir_Hawat.png', w: 400, h: 500, focusY: 0.43 },
+  'Gurney Halleck': { src: '/dune-leaders/Gurney_halleck.png', w: 400, h: 500, focusY: 0.46 },
+  'Duncan Idaho': { src: '/dune-leaders/Duncan_Idaho.png', w: 400, h: 533, focusY: 0.44 },
+  'Dr. Wellington Yueh': { src: '/dune-leaders/Dr_Wellington_Yueh.png', w: 400, h: 533, focusY: 0.48 },
+
+  // Bene Gesserit. All five.
+  'Mother Ramallo': { src: '/dune-leaders/Mother_Ramallo.png', w: 400, h: 500, focusY: 0.48 },
+  'Wanna Yueh': { src: '/dune-leaders/Wanna_yueh.png', w: 400, h: 509, focusY: 0.49 },
+  'Margot Lady Fenring': { src: '/dune-leaders/Margot_ladyy_Fenring.png', w: 400, h: 500, focusY: 0.51 },
+  'Princess Irulan': { src: '/dune-leaders/Princess_Irulan.png', w: 400, h: 500, focusY: 0.47 },
+  Alia: { src: '/dune-leaders/Alia.png', w: 400, h: 500, focusY: 0.52 },
+
+  // The Emperor's fifth. The file is spelled Bushar and the leader is Bashar,
+  // which is most of why it was never wired up.
+  Bashar: { src: '/dune-leaders/Bushar.png', w: 400, h: 500, focusY: 0.52 },
 }
 
 // The framings above are derived, not eyeballed: each tall portrait is centred a
@@ -238,10 +260,16 @@ export function LeaderDisc({
 //                 Baron is the face of the Harkonnen even without a disc. That
 //                 screen does not exist yet — this note is so the file is not
 //                 mistaken for dead weight and deleted before it does.
-//   Emperor       four of five. Bashar (strength 2) has no portrait.
-//   Atreides      none of the five.
-//   Spacing Guild none.
-//   Bene Gesserit none.
+//   Emperor       all five.
+//   Atreides      all five.
+//   Bene Gesserit all five.
+//   Spacing Guild none — the only faction still without any.
+//
+// The framings above are derived the same way as the originals: decode the PNG,
+// take row-by-row edge energy, read the vertical centre of mass off it, and sit
+// the focus a little above it. Faces carry far more local contrast than the
+// ground behind them, so that centroid lands on the face; the offset is
+// calibrated against the entries that were already tuned by hand.
 //
 // A leader with no portrait still renders: the disc comes out in the faction
 // colour with the name and strength on it, which is a usable counter and an
