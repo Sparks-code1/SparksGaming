@@ -1,11 +1,16 @@
 /**
  * The game screen.
  *
- * Phase strip across the top, chat down the left, board in the middle, the
- * other players down the right, your own things along the bottom. The board is
- * the biggest thing on the screen because it is the game; everything else is an
- * edge, and every edge is collapsible or fixed-width so the board keeps the
- * space it is given.
+ * Chat down the left, board in the middle, the other players down the right,
+ * your own things along the bottom. The board is the biggest thing on the
+ * screen because it is the game; everything else is an edge, and every edge is
+ * collapsible or fixed-width so the board keeps the space it is given.
+ *
+ * THE PHASE IS ON THE BOARD. There was a strip of nine across the top saying
+ * which phase it was; the board already prints those nine, in order, along its
+ * own upper edge. Two lists of one thing is one list too many, and the printed
+ * one is better — it has the symbols on it. The current one is ringed there
+ * instead, and the strip is gone.
  *
  * THE ONE RULE THIS FILE ENFORCES. Everything above the bottom strip is public
  * by rule — pieces on the board, strongholds held, how many cards a hand holds,
@@ -26,7 +31,6 @@ import type { FactionId } from '@/types/Dune/Faction'
 import type { DuneGameState } from '@/types/Dune/Game'
 import type { DuneSecrets } from '@/lib/dune/charity'
 import { hudRows, allyOf } from '@/lib/dune/hud'
-import { PhaseStrip } from './PhaseStrip'
 import { ChatPanel } from './ChatPanel'
 import type { ChatMessage } from './ChatPanel'
 import { PlayerHud } from './PlayerHud'
@@ -96,8 +100,6 @@ export function DuneGameScreen({
       display: 'flex', flexDirection: 'column', height: '100vh',
       background: '#0d1220', color: '#f0e2bb', overflow: 'hidden',
     }}>
-      <PhaseStrip phase={state.phase} turn={state.turn} />
-
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <ChatPanel messages={chat} collapsed={chatShut} onSend={onSend}
           onToggle={() => setChatShut(c => !c)} />
@@ -121,7 +123,7 @@ export function DuneGameScreen({
             <DuneBoard
               storm={state.storm} stacks={stacks} spice={state.spiceOnBoard}
               seating={seating} deck={state.spiceDeck} mode={state.mode}
-              awaiting={state.awaiting} />
+              awaiting={state.awaiting} phase={state.phase} />
           </div>
 
           {/* The auction, over the WHOLE middle column rather than over the
@@ -143,7 +145,7 @@ export function DuneGameScreen({
           )}
         </main>
 
-        <PlayerHud rows={rows} awaiting={state.awaiting} seat={seat} />
+        <PlayerHud rows={rows} awaiting={state.awaiting} seat={seat} turn={state.turn} />
       </div>
 
       {/* A spectator has no strip: there is nothing private to show them, and

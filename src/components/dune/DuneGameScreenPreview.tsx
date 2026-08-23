@@ -103,18 +103,47 @@ export default function DuneGameScreenPreview() {
     return () => clearInterval(t)
   }, [])
 
-  const auction = q.get('auction') !== 'off'
   const mode = (q.get('mode') === 'basic' ? 'basic' : 'advanced') as GameMode
   const seat = q.get('seat') === 'none' ? null : ((q.get('seat') ?? 'atreides') as FactionId)
 
+  // THE AUCTION ANSWERS. It used to be a constant with stubbed callbacks, so
+  // the panel came up and stayed up: Bid and Pass did nothing, and the only way
+  // out was to know about ?auction=off. A preview you cannot get out of is a
+  // preview of one frame.
+  const [card, setCard] = useState(q.get('auction') === 'off' ? -1 : BIDDING.ask.index)
+  const running = card >= 0 && card < BIDDING.ask.cardCount
+
   return (
-    <DuneGameScreen
-      state={{ ...STATE, mode }}
-      seat={seat}
-      own={seat ? OWN : null}
-      chat={CHAT}
-      onSend={seat ? () => {} : undefined}
-      bidding={auction ? { ...BIDDING, closesAt: now + 9_000 } : null}
-      now={now} />
+    <>
+      <DuneGameScreen
+        state={{ ...STATE, mode }}
+        seat={seat}
+        own={seat ? OWN : null}
+        chat={CHAT}
+        onSend={seat ? () => {} : undefined}
+        bidding={running
+          ? {
+              ...BIDDING,
+              ask: { ...BIDDING.ask, index: card },
+              closesAt: now + 9_000,
+              // Bidding wins the card and moves the row on; passing ends it
+              // here. Neither is the real auction — that lives on the server —
+              // but both leave the screen somewhere you can get out of.
+              onBid: () => setCard(c => c + 1),
+              onPass: () => setCard(-1),
+            }
+          : null}
+        now={now} />
+      {/* A way back in, since the fixture has no phase that would reopen one. */}
+      {!running && (
+        <button type="button" onClick={() => setCard(0)}
+          style={{
+            position: 'fixed', right: 14, bottom: 118, zIndex: 5,
+            background: '#1b2337', color: '#f0e2bb', border: '1px solid #f0e2bb55',
+            borderRadius: 4, padding: '5px 11px', cursor: 'pointer',
+            font: '12px Georgia, "Times New Roman", serif',
+          }}>run an auction</button>
+      )}
+    </>
   )
 }

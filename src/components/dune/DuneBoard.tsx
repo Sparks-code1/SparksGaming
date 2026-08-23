@@ -18,9 +18,11 @@
 import { useEffect, useState } from 'react'
 import {
   DUNE_BOARD, DUNE_PLAYER_POSITIONS, DUNE_SECTORS, DUNE_STORM_RING, DUNE_TERRITORIES,
+  DUNE_TRACK,
 } from '@/data/dune/boardData'
+import { DUNE_PHASES } from '@/types/Dune/Game'
 import type { FactionId } from '@/types/Dune/Faction'
-import type { GameMode, SectorId, SpiceDeckPublic, TerritoryId } from '@/types/Dune/Game'
+import type { GameMode, GamePhase, SectorId, SpiceDeckPublic, TerritoryId } from '@/types/Dune/Game'
 import { SeatLayer, FACTION_LOOK } from './SeatLayer'
 import { SpiceDeckArea } from './SpiceDeckArea'
 
@@ -85,9 +87,44 @@ export interface DuneBoardProps {
    * a networked game stalls with nobody sure whose move it is.
    */
   awaiting?: FactionId | null
+  /**
+   * The phase of the turn, marked on the board's own nine medallions.
+   *
+   * The board already prints the nine, in order, left to right along the top —
+   * DUNE_TRACK, drawn with a symbol each by PHASE_SYMBOLS in the generator. A
+   * second list of the same nine across the top of the screen was a duplicate
+   * of something the board says better, and it took a strip of the screen to
+   * say it worse.
+   */
+  phase?: GamePhase | null
   /** The board takes clicks only when a caller wants them. */
   interactive?: boolean
   children?: React.ReactNode
+}
+
+/**
+ * Which of the nine medallions is lit.
+ *
+ * DUNE_TRACK is in phase order and runs left to right across the top — track-1
+ * at x=239 through track-9 at x=730 — so the index IS the phase number minus
+ * one. Both come from the same walk of the artwork in the generator, which is
+ * what stops the mark landing on the wrong circle.
+ *
+ * A TINT AND A RING, not a filled disc: the medallion has a symbol printed in
+ * it, and the symbol is what says which phase this is. Covering it to point at
+ * it would be a strange way round.
+ */
+function PhaseMark({ phase }: { phase: GamePhase }) {
+  const at = DUNE_PHASES.indexOf(phase)
+  const stop = at >= 0 ? DUNE_TRACK[at] : undefined
+  if (!stop) return null
+  return (
+    <g data-layer="phase-track" data-phase={phase} data-phase-number={at + 1} pointerEvents="none">
+      <title>{`Phase ${at + 1} — ${phase}`}</title>
+      <circle cx={stop.x} cy={stop.y} r={18.5} fill={WAITING} fillOpacity={0.28} />
+      <circle cx={stop.x} cy={stop.y} r={21} fill="none" stroke={WAITING} strokeWidth={2.6} />
+    </g>
+  )
 }
 
 /** The ring round the seat the game is waiting on. */
@@ -119,7 +156,7 @@ function AwaitingMark({ faction, seating }: {
 
 export function DuneBoard({
   storm, stacks, spice, seating, deck, mode,
-  worms = [], awaiting = null, interactive = false, children,
+  worms = [], awaiting = null, phase = null, interactive = false, children,
 }: DuneBoardProps) {
   const [svg, setSvg] = useState<string | null>(null)
 
@@ -176,6 +213,8 @@ export function DuneBoard({
             </g>
           )
         })}
+
+        {phase && <PhaseMark phase={phase} />}
 
         {/* Who is sitting where. An overlay, not part of the board: the seating
             changes every game and the printed circles do not. */}

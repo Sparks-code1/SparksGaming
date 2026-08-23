@@ -31,6 +31,15 @@ export interface PlayerHudProps {
   awaiting: FactionId | null
   /** This client's own seat, marked so a player can find themselves. */
   seat?: FactionId | null
+  /**
+   * Which turn it is, 1–10.
+   *
+   * Here because the phase strip that used to carry it is gone. The board marks
+   * the PHASE on its own nine medallions, but its turn dial prints 1–10 without
+   * saying which one you are on, so the number would have vanished with the
+   * strip. A game of ten turns is a countdown and wants to be visible.
+   */
+  turn?: number
 }
 
 /** One faction's line. */
@@ -70,7 +79,7 @@ function Stat({ label, value, title }: { label: string; value: number; title: st
   )
 }
 
-export function PlayerHud({ rows, awaiting, seat }: PlayerHudProps) {
+export function PlayerHud({ rows, awaiting, seat, turn }: PlayerHudProps) {
   const ordered = pairAllies(rows)
   return (
     <aside data-layer="player-hud" aria-label="Players"
@@ -82,7 +91,15 @@ export function PlayerHud({ rows, awaiting, seat }: PlayerHudProps) {
         margin: 0, padding: '7px 10px', borderBottom: '1px solid #ffffff1f',
         fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 12,
         letterSpacing: 1.4, fontWeight: 400,
-      }}>PLAYERS</h2>
+        display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+      }}>
+        PLAYERS
+        {turn != null && (
+          <span data-turn={turn} style={{ opacity: 0.75 }}>
+            TURN <b style={{ fontSize: 13 }}>{turn}</b>
+          </span>
+        )}
+      </h2>
 
       {ordered.map((row, i) => {
         // The bracket is drawn round the PAIR, so it is opened by the first of

@@ -7,7 +7,7 @@
 // actually watching.
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
-import { BiddingPanel } from '@/components/dune/BiddingPanel'
+import { BiddingPanel, BiddingBar } from '@/components/dune/BiddingPanel'
 import { TreacheryCardBack } from '@/components/dune/TreacheryCardFace'
 import type { BiddingPanelProps } from '@/components/dune/BiddingPanel'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
@@ -194,7 +194,33 @@ check('the seat to act is given the controls', draw().includes('id="dune-bid"'),
     /background:#000000a8/.test(html), true)
 }
 
-console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
-// Not optional: without an exit code the runner counts a failing suite green.
+// ── the panel can be got out of the way ───────────────────────────────────
+// It covers the middle of the board, and the board is how a player decides what
+// a card is worth — whether they can reach Arrakeen this turn, who is standing
+// next to their spice. Being unable to look at the map while pricing a card for
+// it was a real complaint about a real screen.
+{
+  const open = draw()
+  check('the open panel offers a way to shut it',
+    open.includes('aria-label="Shut the bidding panel to see the board"'), true)
+
+  // WHAT SURVIVES BEING SHUT. An auction you must reopen before you can answer
+  // it is one you will miss the clock on, and the clock does not stop for a
+  // player who wanted to look at the board.
+  const bar = renderToStaticMarkup(createElement(BiddingBar, {
+    ask: base.ask, closesAt: base.closesAt, now: base.now, refusal: null,
+    onOpen: () => {},
+    children: createElement('button', { type: 'button' }, 'Bid'),
+  }))
+  check('the shut bar still says which card', bar.includes('Card 2 of 4'), true)
+  check('...and the standing bid', bar.includes('Harkonnen'), true)
+  check('...and keeps the controls it was given', bar.includes('Bid'), true)
+  check('...and a way back to the panel',
+    bar.includes('aria-label="Open the bidding panel"'), true)
+  // No scrim: the whole point of shutting it is to see the board underneath.
+  check('...and does not dim the board', /#000000a8/.test(bar), false)
+}
+
+console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 process.exit(pass ? 0 : 1)

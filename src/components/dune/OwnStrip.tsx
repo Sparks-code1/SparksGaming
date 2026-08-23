@@ -16,8 +16,21 @@
  * The Kwisatz Haderach tracker is Atreides-only AND advanced-only. Two
  * conditions, and the second is the one that gets forgotten: he does not exist
  * in the basic game, so a tracker there is a promise the rules will not keep.
+ *
+ * THE TWO CARDS ARE PANELS, NOT PANES. The faction card and the ally's card are
+ * paragraphs of rules text, and a paragraph squeezed into a strip is a paragraph
+ * nobody reads — it was a 190px column with its own scrollbar. They open from
+ * buttons into DraggableResizable, the same floating panel Risk's card views
+ * use: draggable anywhere, resizable, position remembered per player, and
+ * closable. A player can park their faction card at the side and leave it up all
+ * game, which is what you do with the real one.
+ *
+ * The room that frees goes to the leader discs, which now render large enough
+ * to read a strength off. Every battle in Dune is a leader plus a number, and a
+ * disc too small to read the number on is a decoration.
  */
 import { useState } from 'react'
+import DraggableResizable from '@/components/DraggableResizable'
 import type { Faction, FactionId } from '@/types/Dune/Faction'
 import type { GameMode } from '@/types/Dune/Game'
 import { kwisatzHaderachAvailable, KWISATZ_HADERACH_AT } from '@/types/Dune/Game'
@@ -32,6 +45,27 @@ import { TreacheryCardFace, TreacheryCardBack } from './TreacheryCardFace'
 
 const PALE = '#f0e2bb'
 const SERIF = "Georgia, 'Times New Roman', serif"
+
+/**
+ * How wide a treachery card is drawn in the hand, and how wide it opens.
+ *
+ * The pair is exported because the RATIO is the claim. Cards are laid out
+ * against CARD_W — see TreacheryCardFace — and their rules text is sized
+ * against that; at thumbnail size it is a grey smudge, which is the entire
+ * reason for opening one. A "zoom" that opens a card at the size it already was
+ * is a thing that looks implemented and does nothing, and nothing about the
+ * markup would say so.
+ */
+export const CARD_THUMB = 116
+export const CARD_ZOOM = 300
+
+/** A button that opens one of the floating cards. */
+const cardButton = (colour: string, open: boolean): React.CSSProperties => ({
+  display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
+  background: open ? '#ffffff1a' : 'transparent', color: PALE,
+  border: `1px solid ${colour}`, borderLeftWidth: 4, borderRadius: 4,
+  padding: '4px 8px', fontFamily: SERIF, fontSize: 12,
+})
 
 /** The faction who may hold the Kwisatz Haderach, named once. */
 const KWISATZ_FACTION: FactionId = 'atreides'
@@ -89,6 +123,21 @@ function Tally({ value, word, title }: { value: number | string; word: string; t
 }
 
 /**
+ * The prose bucket, which the card does not carry.
+ *
+ * `advanced.general` is where a faction's advanced rules go when they are one
+ * block of essay rather than a rule per phase — see AdvancedRules. Two factions
+ * have one, and the Atreides' runs to 854 characters of Kwisatz Haderach
+ * exposition. That is the rulebook, not a reference card: it drowned the three
+ * advantages above it, and its subject already has its own tracker on this same
+ * strip.
+ *
+ * Everything KEYED BY PHASE stays, advanced ones included. Those are advantages
+ * you act on at a known moment, which is what a faction card is for.
+ */
+const STRATEGY_PROSE = 'general'
+
+/**
  * The faction card: who you are and what that lets you do.
  *
  * The advantages come out of the faction data keyed by the phase they apply in,
@@ -96,22 +145,24 @@ function Tally({ value, word, title }: { value: number | string; word: string; t
  * is a rule you can act on, where the same sentence without its phase is a
  * rule you have to remember to look for.
  */
-function FactionCard({ faction, mode }: { faction: Faction; mode: GameMode }) {
+export function FactionCard({ faction, mode }: { faction: Faction; mode: GameMode }) {
   const look = FACTION_LOOK[faction.id]
   const rules = Object.entries(faction.abilities) as [string, string][]
   // Advanced rules are ADDITIONAL, and shown only in the game that has them.
   const extra = mode === 'advanced'
     ? (Object.entries(faction.advanced) as [string, string][])
+      .filter(([key]) => key !== STRATEGY_PROSE)
     : []
   return (
     <div style={{
-      display: 'flex', flexDirection: 'column', minWidth: 0, height: '100%',
-      borderLeft: `4px solid ${look.colour}`, paddingLeft: 8,
+      display: 'flex', flexDirection: 'column', minWidth: 0,
+      borderLeft: `4px solid ${look.colour}`, paddingLeft: 9,
     }}>
-      <b style={{ fontFamily: SERIF, fontSize: 14, letterSpacing: 0.5 }}>{look.name}</b>
-      <div style={{ overflowY: 'auto', fontSize: 10.5, lineHeight: 1.35, maxHeight: 78 }}>
+      {/* In a panel now, so it takes the room the panel has rather than fighting
+          a strip for it. The player sizes that panel themselves. */}
+      <div style={{ fontSize: 13, lineHeight: 1.45 }}>
         {[...rules, ...extra].map(([phase, text]) => (
-          <p key={phase + text.slice(0, 12)} style={{ margin: '0 0 4px' }}>
+          <p key={phase + text.slice(0, 12)} style={{ margin: '0 0 5px' }}>
             <span style={{ opacity: 0.5, letterSpacing: 0.6 }}>{phase.toUpperCase()} </span>
             <span style={{ opacity: 0.9 }}>{text}</span>
           </p>
@@ -188,8 +239,14 @@ function HiddenStack(
  * not show cards.
  */
 export function PrivateView(
-  { kind, hand, traitors }:
-  { kind: 'treachery' | 'traitors'; hand: readonly TreacheryCard[]; traitors: readonly string[] },
+  { kind, hand, traitors, onOpenCard }:
+  {
+    kind: 'treachery' | 'traitors'
+    hand: readonly TreacheryCard[]
+    traitors: readonly string[]
+    /** Clicking a card asks for it enlarged. Absent means the cards are inert. */
+    onOpenCard?: (card: TreacheryCard) => void
+  },
 ) {
   return (
     <div data-layer="private-view" role="dialog"
@@ -198,8 +255,20 @@ export function PrivateView(
         display: 'flex', gap: 10, padding: '10px 12px', overflowX: 'auto',
         background: '#0b1020', borderBottom: '1px solid #ffffff1f',
       }}>
+      {/* At this size the rules text on a card is a grey smudge — it is drawn
+          at a fifth of the size the card was designed at. The thumbnail says
+          WHICH card; clicking it says what the card does. */}
       {kind === 'treachery' && (hand.length
-        ? hand.map(c => <TreacheryCardFace key={c.id} card={c} width={116} />)
+        ? hand.map(c => (
+            <button key={c.id} type="button" onClick={() => onOpenCard?.(c)}
+              aria-label={`Open ${c.name}`}
+              style={{
+                background: 'none', border: 'none', padding: 0,
+                cursor: onOpenCard ? 'zoom-in' : 'default', lineHeight: 0,
+              }}>
+              <TreacheryCardFace card={c} width={CARD_THUMB} />
+            </button>
+          ))
         : <p style={{ opacity: 0.6, margin: 0, fontSize: 12 }}>No treachery cards.</p>)}
       {kind === 'traitors' && (traitors.length
         ? traitors.map(name => {
@@ -223,8 +292,15 @@ export function PrivateView(
 
 export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
   const [open, setOpen] = useState<'treachery' | 'traitors' | null>(null)
+  // The two floating panels, and the one card blown up to be readable. All
+  // three are the player's own view of their own things; none of them changes
+  // any state anybody else can see.
+  const [showFaction, setShowFaction] = useState(false)
+  const [showAlliance, setShowAlliance] = useState(false)
+  const [zoom, setZoom] = useState<TreacheryCard | null>(null)
   const faction = factionById(seat)
   const allyFaction = ally ? factionById(ally) : null
+  const look = FACTION_LOOK[seat]
   if (!faction) return null
 
   // The hand and the traitors come from the secrets row and from nowhere else.
@@ -244,21 +320,33 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
           ever RENDERED when asked for — a hand hidden with CSS is still in the
           markup, and the markup is what a screenshot over somebody's shoulder
           has in it. */}
-      {open && <PrivateView kind={open} hand={hand} traitors={traitors} />}
+      {open && <PrivateView kind={open} hand={hand} traitors={traitors}
+        onOpenCard={setZoom} />}
 
       <div style={{
-        display: 'flex', alignItems: 'stretch', minHeight: 104,
+        display: 'flex', alignItems: 'stretch',
+        // A DEFINITE HEIGHT, scaled to the window. Without one the faction card
+        // sizes the strip to fit all its prose — 260px of a 405px window, taken
+        // straight out of the board's column. Bounded, the card scrolls inside
+        // it instead, which is what its own overflow is for.
+        height: 'clamp(118px, 21vh, 190px)',
         // A backstop, not the plan. The panels below shrink first; this is what
         // stops the last one being clipped off the edge rather than reachable
         // when the window is genuinely too narrow for all of them.
         overflowX: 'auto',
       }}>
-        {/* Given a floor. Shrinking this to nothing to pay for the fixed panels
-            beside it left the faction card twenty pixels wide, which is not a
-            smaller faction card, it is a missing one. */}
-        <div style={{ flex: '1 1 220px', minWidth: 190, padding: '6px 10px' }}>
-          <FactionCard faction={faction} mode={mode} />
-        </div>
+        <Panel label="CARDS">
+          <button type="button" onClick={() => setShowFaction(v => !v)}
+            aria-expanded={showFaction} aria-label="Faction card"
+            style={cardButton(look.colour, showFaction)}>{look.name}</button>
+          {allyFaction && (
+            <button type="button" onClick={() => setShowAlliance(v => !v)}
+              aria-expanded={showAlliance} aria-label="Alliance card"
+              style={cardButton(FACTION_LOOK[allyFaction.id].colour, showAlliance)}>
+              Alliance
+            </button>
+          )}
+        </Panel>
 
         <Panel label="HELD">
           <div style={{ display: 'flex', gap: 6 }}>
@@ -270,12 +358,17 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
           </div>
         </Panel>
 
-        <Panel label="LEADERS" width={200}>
-          <svg viewBox={`0 0 ${faction.leaders.length * 54} 54`}
-            style={{ display: 'block', width: '100%', maxWidth: faction.leaders.length * 44 }}>
+        {/* BIG ENOUGH TO READ. Every battle is a leader and a number, and the
+            number is on the disc — at 28px across it was a smudge. This is the
+            room the faction card gave back by becoming a panel. */}
+        <Panel label="LEADERS" width={faction.leaders.length * 62}>
+          <svg viewBox={`0 0 ${faction.leaders.length * 62} 62`}
+            style={{ display: 'block', width: '100%', height: '100%',
+                     maxHeight: 92, maxWidth: faction.leaders.length * 62 }}
+            preserveAspectRatio="xMidYMid meet">
             {faction.leaders.map((l, i) => (
-              <g key={l.name} transform={`translate(${27 + i * 54} 27)`}>
-                <LeaderDisc leader={l} faction={faction.id} r={25} />
+              <g key={l.name} transform={`translate(${31 + i * 62} 31)`}>
+                <LeaderDisc leader={l} faction={faction.id} r={29} />
               </g>
             ))}
           </svg>
@@ -294,29 +387,42 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
             onToggle={() => setOpen(o => (o === 'traitors' ? null : 'traitors'))} />
         </Panel>
 
-        {/* An ally's card, so the help you can call on is in front of you rather
-            than in their strip, which you cannot see. */}
-        {allyFaction && (
-          <Panel label="ALLIANCE">
-            <div style={{
-              maxWidth: 190, borderLeft: `4px solid ${FACTION_LOOK[allyFaction.id].colour}`,
-              paddingLeft: 7,
-            }}>
-              <b style={{ fontFamily: SERIF, fontSize: 12 }}>{FACTION_LOOK[allyFaction.id].name}</b>
-              <p style={{ margin: '2px 0 0', fontSize: 10, lineHeight: 1.35, opacity: 0.9,
-                maxHeight: 62, overflowY: 'auto' }}>
-                {allyFaction.alliance}
-              </p>
-            </div>
-          </Panel>
-        )}
-
         {mode === 'advanced' && seat === KWISATZ_FACTION && (
           <Panel label="KWISATZ HADERACH">
             <KwisatzTracker battleLosses={player.battleLosses ?? 0} />
           </Panel>
         )}
       </div>
+
+      {/* Floating, and outside the strip's flow — DraggableResizable positions
+          itself fixed. Parked wherever the player last left them. */}
+      {showFaction && (
+        <DraggableResizable title={`${look.name} — faction card`} accentColor={look.colour}
+          width={420} storageKey={`dune-faction-${seat}`} initialTop={90} initialRight={280}
+          onClose={() => setShowFaction(false)}>
+          <FactionCard faction={faction} mode={mode} />
+        </DraggableResizable>
+      )}
+
+      {showAlliance && allyFaction && (
+        <DraggableResizable title={`${FACTION_LOOK[allyFaction.id].name} — alliance`}
+          accentColor={FACTION_LOOK[allyFaction.id].colour}
+          width={380} storageKey={`dune-alliance-${seat}`} initialTop={150} initialRight={60}
+          onClose={() => setShowAlliance(false)}>
+          <p style={{ margin: 0, fontSize: 13, lineHeight: 1.45 }}>{allyFaction.alliance}</p>
+        </DraggableResizable>
+      )}
+
+      {/* One card, at a size its own rules text was drawn for. */}
+      {zoom && (
+        <DraggableResizable title={zoom.name} accentColor={look.colour}
+          width={CARD_ZOOM + 34} storageKey={`dune-card-${seat}`}
+          onClose={() => setZoom(null)}>
+          <div data-layer="card-zoom" style={{ display: 'flex', justifyContent: 'center' }}>
+            <TreacheryCardFace card={zoom} width={CARD_ZOOM} />
+          </div>
+        </DraggableResizable>
+      )}
     </footer>
   )
 }

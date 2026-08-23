@@ -141,6 +141,60 @@ function Clock({ closesAt, now }: { closesAt: number; now: number }) {
   )
 }
 
+/**
+ * The auction, shut down to a bar along the foot of the board area.
+ *
+ * NO SCRIM: the point of shutting it is to see the map, and a dimmed map is
+ * most of the way back to not seeing it.
+ *
+ * EVERYTHING NEEDED TO KEEP PLAYING IS STILL HERE — the standing bid, whose
+ * turn it is, the clock, and Bid and Pass. An auction you have to reopen before
+ * you can answer it is one you will miss the clock on, and the clock does not
+ * stop for a player who wanted to look at the board.
+ *
+ * Its own component so both states can be rendered on their own. The claim that
+ * matters is about what SURVIVES being shut, and that is not checkable on a
+ * component whose shut state only exists after a click.
+ */
+export function BiddingBar(
+  { ask, closesAt, now, refusal, onOpen, children }:
+  Pick<BiddingPanelProps, 'ask' | 'closesAt' | 'now' | 'refusal'>
+  & { onOpen(): void; children: React.ReactNode },
+) {
+  return (
+    <div data-layer="bidding-bar" style={{
+      position: 'absolute', left: 0, right: 0, bottom: 0,
+      display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+      padding: '8px 12px', background: INK, color: SAND,
+      borderTop: `1px solid ${SAND}44`, boxShadow: '0 -10px 30px #0009',
+      font: '14px Georgia, "Times New Roman", serif',
+    }}>
+      <button type="button" onClick={onOpen} aria-expanded={false}
+        aria-label="Open the bidding panel"
+        style={{
+          background: 'transparent', color: SAND, border: `1px solid ${SAND}55`,
+          borderRadius: 4, padding: '3px 9px', cursor: 'pointer',
+        }}>▲</button>
+      <span>Card {ask.index + 1} of {ask.cardCount}</span>
+      <span style={{ opacity: 0.85 }}>
+        {ask.high
+          ? <>bid <strong>{ask.high.spice}</strong> to{' '}
+            <span style={{ color: FACTION_LOOK[ask.high.faction].colour }}>
+              {FACTION_LOOK[ask.high.faction].name}
+            </span></>
+          : 'no bids yet'}
+      </span>
+      <span style={{ flex: 1, minWidth: 90 }}><Clock closesAt={closesAt} now={now} /></span>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>{children}</span>
+      {refusal && (
+        <span role="alert" style={{ fontSize: 12, color: '#e8a0a0' }}>
+          {REFUSAL_TEXT[refusal]} <span style={{ opacity: 0.7 }}>The clock is still running.</span>
+        </span>
+      )}
+    </div>
+  )
+}
+
 export function BiddingPanel(props: BiddingPanelProps) {
   const {
     ask, order, toAct, passed, seat, spice, hand, revealed,
@@ -148,8 +202,47 @@ export function BiddingPanel(props: BiddingPanelProps) {
   } = props
   const minimum = ask.high ? ask.high.spice + 1 : MINIMUM_OPENING_BID
   const [amount, setAmount] = useState(minimum)
+  // SHUT, not gone. An auction cannot be dismissed — you bid or you pass — but
+  // it can be got out of the way. The panel covers the middle of the board, and
+  // the board is how you decide what a card is worth: whether you can reach
+  // Arrakeen this turn, who is standing next to your spice. Being unable to look
+  // at the map while pricing a card for it is the whole complaint.
+  const [shut, setShut] = useState(false)
   const mine = toAct === seat
   const remaining = ask.cardCount - ask.index - 1
+
+  const act = mine ? (
+    <>
+      <label htmlFor="dune-bid" style={{ fontSize: 12, opacity: 0.8 }}>Bid</label>
+      <input id="dune-bid" type="number" min={minimum} max={spice} value={amount}
+        onChange={e => setAmount(Number(e.target.value))}
+        style={{
+          width: 72, background: '#ffffff12', color: SAND,
+          border: `1px solid ${SAND}44`, borderRadius: 4, padding: '4px 6px',
+        }} />
+      <button type="button" onClick={() => onBid(amount)}
+        style={{ padding: '5px 14px', borderRadius: 4, border: 'none', cursor: 'pointer' }}>
+        Bid
+      </button>
+      <button type="button" onClick={onPass}
+        style={{
+          padding: '5px 14px', borderRadius: 4, cursor: 'pointer',
+          background: 'transparent', color: SAND, border: `1px solid ${SAND}55`,
+        }}>
+        Pass
+      </button>
+      <span style={{ fontSize: 12, opacity: 0.7 }}>minimum {minimum}</span>
+    </>
+  ) : (
+    <span style={{ opacity: 0.8 }}>Waiting for {FACTION_LOOK[toAct].name}</span>
+  )
+
+  if (shut) {
+    return (
+      <BiddingBar ask={ask} closesAt={closesAt} now={now} refusal={refusal}
+        onOpen={() => setShut(false)}>{act}</BiddingBar>
+    )
+  }
 
   return (
     // The scrim dims the board and nothing else. It does not cover it: the
@@ -164,11 +257,26 @@ export function BiddingPanel(props: BiddingPanelProps) {
     }}>
       <div role="dialog" aria-label="treachery bidding" style={{
         background: INK, color: SAND, border: `1px solid ${SAND}44`, borderRadius: 10,
-        padding: 18, width: 'min(720px, 100%)', minWidth: 'min(520px, 100%)', maxWidth: 720,
+        padding: 16, width: 'min(660px, 100%)', maxWidth: 660,
+        // Never taller than the area it floats over. Beyond that it scrolls
+        // inside itself rather than growing past the board and off the screen.
+        maxHeight: '100%', overflowY: 'auto',
         font: '14px Georgia, "Times New Roman", serif',
         boxShadow: '0 18px 60px #000000cc',
       }}>
-        <div style={{ display: 'flex', gap: 18 }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+          <button type="button" onClick={() => setShut(true)} aria-expanded
+            aria-label="Shut the bidding panel to see the board"
+            style={{
+              background: 'transparent', color: SAND, border: `1px solid ${SAND}55`,
+              borderRadius: 4, padding: '2px 9px', cursor: 'pointer', fontSize: 12,
+            }}>▼ board</button>
+        </div>
+        {/* WRAPS. The middle column is only as wide as the board is tall, and the
+            board is taller than it is wide, so this row is regularly narrower
+            than the card and the controls side by side. Wrapping puts the card
+            above them instead of pushing half the panel off the edge. */}
+        <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
           {/* ── the card ─────────────────────────────────────────────────── */}
           <div style={{ width: CARD_W * 0.8 }}>
             {revealed
@@ -208,33 +316,9 @@ export function BiddingPanel(props: BiddingPanelProps) {
             <Clock closesAt={closesAt} now={now} />
 
             {/* ── acting ─────────────────────────────────────────────────── */}
-            {mine ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <label htmlFor="dune-bid" style={{ fontSize: 12, opacity: 0.8 }}>Bid</label>
-                <input id="dune-bid" type="number" min={minimum} max={spice} value={amount}
-                  onChange={e => setAmount(Number(e.target.value))}
-                  style={{
-                    width: 72, background: '#ffffff12', color: SAND,
-                    border: `1px solid ${SAND}44`, borderRadius: 4, padding: '4px 6px',
-                  }} />
-                <button type="button" onClick={() => onBid(amount)}
-                  style={{ padding: '5px 14px', borderRadius: 4, border: 'none', cursor: 'pointer' }}>
-                  Bid
-                </button>
-                <button type="button" onClick={onPass}
-                  style={{
-                    padding: '5px 14px', borderRadius: 4, cursor: 'pointer',
-                    background: 'transparent', color: SAND, border: `1px solid ${SAND}55`,
-                  }}>
-                  Pass
-                </button>
-                <span style={{ fontSize: 12, opacity: 0.7 }}>minimum {minimum}</span>
-              </div>
-            ) : (
-              <div style={{ opacity: 0.8 }}>
-                Waiting for {FACTION_LOOK[toAct].name}
-              </div>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              {act}
+            </div>
 
             {/* PRIVATE. Rendered only for the bidder it belongs to, and beside a
                 clock that has not been reset — a refused bid is not a way to buy
