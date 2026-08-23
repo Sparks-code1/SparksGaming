@@ -20,13 +20,21 @@
 import type { FactionId } from '@/types/Dune/Faction'
 import type { HudRow } from '@/lib/dune/hud'
 import { pairAllies } from '@/lib/dune/hud'
-import { FACTION_LOOK } from './SeatLayer'
+import { FACTION_LOOK, SeatMark, SeatFilters } from './SeatLayer'
 
 const PALE = '#f0e2bb'
 const WAITING = '#c9542a'
 
-/** How wide the HUD is. Exported for the same reason as CHAT_WIDTH. */
-export const HUD_WIDTH = 236
+/** The faction's own mark, as a small round avatar. */
+function Avatar({ faction, r = 15 }: { faction: FactionId; r?: number }) {
+  return (
+    <svg width={r * 2} height={r * 2} viewBox={`${-r} ${-r} ${r * 2} ${r * 2}`}
+      style={{ display: 'block', flex: '0 0 auto' }}>
+      <SeatFilters />
+      <SeatMark faction={faction} x={0} y={0} r={r - 1} />
+    </svg>
+  )
+}
 
 export interface PlayerHudProps {
   rows: readonly HudRow[]
@@ -45,24 +53,44 @@ export interface PlayerHudProps {
   turn?: number
 }
 
-/** One faction's line. */
-function Row({ row, awaiting, own }: { row: HudRow; awaiting: boolean; own: boolean }) {
+/**
+ * One faction, as a bubble.
+ *
+ * ROUNDED AND SEPARATE, so six of them read as six people rather than as a
+ * table of numbers. The faction's own mark sits in it — the same mark as on its
+ * seat on the board, so the colour is not doing the identifying alone.
+ */
+function Bubble({ row, awaiting, own }: { row: HudRow; awaiting: boolean; own: boolean }) {
   const look = FACTION_LOOK[row.faction]
   return (
     <div data-faction={row.faction} data-awaiting={awaiting || undefined}
       style={{
-        display: 'grid', gridTemplateColumns: '1fr auto auto auto', alignItems: 'center',
-        gap: 8, padding: '6px 9px',
-        background: awaiting ? '#c9542a26' : own ? '#ffffff0d' : 'transparent',
-        borderLeft: `4px solid ${look.colour}`,
-        outline: awaiting ? `1px solid ${WAITING}` : undefined,
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '7px 10px 7px 7px', borderRadius: 999,
+        // The faction's colour, dimmed to a ground it can carry text on. Its
+        // full strength is on the mark and the ring, where it is a signal
+        // rather than a background.
+        background: `${look.colour}2e`,
+        border: `1px solid ${awaiting ? WAITING : look.colour + '88'}`,
+        boxShadow: awaiting ? `0 0 0 2px ${WAITING}55` : own ? '0 0 0 1px #ffffff33' : undefined,
       }}>
-      <span style={{
-        fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 12.5,
-        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-      }}>
-        {look.name}
-        {own && <span style={{ opacity: 0.55, fontSize: 10 }}> (you)</span>}
+      <Avatar faction={row.faction} />
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{
+          display: 'block', fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 12.5,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {look.name}
+          {own && <span style={{ opacity: 0.55, fontSize: 10 }}> (you)</span>}
+        </span>
+        {/* SAID IN WORDS. A red ring on its own is a colour somebody has to be
+            told the meaning of — and was: the first question anyone asked of
+            this screen was why one player was red. */}
+        {awaiting && (
+          <span style={{ display: 'block', fontSize: 9.5, letterSpacing: 1, color: WAITING }}>
+            WAITING ON THEM
+          </span>
+        )}
       </span>
       <Stat label="forces" value={row.forcesOnBoard} title="Forces on the board" />
       <Stat label="holds" value={row.strongholds} title="Strongholds held" />
@@ -87,8 +115,8 @@ export function PlayerHud({ rows, awaiting, seat, turn }: PlayerHudProps) {
   return (
     <aside data-layer="player-hud" aria-label="Players"
       style={{
-        width: HUD_WIDTH, flex: '0 0 auto', background: '#131c2e', color: PALE,
-        borderLeft: '1px solid #ffffff1f', overflowY: 'auto',
+        flex: '0 0 auto', color: PALE, overflowY: 'auto',
+        borderBottom: '1px solid #ffffff1f',
         // Faction names and three counters. Nothing here is copy.
         userSelect: 'none', WebkitUserSelect: 'none',
       }}>
@@ -106,44 +134,41 @@ export function PlayerHud({ rows, awaiting, seat, turn }: PlayerHudProps) {
         )}
       </h2>
 
-      {ordered.map((row, i) => {
-        // The bracket is drawn round the PAIR, so it is opened by the first of
-        // the two and closed by the second. Reading the neighbour rather than
-        // the row itself is what makes it one mark instead of two.
-        const next = ordered[i + 1]
-        const opensPair = !!row.ally && next?.faction === row.ally
-        const closesPair = !!row.ally && ordered[i - 1]?.faction === row.ally
-        const inPair = opensPair || closesPair
-        const mate = inPair ? FACTION_LOOK[row.ally as FactionId] : null
-        return (
-          <div key={row.faction} data-pair={inPair ? 'yes' : undefined}
-            style={{
-              display: 'flex', alignItems: 'stretch',
-              borderBottom: closesPair || !inPair ? '1px solid #ffffff12' : 'none',
-            }}>
-            {/* The bracket: this row's own colour beside its ally's, so the
-                mark says WHO with whom rather than merely "these two". */}
-            <span aria-hidden data-bracket={inPair ? 'yes' : undefined}
-              style={{
-                width: 5, flex: '0 0 auto',
-                background: mate ? mate.colour : 'transparent',
-                borderTopLeftRadius: opensPair ? 4 : 0,
-                borderBottomLeftRadius: closesPair ? 4 : 0,
-              }} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <Row row={row} awaiting={row.faction === awaiting} own={row.faction === seat} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 9px' }}>
+        {ordered.map((row, i) => {
+          // The pair is opened by the first of the two and closed by the second,
+          // read off the neighbour rather than the row itself, so the join is one
+          // mark between two bubbles instead of a decoration on each.
+          const next = ordered[i + 1]
+          const opensPair = !!row.ally && next?.faction === row.ally
+          const closesPair = !!row.ally && ordered[i - 1]?.faction === row.ally
+          const mate = row.ally ? FACTION_LOOK[row.ally] : null
+          return (
+            <div key={row.faction} data-pair={opensPair || closesPair ? 'yes' : undefined}
+              style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <Bubble row={row} awaiting={row.faction === awaiting} own={row.faction === seat} />
+              {/* The join: a short link in BOTH colours, between the two bubbles
+                  it belongs to. An alliance is a pair, and a mark on one bubble
+                  alone would say the wrong thing. */}
               {opensPair && mate && (
-                <div style={{
-                  padding: '0 9px 4px 13px', fontSize: 9.5, letterSpacing: 1,
-                  opacity: 0.6, fontFamily: "Georgia, 'Times New Roman', serif",
+                <div data-bracket="yes" style={{
+                  display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 22,
+                  marginTop: -3, marginBottom: -3,
                 }}>
-                  ALLIED WITH {mate.name.toUpperCase()}
+                  <span aria-hidden style={{
+                    width: 16, height: 3, borderRadius: 2,
+                    background: `linear-gradient(90deg, ${FACTION_LOOK[row.faction].colour}, ${mate.colour})`,
+                  }} />
+                  <span style={{
+                    fontSize: 9, letterSpacing: 1, opacity: 0.65,
+                    fontFamily: "Georgia, 'Times New Roman', serif",
+                  }}>ALLIED WITH {mate.name.toUpperCase()}</span>
                 </div>
               )}
             </div>
-          </div>
-        )
-      })}
+          )
+        })}
+      </div>
     </aside>
   )
 }

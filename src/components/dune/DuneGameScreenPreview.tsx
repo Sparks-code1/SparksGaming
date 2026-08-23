@@ -138,7 +138,9 @@ export default function DuneGameScreenPreview() {
       {!running && (
         <button type="button" onClick={() => setCard(0)}
           style={{
-            position: 'fixed', right: 14, bottom: 118, zIndex: 5,
+            // Bottom centre, over the board: the right-hand column is the tray now
+            // and this was sitting on top of it.
+            position: 'fixed', left: '50%', transform: 'translateX(-50%)', bottom: 10, zIndex: 5,
             background: '#1b2337', color: '#f0e2bb', border: '1px solid #f0e2bb55',
             borderRadius: 4, padding: '5px 11px', cursor: 'pointer',
             font: '12px Georgia, "Times New Roman", serif',

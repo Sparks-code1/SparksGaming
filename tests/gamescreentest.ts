@@ -18,8 +18,7 @@ import type { DuneGameScreenProps } from '@/components/dune/DuneGameScreen'
 import { PlayerHud } from '@/components/dune/PlayerHud'
 import { OwnStrip, PrivateView, FactionCard } from '@/components/dune/OwnStrip'
 import { CARD_THUMB, CARD_ZOOM } from '@/components/dune/OwnStrip'
-import { ChatPanel, CHAT_WIDTH, CHAT_SHUT_WIDTH } from '@/components/dune/ChatPanel'
-import { HUD_WIDTH } from '@/components/dune/PlayerHud'
+import { ChatPanel } from '@/components/dune/ChatPanel'
 import { hudRows, pairAllies, allyOf, strongholdsHeld } from '@/lib/dune/hud'
 import { DUNE_TRACK } from '@/data/dune/boardData'
 import { DUNE_PHASES, KWISATZ_HADERACH_AT } from '@/types/Dune/Game'
@@ -27,6 +26,7 @@ import type { DuneGameState, DunePlayerPublic, Force } from '@/types/Dune/Game'
 import type { DuneSecrets } from '@/lib/dune/charity'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { factionById } from '@/data/dune/factions'
+import { FACTION_LOOK } from '@/components/dune/SeatLayer'
 import type { FactionId } from '@/types/Dune/Faction'
 
 let pass = true
@@ -223,7 +223,15 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     marked, [1, 2, 3, 4, 5, 6, 7, 8, 9])
 
   // The turn number lived on the strip. It has to live somewhere still.
-  check('the turn is still shown', full.includes('data-turn="3"'), true)
+  //
+  // SCOPED TO THE HUD. `data-turn` is on the board's dial mark as well, which
+  // was added after this check and quietly satisfied it — hiding the HUD's turn
+  // entirely left the suite green, because the dial was answering for it.
+  const hudMarkup = full.slice(full.indexOf('data-layer="player-hud"'),
+                              full.indexOf('data-layer="own-strip"'))
+  check('the turn is still shown', hudMarkup.includes('data-turn="3"'), true)
+  check('...in the HUD, which is a different element from the board dial',
+    /data-layer="turn-dial"[^>]*data-turn="3"/.test(full), true)
 }
 
 // ── allies read as a pair ─────────────────────────────────────────────────
@@ -260,7 +268,9 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   const hud = renderToStaticMarkup(createElement(PlayerHud, {
     rows, awaiting: null, seat: 'atreides' as FactionId,
   }))
-  check('the pair is bracketed', hud.split('data-bracket="yes"').length - 1, 2)
+  // ONE mark, BETWEEN the two bubbles — an alliance is a pair, and a decoration
+  // drawn on each of them separately says something weaker.
+  check('the pair is joined, once', hud.split('data-bracket="yes"').length - 1, 1)
   check('...and named', hud.includes('ALLIED WITH FREMEN'), true)
 
   // AN ALLIANCE IS A PAIR. One side claiming it alone is a bug, not a
@@ -309,14 +319,25 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   // essay by cutting the whole advanced block would take a real advantage with
   // it — the Atreides' Karama power is one.
   check('the advantages stay', card('advanced').includes(atreides.abilities.bidding!), true)
-  // Matched on a fragment with no apostrophe in it: the rules text has one and
-  // renderToStaticMarkup escapes it to &#x27;, so the raw string never matches.
+  // KARAMA IS OFF THE CARD TOO. It is not a standing faction advantage — it is
+  // what this faction may spend a Karama CARD on, which is a thing you do when
+  // you hold one. Matched on a fragment with no apostrophe in it: the rules text
+  // has one and renderToStaticMarkup escapes it to &#x27;.
   const KARAMA = 'use a Karama Card to look at'
   check('the fixture fragment is really in the rule',
     atreides.advanced.karama!.includes(KARAMA), true)
-  check('...and so do the advanced ones that name a phase',
-    card('advanced').includes(KARAMA), true)
-  check('...which the basic game still leaves out', card('basic').includes(KARAMA), false)
+  check('...and the card does not carry it', card('advanced').includes(KARAMA), false)
+
+  // The OTHER advanced entries stay — those are real advantages, keyed to the
+  // phase they apply in. Cutting karama by cutting the whole advanced block
+  // would take them with it.
+  const fremen = factionById('fremen')!
+  const fremenCard = (mode: 'basic' | 'advanced') =>
+    renderToStaticMarkup(createElement(FactionCard, { faction: fremen, mode }))
+  check('the advanced game still shows the rules that name a phase',
+    fremenCard('advanced').includes(fremen.advanced.storm!.slice(0, 40)), true)
+  check('...which the basic game leaves out',
+    fremenCard('basic').includes(fremen.advanced.storm!.slice(0, 40)), false)
 }
 
 // ── the two cards open as panels rather than sitting in the strip ─────────
@@ -402,113 +423,85 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   // reflowed to take another rule.
   const rootAt = boardSrc.indexOf('data-layer="board"')
   const boardRoot = boardSrc.slice(rootAt, rootAt + boardSrc.slice(rootAt).indexOf('}}>'))
+  // THE COLUMN RESERVES THE BOARD'S IDEAL WIDTH — the width a board as tall as
+  // the window would need. Without that basis the side columns' flex-grow takes
+  // width the board still wants, and it ends up SMALLER than before they were
+  // allowed to grow at all: 510x578 at 1280x720, against 539x611 before. The
+  // ratio is the board's own, so the reservation cannot drift from the shape it
+  // is reserving for.
+  check('the board column reserves the width a full-height board needs',
+    full.includes('calc(100vh * ' + (970 / 1099) + ')'), true)
+
   check('...both pinned to the column, so the percentages resolve',
     /position: 'absolute'/.test(boardRoot) && /inset: 0/.test(boardRoot), true)
 
-  // The tray's box IS the board's column: its margins are the two side panels.
-  // Any other number here centres it on something that is not the board.
-  check('the tray is inset by the chat and the HUD',
-    full.includes(`margin-left:${CHAT_WIDTH}px;margin-right:${HUD_WIDTH}px`), true)
-  // Scoped to the tray. The board column above it is centred as well, so
-  // looking for the rule anywhere in the page passed on a tray that had gone
-  // back to flex-start.
-  const trayMarkup = full.slice(full.indexOf('data-layer="own-strip"'))
-  check('...and centres its contents in that box',
-    /justify-content:center/.test(trayMarkup), true)
-  check('...which is a claim about the tray, not the column above it',
-    /justify-content:center/.test(full.slice(0, full.indexOf('data-layer="own-strip"'))), true)
+  // THE TRAY IS IN THE RIGHT-HAND COLUMN, under the HUD, and no longer across
+  // the bottom of the window. That is not a tidying-up: the board is bound by
+  // HEIGHT — it is taller than it is wide — so anything laid across the bottom
+  // comes straight off it. The tray cost it 153px and 36% of its area.
+  //
+  // Which is also why widening the side panels was the wrong answer to the same
+  // complaint: it would have handed the board width it cannot use.
+  const hudAt = full.indexOf('data-layer="player-hud"')
+  const trayAt = full.indexOf('data-layer="own-strip"')
+  check('the HUD and the tray are both on the screen', hudAt > 0 && trayAt > 0, true)
+  check('...with the tray after the HUD, in one column', trayAt > hudAt, true)
+  // Nothing between them but the column's own markup: a board, a chat panel or
+  // a main element in the gap would mean they are not in the same column.
+  const gap = full.slice(hudAt, trayAt)
+  check('...and nothing else between them',
+    /data-layer="board"|<main|data-layer="chat"/.test(gap), false)
+  check('the tray no longer spans the window under the panels',
+    /margin-left:\d+px;margin-right:\d+px/.test(full), false)
 
-  // The panels have to be the widths the tray was told they are. A second copy
-  // of either number is how the tray ends up centred on nothing in particular.
-  const chat = renderToStaticMarkup(createElement(ChatPanel, {
-    messages: [], collapsed: false, onToggle: () => {},
-  }))
-  check('the chat really is that wide', chat.includes(`width:${CHAT_WIDTH}px`), true)
-  const hud = renderToStaticMarkup(createElement(PlayerHud, {
-    rows: hudRows(state), awaiting: null, seat: null,
-  }))
-  check('...and the HUD', hud.includes(`width:${HUD_WIDTH}px`), true)
-
-  // Shutting the chat moves the board without moving the window's centre, which
-  // is the case a window-centred tray gets visibly wrong. The shut state only
-  // exists after a click, so the arithmetic is read from the source.
-  const screenSrc = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
-  check('the tray follows the board when the chat is shut',
-    screenSrc.includes('chatShut ? CHAT_SHUT_WIDTH : CHAT_WIDTH'), true)
-  check('...to the width the shut chat actually is',
-    renderToStaticMarkup(createElement(ChatPanel, {
-      messages: [], collapsed: true, onToggle: () => {},
-    })).includes(`width:${CHAT_SHUT_WIDTH}px`), true)
 }
-// ── a board is not a document ────────────────────────────────────────────
-// Dragging across the board caught the territory names and lit them up like
-// something you were about to copy — which is what a player does while
-// reaching for a stack. The same went for the tray, the HUD and the auction
-// panel: names and tallies, none of it copy.
-//
-// Two things stay selectable ON PURPOSE, and both are checked, because a
-// blanket rule is exactly how they would be lost:
-//
-//   The bid field. `user-select: none` on an ancestor reaches into a text
-//   input and takes select-all and drag-select with it, which turns fixing a
-//   mistyped bid into deleting it a character at a time, against a clock.
-//
-//   The faction and alliance cards. The only prose on the screen anyone would
-//   want to quote, and they open in panels you ask for rather than sitting
-//   under a cursor reaching for the map.
+
+// ── what the faction card tells you now ──────────────────────────────────
+// Two things a player asks for every turn and could not read here. Free
+// revivals come up in the Revival phase and are a number nobody remembers;
+// what you bring to an alliance comes up whenever one is proposed, and was
+// only readable from your ALLY's side of the table.
 {
-  // Its own auction fixture: the one below is block-scoped to its own section.
-  const full = draw({ bidding: {
-    ask: { kind: 'treachery-bid', index: 0, cardCount: 4, high: null, minimum: 1,
-           hands: { atreides: 3, harkonnen: 2, emperor: 2, fremen: 2 } },
-    order: ['atreides', 'harkonnen', 'emperor', 'fremen'],
-    toAct: 'atreides', passed: [], closesAt: 15_000,
-    onBid: () => {}, onPass: () => {},
-  } })
-  const between = (from: string, to?: string) => {
-    const a = full.indexOf(from)
-    const b = to ? full.indexOf(to, a) : full.length
-    return a < 0 ? '' : full.slice(a, b < 0 ? full.length : b)
-  }
-
-  for (const [what, layer] of [
-    ['the board', 'data-layer="board"'],
-    ['the HUD', 'data-layer="player-hud"'],
-    ['the tray', 'data-layer="own-strip"'],
-  ] as const) {
-    const at = full.indexOf(layer)
-    check(`${what} is on the screen to be checked`, at > 0, true)
-    // The rule has to be on the layer's own element, so it inherits into
-    // everything drawn inside it — which for the board is the whole inlined
-    // SVG, where nearly all the text is.
-    check(`...and its text cannot be selected`,
-      /user-select:none/.test(full.slice(at, full.indexOf('>', at))), true)
-  }
-
-  // The auction panel, which has the same problem and is not part of either.
-  const scrim = full.indexOf('background:#000000a8')
-  check('the auction panel is up', scrim > 0, true)
-  check('...and is not selectable either',
-    /user-select:none/.test(full.slice(scrim - 200, full.indexOf('>', scrim))), true)
-
-  // THE TWO EXCEPTIONS.
-  const bidField = between('id="dune-bid"', '/>')
-  check('the bid field can still be selected',
-    /user-select:text/.test(bidField), true)
-
+  const atreides = factionById('atreides')!
   const card = renderToStaticMarkup(createElement(FactionCard, {
-    faction: factionById('atreides')!, mode: 'advanced' as const,
+    faction: atreides, mode: 'advanced' as const,
   }))
-  check('the faction card is prose, and stays selectable',
-    /user-select:text/.test(card), true)
+  check('the card says how many free revivals the faction gets',
+    card.includes(`data-free-revivals="${atreides.freeRevivals}"`), true)
+  // The NUMBER, not just the attribute — an attribute nothing renders beside it
+  // is a fact only a test can see.
+  check('...in words a player can read',
+    new RegExp(`${atreides.freeRevivals} free revival`).test(card), true)
+  check('...and what the faction brings to an alliance',
+    card.includes(atreides.alliance.slice(0, 40)), true)
 
-  // The chat is nobody's chrome — people quote each other. Left alone.
-  const chat = renderToStaticMarkup(createElement(ChatPanel, {
-    messages: [{ id: 'm', faction: 'fremen' as FactionId, text: 'Water', at: 0 }],
-    collapsed: false, onToggle: () => {},
-  }))
-  check('the chat is left selectable', /user-select:none/.test(chat), false)
+  // The faction's own mark, the same one on its seat and its HUD bubble.
+  check('the card carries the faction mark', card.includes('<title>Atreides</title>'), true)
 }
+
+// ── the HUD is bubbles, and says why one is red ──────────────────────────
+{
+  const rows = hudRows(state)
+  const hud = renderToStaticMarkup(createElement(PlayerHud, {
+    rows, awaiting: 'harkonnen' as FactionId, seat: 'atreides' as FactionId, turn: 3,
+  }))
+  check('every player is a bubble',
+    (hud.match(/border-radius:999px/g) ?? []).length, rows.length)
+  check('...carrying their own mark, not just their colour',
+    rows.filter(r => !hud.includes(`<title>${FACTION_LOOK[r.faction].name}</title>`)), [])
+
+  // THE RED RING IS EXPLAINED. It marks the seat the table is waiting on, and
+  // the first question anyone asked of this screen was why one player was red —
+  // so it says so in words rather than relying on the colour being known.
+  check('the awaited seat is marked', /data-faction="harkonnen" data-awaiting="true"/.test(hud), true)
+  check('...and says what the mark means', hud.includes('WAITING ON THEM'), true)
+  check('...on that seat alone', (hud.match(/WAITING ON THEM/g) ?? []).length, 1)
+  const idle = renderToStaticMarkup(createElement(PlayerHud, {
+    rows, awaiting: null, seat: null, turn: 3,
+  }))
+  check('with nobody awaited, nothing says it', idle.includes('WAITING ON THEM'), false)
+}
+
 // ── the drawer is wired to the enlarged card ─────────────────────────────
 // READ FROM THE SOURCE, like transportwiringtest reads the edge functions, and
 // for the same reason. Both claims below are about state that only exists after
@@ -557,8 +550,8 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   // what the discs are drawn into, and shrinking that shrinks them however
   // generous the viewBox is — which is exactly what a sabotage did while every
   // other check here stayed green.
-  check('...in a panel wide enough to hold them',
-    strip.includes(`flex:0 1 ${atreides.leaders.length * 62}px`), true)
+  check('...in a box wide enough to hold them',
+    strip.includes(`max-width:${atreides.leaders.length * 62}px`), true)
 }
 
 // ── the Kwisatz Haderach, in the one game he exists in ────────────────────

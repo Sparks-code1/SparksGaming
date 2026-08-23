@@ -30,6 +30,9 @@ const PALE = '#f0e2bb'
  */
 export const CHAT_WIDTH = 250
 export const CHAT_SHUT_WIDTH = 34
+export const CHAT_MAX_WIDTH = 340
+/** Below this a message is more line-breaks than words. */
+export const CHAT_MIN_WIDTH = 196
 
 export interface ChatMessage {
   id: string
@@ -90,7 +93,12 @@ export function ChatPanel({ messages, collapsed, onToggle, onSend, unread = 0 }:
   return (
     <section data-layer="chat" data-collapsed="false" aria-label="Chat"
       style={{
-        width: CHAT_WIDTH, flex: '0 0 auto', display: 'flex', flexDirection: 'column',
+        // GROWS, up to a point. The board is bound by the window's height and
+        // cannot use spare width, so on a wide screen it goes to the columns that
+        // can — more of a conversation visible rather than more bare navy.
+        width: CHAT_WIDTH, flex: '1 1 auto',
+        minWidth: CHAT_MIN_WIDTH, maxWidth: CHAT_MAX_WIDTH,
+        display: 'flex', flexDirection: 'column',
         background: '#131c2e', borderRight: '1px solid #ffffff1f', color: PALE,
       }}>
       <header style={{

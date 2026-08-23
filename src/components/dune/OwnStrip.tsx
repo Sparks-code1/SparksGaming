@@ -39,7 +39,7 @@ import type { HudRow } from '@/lib/dune/hud'
 import { factionById, findLeader } from '@/data/dune/factions'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import type { TreacheryCard } from '@/types/Dune/Treachery'
-import { FACTION_LOOK } from './SeatLayer'
+import { FACTION_LOOK, SeatMark, SeatFilters } from './SeatLayer'
 import { LeaderDisc } from './LeaderDisc'
 import { TreacheryCardFace, TreacheryCardBack } from './TreacheryCardFace'
 
@@ -89,18 +89,11 @@ export interface OwnStripProps {
 
 /** A titled block along the strip. */
 function Panel(
-  { label, children, width }:
-  { label: string; children: React.ReactNode; width?: number },
+  { label, children }: { label: string; children: React.ReactNode },
 ) {
   return (
     <section style={{
-      // A shrinkable panel still needs a floor. Five leader discs allowed down
-      // to nothing render as five dots, which is not a smaller version of a
-      // leader disc — the portrait and the name are the whole point of one. The
-      // row scrolls rather than squashing them past legibility.
-      flex: width ? `0 1 ${width}px` : '0 0 auto',
-      minWidth: width ? Math.round(width * 0.7) : 0,
-      borderLeft: '1px solid #ffffff14', padding: '6px 10px',
+      borderTop: '1px solid #ffffff14', padding: '7px 10px',
       display: 'flex', flexDirection: 'column', gap: 5,
     }}>
       <h3 style={{
@@ -138,6 +131,15 @@ function Tally({ value, word, title }: { value: number | string; word: string; t
 const STRATEGY_PROSE = 'general'
 
 /**
+ * The Karama entry, which the card does not carry either.
+ *
+ * It is not a faction advantage — it is what this faction may spend a Karama
+ * CARD on, which is a thing you do when you hold one, not a standing power.
+ * It belongs with the card, not on the reference for the faction.
+ */
+const KARAMA_POWER = 'karama'
+
+/**
  * The faction card: who you are and what that lets you do.
  *
  * The advantages come out of the faction data keyed by the phase they apply in,
@@ -151,13 +153,23 @@ export function FactionCard({ faction, mode }: { faction: Faction; mode: GameMod
   // Advanced rules are ADDITIONAL, and shown only in the game that has them.
   const extra = mode === 'advanced'
     ? (Object.entries(faction.advanced) as [string, string][])
-      .filter(([key]) => key !== STRATEGY_PROSE)
+      .filter(([key]) => key !== STRATEGY_PROSE && key !== KARAMA_POWER)
     : []
   return (
     <div style={{
       display: 'flex', flexDirection: 'column', minWidth: 0,
       borderLeft: `4px solid ${look.colour}`, paddingLeft: 9,
     }}>
+      {/* The faction's own mark beside its name — the same one on its seat on
+          the board and on its bubble in the HUD, so a card is identifiable
+          without reading it. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <svg width={30} height={30} viewBox="-15 -15 30 30" style={{ display: 'block' }}>
+          <SeatFilters />
+          <SeatMark faction={faction.id} x={0} y={0} r={14} />
+        </svg>
+        <b style={{ fontFamily: SERIF, fontSize: 16, letterSpacing: 0.5 }}>{look.name}</b>
+      </div>
       {/* In a panel now, so it takes the room the panel has rather than fighting
           a strip for it. The player sizes that panel themselves.
 
@@ -172,6 +184,23 @@ export function FactionCard({ faction, mode }: { faction: Faction; mode: GameMod
             <span style={{ opacity: 0.9 }}>{text}</span>
           </p>
         ))}
+
+        {/* Two things the card was missing that a player asks for every turn.
+            Free revivals come up in the Revival phase and are a number nobody
+            remembers; what you bring to an alliance comes up whenever anyone
+            proposes one, and until now it was only readable from your ALLY's
+            side of the table. */}
+        <p style={{ margin: '7px 0 5px' }} data-free-revivals={faction.freeRevivals}>
+          <span style={{ opacity: 0.5, letterSpacing: 0.6 }}>REVIVAL </span>
+          <span style={{ opacity: 0.9 }}>
+            {faction.freeRevivals} free revival{faction.freeRevivals === 1 ? '' : 's'} each turn,
+            before paying for more.
+          </span>
+        </p>
+        <p style={{ margin: '0 0 5px' }} data-alliance-gift="">
+          <span style={{ opacity: 0.5, letterSpacing: 0.6 }}>ALLIANCE </span>
+          <span style={{ opacity: 0.9 }}>{faction.alliance}</span>
+        </p>
       </div>
     </div>
   )
@@ -320,6 +349,7 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
   return (
     <footer data-layer="own-strip" data-seat={seat}
       style={{
+        flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column',
         background: '#131c2e', color: PALE, borderTop: '1px solid #ffffff1f',
         // Labels, tallies, card faces and leader discs. The two exceptions are
         // re-enabled where they are drawn: the faction card and the ally's card
@@ -335,22 +365,12 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
       {open && <PrivateView kind={open} hand={hand} traitors={traitors}
         onOpenCard={setZoom} />}
 
-      <div style={{
-        display: 'flex', alignItems: 'stretch',
-        // A DEFINITE HEIGHT, scaled to the window, and a modest one. Every pixel
-        // here comes straight off the board directly above it — the board is
-        // taller than it is wide and is bound by the height it is given, so the
-        // tray and the map are in direct competition for it.
-        height: 'clamp(104px, 15vh, 152px)',
-        // CENTRED, AND SPILLING BOTH WAYS when it does not fit. justify-content
-        // rather than an auto margin precisely because of the overflow: an auto
-        // margin resolves to zero once there is no free space, which drops the
-        // row against its left edge — off the board it is supposed to sit under.
-        // Centred, the spill is even, and what it spills into is the empty band
-        // beneath the side panels.
-        justifyContent: 'center',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'stretch' }}>
+      {/* A COLUMN, not a strip. It moved out from under the board and into the
+          right-hand column, because the board is bound by height and everything
+          laid across the bottom of the window came straight off it. Stacked, it
+          costs the board nothing at all. */}
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+        <div>
         <Panel label="CARDS">
           <button type="button" onClick={() => setShowFaction(v => !v)}
             aria-expanded={showFaction} aria-label="Faction card"
@@ -377,10 +397,10 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
         {/* BIG ENOUGH TO READ. Every battle is a leader and a number, and the
             number is on the disc — at 28px across it was a smudge. This is the
             room the faction card gave back by becoming a panel. */}
-        <Panel label="LEADERS" width={faction.leaders.length * 62}>
+        <Panel label="LEADERS">
           <svg viewBox={`0 0 ${faction.leaders.length * 62} 62`}
-            style={{ display: 'block', width: '100%', height: '100%',
-                     maxHeight: 92, maxWidth: faction.leaders.length * 62 }}
+            style={{ display: 'block', width: '100%',
+                     maxWidth: faction.leaders.length * 62 }}
             preserveAspectRatio="xMidYMid meet">
             {faction.leaders.map((l, i) => (
               <g key={l.name} transform={`translate(${31 + i * 62} 31)`}>

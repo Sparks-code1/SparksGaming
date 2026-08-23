@@ -79,7 +79,7 @@ const IMAGE_MARKS: Partial<Record<FactionId, { src: string; filter: string }>> =
  * Inside the layer's own <g> rather than a page-level <defs> so the component
  * stays self-contained — drop it into any SVG and the marks come out right.
  */
-function SeatFilters() {
+export function SeatFilters() {
   return (
     <defs>
       <filter id={FLAT_FILTER} colorInterpolationFilters="sRGB">

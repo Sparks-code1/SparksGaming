@@ -1,10 +1,21 @@
 /**
  * The game screen.
  *
- * Chat down the left, board in the middle, the other players down the right,
- * your own things along the bottom. The board is the biggest thing on the
- * screen because it is the game; everything else is an edge, and every edge is
- * collapsible or fixed-width so the board keeps the space it is given.
+ * Chat down the left, board in the middle, and a right-hand column holding the
+ * other players above your own things. The board is the biggest thing on the
+ * screen because it is the game.
+ *
+ * THE BOARD IS BOUND BY HEIGHT, NOT WIDTH — it is taller than it is wide, so
+ * the only thing that makes it bigger is more height, and anything laid across
+ * the bottom of the window comes straight off it. The tray used to sit there
+ * and cost it 153px: 818x927 in a column that had 616px of width going spare.
+ *
+ * Moved into the right-hand column, the board gets the whole window height and
+ * draws 953x1080 at 1920x1080 — a third more area, and the ceiling, since it
+ * now fills the taller axis exactly. Widening the side panels instead was the
+ * other option and would have changed the board by nothing at all: it would
+ * have taken width the board could not use anyway. The panels DO flex, but for
+ * the leftover, not for the board's sake.
  *
  * THE PHASE IS ON THE BOARD. There was a strip of nine across the top saying
  * which phase it was; the board already prints those nine, in order, along its
@@ -31,15 +42,28 @@ import type { FactionId } from '@/types/Dune/Faction'
 import type { DuneGameState } from '@/types/Dune/Game'
 import type { DuneSecrets } from '@/lib/dune/charity'
 import { hudRows, allyOf } from '@/lib/dune/hud'
-import { ChatPanel, CHAT_WIDTH, CHAT_SHUT_WIDTH } from './ChatPanel'
+import { ChatPanel } from './ChatPanel'
 import type { ChatMessage } from './ChatPanel'
-import { PlayerHud, HUD_WIDTH } from './PlayerHud'
+import { PlayerHud } from './PlayerHud'
 import { OwnStrip } from './OwnStrip'
 import { DuneBoard } from './DuneBoard'
 import { BiddingPanel } from './BiddingPanel'
 import type { BiddingPanelProps } from './BiddingPanel'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import type { TreacheryCard } from '@/types/Dune/Treachery'
+
+/**
+ * The right-hand column: the HUD and the player's own tray, stacked.
+ *
+ * A RANGE, not a number. The board is bound by the window's height and cannot
+ * grow into spare width however much there is, so on a wide screen the column
+ * takes the surplus rather than leaving it as bare navy either side of the map.
+ * The floor is what the tray needs to stay legible; the ceiling stops a very
+ * wide window turning the column into the main event.
+ */
+const SIDE_WIDTH = 320
+const SIDE_MIN = 268
+const SIDE_MAX = 430
 
 export interface DuneGameScreenProps {
   /** The shared row, as everyone receives it. */
@@ -104,19 +128,14 @@ export function DuneGameScreen({
         <ChatPanel messages={chat} collapsed={chatShut} onSend={onSend}
           onToggle={() => setChatShut(c => !c)} />
 
-        {/* THE BOARD AND THE TRAY SHARE A COLUMN, between the chat and the HUD.
-            The tray used to span the whole window under all three, which put its
-            contents against the left edge while the board sat in the middle of
-            what was left — 530px apart at 1920 wide, and further still whenever
-            the chat was collapsed, because the window's centre and the board's
-            are not the same point. In here it is centred on the board by
-            construction rather than by arithmetic that goes stale.
-
-            It also gives the chat and the HUD the full height of the window,
-            which they were previously cut short of by the tray's 190px. */}
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <main style={{
-          flex: 1, minHeight: 0, minWidth: 0, position: 'relative',
+          // ITS BASIS IS THE BOARD'S IDEAL WIDTH — the width a board as tall as
+          // the window would need. Without it the side columns' flex-grow took
+          // width the board still wanted: at 1280x720 they ran to their maxima
+          // and left the board 510x578, which is SMALLER than before any of this.
+          // With it, they only ever divide up what is genuinely surplus.
+          flex: `1 1 calc(100vh * ${970 / 1099})`, minHeight: 0, minWidth: 0,
+          position: 'relative',
           display: 'flex', justifyContent: 'center', alignItems: 'center',
           overflow: 'hidden', padding: 4,
         }}>
@@ -148,34 +167,29 @@ export function DuneGameScreen({
           )}
         </main>
 
-        </div>
+        {/* THE RIGHT-HAND COLUMN: everyone else above, then you. Both are about
+            who is at the table, so they read as one column rather than two
+            edges — and putting the tray here rather than across the bottom is
+            what gives the board the full height of the window.
 
-        <PlayerHud rows={rows} awaiting={state.awaiting} seat={seat} turn={state.turn} />
-      </div>
-
-      {/* ALIGNED TO THE BOARD'S COLUMN, not to the window. The margins are the
-          widths of the two side panels, so this box IS the column and its centre
-          IS the board's — including when the chat is shut, which moves the board
-          108px right of the window's centre and is where a window-centred tray
-          goes visibly wrong.
-
-          It sits under the full width rather than inside the column because it
-          needs more width than the column has at 1024 and below. Confined, it
-          overflowed and its centring collapsed to the left edge; out here it
-          spills evenly past the column into the space under the side panels,
-          which is empty at this height, and stays centred on the board.
-
-          A spectator has no tray: there is nothing private to show them, and an
-          empty one implies a hand they might be holding. */}
-      {seat && mine && myRow && (
+            It FLEXES. The board cannot use width beyond what its height allows,
+            so past that point the leftover may as well go to the column that
+            can: more of a faction card visible, more chat, fewer scrollbars. */}
         <div style={{
-          marginLeft: chatShut ? CHAT_SHUT_WIDTH : CHAT_WIDTH,
-          marginRight: HUD_WIDTH,
+          flex: '1 1 auto', width: SIDE_WIDTH, minWidth: SIDE_MIN, maxWidth: SIDE_MAX,
+          display: 'flex', flexDirection: 'column', minHeight: 0,
+          borderLeft: '1px solid #ffffff1f', background: '#131c2e',
         }}>
-          <OwnStrip seat={seat} mode={state.mode} own={own} player={myRow}
-            ally={allyOf(state.players, mine)} />
+          <PlayerHud rows={rows} awaiting={state.awaiting} seat={seat} turn={state.turn} />
+
+          {/* A spectator has no tray: there is nothing private to show them, and
+              an empty one implies a hand they might be holding. */}
+          {seat && mine && myRow && (
+            <OwnStrip seat={seat} mode={state.mode} own={own} player={myRow}
+              ally={allyOf(state.players, mine)} />
+          )}
         </div>
-      )}
+      </div>
     </div>
   )
 }
