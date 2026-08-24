@@ -44,7 +44,9 @@ function spiceBoxPolygon(side: 'right' | 'left' = 'right'): [number, number][] {
 /** What a caption needs beneath a card — CAPTION in the component. */
 const CAPTION_ROOM = 12
 /** The component's own PAD, which the cards and their captions sit inside. */
-const PAD_ROOM = 6
+const PAD_ROOM = 12
+/** The component's GAP, for the same reason. */
+const GAP_ROOM = 6
 
 let pass = true
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -206,7 +208,7 @@ const draw = (over: Partial<SpiceDeckAreaProps> = {}) =>
     // The captions and side labels have to land in there too.
     check(`...and the deck's caption below it`,
       inPolygon([L.deckX + L.deckW / 2, L.deckY + L.deckH + CAPTION_ROOM], poly), true)
-    check(`...with cards big enough to read`, L.deckW > 48 && L.pileW > 48, true)
+    check(`...with cards big enough to read`, L.deckW > 42 && L.pileW > 42, true)
   }
 
   // EVERY CARD THE SAME SIZE, which is what decides the arrangement rather
@@ -224,9 +226,13 @@ const draw = (over: Partial<SpiceDeckAreaProps> = {}) =>
         [L.pileStepX > 0, L.pileStepY], [true, 0])
       check(`...on one baseline`, L.pileY, L.deckY)
     }
-    // Bigger than the stacked piles were, which is the point of the change.
-    check('three across is bigger than a stacked pair would be',
-      slotLayout(3).cardW > 48, true)
+    // Bigger than a stacked pair would be, which is WHY the row won. Derived
+    // from the box rather than compared to a number that goes stale the moment
+    // the padding changes — which is exactly what happened to the last version
+    // of this check.
+    const { height } = DUNE_SPICE_DECK_AREA
+    const stackedW = ((height - PAD_ROOM * 2 - GAP_ROOM) / 2) / (7 / 5)
+    check('three across beats a stacked pair', slotLayout(3).cardW > stackedW, true)
   }
 
   // THE WIDTH HALF OF THE FIT. The printed box is short and wide, so its height

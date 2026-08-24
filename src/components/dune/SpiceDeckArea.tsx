@@ -41,8 +41,17 @@ const CARD_RATIO = 7 / 5
 // The printed SPICE DECK label is not a concern here. It sits in the thin tail
 // of the wedge, which is outside this rectangle — the generator puts it there
 // precisely because that is the part of the box no card can occupy.
-const PAD = 6
-const GAP = 5
+/**
+ * Margin inside the box, and it is not decoration.
+ *
+ * At 6 the basic game's two cards spanned 162 of 162 usable — edge to edge with
+ * the printed box, touching its sides. Every corner was inside it and every
+ * check passed, and it still read as cards that did not fit, because a card
+ * flush against the edge of the thing it sits in looks like a card that has
+ * overflowed it. The margin is what makes them look placed rather than crammed.
+ */
+const PAD = 12
+const GAP = 6
 /** Caption height beneath a slot that has one. */
 const CAPTION = 12
 

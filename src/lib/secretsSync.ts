@@ -15,6 +15,7 @@
  * Nothing reads this yet. It lands before its first caller so the channel can be
  * proved on its own — see docs/hidden-state-and-simultaneity.md.
  */
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 
 /** Whatever a game keeps per seat. Dune's first is `{ spice: number }`. */
@@ -67,8 +68,20 @@ export function startSecretsSync(
     onForeignRow?(row: SecretsRow): void
     /** This client's seat, used only to RECOGNISE a foreign row, never to filter. */
     expectPlayerId?: string
+    /**
+     * Which authenticated session to listen on. Defaults to the app's.
+     *
+     * NOT a way to see more. A client is a SESSION, and match_secrets is
+     * read-your-own for whoever that session is signed in as — so passing one
+     * here changes whose row arrives only by changing whose credentials are
+     * being used. The dev harness holds one client per seat for exactly that
+     * reason: it is several browser windows in one process, not one window with
+     * more privilege. See src/dev/multiSeat.
+     */
+    client?: SupabaseClient
   },
 ): () => void {
+  const db: SupabaseClient = handlers.client ?? supabase
   let channel: ReturnType<typeof supabase.channel> | null = null
   let cancelled = false
 
@@ -85,7 +98,7 @@ export function startSecretsSync(
   // Read once before subscribing. A changefeed only reports CHANGES, so a seat
   // joining mid-match would otherwise see nothing until its secrets happened to
   // be written — which for spice might be several turns.
-  void supabase
+  void db
     .from('match_secrets')
     .select('match_id, player_id, data, updated_at')
     .eq('match_id', matchId)
@@ -96,7 +109,7 @@ export function startSecretsSync(
 
   // Unique channel name per subscription: reusing a subscribed handle throws
   // when handlers are added, which a reconnect or a remount does routinely.
-  channel = supabase
+  channel = db
     .channel(`secrets:${matchId}:${Math.random().toString(36).slice(2, 10)}`)
     .on(
       'postgres_changes',
@@ -112,7 +125,7 @@ export function startSecretsSync(
 
   return () => {
     cancelled = true
-    if (channel) void supabase.removeChannel(channel)
+    if (channel) void db.removeChannel(channel)
     channel = null
   }
 }
