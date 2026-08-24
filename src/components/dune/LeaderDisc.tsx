@@ -26,7 +26,7 @@
 import { useId } from 'react'
 import type { FactionId } from '@/types/Dune/Faction'
 import type { Leader } from '@/types/Dune/Faction'
-import { FACTION_LOOK } from './SeatLayer'
+import { FACTION_LOOK, SeatMark, SeatFilters } from './SeatLayer'
 
 const PALE = '#f0e2bb'
 
@@ -116,6 +116,12 @@ export const LEADER_PORTRAITS: Record<string, Portrait> = {
   // The Emperor's fifth. The file is spelled Bushar and the leader is Bashar,
   // which is most of why it was never wired up.
   Bashar: { src: '/dune-leaders/Bushar.png', w: 400, h: 500, focusY: 0.52 },
+
+  // Spacing Guild. Three of the five so far — Soo-Soo Sook and the Guild
+  // Representative have no portrait and render as plain faction counters.
+  'Staban Tuek': { src: '/dune-leaders/Staban_Tuek.png', w: 400, h: 500, focusY: 0.49 },
+  'Master Bewt': { src: '/dune-leaders/Master_Bewt.png', w: 400, h: 500, focusY: 0.55 },
+  'Esmar Tuek': { src: '/dune-leaders/Esmar_tuek.png', w: 400, h: 533, focusY: 0.49 },
 }
 
 // The framings above are derived, not eyeballed: each tall portrait is centred a
@@ -126,9 +132,33 @@ export const LEADER_PORTRAITS: Record<string, Portrait> = {
 // stay dead centre, where the picture is exactly the circle's bounding box and
 // nothing is cropped at all. All of them are one number each to nudge.
 
+/**
+ * The other side of a leader disc: the faction's symbol, and nothing else.
+ *
+ * A LEADER DISC IS TWO-SIDED, and both sides get used. Leaders go face DOWN in
+ * the Tleilaxu Tanks when they are killed, and face down is not "not rendered"
+ * — it is a disc you can still see, still count and still tell the owner of.
+ * Which faction lost a leader is public; WHICH leader is not always, and the
+ * back is the difference.
+ *
+ * The mark is SeatMark, the same one on the faction's seat on the board and on
+ * its bubble in the HUD. One drawing of each faction's symbol, so a disc in the
+ * tanks is recognisably the same faction as the seat it came from.
+ */
+export function LeaderDiscBack({ faction, r = 60 }: { faction: FactionId; r?: number }) {
+  return (
+    <g data-face="down" data-faction={faction}>
+      <SeatFilters />
+      <SeatMark faction={faction} x={0} y={0} r={r} />
+    </g>
+  )
+}
+
 export function LeaderDisc({
-  leader, faction, r = 60,
-}: { leader: Leader; faction: FactionId; r?: number }) {
+  leader, faction, r = 60, faceDown = false,
+}: { leader: Leader; faction: FactionId; r?: number; faceDown?: boolean }) {
+  // Hooks before any early return, or the count changes between renders when a
+  // disc is turned over and React loses track of which state belongs to which.
   const id = useId()
   const clip = `leader-clip-${id}`
   const arc = `leader-arc-${id}`
@@ -163,6 +193,8 @@ export function LeaderDisc({
   // NEFUD is nineteen and overruns the arc at the next size up.
   const len = leader.name.length
   const nameSize = r * (len > 16 ? 0.115 : len > 12 ? 0.135 : len > 8 ? 0.15 : 0.17)
+
+  if (faceDown) return <LeaderDiscBack faction={faction} r={r} />
 
   return (
     <g>
@@ -263,7 +295,8 @@ export function LeaderDisc({
 //   Emperor       all five.
 //   Atreides      all five.
 //   Bene Gesserit all five.
-//   Spacing Guild none — the only faction still without any.
+//   Spacing Guild three of five. Soo-Soo Sook and the Guild Representative
+//                 have none yet.
 //
 // The framings above are derived the same way as the originals: decode the PNG,
 // take row-by-row edge energy, read the vertical centre of mass off it, and sit

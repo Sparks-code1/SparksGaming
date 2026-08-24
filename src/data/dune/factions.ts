@@ -149,7 +149,7 @@ export const FREMEN: Faction = {
       + 'appears again and you still have forces in the original territory, you may do this again.',
   },
   alliance:
-    'You may choose to protect (or not protect) your allies from the effects of Shai-Hulud, and at your '
+    'You may choose to protect (or not protect) your allies from the effects of Shai-Hulud (sandworm), and at your '
     + 'discretion, may also allow them to revive 3 forces for free during the revival phase. In addition, your '
     + 'allies win with you if you win with the special victory condition.',
   specialVictory:

@@ -17,7 +17,9 @@
 //   A file on disk that nothing registers is the case above: art that was drawn,
 //   committed, and never appeared.
 import { readdirSync, existsSync } from 'node:fs'
-import { LEADER_PORTRAITS } from '@/components/dune/LeaderDisc'
+import { LEADER_PORTRAITS, LeaderDisc } from '@/components/dune/LeaderDisc'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { FACTION_IDS, factionById } from '@/data/dune/factions'
 
 let pass = true
@@ -104,7 +106,7 @@ const everyLeader = FACTION_IDS.flatMap(id =>
 }
 
 // ── how much of the game is covered ───────────────────────────────────────
-// Not a pass/fail on completeness — the Spacing Guild has no art yet and that
+// Not a pass/fail on completeness — two Guild leaders have no art yet and that
 // is fine. It prints, so a faction quietly losing its portraits is visible in
 // the run rather than only on the screen.
 {
@@ -118,5 +120,36 @@ const everyLeader = FACTION_IDS.flatMap(id =>
     total < everyLeader.length, true)
 }
 
+// ── the other side of the disc ───────────────────────────────────────────
+// A leader disc is TWO-SIDED and both sides get used: leaders go face down in
+// the Tleilaxu Tanks when they are killed. Face down is not "not rendered" —
+// it is a disc you can still see and still tell the owner of. Which faction
+// lost a leader is public; WHICH leader is not always, and that is the whole
+// difference between the two sides.
+{
+  for (const id of FACTION_IDS) {
+    const leader = factionById(id)?.leaders[0]
+    if (!leader) continue
+    const down = renderToStaticMarkup(createElement(LeaderDisc, {
+      leader, faction: id, r: 40, faceDown: true,
+    }))
+    // THE MARK, so a disc in the tanks is recognisably the faction whose seat
+    // it came from — the same drawing, not a second one.
+    check(`${id}: the back carries the faction`,
+      down.includes(`data-faction="${id}"`) && down.includes('data-face="down"'), true)
+    // AND NOT THE LEADER. A face-down disc that names the leader is a disc
+    // that is not face down, and nothing about the picture would say so.
+    check(`...and not who the leader is`,
+      down.includes(leader.name) || down.includes(`strength ${leader.strength}`), false)
+
+    // The front still does both, or the check above passes on a disc that
+    // never says anything.
+    const up = renderToStaticMarkup(createElement(LeaderDisc, {
+      leader, faction: id, r: 40,
+    }))
+    check(`...while the front still names them`,
+      up.includes(`${leader.name} — strength ${leader.strength}`), true)
+  }
+}
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 process.exit(pass ? 0 : 1)

@@ -322,7 +322,12 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   // The NUMBER, not just the attribute — an attribute nothing renders beside it
   // is a fact only a test can see.
   check('...in words a player can read',
-    new RegExp(`${atreides.freeRevivals} free revival`).test(card), true)
+    new RegExp(`${atreides.freeRevivals} Force`).test(card), true)
+  // FIRST on the card. It is the one line here that is looked up rather than
+  // read — once every Revival phase — and at the foot of four paragraphs of
+  // rules it was the hardest thing on the card to find.
+  check('...and before the rules, not after them',
+    card.indexOf('FREE REVIVAL') < card.indexOf('BIDDING'), true)
   check('...and what the faction brings to an alliance',
     card.includes(atreides.alliance.slice(0, 40)), true)
   check('...and the faction mark, beside the name',

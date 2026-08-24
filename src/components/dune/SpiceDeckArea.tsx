@@ -41,19 +41,10 @@ const CARD_RATIO = 7 / 5
 // The printed SPICE DECK label is not a concern here. It sits in the thin tail
 // of the wedge, which is outside this rectangle — the generator puts it there
 // precisely because that is the part of the box no card can occupy.
-const PAD = 8
-const GAP = 6
+const PAD = 6
+const GAP = 5
 /** Caption height beneath a slot that has one. */
 const CAPTION = 12
-/**
- * Room for a label beside a stacked pile rather than under it.
- *
- * Zero, because the stacked piles carry no label: two cards one above the other
- * beside a deck say what they are without being told. Kept as a named constant
- * rather than deleted because the geometry still has an opinion about it — a
- * pile that ever needs a word again needs this width back with it.
- */
-const SIDE_LABEL_W = 0
 
 /**
  * The spice spiral, the same curve the board's own marks are drawn from.
@@ -99,63 +90,42 @@ function wrap(text: string, perLine: number): string[] {
 }
 
 /**
- * Where the deck and the discard pile(s) sit.
+ * Where the deck and the discard pile(s) sit — all the same size, in a row.
  *
- * TWO ARRANGEMENTS, because the two games want different ones.
+ * EQUAL SIZE IS WHAT DECIDES THE ARRANGEMENT. A deck standing up the left with
+ * the two piles stacked beside it let the deck be much bigger, but only by
+ * making the piles half its height: stacking two cards in a 128-tall box caps
+ * each at 61, and matching the deck to them would put every card at 44. In a
+ * row all three come out at 51, which is the largest three equal cards this box
+ * holds — the stack and equal size cannot both be had.
  *
- * The advanced game has two piles. Three cards abreast in a box this shape are
- * bound by its width and none of them can use its height — the deck came out 46
- * wide with 60 of the box's 144 going spare beneath it. Standing the deck up on
- * its own down the left and stacking the two piles beside it takes the deck to
- * 78 wide and leaves the piles about where they were.
- *
- * The basic game has one pile, and side by side is the best it can do. Stacking
- * a single pile gives it height it cannot use and takes the width off the deck,
- * which is what a first attempt at this did: a 91-wide discard beside a 31-wide
- * deck. The arithmetic said it was fine; the two numbers said it was not.
- *
- * The box is a PARAMETER, defaulting to the printed one — the real box is short
+ * The box is a PARAMETER, defaulting to the printed one. The real box is short
  * and wide enough that its height always binds, so with it alone the width term
  * can never be shown to do anything.
  */
 export function slotLayout(slots: number, area: DuneArea = DUNE_SPICE_DECK_AREA) {
   const { x, y, width, height } = area
-  const piles = Math.max(1, slots - 1)
   const usableW = width - PAD * 2
   const usableH = height - PAD * 2
-  const left = x + PAD
 
-  if (piles < 2) {
-    // Side by side, both captioned underneath.
-    const colW = (usableW - GAP) / 2
-    const cardH = Math.min(usableH - CAPTION, colW * CARD_RATIO)
-    const cardW = cardH / CARD_RATIO
-    const top = y + (height - cardH - CAPTION) / 2
-    return {
-      deckW: cardW, deckH: cardH, deckX: left, deckY: top,
-      pileW: cardW, pileH: cardH, pileX: left + cardW + GAP, pileY: top,
-      pileStep: 0, sideLabels: false,
-      cardW, cardH, top, left,
-    }
-  }
+  // Bound by BOTH axes: three across run out of width first, two run out of
+  // height. Taking only one of them put cards outside the box in each
+  // direction on separate occasions.
+  const byWidth = ((usableW - GAP * (slots - 1)) / slots) * CARD_RATIO
+  const cardH = Math.min(usableH - CAPTION, byWidth)
+  const cardW = cardH / CARD_RATIO
+  const step = cardW + GAP
+  const rowW = cardW * slots + GAP * (slots - 1)
+  const left = x + (width - rowW) / 2
+  const top = y + (height - cardH - CAPTION) / 2
 
-  // Stacked: the piles' height is fixed by how many there are, their width
-  // follows from that, and the deck takes what is left across.
-  // Bound by BOTH axes. Sized by the stack's height alone, a tall narrow box
-  // gave piles 135 wide inside 104 of usable width — the same class of mistake
-  // as the row of three, in the other direction.
-  const slotH = (usableH - GAP * (piles - 1)) / piles
-  const pileW = Math.min(slotH / CARD_RATIO, (usableW - GAP - SIDE_LABEL_W) * 0.45)
-  const pileH = pileW * CARD_RATIO
-  const deckW = Math.min(usableW - GAP - pileW - SIDE_LABEL_W, (usableH - CAPTION) / CARD_RATIO)
-  const deckH = deckW * CARD_RATIO
   return {
-    deckW, deckH, deckX: left, deckY: y + (height - deckH - CAPTION) / 2,
-    pileW, pileH, pileX: x + width - PAD - pileW - SIDE_LABEL_W, pileY: y + PAD,
-    pileStep: pileH + GAP, sideLabels: true,
-    // Kept so a caller can speak of "a card" without knowing which it is.
-    cardW: Math.min(deckW, pileW), cardH: Math.min(deckH, pileH),
-    top: y + PAD, left,
+    deckW: cardW, deckH: cardH, deckX: left, deckY: top,
+    pileW: cardW, pileH: cardH, pileX: left + step, pileY: top,
+    // Which way the piles run from the first one. A row, so across.
+    pileStepX: step, pileStepY: 0,
+    sideLabels: false,
+    cardW, cardH, top, left,
   }
 }
 
@@ -358,7 +328,7 @@ export function SpiceDeckArea({ deck, mode }: SpiceDeckAreaProps) {
           one — an empty slot on the board says "nothing here yet", which is a
           different and wrong thing from "this pile is not in this game". */}
       {advanced && (
-        <Pile cards={deck.discardB} x={L.pileX} y={L.pileY + L.pileStep}
+        <Pile cards={deck.discardB} x={L.pileX + L.pileStepX} y={L.pileY + L.pileStepY}
           w={L.pileW} h={L.pileH} name="Discard pile B" caption="" sideLabel={L.sideLabels} />
       )}
     </g>

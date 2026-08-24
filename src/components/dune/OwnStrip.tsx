@@ -190,6 +190,17 @@ export function FactionCard({ faction }: { faction: Faction }) {
                 </p>
               ))
         ) : (<>
+        {/* First, and a quantity rather than a sentence: this is the one thing
+            on the card that is looked up rather than read, once every Revival
+            phase, and at the foot of four paragraphs it was the hardest line
+            here to find. */}
+        <p style={{ margin: '0 0 6px' }} data-free-revivals={faction.freeRevivals}>
+          <span style={{ opacity: 0.5, letterSpacing: 0.6 }}>FREE REVIVAL </span>
+          <span style={{ opacity: 0.9 }}>
+            {faction.freeRevivals} Force{faction.freeRevivals === 1 ? '' : 's'}
+          </span>
+        </p>
+
         {[...rules].map(([phase, text]) => (
           <p key={phase + text.slice(0, 12)} style={{ margin: '0 0 5px' }}>
             <span style={{ opacity: 0.5, letterSpacing: 0.6 }}>{phase.toUpperCase()} </span>
@@ -197,19 +208,10 @@ export function FactionCard({ faction }: { faction: Faction }) {
           </p>
         ))}
 
-        {/* Two things the card was missing that a player asks for every turn.
-            Free revivals come up in the Revival phase and are a number nobody
-            remembers; what you bring to an alliance comes up whenever anyone
-            proposes one, and until now it was only readable from your ALLY's
-            side of the table. */}
-        <p style={{ margin: '7px 0 5px' }} data-free-revivals={faction.freeRevivals}>
-          <span style={{ opacity: 0.5, letterSpacing: 0.6 }}>REVIVAL </span>
-          <span style={{ opacity: 0.9 }}>
-            {faction.freeRevivals} free revival{faction.freeRevivals === 1 ? '' : 's'} each turn,
-            before paying for more.
-          </span>
-        </p>
-        <p style={{ margin: '0 0 5px' }} data-alliance-gift="">
+        {/* What you bring to an alliance, which comes up whenever one is
+            proposed and was previously only readable from your ALLY's side of
+            the table. */}
+        <p style={{ margin: '7px 0 5px' }} data-alliance-gift="">
           <span style={{ opacity: 0.5, letterSpacing: 0.6 }}>ALLIANCE </span>
           <span style={{ opacity: 0.9 }}>{faction.alliance}</span>
         </p>

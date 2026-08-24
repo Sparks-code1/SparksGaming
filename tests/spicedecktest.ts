@@ -44,7 +44,7 @@ function spiceBoxPolygon(side: 'right' | 'left' = 'right'): [number, number][] {
 /** What a caption needs beneath a card — CAPTION in the component. */
 const CAPTION_ROOM = 12
 /** The component's own PAD, which the cards and their captions sit inside. */
-const PAD_ROOM = 8
+const PAD_ROOM = 6
 
 let pass = true
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -193,7 +193,9 @@ const draw = (over: Partial<SpiceDeckAreaProps> = {}) =>
     const box = (x: number, y: number, w: number, h: number) =>
       out.push([x, y], [x + w, y], [x, y + h], [x + w, y + h])
     box(L.deckX, L.deckY, L.deckW, L.deckH)
-    for (let i = 0; i < piles; i++) box(L.pileX, L.pileY + i * L.pileStep, L.pileW, L.pileH)
+    for (let i = 0; i < piles; i++) {
+      box(L.pileX + i * L.pileStepX, L.pileY + i * L.pileStepY, L.pileW, L.pileH)
+    }
     return out
   }
 
@@ -204,27 +206,27 @@ const draw = (over: Partial<SpiceDeckAreaProps> = {}) =>
     // The captions and side labels have to land in there too.
     check(`...and the deck's caption below it`,
       inPolygon([L.deckX + L.deckW / 2, L.deckY + L.deckH + CAPTION_ROOM], poly), true)
-    check(`...with cards big enough to read`, L.deckW > 40 && L.pileW > 40, true)
+    check(`...with cards big enough to read`, L.deckW > 48 && L.pileW > 48, true)
   }
 
-  // THE ARRANGEMENT, which is different per game and deliberately so.
+  // EVERY CARD THE SAME SIZE, which is what decides the arrangement rather
+  // than the other way round. A deck standing up the left with the two piles
+  // stacked beside it let the deck be nearly twice their width — but only by
+  // halving their height, and matching the deck down to them puts every card at
+  // 44 rather than the 51 a row gives. The stack and equal size cannot both be
+  // had, and equal size is the one that was asked for.
   {
-    const basic = slotLayout(2)
-    check('one pile sits beside the deck, not under it',
-      Math.abs(basic.pileY - basic.deckY) < 0.01 && basic.pileX > basic.deckX, true)
-    check('...and is captioned underneath, like the deck', basic.sideLabels, false)
-
-    const adv = slotLayout(3)
-    check('two piles stack to the right of the deck',
-      adv.pileX > adv.deckX + adv.deckW && adv.pileStep > adv.pileH * 0.9, true)
-    check('...labelled beside themselves, since height is what they are short of',
-      adv.sideLabels, true)
-    // THE POINT OF THE REARRANGEMENT. Three cards abreast were bound by the
-    // box's width and left 60 of its 144 unused; standing the deck up takes it
-    // from 46 wide to 82 without costing the piles anything to speak of.
-    check('the stacked arrangement makes the deck much bigger',
-      adv.deckW > 75, true)
-    check('...without shrinking the piles much', adv.pileW > 42, true)
+    for (const [slots, piles] of [[2, 1], [3, 2]] as const) {
+      const L = slotLayout(slots)
+      check(`${piles} pile(s): the deck and the piles are the same size`,
+        [L.pileW === L.deckW, L.pileH === L.deckH], [true, true])
+      check(`...laid out across, not stacked`,
+        [L.pileStepX > 0, L.pileStepY], [true, 0])
+      check(`...on one baseline`, L.pileY, L.deckY)
+    }
+    // Bigger than the stacked piles were, which is the point of the change.
+    check('three across is bigger than a stacked pair would be',
+      slotLayout(3).cardW > 48, true)
   }
 
   // THE WIDTH HALF OF THE FIT. The printed box is short and wide, so its height
