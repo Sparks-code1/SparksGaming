@@ -977,11 +977,34 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   check('the block sits inside the boxes\' band',
     y - PHASE_TIMER_EXTENT.above > tanks.y0 && y + PHASE_TIMER_EXTENT.below < tanks.y1, true)
   // WITH ROOM TO SPARE. "Below the midpoint" was satisfied by 0.05 of a unit
-  // — the flattened path puts the midpoint at 990.45, so the old centre of
+  // — the flattened path puts the midpoint at 990.45, so an earlier centre of
   // 990.5 passed a check meant to say the clock had moved DOWN. A margin is
   // what makes it mean that.
   check('...low in it, level with the boxes rather than floating above them',
     y > (tanks.y0 + tanks.y1) / 2 + 15, true)
+
+  // ON THE PRINTED LABELS' OWN AXIS, read out of the board rather than agreed
+  // with by eye. TLEILAXU TANKS and SPICE DECK are both drawn at one y with
+  // dominant-baseline="central", so that y is the MIDDLE of the lettering; the
+  // clock's number is drawn the same way at the same y and the three share a
+  // line. Regenerate the board with the lettering moved and this says so.
+  const labelY = (label: string) => {
+    const tag = svg.match(new RegExp(`<text[^>]*>${label}</text>`))?.[0] ?? ''
+    const at = tag.match(/\sy="([\d.]+)"/)
+    return at ? Number(at[1]) : NaN
+  }
+  check('the tanks label can be found and read', labelY('TLEILAXU TANKS') > 0, true)
+  check('...and the spice deck label agrees with it',
+    labelY('SPICE DECK'), labelY('TLEILAXU TANKS'))
+  check('the clock sits on that same axis', y, labelY('TLEILAXU TANKS'))
+  // The number is drawn CENTRAL like they are. From its baseline at the same y
+  // it would sit half a line proud of them, which is the whole reason the two
+  // numbers being equal is not sufficient on its own.
+  const timerSvg = renderToStaticMarkup(createElement(PhaseTimer, {
+    phase: 'CHOAM Charity', closesAt: 9_000, now: 0,
+  }))
+  check('...and is centred on it, as the printed labels are',
+    (timerSvg.match(/dominant-baseline="central"/g) ?? []).length >= 2, true)
   // The bar has to fit in the gap it is drawn in.
   check('the room it claims fits between them',
     PHASE_TIMER_HALF_WIDTH * 2 <= deckBox.x0 - tanks.x1, true)

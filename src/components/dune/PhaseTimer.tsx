@@ -33,7 +33,7 @@ const BAR = 150
  * rather than only its centre point — the centre being inside a band says
  * nothing about a label reaching out of the top of it.
  */
-export const PHASE_TIMER_EXTENT = { above: 29, below: 21 }
+export const PHASE_TIMER_EXTENT = { above: 28, below: 22 }
 const SERIF = "Georgia, 'Times New Roman', serif"
 
 /**
@@ -50,14 +50,21 @@ const SERIF = "Georgia, 'Times New Roman', serif"
  * 351 wide and 215 tall at y 883, the left starting at 0.5 and the right at
  * 617.6 — so the gap between them is centred on that line.
  *
- * LOW IN THE BAND rather than centred in it. The boxes read as a row along the
- * bottom of the board and the clock belongs with them; sitting on the band's
- * midpoint left it floating above the boxes' own contents. The test asserts the
- * whole drawn block — label, number and bar — falls inside the band, which is
- * the constraint that actually matters, rather than pinning the centre to a
- * midpoint it is deliberately no longer on.
+ * ON THE LABELS' OWN AXIS. The board prints TLEILAXU TANKS and SPICE DECK at
+ * y 1071.94, both with dominant-baseline="central" — so that number is the
+ * MIDDLE of the lettering, not its baseline, and the clock's number is drawn
+ * the same way at the same y. The three then share one line across the bottom
+ * of the board and read as one band rather than three things at three heights.
+ *
+ * MEASURED, NOT ESTIMATED. phasetimertest reads the tanks label out of the
+ * shipped SVG and asserts this equals its y, so a regenerated board that moves
+ * the lettering takes the clock with it — or fails saying it did not.
+ *
+ * It arrived here by stages: the band's midpoint (990.5), then lower (1022),
+ * then this. The first two were guesses at where the boxes' contents sit; this
+ * one is where they actually are.
  */
-export const PHASE_TIMER_CENTRE = { x: 485, y: 1022 }
+export const PHASE_TIMER_CENTRE = { x: 485, y: 1071.94 }
 /** Half the room available, for anything drawn either side of the centre. */
 export const PHASE_TIMER_HALF_WIDTH = 133
 
@@ -100,20 +107,23 @@ export function PhaseTimer({ phase, closesAt, now, windowMs }: PhaseTimerProps) 
   return (
     <g data-layer="phase-timer" data-phase={phase} data-remaining-ms={Math.round(remaining)}
       pointerEvents="none">
-      <text x={x} y={y - 18} fontSize={10.5} fill={INK} textAnchor="middle"
-        fontFamily={SERIF} letterSpacing={1.2} opacity={0.75}>
+      <text x={x} y={y - 22} fontSize={10.5} fill={INK} textAnchor="middle"
+        dominantBaseline="central" fontFamily={SERIF} letterSpacing={1.2} opacity={0.75}>
         {phase.toUpperCase()}
       </text>
-      <text x={x} y={y + 7} fontSize={28} fill={INK} textAnchor="middle"
-        fontFamily={SERIF} fontWeight="bold">
+      {/* CENTRAL, like the two printed labels either side of it — their y is
+          the middle of the lettering, so a clock drawn from its baseline at the
+          same y would sit half a line proud of them. */}
+      <text x={x} y={y} fontSize={28} fill={INK} textAnchor="middle"
+        dominantBaseline="central" fontFamily={SERIF} fontWeight="bold">
         {seconds}s
       </text>
       {/* A bar under the number, because a shrinking length is read faster than
           a falling number — and the number is what says how much is left. */}
       {windowMs != null && windowMs > 0 && (
         <>
-          <rect x={x - BAR / 2} y={y + 16} width={BAR} height={5} rx={2.5} fill="#00000018" />
-          <rect x={x - BAR / 2} y={y + 16} height={5} rx={2.5} fill="#c9542a"
+          <rect x={x - BAR / 2} y={y + 17} width={BAR} height={5} rx={2.5} fill="#00000018" />
+          <rect x={x - BAR / 2} y={y + 17} height={5} rx={2.5} fill="#c9542a"
             width={Math.max(0, Math.min(BAR, BAR * (remaining / windowMs)))} />
         </>
       )}
