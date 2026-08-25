@@ -34,6 +34,9 @@ import {
   applyBlowToBoard, publicSpiceDeck, WORM_SECONDS,
 } from '../_shared/duneSpiceBlow.gen.ts'
 import { prescienceFor, withReveal, PRESCIENT_FACTION } from '../_shared/dunePrescience.gen.ts'
+import {
+  charityGrant, isEligibleForCharity, readSpice, CHARITY_TOPS_UP_TO, CHARITY_WINDOW_MS,
+} from '../_shared/duneCharity.gen.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -51,9 +54,6 @@ const json = (body: unknown, status = 200) =>
 // used to promise: the auction, the deck, the ledger and the settlement are all
 // bundled from src/lib/dune by npm run build:edge and imported above. What is
 // left here are two constants that are small, stable and have no logic in them.
-const CHARITY_TOPS_UP_TO = 2
-const CHARITY_WINDOW_MS = 15_000
-
 interface DuneSecrets { spice?: number }
 // Deliberately minimal, like DuneSecrets above. The real shapes live in
 // types/Dune/Game, which Deno cannot import — that is the whole reason the
@@ -94,12 +94,6 @@ interface SpiceDeckPublicRow {
 }
 interface CharityWindow { expiresAt: number; claims: string[]; turn: number }
 
-const readSpice = (s: DuneSecrets | null | undefined): number =>
-  typeof s?.spice === 'number' && Number.isFinite(s.spice) ? s.spice : 0
-const charityGrant = (s: DuneSecrets | null | undefined): number => {
-  const spice = readSpice(s)
-  return spice <= CHARITY_TOPS_UP_TO ? CHARITY_TOPS_UP_TO - spice : 0
-}
 
 Deno.serve(async req => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
@@ -335,8 +329,12 @@ Deno.serve(async req => {
         .eq('player_id', playerId)
         .maybeSingle()
       const secrets = (row?.data ?? {}) as DuneSecrets
-      const granted = charityGrant(secrets)
-      if (granted <= 0 && readSpice(secrets) > CHARITY_TOPS_UP_TO) {
+      // THE FACTION MATTERS, because one of them ignores the threshold
+      // entirely. myFaction comes from match_players keyed on the caller's user
+      // id — never from the payload, which would let a seat claim to be the one
+      // faction that always qualifies.
+      const granted = charityGrant(secrets, myFaction)
+      if (!isEligibleForCharity(secrets, myFaction)) {
         // Deliberately vague: telling a rejected caller their own total is fine,
         // but the refusal is logged without it so nothing downstream is tempted
         // to relay a number to the table.

@@ -18,6 +18,7 @@
  */
 import type { Secrets } from '../secretsSync'
 import type { GamePhase } from '@/types/Dune/Game'
+import type { FactionId } from '@/types/Dune/Faction'
 
 /** What a Dune seat keeps hidden. One number, for now. */
 export interface DuneSecrets extends Secrets {
@@ -57,24 +58,57 @@ export const readSpice = (s: Secrets | null | undefined): number => {
   return typeof v === 'number' && Number.isFinite(v) ? v : 0
 }
 
-/** Server-side only: never send the result of this to a client. */
-export function isEligibleForCharity(secrets: Secrets | null | undefined): boolean {
+/**
+ * The one faction the threshold does not apply to.
+ *
+ * "You always receive CHOAM charity of 2 spice regardless of how many spice you
+ * already have" — their advanced advantage, in advanced.charity on the faction.
+ *
+ * A FLAT 2, NOT A TOP-UP, and the difference is the whole rule. Everyone else
+ * is brought UP TO two and a seat already holding two gets nothing; the Bene
+ * Gesserit holding ten claim and hold twelve. Reading it as a top-up would give
+ * them exactly what everybody else gets and quietly delete the advantage.
+ */
+const ALWAYS_ELIGIBLE: FactionId = 'bene-gesserit'
+
+/**
+ * Server-side only: never send the result of this to a client.
+ *
+ * Takes the FACTION as well as the purse now, because one faction's answer does
+ * not depend on the purse at all. Optional, so a caller that does not know who
+ * is asking gets the ordinary rule rather than a crash — but the server always
+ * knows, and passes it.
+ */
+export function isEligibleForCharity(
+  secrets: Secrets | null | undefined, faction?: FactionId | null,
+): boolean {
+  if (faction === ALWAYS_ELIGIBLE) return true
   return readSpice(secrets) <= CHARITY_TOPS_UP_TO
 }
 
 /**
  * What a claim is worth. Zero for anyone at or above the threshold, which is
  * also how an ineligible claim is refused: the grant is the check.
+ *
+ * Except for the Bene Gesserit, who get the full two whatever they hold. That
+ * is why the grant alone can no longer decide eligibility — a rich seat and a
+ * rich Bene Gesserit both used to come out at zero, and only one of them is
+ * being refused. See isEligibleForCharity, which the server now asks first.
  */
-export function charityGrant(secrets: Secrets | null | undefined): number {
+export function charityGrant(
+  secrets: Secrets | null | undefined, faction?: FactionId | null,
+): number {
+  if (faction === ALWAYS_ELIGIBLE) return CHARITY_TOPS_UP_TO
   const spice = readSpice(secrets)
   return spice <= CHARITY_TOPS_UP_TO ? CHARITY_TOPS_UP_TO - spice : 0
 }
 
 /** A seat's secrets after claiming. Untouched when the claim is worth nothing. */
-export function applyCharity(secrets: Secrets | null | undefined): DuneSecrets {
+export function applyCharity(
+  secrets: Secrets | null | undefined, faction?: FactionId | null,
+): DuneSecrets {
   const spice = readSpice(secrets)
-  return { ...(secrets ?? {}), spice: spice + charityGrant(secrets) } as DuneSecrets
+  return { ...(secrets ?? {}), spice: spice + charityGrant(secrets, faction) } as DuneSecrets
 }
 
 /**
@@ -154,11 +188,12 @@ export function refuseCharityClaim(
   secrets: Secrets | null | undefined,
   playerId: string,
   now: number,
+  faction?: FactionId | null,
 ): CharityRefusal | null {
   if (!window) return 'no-window'
   if (now >= window.expiresAt) return 'window-closed'
   if (window.claims.includes(playerId)) return 'already-claimed'
-  if (!isEligibleForCharity(secrets)) return 'not-eligible'
+  if (!isEligibleForCharity(secrets, faction)) return 'not-eligible'
   return null
 }
 

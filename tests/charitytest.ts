@@ -4,8 +4,9 @@
 import {
   isEligibleForCharity, charityGrant, applyCharity, openCharityWindow,
   charityWindowIsOpen, refuseCharityClaim, applyCharityClaim, refuseCharityOpen,
-  CHARITY_TOPS_UP_TO, CHARITY_WINDOW_MS,
+  CHARITY_TOPS_UP_TO, CHARITY_WINDOW_MS, readSpice,
 } from '@/lib/dune/charity'
+import type { FactionId } from '@/types/Dune/Faction'
 import type { CharityWindow } from '@/lib/dune/charity'
 import { readFileSync } from 'node:fs'
 
@@ -101,16 +102,33 @@ check('...and no spice anywhere in it',
 {
   const edge = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
   const constIn = (src: string, name: string): number | null => {
-    const m = src.match(new RegExp(name + '\\s*=\\s*([0-9_]+)'))
+    // Exponent notation too: the bundle is esbuild output, which writes
+    // 15_000 as 15e3. A reader that only understood underscores returned
+    // null for it, and the check then failed on the formatting rather than
+    // on the value — the drift it exists to catch would have looked the same.
+    const m = src.match(new RegExp(name + '\\s*=\\s*([0-9_.e+]+)'))
     return m ? Number(m[1].replace(/_/g, '')) : null
   }
-  // The reader is asserted before it is trusted. A regex that silently matched
-  // nothing would report every constant as null and call them equal — which is
-  // how a drift check ends up passing forever without reading anything.
-  check('the constant reader actually finds something',
-    constIn(edge, 'CHARITY_TOPS_UP_TO'), CHARITY_TOPS_UP_TO)
+  // THEY ARE NOT DUPLICATED ANY MORE, so there is nothing left to drift. The
+  // endpoint carried its own copy of the threshold, the window and the grant,
+  // on the argument that they were small and had no logic in them. The grant
+  // had exactly enough logic to matter — the Bene Gesserit ignore the threshold
+  // entirely — so charity is bundled into _shared like the reducer and the
+  // auction, and the server imports what the client runs.
+  //
+  // The check therefore changes shape rather than being deleted: agreement by
+  // construction still has to be verified as construction.
+  check('the endpoint imports the charity rules rather than restating them',
+    edge.includes("from '../_shared/duneCharity.gen.ts'"), true)
+  check('...and defines neither constant of its own',
+    constIn(edge, 'const CHARITY_TOPS_UP_TO'), null)
+  check('...nor its own grant', /const charityGrant = /.test(edge), false)
+  // The bundle is the client's own file, so the numbers cannot disagree.
+  const gen = readFileSync('supabase/functions/_shared/duneCharity.gen.ts', 'utf8')
+  check('the shared bundle carries the threshold',
+    constIn(gen, 'CHARITY_TOPS_UP_TO'), CHARITY_TOPS_UP_TO)
   check('the window length agrees across the boundary',
-    constIn(edge, 'CHARITY_WINDOW_MS'), CHARITY_WINDOW_MS)
+    constIn(gen, 'CHARITY_WINDOW_MS'), CHARITY_WINDOW_MS)
 }
 
 // ── opening the window is guarded ──────────────────────────────────────────
@@ -129,6 +147,84 @@ check('...and no spice anywhere in it',
     refuseCharityOpen(opened, 'CHOAM Charity', 5), null)
   check('an expired window still blocks a reopen in its own turn',
     refuseCharityOpen({ ...opened, expiresAt: 0 }, 'CHOAM Charity', 4), 'already-opened')
+}
+
+
+// ── the Bene Gesserit ignore the threshold ────────────────────────────────
+// "You always receive CHOAM charity of 2 spice regardless of how many spice you
+// already have" — their advanced advantage. It sat in the faction data,
+// described and unimplemented, while both the client and the server topped
+// everyone up to two alike.
+//
+// A FLAT TWO, NOT A TOP-UP, and the difference is the whole advantage. Everyone
+// else is brought UP TO two, so a seat already holding two gets nothing;
+// reading the exception as a top-up would give them exactly what everybody else
+// gets and quietly delete it.
+{
+  const bg = 'bene-gesserit' as FactionId
+  const other = 'atreides' as FactionId
+
+  check('a rich seat is not eligible', isEligibleForCharity({ spice: 9 }, other), false)
+  // AT the threshold is eligible and gets nothing, which is not the same as
+  // being refused — the Harkonnen seat in the harness fixture sits exactly
+  // here, and a rule that conflated the two would offer it no button at all.
+  check('...a seat at the threshold is eligible', isEligibleForCharity({ spice: 2 }, other), true)
+  check('...and its claim is not refused',
+    refuseCharityClaim({ expiresAt: 10_000, claims: [], turn: 1 }, { spice: 2 }, 'p1', 0, other), null)
+  check('...but a rich Bene Gesserit is', isEligibleForCharity({ spice: 9 }, bg), true)
+  check('...and a poor one still is', isEligibleForCharity({ spice: 0 }, bg), true)
+
+  check('the ordinary grant tops up to the threshold',
+    charityGrant({ spice: 1 }, other), CHARITY_TOPS_UP_TO - 1)
+  check('...and is nothing at the threshold', charityGrant({ spice: 2 }, other), 0)
+  check('...and nothing above it', charityGrant({ spice: 9 }, other), 0)
+
+  check('the Bene Gesserit get the full two however rich',
+    charityGrant({ spice: 9 }, bg), CHARITY_TOPS_UP_TO)
+  check('...including at the threshold, where everyone else gets nothing',
+    charityGrant({ spice: 2 }, bg), CHARITY_TOPS_UP_TO)
+  check('...and it is added, not topped up to',
+    readSpice(applyCharity({ spice: 9 }, bg)), 11)
+
+  // THE GRANT NO LONGER DECIDES ELIGIBILITY, which is what forced the rule to
+  // be asked separately. A rich seat and a rich Bene Gesserit used to come out
+  // at zero together, and only one of them is being refused.
+  check('a claim by a rich Bene Gesserit is not refused',
+    refuseCharityClaim({ expiresAt: 10_000, claims: [], turn: 1 }, { spice: 9 }, 'p1', 0, bg), null)
+  check('...where the same claim by anyone else is',
+    refuseCharityClaim({ expiresAt: 10_000, claims: [], turn: 1 }, { spice: 9 }, 'p1', 0, other),
+    'not-eligible')
+
+  // WITHOUT A FACTION the ordinary rule applies. Callers that do not know who
+  // is asking should not accidentally get the exception — and the server always
+  // knows, so this is the safe default rather than the common path.
+  check('an unknown faction gets the ordinary rule',
+    isEligibleForCharity({ spice: 9 }), false)
+  check('...and the ordinary grant', charityGrant({ spice: 9 }), 0)
+
+  // The other refusals still come first: being always eligible is not being
+  // able to claim twice, or after the window has shut.
+  check('always-eligible does not mean twice',
+    refuseCharityClaim({ expiresAt: 10_000, claims: ['p1'], turn: 1 }, { spice: 9 }, 'p1', 0, bg),
+    'already-claimed')
+  check('...nor after the window closes',
+    refuseCharityClaim({ expiresAt: 10_000, claims: [], turn: 1 }, { spice: 9 }, 'p1', 20_000, bg),
+    'window-closed')
+}
+
+// ── the server asks the same question ─────────────────────────────────────
+// The endpoint used to carry its own charityGrant, on the argument that it was
+// small and had no logic in it. It had exactly enough: this exception.
+{
+  const edge = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  check('the endpoint asks eligibility directly',
+    /isEligibleForCharity\(secrets, myFaction\)/.test(edge), true)
+  check('...and grants by faction too',
+    /charityGrant\(secrets, myFaction\)/.test(edge), true)
+  // FROM THE TOKEN, never the payload. A faction in the request body would let
+  // any seat claim to be the one faction that always qualifies.
+  check('...with the faction it derived, not one it was sent',
+    /charityGrant\(secrets, action\./.test(edge), false)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

@@ -82,6 +82,18 @@ const TARGETS = [
     exportName: 'applySpiceMoves',
   },
   {
+    entry: 'src/lib/dune/charity.ts',
+    out: 'supabase/functions/_shared/duneCharity.gen.ts',
+    what: 'CHOAM charity',
+    // The endpoint carried its own charityGrant, on the argument that it was
+    // small and had no logic in it. It had exactly enough: the threshold, and
+    // now the Bene Gesserit exception to it. Two implementations of who
+    // qualifies is two answers to a question the whole phase turns on, and the
+    // one on the server is the one that pays out.
+    mustExport: /export\s*\{[^}]*charityGrant/,
+    exportName: 'charityGrant',
+  },
+  {
     entry: 'src/lib/dune/spiceBlow.ts',
     out: 'supabase/functions/_shared/duneSpiceBlow.gen.ts',
     what: 'spice deck and blow',
