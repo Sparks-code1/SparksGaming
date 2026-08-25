@@ -187,7 +187,12 @@ export default function DuneMultiSeatView() {
               say={say}
               matchId={matchId}
               client={mine.client}
-              charity={publicRow?.charity ?? null} />
+              charity={publicRow?.charity ?? null}
+              // ITS OWN ROW, from its own session — the same secrets the tray
+              // reads. It lets the panel answer "may I claim" without being
+              // told anything about anybody else's purse.
+              own={(mine.secrets ?? null) as DuneSecrets | null}
+              faction={mine.login.faction} />
           : <p style={{ margin: 0, opacity: 0.7 }}>
               {mine ? `${mine.login.faction} is still signing in…` : 'pick a seat to act as'}
             </p>}

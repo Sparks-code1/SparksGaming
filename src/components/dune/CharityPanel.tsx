@@ -32,7 +32,9 @@ import {
 } from '@/lib/dune/charity'
 import type { CharityWindow, DuneSecrets } from '@/lib/dune/charity'
 import { dispatchDuneAction } from '@/lib/dune/duneDispatch'
+import { isEligibleForCharity, charityGrant } from '@/lib/dune/charity'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { FactionId } from '@/types/Dune/Faction'
 
 const SEATS = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6']
 const panel = { border: '1px solid #ffffff22', borderRadius: 6, padding: 10, marginBottom: 10 }
@@ -61,9 +63,20 @@ export interface CharityPanelProps {
    * phase is still open.
    */
   charity?: CharityWindow | null
+  /**
+   * This seat's own secrets, and who it is.
+   *
+   * FOR ITS OWN ELIGIBILITY, and only its own. A seat's spice is in its own
+   * match_secrets row, so this client can answer "may I claim" without being
+   * told anything about anybody else — which is the distinction that makes
+   * showing it here safe. The server still decides; this only stops the panel
+   * offering a button whose one outcome is a refusal.
+   */
+  own?: DuneSecrets | null
+  faction?: FactionId | null
 }
 
-export default function CharityPanel({ say, matchId, client, charity }: CharityPanelProps) {
+export default function CharityPanel({ say, matchId, client, charity, own, faction }: CharityPanelProps) {
   const live = !!matchId
   const [secrets, setSecrets] = useState<Record<string, DuneSecrets>>(startingSpice)
   const [localWindow, setWindow] = useState<CharityWindow | null>(null)
@@ -71,6 +84,8 @@ export default function CharityPanel({ say, matchId, client, charity }: CharityP
   const [now, setNow] = useState(() => Date.now())
   const [busy, setBusy] = useState(false)
   const [refused, setRefused] = useState<string | null>(null)
+  // Local, and deliberately not sent anywhere — see pass().
+  const [passed, setPassed] = useState(false)
 
   // In live mode the window comes down the changefeed; in simulated mode it is
   // held here. One name downstream, so nothing below has to know which.
@@ -103,9 +118,25 @@ export default function CharityPanel({ say, matchId, client, charity }: CharityP
   }, [open, window_, say, live])
 
   const refusal = useMemo(
-    () => (window_ ? refuseCharityClaim(window_, secrets[seat], seat, now) : 'no-window'),
+    () => (window_ ? refuseCharityClaim(window_, secrets[seat], seat, now, undefined) : 'no-window'),
     [window_, secrets, seat, now],
   )
+
+  /**
+   * Whether THIS seat may claim, worked out from its own row.
+   *
+   * The earlier version deliberately refused to judge this, on the grounds that
+   * eligibility depends on a purse the client cannot read. That is true of
+   * every OTHER seat and false of this one: its spice arrives on its own
+   * secrets channel. Offering a Claim whose only possible outcome is
+   * 'not-eligible' is not caution, it is a button that lies.
+   *
+   * The Bene Gesserit are eligible whatever they hold, which is why this asks
+   * the shared rule rather than comparing a number — the same function the
+   * server pays out from.
+   */
+  const canClaim = live ? isEligibleForCharity(own ?? null, faction ?? null) : !refusal
+  const wouldGet = live ? charityGrant(own ?? null, faction ?? null) : 0
 
   /**
    * One live action, with the refusal shown rather than thrown.
@@ -161,6 +192,21 @@ export default function CharityPanel({ say, matchId, client, charity }: CharityP
       `Charity closed — claimed by ${(data.claims as string[])?.length ? (data.claims as string[]).join(', ') : 'nobody'}.`)
   }
 
+  /**
+   * Passing is a decision, and it is said out loud.
+   *
+   * There is no PASS on the server and there should not be: a claim that never
+   * arrives and a claim declined are the same thing to the rules, and inventing
+   * an action for it would put a row in the log for a player doing nothing.
+   * What a Pass button buys is that the seat can stop looking at the phase —
+   * without one, "eligible" sits there until the window shuts and the only way
+   * to be finished with it is to take spice you may not want.
+   */
+  function pass() {
+    setPassed(true)
+    say(`${live ? 'this seat' : seat} passed on charity.`)
+  }
+
   return (
     <fieldset style={panel}>
       <legend>CHOAM Charity</legend>
@@ -210,19 +256,37 @@ export default function CharityPanel({ say, matchId, client, charity }: CharityP
               }} />
             </div>
           </div>
-          {/* LIVE, THE BUTTON IS NOT PRE-JUDGED. Eligibility depends on a purse
-              this client cannot read, so a disabled button would be a guess —
-              and a wrong guess either hides a legal claim or promises one the
-              server will refuse. It asks, and shows what comes back. */}
-          <button onClick={claim} disabled={busy || (!live && !!refusal)}>
-            {live ? 'Claim charity' : `Claim charity as ${seat}`}
-          </button>{' '}
+          {/* CLAIM OR PASS, and only for a seat that may actually claim.
+              This offered Claim to everyone, on the argument that eligibility
+              depends on a purse the client cannot read. True of every OTHER
+              seat; false of this one, whose spice arrives on its own secrets
+              channel. A button whose only possible outcome is 'not-eligible'
+              is not caution.
+
+              Passing sends nothing — see pass(). A claim declined and a claim
+              never made are the same thing to the rules. */}
+          {passed ? (
+            <span style={{ opacity: 0.7 }}>passed</span>
+          ) : canClaim ? (
+            <>
+              <button onClick={claim} disabled={busy}>
+                {live ? `Claim charity (+${wouldGet})` : `Claim charity as ${seat}`}
+              </button>{' '}
+              <button onClick={pass} disabled={busy}>Pass</button>{' '}
+            </>
+          ) : (
+            <span style={{ opacity: 0.7 }}>
+              {/* WHY they cannot, rather than a dead button. The Bene Gesserit
+                  never land here: they are eligible whatever they hold. */}
+              not eligible — holds more than {CHARITY_TOPS_UP_TO}
+            </span>
+          )}
           {live && !open && (
             <button onClick={close} disabled={busy}>Close window</button>
           )}{' '}
           <span style={{ opacity: 0.7 }}>
             {live
-              ? (refused === 'not-eligible' ? `holds more than ${CHARITY_TOPS_UP_TO}`
+              ? (refused === 'not-eligible' ? `the server refused: holds more than ${CHARITY_TOPS_UP_TO}`
                 : refused === 'already-claimed' ? 'already claimed'
                 : refused === 'window-closed' ? 'window closed'
                 : refused ?? (busy ? 'asking…' : ''))

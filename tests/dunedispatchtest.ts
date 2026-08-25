@@ -166,11 +166,26 @@ const bodyOf = (s: Sent) => JSON.parse(String(s.init.body))
   check('the seat dropdown is not offered in live mode',
     /live \? \([\s\S]{0,400}\) : \([\s\S]{0,200}<select/.test(panel), true)
 
-  // Live, the claim button is NOT pre-judged. Eligibility depends on a purse
-  // this client cannot read, so a disabled button is a guess — and a wrong one
-  // either hides a legal claim or promises one the server will refuse.
-  check('the claim button does not guess eligibility live',
-    panel.includes('disabled={busy || (!live && !!refusal)}'), true)
+  // THE BUTTON JUDGES ITS OWN SEAT, and only its own. This used to offer Claim
+  // to everyone on the grounds that eligibility depends on a purse the client
+  // cannot read — true of every OTHER seat, false of this one, whose spice
+  // arrives on its own secrets channel. A Claim whose only outcome is
+  // 'not-eligible' is not caution, it is a button that lies.
+  check('the panel works out its own eligibility',
+    panel.includes('isEligibleForCharity(own ?? null, faction ?? null)'), true)
+  check('...from the same rule the server pays out from',
+    panel.includes("from '@/lib/dune/charity'"), true)
+  // AND IT ASKS THE RULE RATHER THAN COMPARING A NUMBER, which is what keeps
+  // the Bene Gesserit working: they are eligible whatever they hold, so any
+  // check written as a comparison against the threshold would refuse them.
+  check('...rather than comparing spice to the threshold itself',
+    /spice\s*<=\s*CHARITY_TOPS_UP_TO|readSpice\([^)]*\)\s*[<>]/.test(panel), false)
+  // Claim OR Pass, because declining is a decision and the alternative is
+  // staring at an eligible phase until the window shuts.
+  check('an eligible seat is offered a pass as well as a claim',
+    /<button onClick=\{pass\}/.test(panel), true)
+  check('...and an ineligible one is offered no claim at all',
+    /canClaim \? \(/.test(panel), true)
 }
 
 // ── the harness drives, rather than only watching ─────────────────────────
@@ -269,6 +284,44 @@ const bodyOf = (s: Sent) => JSON.parse(String(s.init.body))
     /deck|cards|carry/.test(pauseShape), false)
   check('...naming only the pile and the count',
     /pile\?: 'A' \| 'B'/.test(pauseShape) && /worms\?: number/.test(pauseShape), true)
+}
+
+// ── the seeded match is a match somebody can look at ──────────────────────
+// The seed script is scaffolding, and scaffolding nothing checks is scaffolding
+// that quietly stops working. Both of these were live faults found by sabotage
+// after being fixed by hand — which is to say, nothing would have noticed them
+// coming back.
+{
+  const seed = readFileSync('scripts/seed-dune-match.mjs', 'utf8')
+
+  // WITHOUT PLAYERS THE BOARD IS EMPTY. DuneGameScreen builds its seating from
+  // state.players, so a match seeded with none renders a board with nobody on
+  // it — which reads as the harness using some other board component, and is
+  // really just a match that never said who was playing.
+  check('the seeded match publishes its players',
+    /players: publicPlayers\(seats\)/.test(seed), true)
+  check('...in both fixtures', (seed.match(/players: publicPlayers\(seats\)/g) ?? []).length, 2)
+  check('...and never seeds an empty roster', /players: \[\]/.test(seed), false)
+  // The board coordinate, not the secrets key. These are different columns
+  // meaning different things and the harness wants the other one.
+  check('...at their printed board positions',
+    /seat: `player-position-\$\{i \+ 1\}`/.test(seed), true)
+
+  // AND THE PUBLIC ROSTER CARRIES NO SPICE. state.players reaches every client;
+  // a purse in it is every purse published to the whole table, which is the one
+  // thing the three-store split exists to prevent. handCount is a COUNT for the
+  // same reason — the cards are secret, so only their number is public.
+  // COMMENTS STRIPPED FIRST. The function explains in prose that it carries no
+  // spice, and a search for the word matched the explanation — the third time
+  // in this codebase a check has confirmed a mention rather than a use. What is
+  // being asked is whether a FIELD is assigned, so the fields are what is read.
+  const roster = seed
+    .slice(seed.indexOf('const publicPlayers'), seed.indexOf('}))', seed.indexOf('const publicPlayers')))
+    .split('\n').filter(l => !l.trim().startsWith('//')).join('\n')
+  check('the public roster is there to check', roster.length > 60, true)
+  check('...and assigns no spice', /\bspice\s*:/.test(roster), false)
+  check('...nor anyone\'s cards', /\bcards\s*:/.test(roster), false)
+  check('...only a hand COUNT', /handCount\s*:/.test(roster), true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
