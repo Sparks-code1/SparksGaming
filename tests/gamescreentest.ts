@@ -1051,5 +1051,55 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   check('...half spent is half drawn', /width="75"/.test(half), true)
 }
 
+// ── prescience shows for one seat, off that seat's own row ────────────────
+// The card up for auction is face up for the Atreides and for nobody else. It
+// travels on their secrets row, is read there by revealedFor(own), and appears
+// in no shared state — so this is the one thing in the phase where what is
+// rendered depends on WHICH client is rendering it.
+{
+  const card = TREACHERY_CARDS[0]
+  const auction = {
+    ask: {
+      kind: 'treachery-bid' as const, index: 0, cardCount: 3,
+      high: null, minimum: 1, hands: { atreides: 1, harkonnen: 2 },
+    },
+    order: ['atreides', 'harkonnen'] as FactionId[],
+    toAct: 'atreides' as FactionId,
+    passed: [] as FactionId[],
+    closesAt: base.now + 15_000,
+    onBid: () => {},
+    onPass: () => {},
+  }
+
+  // The entitled seat, with the reveal on its own row exactly as the server
+  // writes it: the card's id, under `prescience`.
+  const prescient = draw({
+    seat: 'atreides' as FactionId,
+    own: { cards: [], spice: 12, prescience: card.id } as DuneSecrets,
+    bidding: auction,
+  })
+  check('the Atreides see the card up for auction', prescient.includes(card.name), true)
+
+  // ANY OTHER SEAT, handed the SAME auction. Nothing about the public step
+  // changes; the difference is entirely which secrets row is in hand.
+  const blind = draw({
+    seat: 'harkonnen' as FactionId,
+    own: { cards: [], spice: 12 } as DuneSecrets,
+    bidding: auction,
+  })
+  check('...and no other seat does', blind.includes(card.name), false)
+  check('...though the auction itself still draws for them',
+    blind.includes('data-layer="bidding"'), true)
+
+  // AND IT COMES FROM `own`, NOT FROM THE AUCTION PROP. If the reveal could be
+  // passed in beside the public step, a caller could hand it to the wrong seat
+  // — the type is shaped to make that impossible, and this says so.
+  const screen = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
+  check('the screen reads the reveal off the seat\'s own row',
+    /revealed=\{revealedFor\(own\)\}/.test(screen), true)
+  check('...and the bidding prop cannot carry one',
+    /Omit<BiddingPanelProps, 'seat' \| 'spice' \| 'hand' \| 'revealed' \| 'now'>/.test(screen), true)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 process.exit(pass ? 0 : 1)

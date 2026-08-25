@@ -253,7 +253,7 @@ export function BiddingPanel(props: BiddingPanelProps) {
   return (
     // The scrim dims the board and nothing else. It does not cover it: the
     // territory being fought over is why the bid is worth making.
-    <div style={{
+    <div data-layer="bidding" style={{
       position: 'absolute', inset: 0, background: '#000000a8',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       // Scrolls rather than spilling. A hard minWidth in a column narrower than

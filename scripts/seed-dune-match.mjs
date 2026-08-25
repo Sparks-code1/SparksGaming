@@ -9,8 +9,8 @@
  *
  * IT SEEDS THE CHARITY PHASE by default, because that is the round trip with
  * both halves wired — a window the server opens, an eligibility check only it
- * can make, and a claim that pays from the bank into a hidden purse. Pass
- * --phase=blow for the spice blow instead.
+ * can make, and a claim that pays from the bank into a hidden purse.
+ * --phase=blow gives the spice blow, --phase=bidding the treachery auction.
  *
  * THE SPICE IS THE POINT of the charity fixture. Seats are dealt 0, 1, 2, 3, 7
  * and 12, so some are under the threshold and some are over: a table where
@@ -43,6 +43,7 @@
  *   node scripts/seed-dune-match.mjs --drop            (remove earlier seeds)
  */
 import { createClient } from '@supabase/supabase-js'
+import { readFileSync } from 'node:fs'
 
 const need = name => {
   const v = process.env[name]
@@ -60,7 +61,8 @@ const admin = createClient(URL, SERVICE, { auth: { persistSession: false } })
 const TAG = 'dune-seed'
 const RUN = `${TAG}-${Date.now().toString(36)}`
 const arg = name => process.argv.find(a => a.startsWith(`--${name}=`))?.split('=')[1]
-const PHASE = arg('phase') === 'blow' ? 'blow' : 'charity'
+const PHASES = ['charity', 'blow', 'bidding']
+const PHASE = PHASES.includes(arg('phase')) ? arg('phase') : 'charity'
 
 // ── sweeping up ─────────────────────────────────────────────────────────────
 if (process.argv.includes('--drop')) {
@@ -89,8 +91,33 @@ if (emails.length > FACTIONS.length) {
   process.exit(2)
 }
 
+/**
+ * Hand limits, mirroring factions.ts.
+ *
+ * COPIED, because this is a plain node script and cannot import the TS data.
+ * A small copy, but a copy — if a limit ever changes, the fixture below stops
+ * putting a seat exactly AT its limit and quietly stops showing the case it
+ * exists to show. The run prints which seat is at its limit so that is visible
+ * rather than silent.
+ */
+const HAND_LIMITS = {
+  atreides: 4, fremen: 4, harkonnen: 8, emperor: 4,
+  'spacing-guild': 4, 'bene-gesserit': 4,
+}
+
 // Under the threshold and over it, so charity has something to refuse.
-const STARTING_SPICE = [0, 1, 2, 3, 7, 12]
+const CHARITY_SPICE = [0, 1, 2, 3, 7, 12]
+/**
+ * Purses for the auction, which wants the opposite spread.
+ *
+ * Charity's fixture is deliberately poor — its whole point is seats the
+ * threshold refuses — and a table where nobody holds more than three cannot
+ * hold an auction worth watching. These are varied and mostly solvent, with
+ * one seat down at 1 so a bid it cannot afford is one keypress away and the
+ * refusal path shows without contriving anything.
+ */
+const BIDDING_SPICE = [12, 8, 5, 20, 1, 15]
+const STARTING_SPICE = PHASE === 'bidding' ? BIDDING_SPICE : CHARITY_SPICE
 
 /**
  * The seats as the whole table sees them.
@@ -119,9 +146,26 @@ const publicPlayers = seats => seats.map((s, i) => ({
   // noughts for every seat and read as broken rather than as empty, which is
   // the wrong impression for scaffolding whose job is to show the screen
   // working. Varied per seat so the column is legibly per-player.
-  handCount: [2, 4, 1, 3, 0, 5][i] ?? 0,
+  handCount: handCountFor(s.faction, i),
   ally: null,
 }))
+
+/**
+ * How many cards a seat holds.
+ *
+ * ONE SEAT AT ITS LIMIT in the bidding fixture, and that is the point of it.
+ * cardsOnOffer counts only seats UNDER their limit, so a table where everyone
+ * has room auctions one card per seat and never shows the case that matters —
+ * a seat the auction skips because it cannot hold another card.
+ *
+ * The SECOND seat is the one filled, whichever faction happens to sit there,
+ * so the fixture survives reordering DUNE_SEED_ACCOUNTS.
+ */
+const handCountFor = (faction, i) => {
+  if (PHASE !== 'bidding') return [2, 4, 1, 3, 0, 5][i] ?? 0
+  if (i === 1) return HAND_LIMITS[faction] ?? 4
+  return [1, 0, 2, 0, 3, 1][i] ?? 0
+}
 
 /**
  * Forces on the board, so the HUD has something to total.
@@ -143,6 +187,24 @@ const publicForces = seats => seats.flatMap((s, i) => [
   // And a stack in open sand, so forces-on-board is not just the stronghold.
   { faction: s.faction, territoryId: 'territory-07', sector: 'sector-3', count: 2 + i },
 ])
+
+/**
+ * Every treachery card id, read out of the data the client renders from.
+ *
+ * PARSED RATHER THAN COPIED. This is a plain node script and cannot import the
+ * TS module, and a hand-written list of card ids is a list that goes wrong the
+ * first time one is renamed — the auction would then deal a card the client
+ * cannot draw, which looks like a rendering fault rather than a stale fixture.
+ * Reading the ids keeps one source.
+ */
+const treacheryIds = () => {
+  const src = readFileSync('src/data/dune/treachery.ts', 'utf8')
+  const ids = [...src.matchAll(/\bid: '([^']+)'/g)].map(m => m[1])
+  if (ids.length < 10) {
+    throw new Error(`only found ${ids.length} treachery ids — has the file's shape changed?`)
+  }
+  return ids
+}
 
 const userIdFor = async email => {
   // listUsers rather than a lookup by email: the admin API has no by-email get,
@@ -176,7 +238,16 @@ const { error: cErr } = await admin.from('campaigns').insert({
 })
 if (cErr) throw new Error(`seed campaign: ${cErr.message}`)
 
-const state = PHASE === 'blow'
+const state = PHASE === 'bidding'
+  ? {
+      // The phase OPEN_BIDDING demands, and a discard the reshuffle can read.
+      phase: 'Bidding', turn: 1, mode: 'advanced', storm: 'sector-18',
+      treacheryDiscard: [],
+      spiceDeck: { remaining: 21, discardA: [], discardB: [] },
+      forces: publicForces(seats), spiceOnBoard: { 'territory-07': 8 },
+      players: publicPlayers(seats), awaiting: null, shieldWall: 'intact',
+    }
+  : PHASE === 'blow'
   ? {
       phase: 'Spice Blow and Nexus', turn: 2, mode: 'advanced', storm: 'sector-18',
       // A card SHOWING on pile A. A worm drawn over an empty discard throws —
@@ -214,7 +285,22 @@ await admin.from('match_secrets').insert(seats.map(s => ({
   match_id: match.id, player_id: s.playerId, data: { cards: [], spice: s.spice },
 })))
 
-if (PHASE === 'blow') {
+if (PHASE === 'bidding') {
+  /**
+   * Real card ids, so the cards dealt are cards the client can render.
+   *
+   * DRAWN BY THE SERVER, not here. OPEN_BIDDING takes them off this pile and
+   * parks them under 'auction-lot' where nobody may read them; seeding a lot
+   * directly would skip the one step that proves the order is fixed before a
+   * bid is made.
+   *
+   * Enough for several auctions — a pile that runs out mid-run turns a phase
+   * into a reshuffle, which is a different thing to be watching.
+   */
+  await admin.from('match_decks').insert({
+    match_id: match.id, deck: 'treachery', cards: treacheryIds(),
+  })
+} else if (PHASE === 'blow') {
   // Two worms then two territories: pile A turns a worm that eats the showing
   // card, a second that is the Fremen's, and then a territory to land on.
   const worm = { kind: 'shai-hulud' }
@@ -236,7 +322,19 @@ console.log('  ...replacing <password> with each account\'s own. They are read b
 console.log('  browser at dev time only and never committed.\n')
 console.log('Then open:\n')
 console.log(`  http://localhost:5173/?dune-seats&match=${match.id}\n`)
-if (PHASE === 'charity') {
+if (PHASE === 'bidding') {
+  const atLimit = seats[1]
+  console.log('Seats hold ' + seats.map(s => `${s.faction}:${s.spice}`).join(', ') + ' spice')
+  console.log(`${atLimit.faction} is at its hand limit (${HAND_LIMITS[atLimit.faction] ?? 4}),`
+    + ' so the auction offers one card fewer and skips that seat.')
+  console.log(`${seats.find(x => x.spice <= 2)?.faction ?? 'nobody'} is nearly broke,`
+    + ' so a bid it cannot afford shows the refusal path.')
+  // PRESCIENCE IS THE ATREIDES', and they are seated first, so it always
+  // renders somewhere. The reveal is written by OPEN_BIDDING into that seat's
+  // own row — nothing seeds it here, and nothing else can read it.
+  console.log('The Atreides see the card up for auction face up; no other seat does.\n')
+  console.log('Open the auction from the dev panel, then bid as each seat.\n')
+} else if (PHASE === 'charity') {
   console.log('Seats hold ' + seats.map(s => `${s.faction}:${s.spice}`).join(', '))
   console.log('Charity tops up to 2, so the seats above that are the ones it must refuse.\n')
 } else {

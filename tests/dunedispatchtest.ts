@@ -205,8 +205,16 @@ const code = (path: string) => readFileSync(path, 'utf8')
 
   // The harness does, through the acting seat's client.
   check('the harness sends the claim', view.includes("'CLAIM_CHARITY'"), true)
+  // THE CLIENT ARGUMENT, not the whole call. Pinning the exact call text
+  // failed the moment send() grew a payload for OPEN_BIDDING, which is not
+  // the rule — the rule is that EVERY action goes out on the acting seat's
+  // own session, and counting them says that where matching one string did
+  // not: a second call added without a client would slip past a check that
+  // only looks for the first.
   check('...through that seat\'s own session',
-    /dispatchDuneAction\(matchId, \{ type \}, \{ client: session\.client \}\)/.test(view), true)
+    (view.match(/dispatchDuneAction\(/g) ?? []).length > 0
+      && (view.match(/client: session\.client/g) ?? []).length
+         === (view.match(/dispatchDuneAction\(/g) ?? []).length, true)
 
   // PASSING SENDS NOTHING, and there is no PASS action on the server: a claim
   // declined and a claim never made are the same thing to the rules. What it
@@ -309,7 +317,13 @@ const code = (path: string) => readFileSync(path, 'utf8')
   // really just a match that never said who was playing.
   check('the seeded match publishes its players',
     /players: publicPlayers\(seats\)/.test(seed), true)
-  check('...in both fixtures', (seed.match(/players: publicPlayers\(seats\)/g) ?? []).length, 2)
+  // EVERY fixture, however many there are. Written as a count of two when
+  // there were two phases, which quietly stopped meaning "all of them" the
+  // moment a third arrived — the new one could have shipped with an empty
+  // roster and this would still have passed.
+  check('...in every fixture the script can seed',
+    (seed.match(/players: publicPlayers\(seats\)/g) ?? []).length,
+    (seed.match(/phase: '[^']+'/g) ?? []).length)
   check('...and never seeds an empty roster', /players: \[\]/.test(seed), false)
   // The board coordinate, not the secrets key. These are different columns
   // meaning different things and the harness wants the other one.
@@ -346,7 +360,7 @@ const code = (path: string) => readFileSync(path, 'utf8')
   // zero for everybody and looks exactly like a HUD that cannot count.
   check('...including stronghold territories',
     /territory-13|territory-26|territory-38|territory-40/.test(seed), true)
-  check('...and hands that are not all empty', /handCount: \[/.test(seed), true)
+  check('...and hands that are not all empty', /handCountFor\(/.test(seed), true)
 
   // STILL NO SPICE, and still only a COUNT of cards. Public state reaches every
   // client; the reason those are absent does not change because the fixture got
@@ -377,6 +391,88 @@ const code = (path: string) => readFileSync(path, 'utf8')
   // NAMING WHO IS SEATED, because "not seated" alone leaves the reader to guess
   // whether the match is wrong or the env var is.
   check('...listing who the match does seat', /seatedFactions\.join/.test(view), true)
+}
+
+// ── the harness drives the auction ────────────────────────────────────────
+{
+  const view = code('src/components/dune/DuneMultiSeatView.tsx')
+
+  check('the harness builds the auction from public state',
+    /const step = publicRow\?\.auction/.test(view), true)
+  check('...and passes it to the screen', /bidding=\{biddingFor\(mine\)\}/.test(view), true)
+  check('...sending bids and passes as actions',
+    view.includes("type: 'BID'"), true)
+  check('...and opening the auction', view.includes("'OPEN_BIDDING'"), true)
+
+  // HAND SIZES, NOT CONTENTS. Sizes are public at a table; what is in a hand is
+  // not, and OPEN_BIDDING is given only the counts already in public state.
+  check('what it sends about hands is the published count',
+    /hands = Object\.fromEntries\(publicRow\.players\.map\(p => \[p\.faction, p\.handCount\]\)\)/.test(view),
+    true)
+
+  // A REFUSAL IS PRIVATE AND PER SEAT. It announces roughly what a bidder
+  // holds, which is most of what bidding hides — and the harness holds six
+  // seats in one page, so a single value would show one seat's refusal to the
+  // next one switched to.
+  check('a bid refusal is kept per seat',
+    /setBidRefusal\(r => \(\{ \.\.\.r, \[session\.login\.faction\]/.test(view), true)
+  check('...and handed only to that seat',
+    /refusal: bidRefusal\[session\.login\.faction\]/.test(view), true)
+  // The server writes nothing on a refusal, so neither does this.
+  const bidFn = view.slice(view.indexOf('const bid = async'), view.indexOf('const openBidding'))
+  check('the bid helper is there to check', bidFn.length > 100, true)
+  check('...and advances nothing itself', /setPublicRow|setAnswered/.test(bidFn), false)
+}
+
+// ── the bidding fixture is worth opening ──────────────────────────────────
+{
+  const seed = code('scripts/seed-dune-match.mjs')
+
+  check('the seed offers a bidding phase', /'bidding'/.test(seed), true)
+  check('...at the phase OPEN_BIDDING demands', /phase: 'Bidding'/.test(seed), true)
+  check('...with a discard the reshuffle can read', /treacheryDiscard: \[\]/.test(seed), true)
+
+  // ONE SEAT AT ITS LIMIT, which is the case the fixture exists to show:
+  // cardsOnOffer counts only seats UNDER their limit, so a table where everyone
+  // has room never demonstrates a seat the auction skips.
+  // SOME seat, not a particular one. Pinning the index failed when the seat at
+  // the limit moved, which is not the rule — the rule is that one of them is.
+  check('one seat is seeded at its hand limit',
+    /return HAND_LIMITS\[faction\]/.test(seed), true)
+
+  // AND THE PURSES ARE WORTH BIDDING WITH. Asserting the constant merely
+  // EXISTS passed when its values were replaced with charity's — a table where
+  // nobody holds more than three cannot hold an auction worth watching, and
+  // the check said nothing about it.
+  const purses = (seed.match(/const BIDDING_SPICE = \[([^\]]*)\]/)?.[1] ?? '')
+    .split(',').map(n => Number(n.trim())).filter(n => Number.isFinite(n))
+  check('the bidding purses are there to read', purses.length >= 4, true)
+  check('...and somebody can afford a real bid', Math.max(...purses) >= 5, true)
+  check('...and they differ, so it is a contest', new Set(purses).size > 1, true)
+  // One seat nearly broke, so the refusal path is one keypress away.
+  check('...with one seat that cannot afford much', Math.min(...purses) <= 2, true)
+  // The Atreides are seated first in every run, so prescience always has
+  // somebody to render for.
+  check('the Atreides are always seated', /const FACTIONS = \['atreides'/.test(seed), true)
+
+  // CARDS THE CLIENT CAN DRAW. A hand-written list of ids goes wrong the first
+  // time one is renamed, and the auction would then deal a card that renders as
+  // nothing — which looks like a rendering fault rather than a stale fixture.
+  // READ, not just mentioned. The first version checked that the file was
+  // opened — which stayed true when the ids underneath were replaced with a
+  // hand-written pair, so the check passed on exactly the fixture it exists to
+  // forbid.
+  const idsFn = seed.slice(seed.indexOf('const treacheryIds'), seed.indexOf('const userIdFor'))
+  check('the treachery pile is read from the card data',
+    /readFileSync\('src\/data\/dune\/treachery\.ts'/.test(idsFn), true)
+  check('...and the ids come out of it', /matchAll\(/.test(idsFn), true)
+  check('...rather than being listed by hand',
+    /\[\s*'[a-z-]+'\s*,\s*'[a-z-]+'/.test(idsFn), false)
+  check('...and refuses a shape it does not recognise',
+    /has the file's shape changed/.test(seed), true)
+  // DRAWN BY THE SERVER. Seeding a lot directly would skip the step that fixes
+  // the order before a single bid is made.
+  check('...and no auction lot is seeded directly', /'auction-lot'/.test(seed), false)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

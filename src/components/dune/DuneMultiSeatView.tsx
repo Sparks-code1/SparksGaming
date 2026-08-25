@@ -23,6 +23,9 @@ import { WormPlacementPanel } from './WormPlacementPanel'
 import { dispatchDuneAction } from '@/lib/dune/duneDispatch'
 import type { SpiceBlowPause } from './WormPlacementPanel'
 import type { CharityWindow } from '@/lib/dune/charity'
+import { factionById } from '@/data/dune/factions'
+import type { BidAsk, AuctionCarry } from '@/lib/dune/bidding'
+import type { BidRefusal } from '@/lib/dune/bidding'
 import type { ChatMessage } from './ChatPanel'
 
 const PALE = '#f0e2bb'
@@ -46,7 +49,18 @@ const PUBLIC_FIXTURE: DuneGameState = {
 
 /** The public row carries fields the screen's type does not name — the charity
  *  window among them, which is public because who has claimed is on the table. */
-type PublicRow = DuneGameState & { charity?: CharityWindow; spiceBlow?: SpiceBlowPause }
+/** The auction as public state carries it: a Step, ask and carry and all. */
+interface AuctionStep {
+  status: string
+  ask?: BidAsk
+  carry?: AuctionCarry
+  closesAt?: number
+}
+type PublicRow = DuneGameState & {
+  charity?: CharityWindow
+  spiceBlow?: SpiceBlowPause
+  auction?: AuctionStep
+}
 
 function Notice({ children }: { children: React.ReactNode }) {
   return (
@@ -79,6 +93,18 @@ export default function DuneMultiSeatView() {
    * everybody the moment one of them passed.
    */
   const [answered, setAnswered] = useState<Record<string, number>>({})
+  /**
+   * The acting seat's OWN last bid refusal.
+   *
+   * PRIVATE TO THEM, which is why it is held here and not in public state: a
+   * rejection announces roughly what a bidder holds, and that is most of what
+   * bidding hides. The server says so too — a refused bid writes nothing at
+   * all and comes back only in that caller's response.
+   *
+   * Keyed by faction because the harness holds six seats in one page and a
+   * single value would show one seat's refusal to the next one switched to.
+   */
+  const [bidRefusal, setBidRefusal] = useState<Record<string, BidRefusal | null>>({})
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
@@ -207,12 +233,81 @@ export default function DuneMultiSeatView() {
     }
   }
 
+  /**
+   * The auction for one seat, or null when there is nothing to bid on.
+   *
+   * EVERYTHING PUBLIC COMES OFF THE STEP, which the server writes into
+   * matches.state: the ask, the order, whose turn it is, who has passed, and
+   * when the turn to bid shuts. None of it names a card — the auction is
+   * card-blind by construction, and the panel could not show one if it tried.
+   *
+   * THE ONE CARD THAT IS SHOWN comes from somewhere else entirely. Atreides
+   * prescience arrives on that seat's own secrets row and DuneGameScreen reads
+   * it there with revealedFor(own) — so it is never passed through here, and a
+   * seat that is not entitled to it has nothing to be careless with.
+   */
+  const biddingFor = (session: SeatSession | null) => {
+    const step = publicRow?.auction
+    if (!step || step.status !== 'awaiting' || !step.ask || !step.carry) return null
+    if (!session?.client) return null
+    const carry = step.carry
+    return {
+      ask: step.ask,
+      order: carry.order,
+      toAct: carry.toAct,
+      passed: carry.passed,
+      closesAt: step.closesAt ?? 0,
+      refusal: bidRefusal[session.login.faction] ?? null,
+      onBid: (spice: number) => void bid(session, { kind: 'bid' as const, spice }),
+      onPass: () => void bid(session, { kind: 'pass' as const }),
+    }
+  }
+
+  /**
+   * One bid or pass, as this seat.
+   *
+   * A REFUSAL IS NOT AN ERROR HERE. "More than you hold" and "not your turn"
+   * are things the server is supposed to say, they change no state, and they
+   * are shown to the bidder alone beside a countdown that goes on counting —
+   * a refused bid must not be a way to buy thinking time.
+   */
+  const bid = async (session: SeatSession, answer: { kind: 'bid'; spice: number } | { kind: 'pass' }) => {
+    if (busy) return
+    setBusy(true)
+    setBidRefusal(r => ({ ...r, [session.login.faction]: null }))
+    const res = await dispatchDuneAction(matchId, { type: 'BID', bid: answer },
+      { client: session.client })
+    setBusy(false)
+    if (!res.ok) {
+      setBidRefusal(r => ({ ...r, [session.login.faction]: (res.error?.code ?? null) as BidRefusal | null }))
+      return
+    }
+    say(answer.kind === 'pass' ? 'passed on the card.' : `bid ${answer.spice}.`)
+  }
+
+  /**
+   * Open the auction.
+   *
+   * A DEV CONTROL, like opening charity: which seat may drive a phase
+   * transition has no answer in the match state yet. The order, hands and
+   * limits come from public state and the faction data — hand SIZES are public
+   * at a table, hand contents are not, and only the sizes are sent.
+   */
+  const openBidding = () => {
+    if (!mine?.client || !publicRow) return
+    const order = publicRow.players.map(p => p.faction)
+    const hands = Object.fromEntries(publicRow.players.map(p => [p.faction, p.handCount]))
+    const limits = Object.fromEntries(
+      publicRow.players.map(p => [p.faction, factionById(p.faction)?.handLimit ?? 4]))
+    void send(mine, 'OPEN_BIDDING', { order, hands, limits })
+  }
+
   /** One action, as this seat, with the refusal shown rather than thrown. */
-  const send = async (session: SeatSession, type: string) => {
+  const send = async (session: SeatSession, type: string, fields: Record<string, unknown> = {}) => {
     if (busy) return
     setBusy(true)
     setRefused(null)
-    const res = await dispatchDuneAction(matchId, { type }, { client: session.client })
+    const res = await dispatchDuneAction(matchId, { type, ...fields }, { client: session.client })
     setBusy(false)
     if (!res.ok) {
       setRefused(res.error?.code ?? 'refused')
@@ -238,6 +333,7 @@ export default function DuneMultiSeatView() {
     <>
       <DuneGameScreen
         charity={charityFor(mine)}
+        bidding={biddingFor(mine)}
         state={publicRow ?? PUBLIC_FIXTURE}
         seat={active}
         // ONE SEAT'S ROW, from that seat's own session. The screen has no way to
@@ -319,6 +415,12 @@ export default function DuneMultiSeatView() {
             <button onClick={() => void send(mine, 'CLOSE_CHARITY')} disabled={busy}>
               Close window
             </button>
+
+            {/* THE AUCTION. Opening it is the same kind of dev control:
+                which seat may drive a phase transition has no answer in the
+                match state yet, and nothing else calls OPEN_BIDDING. */}
+            <b style={{ display: 'block', margin: '10px 0 6px' }}>Bidding</b>
+            <button onClick={openBidding} disabled={busy}>Open auction</button>
           </>
         ) : (
           <p style={{ margin: 0, opacity: 0.7 }}>
