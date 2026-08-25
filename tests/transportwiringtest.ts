@@ -271,17 +271,45 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
       [...fn.matchAll(/import \{([^}]*)\} from/g)]
         .flatMap(m => m[1].split(',').map(x => x.trim()))
         .filter(Boolean))
+    // KEEP THIS LIST HONEST. It is only a list of names to look for, so a name
+    // missing from it is a name nobody checks — and this rule is the ONLY thing
+    // standing between a forgotten import and a ReferenceError in production,
+    // because tsc does not read this directory.
+    //
+    // It went stale exactly that way. It still named resolveDoubleSpiceBlow
+    // after the endpoint stopped using it, and never named beginDoubleSpiceBlow
+    // or placeFremenWorms after it started. A patch that silently failed to
+    // rewrite the import line left the function calling two names it did not
+    // import, and the whole suite stayed green.
     const shared = [
       'applySpiceMoves', 'BANK', 'settleAuction', 'beginAuction', 'answerBid',
       'cardsOnOffer', 'BID_SECONDS', 'drawTreachery', 'discardUnsold', 'shuffleWithSeed',
-      'seededRng', 'buildSpiceDeck', 'resolveSpiceBlow', 'resolveDoubleSpiceBlow',
-      'applyBlowToBoard', 'publicSpiceDeck',
+      'seededRng', 'buildSpiceDeck', 'resolveSpiceBlow', 'beginDoubleSpiceBlow',
+      'placeFremenWorms', 'applyBlowToBoard', 'publicSpiceDeck', 'WORM_SECONDS',
+      'prescienceFor', 'withReveal', 'PRESCIENT_FACTION',
     ]
     const used = shared.filter(name => new RegExp(`\\b${name}\\b`).test(fn))
     // The rule is only worth anything if it is looking at names actually in use.
     check('the Dune server uses the shared modules', used.length > 5, true)
     check('...and imports every name it uses from them',
       used.filter(name => !imported.has(name)), [])
+
+    // THE OTHER DIRECTION, and this one keeps itself current: whatever the file
+    // imports from a .gen bundle has to be exported by that bundle. A list can
+    // go stale; this cannot, because it reads the imports themselves.
+    //
+    // It catches the mirror of the bug above — an import left naming a function
+    // that has since been renamed or removed from the shared source, which
+    // Deno resolves to undefined and calls on the first real request.
+    const missing: string[] = []
+    for (const m of fn.matchAll(/import \{([^}]*)\} from '\.\.\/_shared\/([^']+)'/g)) {
+      const bundle = readFileSync('supabase/functions/_shared/' + m[2], 'utf8')
+      const exported = bundle.slice(bundle.lastIndexOf('export {'))
+      for (const name of m[1].split(',').map(x => x.trim()).filter(Boolean)) {
+        if (!new RegExp('\\b' + name + '\\b').test(exported)) missing.push(m[2] + ':' + name)
+      }
+    }
+    check('...and every name it imports is actually exported', missing, [])
   }
 }
 
@@ -363,34 +391,160 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
     blowCase.includes('already-blown'), true)
   check('...by comparing the turn it was last turned for',
     /shown\.turn === turn/.test(blowCase), true)
+  check('...and a blow cannot begin while one is half-done',
+    blowCase.includes('blow-in-progress'), true)
+  // THE GUARD, NOT THE MESSAGE. Sabotage turned this into `if (false)` and the
+  // check passed, because the error string was still sitting there in a branch
+  // nothing could reach. An error code proves a message exists; it says nothing
+  // about whether anything can produce it.
+  check('...on a condition that can actually fire',
+    /if \(state\.spiceBlow\) \{/.test(blowCase), true)
 
-  // THE FREMEN'S WORMS ARE NOT THE SERVER'S TO DECLINE. Worms after the first
-  // in a pile are theirs to place, and the rule is that they CAN be placed —
-  // declining is a legal choice, which is exactly why a server that resolves
-  // straight through is not picking a safe default but playing a seat's turn.
-  // resolveDoubleSpiceBlow says so in its own docstring: it is the shortcut for
-  // callers with nobody to ask.
-  check('worms owed to a seated Fremen stop the blow',
-    blowCase.includes('fremen-worms-unwired'), true)
-  check('...before anything is written',
-    blowCase.indexOf('fremen-worms-unwired') < blowCase.indexOf('apply_match_write'), true)
-  check('...and only when they are actually at the table',
-    /owedToFremen > 0 && fremenInPlay/.test(blowCase), true)
+  // ── THE PAUSE ────────────────────────────────────────────────────────────
+  // Worms after the first in a pile are the Fremen's to place, and the rule is
+  // that they CAN be placed — declining is legal. So the phase stops and asks,
+  // rather than resolving straight through and calling the result the rules.
+  // It used to refuse outright (`fremen-worms-unwired`), which was honest but
+  // left the phase unfinishable with a Fremen at the table.
+  check('the blow no longer refuses when worms are owed',
+    fn.includes('fremen-worms-unwired'), false)
+  check('...it pauses through the step protocol instead',
+    blowCase.includes('beginDoubleSpiceBlow('), true)
+  check('...and there is an answer half', fn.includes("case 'PLACE_WORMS'"), true)
 
-  // TWO PILES ARE THE ADVANCED GAME'S STRUCTURE. Resolving one of them would
-  // leave discardB permanently empty — the same class of bug as a count that
-  // never moves, and just as quiet.
-  // Sliced at the branch rather than searched within a fixed window: the first
-  // version of this allowed 200 characters between the two, and a comment
-  // explaining WHY there are two piles pushed the call past it. A check that
-  // depends on how much prose sits next to the code is a check that will fail
-  // for the wrong reason.
-  const advancedBranch = blowCase.slice(blowCase.indexOf('if (advanced) {'), blowCase.indexOf('} else {'))
+  const placeCase = fn.slice(fn.indexOf("case 'PLACE_WORMS'"), fn.indexOf("case 'OPEN_BIDDING'"))
+  check('the answer is there to check', placeCase.length > 400, true)
+  check('...and runs the phase on from where it stopped',
+    placeCase.includes('placeFremenWorms('), true)
+
+  // ONLY THE FREMEN, AND FROM THE TOKEN. myFaction comes out of match_players
+  // keyed on the caller's user id, so this cannot be claimed by a payload — the
+  // same reason the acting seat is never in the body.
+  check('only the Fremen may place these worms',
+    /myFaction !== 'fremen'/.test(placeCase), true)
+  check('...and nothing in the request says who is asking',
+    /action\.(seat|faction|playerId|actAs)/.test(placeCase), false)
+  check('...refused when no pause is open', placeCase.includes('no-pause'), true)
+  // A public pause with no parked continuation is a broken match, not an
+  // invitation to start a fresh blow over the top of one already half-turned.
+  check('...and refused when the continuation is missing',
+    placeCase.includes('carry-missing'), true)
+  // Again the guard rather than the string: `if (false)` left the code in place
+  // and the check green, while a public pause with no parked continuation would
+  // sail through and start a fresh blow over one already half-turned.
+  check('...on a condition that can actually fire',
+    /if \(!held\?\.carry\) \{/.test(placeCase), true)
+  // And the answer count really is carried on, rather than the expression
+  // merely appearing somewhere in the case — it appears in the rng offset too,
+  // which is how a sabotage that reset it to 0 went unnoticed.
+  check('...and each answer advances the resume count',
+    /publishBlowStep\(step, pause\.turn, held\.seed, held\.resumes \+ 1\)/.test(placeCase), true)
+
+  // ── the window, and who gets to answer once it shuts ─────────────────────
+  // A required stop with a deadline: the phase cannot go on until an answer
+  // exists, and the clock supplies one if the Fremen do not. Safe here only
+  // because placing is optional — silence means declined, which takes nothing
+  // that was theirs. The shared module's half of this is exercised for real in
+  // spiceblowtest; these are the wiring claims only the server can make.
+  check('the blow stamps a deadline on the pause',
+    /closesAt: now \+ WORM_SECONDS \* 1000/.test(blowCase), true)
+  check('...from the server\'s clock, not the caller\'s',
+    /closesAt: action\./.test(blowCase), false)
+  check('...and the answer re-stamps one for the next pile',
+    /now \+ WORM_SECONDS \* 1000/.test(placeCase), true)
+
+  // THE DEADLINE DECIDES WHO ANSWERS. Before it the worms are the Fremen's and
+  // nobody may speak for them; after it, silence has already said declined and
+  // any seat may push the phase along — the rule CLOSE_CHARITY follows, so a
+  // match does not hang on whoever happens to be looking at the right screen.
+  check('the pause knows when it has expired',
+    /const expired = pause\.closesAt != null && now >= pause\.closesAt/.test(placeCase), true)
+  check('...and only then may another seat answer',
+    /if \(!expired && myFaction !== 'fremen'\)/.test(placeCase), true)
+  // A LATE PLACEMENT IS NOT HONOURED, including from the Fremen themselves.
+  // Honouring one would make the deadline advisory, and a window that only
+  // sometimes shuts is not a window.
+  check('...with the answer defaulting to declined once it has',
+    /const at = expired \? \[\] :/.test(placeCase), true)
+
+  // ── THE STEP IS SPLIT, AND THAT IS THE POINT ─────────────────────────────
+  // The ask is public: which pile stopped, how many worms, who owes an answer.
+  // The CARRY IS NOT — it holds the remaining deck in order, so writing the
+  // step whole into matches.state would publish the spice deck to every client
+  // through the back door of a phase that happens to pause.
+  // SLICED AT THE FUNCTION, not at a character count. This took a fixed 2200
+  // characters from the start, and adding the deadline pushed the last checks
+  // past the end of the window — three of them failed for the length of a
+  // comment rather than for anything about the code.
+  const publish = fn.slice(fn.indexOf('const publishBlowStep'), fn.indexOf('switch (action.type)'))
+  check('the publisher is there to check', publish.length > 800, true)
+
+  const pausedState = publish.slice(publish.indexOf('p_state:'), publish.indexOf('p_secrets:'))
+  check('the paused state block is there to check', pausedState.length > 100, true)
+  check('the ask reaches public state',
+    pausedState.includes('pile: ask.pile') && pausedState.includes('worms: ask.worms'), true)
+  check('...with the deadline the table counts toward',
+    pausedState.includes('closesAt: step.closesAt'), true)
+  // THE CARRY DOES NOT. It holds the remaining deck in order, so writing the
+  // step whole would publish the spice deck to every client — defeating
+  // match_decks through the back door of a phase that happens to pause.
+  check('...and the carry is not in it', pausedState.includes('carry'), false)
+  check('...nor the deck', /\bdeck\b/.test(pausedState), false)
+  check('...the carry parks beside the deck it contains',
+    /p_decks: \{ 'spice-blow': \{ carry: step\.carry/.test(publish), true)
+  check('...and the table is told who it is waiting on',
+    /awaiting: 'fremen'/.test(publish), true)
+
+  // THE REPLY IS A SEPARATE LEAK. Sabotage appended `carry: step.carry` to the
+  // response and this passed: the check matched the opening fields and said
+  // nothing about what came after them. The response goes to a client exactly
+  // as public state does, so it is checked the same way — by what is IN it.
+  const pausedReply = publish.slice(publish.indexOf("return json({\n        awaiting: 'fremen'"))
+  const replyBody = pausedReply.slice(0, pausedReply.indexOf('})') + 2)
+  check('the paused reply is there to check', replyBody.length > 40, true)
+  check('the reply says what is being asked',
+    replyBody.includes('pile: ask.pile') && replyBody.includes('worms: ask.worms'), true)
+  check('...and carries no continuation', /carry/.test(replyBody), false)
+  check('...nor any deck', /\bdeck\b|cards/.test(replyBody), false)
+
+  // THE SURVIVORS COME BACK FROM THE PHASE, not from a filter here. The carry
+  // has been to the database and back, so nothing in toTanks is identical to
+  // anything in state.forces — an identity filter would remove NOTHING and put
+  // every devoured stack back on its feet, silently.
+  check('the finished phase supplies the surviving forces',
+    /forces: out\.forces/.test(publish), true)
+  check('...rather than being filtered by identity across the round trip',
+    /toTanks\.includes|new Set\(out\.toTanks\)|Set\(.*toTanks/.test(publish), false)
+
+  // AND THE PAUSE IS CLEARED WHEN IT ENDS. Left behind, the table reads a phase
+  // still waiting on a seat that has already answered.
+  const commit = fn.slice(fn.indexOf('const commitBlow'), fn.indexOf('const publishBlowStep'))
+  check('finishing clears the pause', commit.includes('delete rest.spiceBlow'), true)
+  check('...and clears the parked continuation with it',
+    /'spice-blow': \[\]/.test(commit), true)
+  check('...in the same write as the deck', /p_decks: \{ spice: done\.deck, 'spice-blow'/.test(commit), true)
+
+  // ── each resumption gets its own reproducible stream ─────────────────────
+  // The rng is not in the carry — it cannot be, being a function — so the
+  // caller supplies it. Supplying seededRng(seed) again would replay pile A's
+  // numbers for pile B.
+  check('a resumption does not replay the same random numbers',
+    /seededRng\(held\.seed \+ held\.resumes \+ 1\)/.test(placeCase), true)
+  check('...and the count of answers is carried, so it stays reproducible',
+    /resumes: held\.resumes \+ 1|held\.resumes \+ 1\)/.test(placeCase), true)
+
+  // ── two piles, and one that cannot stop ──────────────────────────────────
+  const advancedBranch = blowCase.slice(blowCase.indexOf("if (state.mode === 'advanced')"), blowCase.indexOf('// ── the basic game'))
   check('the advanced game turns both piles',
-    advancedBranch.includes('resolveDoubleSpiceBlow('), true)
+    advancedBranch.includes('beginDoubleSpiceBlow('), true)
   check('...reading and writing both discard piles',
     advancedBranch.includes('discardB') && advancedBranch.includes('discardA'), true)
-  check('...and the basic game turns one', blowCase.includes('resolveSpiceBlow({'), true)
+  // Placing worms is a Fremen ADVANCED advantage — resolveSpiceBlow counts them
+  // only when mode is 'advanced' — so a basic blow runs to the end by
+  // construction rather than by hoping it will.
+  check('...and the basic game turns one', blowCase.includes("mode: 'basic'"), true)
+  check('...which therefore cannot pause', blowCase.includes('commitBlow({'), true)
+
 
   check('...with no deck array written into public state',
     /p_state:[\s\S]{0,400}spiceDeck: *(nextDeck|deck)\b/.test(blowCase), false)

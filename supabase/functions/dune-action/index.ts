@@ -30,7 +30,8 @@ import { settleAuction } from '../_shared/duneAuction.gen.ts'
 import { beginAuction, answerBid, cardsOnOffer, BID_SECONDS } from '../_shared/duneBidding.gen.ts'
 import { drawTreachery, discardUnsold, shuffleWithSeed, seededRng } from '../_shared/duneDeck.gen.ts'
 import {
-  buildSpiceDeck, resolveSpiceBlow, resolveDoubleSpiceBlow, applyBlowToBoard, publicSpiceDeck,
+  buildSpiceDeck, resolveSpiceBlow, beginDoubleSpiceBlow, placeFremenWorms,
+  applyBlowToBoard, publicSpiceDeck, WORM_SECONDS,
 } from '../_shared/duneSpiceBlow.gen.ts'
 import { prescienceFor, withReveal, PRESCIENT_FACTION } from '../_shared/dunePrescience.gen.ts'
 
@@ -61,6 +62,29 @@ interface DuneSecrets { spice?: number }
 // them is the same one the client runs.
 interface SpiceCardRow { kind: string; [field: string]: unknown }
 interface ForceRow { [field: string]: unknown }
+/**
+ * The pause, as the table sees it.
+ *
+ * The ask and nothing else. The continuation that goes with it holds the
+ * remaining deck, so it lives in match_decks — see publishBlowStep.
+ */
+interface SpiceBlowPauseRow {
+  turn: number
+  pile?: 'A' | 'B'
+  worms?: number
+  from?: string[]
+  /** When the window shuts. Public, like the charity window's — it is a time,
+   *  not a card, and clients have to count toward it. */
+  closesAt?: number
+}
+/** What is parked beside the deck while the phase waits. */
+interface BlowCarryRow {
+  carry: Record<string, unknown>
+  seed: number
+  /** How many answers have been given. Offsets the rng so each resumption gets
+   *  its own stream and every one of them is reproducible. */
+  resumes: number
+}
 interface SpiceDeckPublicRow {
   remaining?: number
   discardA?: SpiceCardRow[]
@@ -137,6 +161,128 @@ Deno.serve(async req => {
 
   const state = (match.state ?? {}) as Record<string, unknown>
   const now = Date.now()
+
+  // ── Committing a spice blow, paused or finished ────────────────────────────
+  // Both halves of the phase end here, so there is one answer to what the table
+  // is told and one answer to where the deck lives.
+
+  /**
+   * Write a finished blow: the projection to public state, the order to
+   * match_decks, in one transaction.
+   *
+   * A blow committed without the spice it placed is a card turned for nothing;
+   * spice placed without the shortened deck deals the same card twice.
+   */
+  const commitBlow = async (done: {
+    turn: number
+    spiceDeck: Record<string, unknown>
+    spiceOnBoard: Record<string, number>
+    forces: ForceRow[]
+    deck: SpiceCardRow[]
+    said: Record<string, unknown>
+  }): Promise<Response> => {
+    const rest = { ...state }
+    // The pause is over, so it stops being said. Left behind, the table would
+    // read a phase still waiting on a seat that has already answered.
+    delete rest.spiceBlow
+    const { data, error } = await admin.rpc('apply_match_write', {
+      p_match_id: matchId,
+      p_expected_version: match.version,
+      p_state: {
+        ...rest,
+        spiceDeck: { ...done.spiceDeck, turn: done.turn },
+        spiceOnBoard: done.spiceOnBoard,
+        forces: done.forces,
+        awaiting: null,
+      },
+      p_secrets: {},
+      // The ORDER parks where nobody can read it, and the carry is cleared in
+      // the same write — a stale carry beside a finished blow is a second,
+      // older answer to what the deck is.
+      p_decks: { spice: done.deck, 'spice-blow': [] },
+    })
+    if (error) return json({ error: error.message }, 500)
+    if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+    return json({ ...done.said, spiceDeck: { ...done.spiceDeck, turn: done.turn }, version: data[0].version })
+  }
+
+  /**
+   * Publish a step — a pause to wait on, or the finished phase.
+   *
+   * THE SPLIT IS THE WHOLE POINT. A Step is one object, and it cannot be
+   * written to one place:
+   *
+   *   the ASK is public — which pile stopped, how many worms are offered, and
+   *   who owes the answer. That is what the table is entitled to see, and it
+   *   says what is needed rather than what anyone chose.
+   *
+   *   the CARRY IS NOT. It holds the remaining deck, in order. Writing the step
+   *   whole into matches.state would publish the spice deck to every client —
+   *   the exact thing match_decks exists to prevent, arriving by the back door
+   *   of a phase that happens to pause.
+   *
+   * So the ask goes to public state and the carry goes beside the deck it
+   * contains, in one transaction, and neither is ever in the other's place.
+   */
+  const publishBlowStep = async (
+    step: {
+      status: string; from?: string[]; closesAt?: number
+      ask?: Record<string, unknown>; carry?: unknown; result?: Record<string, unknown>
+    },
+    turn: number, seed: number, resumes: number,
+  ): Promise<Response> => {
+    if (step.status === 'awaiting') {
+      const ask = (step.ask ?? {}) as { pile?: string; worms?: number }
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state,
+          spiceBlow: {
+            turn, pile: ask.pile, worms: ask.worms, from: step.from ?? ['fremen'],
+            // THE DEADLINE COMES FROM THE STEP, which got it from this request.
+            // Nothing recomputes it later: one moment, stamped once.
+            closesAt: step.closesAt,
+          },
+          // The seat the game is waiting on, which is public on purpose: six
+          // people round a table can all see who is thinking.
+          awaiting: 'fremen',
+        },
+        p_secrets: {},
+        p_decks: { 'spice-blow': { carry: step.carry, seed, resumes } },
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      // The ask, and nothing from the carry.
+      return json({
+        awaiting: 'fremen', pile: ask.pile, worms: ask.worms,
+        closesAt: step.closesAt, version: data[0].version,
+      })
+    }
+
+    const out = (step.result ?? {}) as {
+      deck: SpiceCardRow[]; discardA: SpiceCardRow[]; discardB: SpiceCardRow[]
+      forces: ForceRow[]; spiceOnBoard: Record<string, number>
+      a?: unknown; b?: unknown; nexus?: boolean
+      blockedByStorm?: unknown; devouredByFremen?: unknown
+    }
+    return await commitBlow({
+      turn,
+      spiceDeck: publicSpiceDeck({ deck: out.deck, discardA: out.discardA, discardB: out.discardB }),
+      spiceOnBoard: out.spiceOnBoard,
+      // THE SURVIVORS, returned by the phase rather than filtered here. The
+      // carry has been to the database and back, so nothing in toTanks is
+      // identical to anything in state.forces and a filter on it would remove
+      // nothing at all — every devoured stack back on its feet.
+      forces: out.forces,
+      deck: out.deck,
+      said: {
+        nexus: out.nexus,
+        blockedByStorm: out.blockedByStorm,
+        devouredByFremen: out.devouredByFremen,
+      },
+    })
+  }
 
   switch (action.type) {
     // ── Open the charity window ──────────────────────────────────────────────
@@ -276,6 +422,11 @@ Deno.serve(async req => {
     // runs (npm run build:edge), so a worm devours the same stacks on both
     // machines. What is here is the part only a server can do: hold the order,
     // and decide what is said about it.
+    //
+    // THE PHASE CAN STOP. In the advanced game, worms after the first in a pile
+    // are the Fremen's to place, so pile A resolves, they place what it handed
+    // back, and only then is pile B revealed — per pile, because a discard pile
+    // is one blow. That pause is data: see publishBlowStep below.
     case 'SPICE_BLOW': {
       if (state.phase !== 'Spice Blow and Nexus') {
         return json({ error: 'the turn is not at the spice blow', code: 'wrong-phase' }, 409)
@@ -288,6 +439,11 @@ Deno.serve(async req => {
       // than the game does.
       if (shown.turn === turn) {
         return json({ error: 'the blow has already been turned this turn', code: 'already-blown' }, 409)
+      }
+      // AND NOT WHILE ONE IS HALF-DONE. A blow begun again mid-pause would draw
+      // from the pre-pause deck and strand the carry holding the real one.
+      if (state.spiceBlow) {
+        return json({ error: 'the blow is waiting on the Fremen', code: 'blow-in-progress' }, 409)
       }
 
       const { data: deckRows } = await admin
@@ -306,113 +462,121 @@ Deno.serve(async req => {
 
       const forces = (state.forces ?? []) as ForceRow[]
       const spiceOnBoard = (state.spiceOnBoard ?? {}) as Record<string, number>
-      const advanced = state.mode === 'advanced'
       const fremenInPlay = Object.prototype.hasOwnProperty.call(seatOfFaction, 'fremen')
-      const rng = seededRng(seed + 1)
 
-      let nextDeck: SpiceCardRow[]
-      let discardA: SpiceCardRow[]
-      let discardB: SpiceCardRow[]
-      let owedToFremen: number
-      let toTanks: ForceRow[]
-      let placed: unknown
-      let blockedByStorm: unknown
-      let devoured: unknown[]
-      let spiceAfter: Record<string, number>
-
-      try {
-        if (advanced) {
-          // TWO PILES ARE THE ADVANCED GAME'S STRUCTURE, not a detail. Resolving
-          // one of them would leave discardB permanently empty, which is the
-          // same class of bug as the count that never moved.
-          const out = resolveDoubleSpiceBlow({
+      // ── the advanced game: two piles, and a stop between them ────────────
+      if (state.mode === 'advanced') {
+        let step
+        try {
+          step = beginDoubleSpiceBlow({
             deck, discardA: shown.discardA ?? [], discardB: shown.discardB ?? [],
             forces, spiceOnBoard, storm: state.storm as number,
-            firstTurn: turn <= 1, fremenInPlay, rng,
+            firstTurn: turn <= 1, fremenInPlay, rng: seededRng(seed),
+            closesAt: now + WORM_SECONDS * 1000,
           })
-          nextDeck = out.deck
-          discardA = out.discardA
-          discardB = out.discardB
-          owedToFremen = out.wormsForFremenToPlace
-          toTanks = out.toTanks
-          placed = [out.a.placed, out.b.placed].filter(Boolean)
-          blockedByStorm = out.blockedByStorm
-          devoured = [...out.a.devoured, ...out.b.devoured, ...out.devouredByFremen]
-          // The double blow works the board out itself, across both piles and
-          // any Fremen worms, because doing it by hand means applying two
-          // placements and any number of devours in the right order.
-          spiceAfter = out.spiceOnBoard
-        } else {
-          const out = resolveSpiceBlow({
-            deck, discard: shown.discardA ?? [], forces,
-            mode: 'basic', fremenInPlay, spiceOnBoard,
-            storm: state.storm as number, firstTurn: turn <= 1, rng,
-          })
-          nextDeck = out.deck
-          discardA = out.discard
-          discardB = []
-          owedToFremen = out.wormsForFremenToPlace
-          toTanks = out.toTanks
-          placed = out.placed
-          blockedByStorm = out.blockedByStorm
-          devoured = out.devoured
-          // SET, not add, and the devoured lose theirs first. One call, because
-          // doing it by hand is where the add-versus-set bug lived.
-          spiceAfter = applyBlowToBoard(spiceOnBoard, out)
+        } catch (e) {
+          return json({ error: String(e), code: 'blow-failed' }, 409)
         }
+        return await publishBlowStep(step, turn, seed, 0)
+      }
+
+      // ── the basic game: one pile, and it cannot stop ─────────────────────
+      // Placing worms is a Fremen ADVANCED advantage — resolveSpiceBlow only
+      // counts them when mode is 'advanced' — so a basic blow runs to the end
+      // by construction rather than by hoping.
+      let out
+      try {
+        out = resolveSpiceBlow({
+          deck, discard: shown.discardA ?? [], forces,
+          mode: 'basic', fremenInPlay, spiceOnBoard,
+          storm: state.storm as number, firstTurn: turn <= 1, rng: seededRng(seed),
+        })
       } catch (e) {
         return json({ error: String(e), code: 'blow-failed' }, 409)
       }
-
-      // NOT WIRED, AND SAID SO RATHER THAN DECIDED. Worms after the first in a
-      // pile are the Fremen's to place, and the rule is that they CAN be placed
-      // — declining is legal. So a server that resolves straight through is not
-      // making a safe default, it is playing a seat's turn for them and calling
-      // the result the rules. resolveDoubleSpiceBlow says as much in its own
-      // docstring: it is the shortcut for callers with nobody to ask.
-      //
-      // Refused BEFORE the write, so the deck is untouched and the same blow
-      // can be turned again once the pause protocol exists — the auction
-      // already has the shape it needs (awaiting/answer).
-      if (owedToFremen > 0 && fremenInPlay) {
-        return json({
-          error: `${owedToFremen} worm(s) are the Fremen's to place, and this endpoint cannot ask them yet`,
-          code: 'fremen-worms-unwired',
-        }, 409)
-      }
-
-      // THE PROJECTION, not a hand-written count. The deck goes in and a number
-      // comes out; that asymmetry is the boundary this endpoint exists to hold.
-      const spiceDeck = {
-        ...publicSpiceDeck({ deck: nextDeck, discardA, discardB }),
+      // Identity is sound HERE and only here: toTanks holds the very objects
+      // this same request parsed out of state.forces. The advanced path cannot
+      // do this, because its carry has been to the database and back — see the
+      // note on DoubleBlowOutcome.forces.
+      const eaten = new Set(out.toTanks)
+      return await commitBlow({
         turn,
+        spiceDeck: publicSpiceDeck({ deck: out.deck, discardA: out.discard, discardB: [] }),
+        // SET, not add, and the devoured lose theirs first. One call, because
+        // doing it by hand is where the add-versus-set bug lived.
+        spiceOnBoard: applyBlowToBoard(spiceOnBoard, out),
+        forces: forces.filter(f => !eaten.has(f)),
+        deck: out.deck,
+        said: { placed: out.placed, blockedByStorm: out.blockedByStorm, devoured: out.devoured },
+      })
+    }
+
+    // ── The Fremen put their worms down ──────────────────────────────────────
+    // The answer half of the pause. Worms after the first in a pile are theirs,
+    // and the rule says they CAN be placed — so declining is legal and an empty
+    // list is how it is said. Nothing else may answer for them, and nothing here
+    // decides on their behalf.
+    case 'PLACE_WORMS': {
+      const pause = state.spiceBlow as SpiceBlowPauseRow | undefined
+      if (!pause) return json({ error: 'no worms are waiting to be placed', code: 'no-pause' }, 409)
+
+      // THE DEADLINE DECIDES WHO ANSWERS. Before it, the worms are the Fremen's
+      // and nobody else may speak for them. After it, silence has already said
+      // "declined" and any seat may push the phase along — the same rule
+      // CLOSE_CHARITY follows, so a match does not hang on whoever happens to
+      // be looking at the right screen.
+      //
+      // Declining costs them nothing that was theirs: the rule says the worms
+      // CAN be placed. A deadline would not be safe on a phase where doing
+      // nothing is not a legal move.
+      const expired = pause.closesAt != null && now >= pause.closesAt
+
+      // WHOSE DECISION IT IS, from the token. myFaction comes out of
+      // match_players keyed on the caller's user id, so this cannot be claimed
+      // by a payload — the same reason the acting seat is never in the body.
+      if (!expired && myFaction !== 'fremen') {
+        return json({ error: 'only the Fremen place these worms', code: 'not-your-decision' }, 403)
       }
 
-      const eaten = new Set(toTanks)
-      const { data, error } = await admin.rpc('apply_match_write', {
-        p_match_id: matchId,
-        p_expected_version: match.version,
-        // ONE WRITE for the board and the deck. A blow committed without the
-        // spice it placed is a card turned for nothing; spice placed without
-        // the shortened deck deals the same card twice.
-        p_state: {
-          ...state,
-          spiceDeck,
-          forces: forces.filter(f => !eaten.has(f)),
-          spiceOnBoard: spiceAfter,
-        },
-        p_secrets: {},
-        // The ORDER parks where nobody can read it. Everything the table learns
-        // about this deck is the projection above.
-        p_decks: { spice: nextDeck },
-      })
-      if (error) return json({ error: error.message }, 500)
-      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      const { data: deckRows } = await admin
+        .from('match_decks').select('deck, cards').eq('match_id', matchId)
+      const piles = Object.fromEntries((deckRows ?? []).map(r => [r.deck, r.cards]))
+      const held = piles['spice-blow'] as BlowCarryRow | undefined
+      if (!held?.carry) {
+        // The public pause says one thing and the parked continuation says
+        // another. Refuse rather than starting a new blow over the top of it:
+        // the deck order is in there, and inventing a replacement would deal
+        // cards this match has already turned.
+        return json({ error: 'the paused blow could not be found', code: 'carry-missing' }, 500)
+      }
 
-      // What HAPPENED, which is public — these are cards turned face up and
-      // forces removed from a board everyone is looking at. What is left in the
-      // deck is in the projection; its order is in neither.
-      return json({ placed, blockedByStorm, devoured, spiceDeck, version: data[0].version })
+      // AND WHAT THE ANSWER IS. Past the deadline the answer is the default,
+      // whoever asked and whatever they sent — including the Fremen themselves,
+      // whose time is up. Honouring a late placement would make the deadline
+      // advisory, and a window that only sometimes shuts is not a window.
+      const at = expired ? [] : (Array.isArray(action.at) ? action.at as string[] : [])
+      let step
+      try {
+        // A DISTINCT STREAM PER RESUMPTION, and a reproducible one. The rng is
+        // not in the carry — it cannot be, being a function — so the caller
+        // supplies it, and supplying `seededRng(seed)` again would replay pile
+        // A's numbers for pile B. Offsetting by the number of answers so far
+        // keeps every resumption reproducible from (seed, resumes) alone, which
+        // is what replaying this turn later needs.
+        step = placeFremenWorms(
+          held.carry, at, seededRng(held.seed + held.resumes + 1),
+          // The NEXT pause gets a fresh window. Carrying one deadline across
+          // both piles would give the Fremen less time for the second decision
+          // than the first, for no reason anyone could explain.
+          now + WORM_SECONDS * 1000,
+        )
+      } catch (e) {
+        // placeFremenWorms throws on more worms than were offered and on a
+        // territory that does not exist. Both are the caller's error and
+        // neither writes anything.
+        return json({ error: String(e), code: 'bad-placement' }, 409)
+      }
+      return await publishBlowStep(step, pause.turn, held.seed, held.resumes + 1)
     }
 
     // ── Start the auction ────────────────────────────────────────────────────
