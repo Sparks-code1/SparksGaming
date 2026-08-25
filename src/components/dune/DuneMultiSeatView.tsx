@@ -19,23 +19,32 @@ import { startMultiSeat, seatLoginsFromEnv } from '@/dev/multiSeat'
 import type { SeatSession } from '@/dev/multiSeat'
 import { DuneGameScreen } from './DuneGameScreen'
 import { DevSeatSwitcher } from './DevSeatSwitcher'
+import CharityPanel from './CharityPanel'
+import type { CharityWindow } from '@/lib/dune/charity'
 import type { ChatMessage } from './ChatPanel'
 
 const PALE = '#f0e2bb'
 const SERIF = "Georgia, 'Times New Roman', serif"
 
 /**
- * The public state, until the shared row is wired here too.
+ * What to draw before the row arrives.
  *
- * The harness's job is the SECRETS side — several sessions, each seeing only
- * its own. The public row is one record everybody gets identically, so it is
- * not what needed proving and is left as a fixture rather than half-subscribed.
+ * A FALLBACK now, not the story. This was the whole public side of the harness,
+ * on the argument that the shared row is identical for everyone and so was not
+ * what needed proving. That held right up until the harness could ACT: a seat
+ * that posts an action and watches a fixture cannot tell a working round trip
+ * from a broken one, and `remaining: 21` here was the literal permanent
+ * "21 LEFT" the deck area kept showing.
  */
 const PUBLIC_FIXTURE: DuneGameState = {
   storm: 'sector-4', turn: 1, phase: 'Bidding', shieldWall: 'intact', mode: 'advanced',
   spiceDeck: { remaining: 21, discardA: [], discardB: [] },
   players: [], forces: [], spiceOnBoard: {}, awaiting: null,
 }
+
+/** The public row carries fields the screen's type does not name — the charity
+ *  window among them, which is public because who has claimed is on the table. */
+type PublicRow = DuneGameState & { charity?: CharityWindow }
 
 function Notice({ children }: { children: React.ReactNode }) {
   return (
@@ -53,6 +62,8 @@ export default function DuneMultiSeatView() {
   const [sessions, setSessions] = useState<SeatSession[]>([])
   const [active, setActive] = useState<FactionId | null>(logins[0]?.faction ?? null)
   const [now, setNow] = useState(() => Date.now())
+  const [publicRow, setPublicRow] = useState<PublicRow | null>(null)
+  const [log, setLog] = useState<string[]>([])
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
@@ -63,6 +74,39 @@ export default function DuneMultiSeatView() {
     if (!matchId || logins.length === 0) return
     return startMultiSeat(matchId, logins, setSessions)
   }, [matchId, logins])
+
+  /**
+   * The shared row, read and then watched.
+   *
+   * ON ANY SEAT'S CLIENT, deliberately: matches.state is public, so every
+   * session sees the identical row and it does not matter which one asks. That
+   * is the opposite of the secrets channel, where WHICH session asks is the
+   * entire mechanism — and keeping the two visibly different here is worth more
+   * than sharing one code path between them.
+   *
+   * Deliberately simpler than lib/matchSync: no backoff, no poll, no action
+   * feed. That module is typed to Risk's GameState and giving it a second game
+   * is a change to make on purpose rather than in passing, and this is a dev
+   * harness on a local machine.
+   */
+  const readyClient = sessions.find(s => s.userId)?.client
+  useEffect(() => {
+    if (!matchId || !readyClient) return
+    let live = true
+    const take = (row: unknown) => {
+      const state = (row as { state?: PublicRow } | null)?.state
+      if (live && state) setPublicRow(state)
+    }
+    void readyClient.from('matches').select('state').eq('id', matchId).maybeSingle()
+      .then(({ data }) => take(data))
+    const channel = readyClient
+      .channel(`dune-harness:${matchId}:${Math.random().toString(36).slice(2, 10)}`)
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'matches', filter: `id=eq.${matchId}` },
+        payload => take(payload.new))
+      .subscribe()
+    return () => { live = false; void readyClient.removeChannel(channel) }
+  }, [matchId, readyClient])
 
   if (logins.length === 0) {
     return (
@@ -92,11 +136,12 @@ export default function DuneMultiSeatView() {
   }
 
   const mine = sessions.find(s => s.login.faction === active) ?? null
+  const say = (line: string) => setLog(l => [...l.slice(-6), line])
 
   return (
     <>
       <DuneGameScreen
-        state={PUBLIC_FIXTURE}
+        state={publicRow ?? PUBLIC_FIXTURE}
         seat={active}
         // ONE SEAT'S ROW, from that seat's own session. The screen has no way to
         // reach the others: they are behind different clients entirely.
@@ -104,6 +149,37 @@ export default function DuneMultiSeatView() {
         chat={[] as ChatMessage[]}
         now={now} />
       <DevSeatSwitcher sessions={sessions} active={active} onPick={setActive} />
+
+      {/* DRIVING, not just watching.
+          The panel posts through THIS SEAT'S client, so switching seats above
+          changes who the server thinks is claiming — without any field in the
+          payload saying so, and without this page holding anything the seat's
+          own browser would not. That is the whole point of the harness: six
+          real sessions, and the acting one is whichever token is presented. */}
+      <div style={{
+        position: 'fixed', left: 12, bottom: 12, width: 320, zIndex: 40,
+        background: '#0d1220ee', color: PALE, border: '1px solid #ffffff22',
+        borderRadius: 8, padding: 10, font: `12px ${SERIF}`,
+      }}>
+        {/* NO CLIENT, NO PANEL. dispatchDuneAction falls back to the app's own
+            session when none is given — right for the app, wrong here: a seat
+            still signing in would post as whoever this browser happens to be,
+            and the action would succeed under the wrong seat rather than fail.
+            The one case where acting as the wrong seat is possible is the one
+            case this must not reach. */}
+        {mine?.client
+          ? <CharityPanel
+              say={say}
+              matchId={matchId}
+              client={mine.client}
+              charity={publicRow?.charity ?? null} />
+          : <p style={{ margin: 0, opacity: 0.7 }}>
+              {mine ? `${mine.login.faction} is still signing in…` : 'pick a seat to act as'}
+            </p>}
+        <div style={{ marginTop: 8, opacity: 0.7, lineHeight: 1.45 }}>
+          {log.map((line, i) => <div key={i}>{line}</div>)}
+        </div>
+      </div>
     </>
   )
 }
