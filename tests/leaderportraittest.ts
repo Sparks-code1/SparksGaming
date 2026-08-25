@@ -36,12 +36,20 @@ const files = readdirSync(DIR).filter(f => f.endsWith('.png'))
 /**
  * Artwork that deliberately matches no leader.
  *
- * A FACTION'S NAMESAKE IS NOT ONE OF ITS LEADERS. The Baron has no disc in
- * Dune — he is the Harkonnen player — and the Emperor is the same case: the
- * Emperor's five are Hasimir Fenring, Captain Aramsham, Caid, Burseg and
- * Bashar, and he is none of them. Edric is a Guild navigator and not one of
- * the Guild's five either; he is held for something later. All three are kept
- * for screens that do not exist yet.
+ * A FACTION'S OWN FIGURE IS NOT ONE OF ITS LEADERS, and three of these are
+ * that. The Baron is the Harkonnen player and has no disc; the Emperor is the
+ * same, his five being Hasimir Fenring, Captain Aramsham, Caid, Burseg and
+ * Bashar; and Reverend Mother Mohiam is the Bene Gesserit's, theirs being
+ * Mother Ramallo, Wanna Yueh, Margot Lady Fenring, Princess Irulan and Alia.
+ * Each is the person their faction IS, which is exactly why none of them takes
+ * a disc and fights.
+ *
+ * EDRIC IS THE ODD ONE OUT, and the distinction is worth keeping rather than
+ * flattening into "not a leader". He is a Guild navigator — not the Guild's
+ * own figure either, that being the Guild Representative, who IS one of their
+ * five and does have a portrait. Edric is simply held for something later.
+ *
+ * All four are kept for screens that do not exist yet.
  *
  * NAMED ONE BY ONE, not waved through by a pattern. Each entry is a claim that
  * somebody looked at that file and decided it belongs to nobody — which is the
@@ -49,10 +57,29 @@ const files = readdirSync(DIR).filter(f => f.endsWith('.png'))
  * the folder unregistered and nothing says whether that was meant. A second
  * stray file still fails, because the list is exact.
  */
-const NOT_A_LEADER = ['Baron.png', 'Edric.png', 'Emperor.png']
+const NOT_A_LEADER = ['Baron.png', 'Edric.png', 'Emperor.png', 'Mother_Mohiam.png']
 
 const everyLeader = FACTION_IDS.flatMap(id =>
   (factionById(id)?.leaders ?? []).map(l => ({ ...l, faction: id })))
+
+// ── the exclusions mean something ─────────────────────────────────────────
+// The list is enumerated one by one so each entry is a claim somebody made
+// about a file. That is only worth anything while every entry is doing work: a
+// name whose file has gone, or a name that is ALSO registered as a leader's
+// portrait, is an entry that excludes nothing and quietly makes the list
+// longer and less trustworthy.
+//
+// Sabotage found the second case — adding a registered portrait to the list
+// changed no outcome, because a registered file never appears in the
+// pointing-at-nobody list to be excluded from in the first place.
+{
+  const missing = NOT_A_LEADER.filter(f => !files.includes(f))
+  check('every excluded file is actually there', missing, [])
+
+  const registered = new Set(Object.values(LEADER_PORTRAITS).map(p => p.src.split('/').pop()))
+  const both = NOT_A_LEADER.filter(f => registered.has(f))
+  check('...and none of them is a registered portrait too', both, [])
+}
 
 // ── the table points at files that exist ──────────────────────────────────
 {
