@@ -43,10 +43,35 @@ export interface ChatMessage {
   text: string
   /** Epoch ms. Injected like every other clock in this codebase. */
   at: number
+  /**
+   * The one seat this line is for, or absent for the whole table.
+   *
+   * FOR THINGS THAT SAY SOMETHING ABOUT A SEAT'S HIDDEN STATE. "Not eligible
+   * for charity" is the case that forced it: it is a sentence about how much
+   * spice somebody has, and putting it in front of the table hands out exactly
+   * what the three-store split exists to withhold. Announcing that they claimed
+   * is public — the claim is; what it was worth, and why it was refused, is not.
+   *
+   * A NOTE ON WHERE THESE MAY COME FROM. A private line must never arrive
+   * through matches.state, because that row reaches every client and marking a
+   * message private does not make the transport private. These are written
+   * locally, by the seat that made the request, out of the response it received
+   * — which only it received. The field says who may SEE it; it is not a
+   * delivery mechanism, and rendering is the last place to enforce privacy
+   * rather than the first.
+   */
+  to?: FactionId
 }
 
 export interface ChatPanelProps {
   messages: readonly ChatMessage[]
+  /**
+   * Which seat is reading, so private lines can be kept from everyone else.
+   *
+   * Null for a spectator, who sees only the public ones — which is right: a
+   * spectator has no hidden state and is entitled to nobody else's.
+   */
+  seat?: FactionId | null
   collapsed: boolean
   onToggle(): void
   /** Absent for a spectator, who may read but not speak. */
@@ -55,15 +80,34 @@ export interface ChatPanelProps {
   unread?: number
 }
 
-export function ChatPanel({ messages, collapsed, onToggle, onSend, unread = 0 }: ChatPanelProps) {
+/**
+ * What this reader may see.
+ *
+ * Exported so the filtering can be tested directly rather than inferred from
+ * rendered markup, and so the unread count can be taken from the same list the
+ * panel shows — a badge counting lines the reader will never find is worse than
+ * no badge.
+ */
+export function visibleTo(
+  messages: readonly ChatMessage[], seat: FactionId | null | undefined,
+): ChatMessage[] {
+  // ABSENT `to` IS PUBLIC. Written this way round deliberately: a message is
+  // shown unless it names somebody else, so a line that forgets the field is
+  // public rather than invisible. The opposite default would hide game
+  // announcements the moment anyone forgot to mark them.
+  return messages.filter(m => m.to == null || m.to === seat)
+}
+
+export function ChatPanel({ messages, seat, collapsed, onToggle, onSend, unread = 0 }: ChatPanelProps) {
   const [draft, setDraft] = useState('')
+  const shown = visibleTo(messages, seat)
   const foot = useRef<HTMLDivElement | null>(null)
 
   // Newest at the bottom, and the view follows it. Only while open — scrolling
   // a panel nobody can see is how a collapsed panel steals the page's scroll.
   useEffect(() => {
     if (!collapsed) foot.current?.scrollIntoView({ block: 'end' })
-  }, [messages.length, collapsed])
+  }, [shown.length, collapsed])
 
   if (collapsed) {
     return (
@@ -117,11 +161,23 @@ export function ChatPanel({ messages, collapsed, onToggle, onSend, unread = 0 }:
         {messages.length === 0 && (
           <p style={{ opacity: 0.5, margin: 0 }}>Nothing said yet.</p>
         )}
-        {messages.map(m => (
-          <p key={m.id} style={{ margin: '0 0 7px' }}>
+        {shown.map(m => (
+          <p key={m.id} data-private={m.to ? 'true' : undefined}
+            style={{
+              margin: '0 0 7px',
+              // MARKED AS PRIVATE WHERE IT IS READ. A line only you can see,
+              // sitting in the same column as lines everyone can see, is one
+              // people answer out loud — so it says so rather than relying on
+              // the reader remembering which is which.
+              ...(m.to ? {
+                borderLeft: '2px solid #c9542a', paddingLeft: 7,
+                background: '#c9542a12',
+              } : null),
+            }}>
             <b style={{ color: m.faction ? FACTION_LOOK[m.faction].colour : PALE }}>
               {m.faction ? FACTION_LOOK[m.faction].name : m.from ?? 'Game'}
             </b>
+            {m.to && <span style={{ opacity: 0.6 }}> · only you</span>}
             {'  '}
             <span style={{ opacity: 0.92 }}>{m.text}</span>
           </p>
