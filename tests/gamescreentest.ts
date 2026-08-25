@@ -19,8 +19,9 @@ import { PlayerHud } from '@/components/dune/PlayerHud'
 import { OwnStrip, PrivateView, FactionCard, ruleLabel } from '@/components/dune/OwnStrip'
 import { CARD_THUMB, CARD_ZOOM } from '@/components/dune/OwnStrip'
 import { ChatPanel, visibleTo } from '@/components/dune/ChatPanel'
+import { CharityModal } from '@/components/dune/CharityModal'
 import type { ChatMessage } from '@/components/dune/ChatPanel'
-import { PhaseTimer, PHASE_TIMER_CENTRE, PHASE_TIMER_HALF_WIDTH } from '@/components/dune/PhaseTimer'
+import { PhaseTimer, PHASE_TIMER_CENTRE, PHASE_TIMER_HALF_WIDTH, PHASE_TIMER_EXTENT } from '@/components/dune/PhaseTimer'
 import type { PhaseTimerProps } from '@/components/dune/PhaseTimer'
 import { flattenPath } from './lib/svgPath'
 import { hudRows, pairAllies, allyOf, strongholdsHeld } from '@/lib/dune/hud'
@@ -881,11 +882,67 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   })
   check('an open window puts a clock on the board',
     running.includes('data-layer="phase-timer"'), true)
-  check('...counting the seconds left', running.includes('9.0s'), true)
+  check('...counting the seconds left', running.includes('9s'), true)
   // AND NOTHING WHEN NOTHING IS RUNNING, so a stale clock cannot sit at zero
   // implying a phase that has stalled.
   check('no window, no clock',
     draw({}).includes('data-layer="phase-timer"'), false)
+}
+
+// ── the modal promises what the rule pays ─────────────────────────────────
+// Reading that it CALLS charityGrant is not the same as it showing the answer.
+// A hard-coded 2 satisfies every source check and tells a seat holding one
+// spice that it may claim two.
+{
+  const modal = (spice: number, faction: FactionId) =>
+    renderToStaticMarkup(createElement(CharityModal, {
+      faction, own: { spice }, onClaim: () => {}, onPass: () => {},
+    }))
+
+  check('a seat one short is offered exactly one', modal(1, 'atreides' as FactionId).includes('<b>1</b>'), true)
+  check('...and an empty purse the full two', modal(0, 'atreides' as FactionId).includes('<b>2</b>'), true)
+  // THE BENE GESSERIT GET TWO WHATEVER THEY HOLD, which is the case a
+  // hard-coded number would accidentally get right — so it is checked beside
+  // one it would get wrong.
+  check('...while a rich Bene Gesserit is still offered two',
+    modal(9, 'bene-gesserit' as FactionId).includes('<b>2</b>'), true)
+
+  // CLAIM AND PASS, both, for a seat that may claim. The pass button used to be
+  // checked by looking for onPass — which the ineligible branch's Close button
+  // also uses, so removing the real one changed nothing.
+  const eligible = modal(0, 'atreides' as FactionId)
+  check('an eligible seat is offered a claim', eligible.includes('Claim CHOAM'), true)
+  check('...and a pass', /<button[^>]*>Pass<\/button>/.test(eligible), true)
+
+  const rich = modal(9, 'atreides' as FactionId)
+  check('a seat that cannot claim is offered no claim', rich.includes('Claim CHOAM'), false)
+  check('...and is told why', rich.includes('nothing to claim'), true)
+}
+
+// ── and the screen actually puts it on the board ──────────────────────────
+// The modal rendering correctly is not the same as the screen rendering it.
+{
+  const open = {
+    ...base.state, phase: 'CHOAM Charity',
+    charity: { expiresAt: base.now + 9_000, claims: [], turn: 1 },
+  } as DuneGameState
+
+  const withDecision = draw({
+    state: open,
+    charity: { onClaim: () => {}, onPass: () => {} },
+  })
+  check('an open window with a decision to make draws the modal',
+    withDecision.includes('data-layer="charity-modal"'), true)
+
+  // NO HANDLERS, NO MODAL — which is what a spectator and the preview get, and
+  // what a seat that has already answered gets once the caller withdraws them.
+  check('...and none without handlers',
+    draw({ state: open }).includes('data-layer="charity-modal"'), false)
+  // NO WINDOW, NO MODAL, even with handlers: the modal covers the board, so
+  // one left up outside the phase hides the game behind a dialog.
+  check('...nor outside the phase',
+    draw({ charity: { onClaim: () => {}, onPass: () => {} } })
+      .includes('data-layer="charity-modal"'), false)
 }
 
 // ── the clock is printed between the two off-board boxes ──────────────────
@@ -912,10 +969,19 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   // Centred in the gap, not merely inside it — within a couple of units.
   check('...centred between them',
     Math.abs(x - (tanks.x1 + deckBox.x0) / 2) < 2, true)
-  // And on the same band as the boxes, so it reads as part of that row.
-  check('...on the boxes\' own band',
-    y > tanks.y0 && y < tanks.y1, true)
-  check('...vertically centred in it', Math.abs(y - (tanks.y0 + tanks.y1) / 2) < 2, true)
+
+  // THE WHOLE BLOCK, not just the centre point. A centre inside the band says
+  // nothing about a label reaching out of the top of it, and the clock is
+  // deliberately no longer centred vertically — it sits low, with the boxes,
+  // which read as a row along the bottom of the board.
+  check('the block sits inside the boxes\' band',
+    y - PHASE_TIMER_EXTENT.above > tanks.y0 && y + PHASE_TIMER_EXTENT.below < tanks.y1, true)
+  // WITH ROOM TO SPARE. "Below the midpoint" was satisfied by 0.05 of a unit
+  // — the flattened path puts the midpoint at 990.45, so the old centre of
+  // 990.5 passed a check meant to say the clock had moved DOWN. A margin is
+  // what makes it mean that.
+  check('...low in it, level with the boxes rather than floating above them',
+    y > (tanks.y0 + tanks.y1) / 2 + 15, true)
   // The bar has to fit in the gap it is drawn in.
   check('the room it claims fits between them',
     PHASE_TIMER_HALF_WIDTH * 2 <= deckBox.x0 - tanks.x1, true)
@@ -931,11 +997,26 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   // permanent 0.0s reads as a stuck phase.
   check('no deadline draws nothing', at({ closesAt: null }), '')
   check('a running window draws the phase', at({ closesAt: 6_000 }).includes('CHOAM CHARITY'), true)
-  check('...and the seconds left', at({ closesAt: 6_000 }).includes('5.0s'), true)
+
+  // WHOLE SECONDS, because `now` arrives once a second. Tenths off a one-second
+  // tick are a lie told to one decimal place — the digit never moves, the
+  // number jumps a whole second at a time, and it reads as a stutter.
+  check('...and the seconds left', at({ closesAt: 6_000 }).includes('5s'), true)
+  check('...without a fractional part that never changes',
+    /\d\.\ds/.test(at({ closesAt: 6_000 })), false)
   check('...counted from the stamped moment, not a duration',
-    at({ closesAt: 6_000, now: 3_000 }).includes('3.0s'), true)
-  check('an expired window says so', at({ closesAt: 500 }).includes('CLOSED'), true)
-  check('...rather than a negative count', /-\d/.test(at({ closesAt: 500 })), false)
+    at({ closesAt: 6_000, now: 3_000 }).includes('3s'), true)
+  // CEILED, so any time left shows at least 1 and the count runs 15…1 rather
+  // than resting on 0 for a whole second.
+  check('...ceiled, so a part-second still reads as one',
+    at({ closesAt: 1_200 }).includes('1s'), true)
+
+  // NOTHING once it has run out. A "CLOSED" sign sat on the board until the
+  // server got round to clearing the window — a second answer to whether the
+  // phase is over, and the wrong one: the window closes when the row changes,
+  // not when this clock reaches zero.
+  check('an expired window draws nothing at all', at({ closesAt: 500 }), '')
+  check('...so no negative count either', /-\d/.test(at({ closesAt: 500 })), false)
 
   // THE BAR NEEDS THE WINDOW'S LENGTH. closesAt says when it shuts and nothing
   // about when it opened; the first version tried to derive the fraction from
@@ -944,7 +1025,7 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   check('no bar without a length', at({ closesAt: 6_000 }).includes('#c9542a'), false)
   check('a bar with one', at({ closesAt: 6_000, windowMs: 10_000 }).includes('#c9542a'), true)
   const half = at({ closesAt: 6_000, windowMs: 10_000 })
-  check('...half spent is half drawn', /width="90"/.test(half), true)
+  check('...half spent is half drawn', /width="75"/.test(half), true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

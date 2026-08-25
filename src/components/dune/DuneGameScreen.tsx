@@ -50,6 +50,7 @@ import { DuneBoard } from './DuneBoard'
 import { CHARITY_WINDOW_MS } from '@/lib/dune/charity'
 import { WORM_SECONDS } from '@/lib/dune/spiceBlow'
 import { BiddingPanel } from './BiddingPanel'
+import { CharityModal } from './CharityModal'
 import type { BiddingPanelProps } from './BiddingPanel'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import type { TreacheryCard } from '@/types/Dune/Treachery'
@@ -91,12 +92,28 @@ export interface DuneGameScreenProps {
    * — see the assembly below.
    */
   bidding?: Omit<BiddingPanelProps, 'seat' | 'spice' | 'hand' | 'revealed' | 'now'> | null
+  /**
+   * The charity decision, when this seat has one to make.
+   *
+   * HANDLERS ONLY. Whether a window is open comes from public state, and what
+   * this seat may claim comes from its own secrets — neither is passed in.
+   * What the caller supplies is what to DO, because dispatching belongs to
+   * whoever owns the session, not to a component that draws a board.
+   *
+   * Absent means no modal, which is what the preview and any spectator get.
+   */
+  charity?: {
+    onClaim(): void
+    onPass(): void
+    busy?: boolean
+    refused?: string | null
+  } | null
   /** Injected, like every clock in this codebase. */
   now: number
 }
 
 export function DuneGameScreen({
-  state, seat, own, chat, onSend, bidding = null, now,
+  state, seat, own, chat, onSend, bidding = null, charity = null, now,
 }: DuneGameScreenProps) {
   const [chatShut, setChatShut] = useState(false)
   const rows = hudRows(state)
@@ -191,6 +208,21 @@ export function DuneGameScreen({
               spice={own?.spice ?? 0}
               hand={handOf(own)}
               revealed={revealedFor(own)} />
+          )}
+
+          {/* CHARITY COVERS THE BOARD rather than dimming it, unlike the
+              auction. An auction is about a card you are spending real spice
+              on, with the board still worth reading; charity is two words and
+              a number for fifteen seconds, and the board says nothing about it.
+
+              Only while the window is actually open, and only for a seat that
+              has not already answered — `charity` is withdrawn by the caller
+              once this seat has claimed or passed. */}
+          {charity && seat && timed.charity && (
+            <CharityModal
+              faction={seat} own={own}
+              onClaim={charity.onClaim} onPass={charity.onPass}
+              busy={charity.busy} refused={charity.refused} />
           )}
         </main>
 
