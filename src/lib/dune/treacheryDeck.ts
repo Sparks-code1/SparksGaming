@@ -100,15 +100,25 @@ export function discardUnsold(discard: readonly string[], unsold: readonly strin
  * mulberry32 and Fisher–Yates, both written out rather than pulled in — this
  * bundle has to run on Deno with nothing polyfilled, and a dependency here would
  * be a dependency in the edge function.
+ *
+ * GENERIC IN THE CARD. It shuffled string[] while the treachery deck was the
+ * only seeded deck on the server; the spice deck's cards are objects, and the
+ * alternatives were both worse than widening this — a second mulberry32 beside
+ * it is the fork this whole bundle exists to prevent, and reaching into Risk's
+ * reducer for its seeded rng would tie the Dune endpoint to Risk's rules.
  */
-export function shuffleWithSeed(seed: number, cards: readonly string[]): string[] {
+export function seededRng(seed: number): () => number {
   let a = (seed >>> 0) || 1
-  const next = () => {
+  return () => {
     a = (a + 0x6D2B79F5) >>> 0
     let t = Math.imul(a ^ (a >>> 15), 1 | a)
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
+}
+
+export function shuffleWithSeed<T>(seed: number, cards: readonly T[]): T[] {
+  const next = seededRng(seed)
   const out = [...cards]
   // Backwards, which is the version of Fisher–Yates that is uniform. The forward
   // one that looks the same is not, and the difference is invisible in a test

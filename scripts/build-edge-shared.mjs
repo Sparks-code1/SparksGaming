@@ -82,6 +82,18 @@ const TARGETS = [
     exportName: 'applySpiceMoves',
   },
   {
+    entry: 'src/lib/dune/spiceBlow.ts',
+    out: 'supabase/functions/_shared/duneSpiceBlow.gen.ts',
+    what: 'spice deck and blow',
+    // publicSpiceDeck is the boundary between what the server knows about the
+    // deck and what the table sees: the order goes in, a COUNT comes out. A
+    // second copy of that on the server is a second answer to "how many are
+    // left", and the two disagree the first time either is fixed — silently,
+    // because a wrong count looks exactly like a right one.
+    mustExport: /export\s*\{[^}]*publicSpiceDeck/,
+    exportName: 'publicSpiceDeck',
+  },
+  {
     entry: 'src/lib/stateView.ts',
     out: 'supabase/functions/_shared/stateView.gen.ts',
     what: 'state projections',
