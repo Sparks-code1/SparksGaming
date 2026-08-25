@@ -117,6 +117,18 @@ function Tally({ value, word, title }: { value: number | string; word: string; t
 }
 
 /**
+ * A data key as a label a person can read.
+ *
+ * The keys are camelCase and were printed with toUpperCase alone, which ran the
+ * words together: KWISATZHADERACH, SPICEBLOW, SHAIHULUD, CAPTUREDLEADERS. The
+ * labels are the only thing telling a player which rule they are looking at, so
+ * a label that has to be decoded is worse than no label.
+ */
+export function ruleLabel(key: string) {
+  return key.replace(/([a-z])([A-Z])/g, '$1 $2').toUpperCase()
+}
+
+/**
  * The card has a back, and everything the advanced game adds is on it.
  *
  * Two entries used to be dropped outright: the Karama power, because it is
@@ -185,7 +197,7 @@ export function FactionCard({ faction }: { faction: Faction }) {
               </p>
             : advanced.map(([key, text]) => (
                 <p key={key + text.slice(0, 12)} style={{ margin: '0 0 6px' }}>
-                  <span style={{ opacity: 0.5, letterSpacing: 0.6 }}>{key.toUpperCase()} </span>
+                  <span style={{ opacity: 0.5, letterSpacing: 0.6 }}>{ruleLabel(key)} </span>
                   <span style={{ opacity: 0.9 }}>{text}</span>
                 </p>
               ))
@@ -203,7 +215,7 @@ export function FactionCard({ faction }: { faction: Faction }) {
 
         {[...rules].map(([phase, text]) => (
           <p key={phase + text.slice(0, 12)} style={{ margin: '0 0 5px' }}>
-            <span style={{ opacity: 0.5, letterSpacing: 0.6 }}>{phase.toUpperCase()} </span>
+            <span style={{ opacity: 0.5, letterSpacing: 0.6 }}>{ruleLabel(phase)} </span>
             <span style={{ opacity: 0.9 }}>{text}</span>
           </p>
         ))}

@@ -96,11 +96,19 @@ export const EMPEROR: Faction = {
   advanced: {
     karama:
       'You may use a Karama Card to revive up to three forces or one leader for free.',
-    general:
-      'If you are playing the advanced game, Sardaukar is in play. Your 5 starred forces, elite Sardaukar, have a '
-      + 'special fighting capability. They are worth two normal forces in battle and in taking losses against all '
-      + 'opponents except Fremen. Your starred forces are worth just one force against Fremen. They are treated as '
-      + 'one force in revival. Only one Sardaukar force can be revived per turn.',
+    // UNDER `forces`, not `general`. The card labels each entry with the key it
+    // came from, and GENERAL says nothing — where FORCES says which of these
+    // rules is the one about your soldiers. The Fremen's Fedaykin entry has
+    // always been shaped this way; this is the same rule for the same reason.
+    //
+    // The rulebook's opening clause, "If you are playing the advanced game,
+    // Sardaukar is in play", is dropped: it sits on the back of the card, which
+    // is the advanced side and says so.
+    forces:
+      'Sardaukar: Your 5 starred forces, elite Sardaukar, have a special fighting capability. They are worth two '
+      + 'normal forces in battle and in taking losses against all opponents except Fremen. Your starred forces are '
+      + 'worth just one force against Fremen. They are treated as one force in revival. Only one Sardaukar force '
+      + 'can be revived per turn.',
   },
   unsuppressable: [],
   leaders: [

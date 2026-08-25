@@ -16,7 +16,7 @@ import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { DuneGameScreen, handOf, revealedFor } from '@/components/dune/DuneGameScreen'
 import type { DuneGameScreenProps } from '@/components/dune/DuneGameScreen'
 import { PlayerHud } from '@/components/dune/PlayerHud'
-import { OwnStrip, PrivateView, FactionCard } from '@/components/dune/OwnStrip'
+import { OwnStrip, PrivateView, FactionCard, ruleLabel } from '@/components/dune/OwnStrip'
 import { CARD_THUMB, CARD_ZOOM } from '@/components/dune/OwnStrip'
 import { ChatPanel } from '@/components/dune/ChatPanel'
 import { hudRows, pairAllies, allyOf, strongholdsHeld } from '@/lib/dune/hud'
@@ -695,6 +695,77 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   }))
   check('a spectator gets no composer', watching.includes('aria-label="Message"'), false)
   check('...but still reads the table', watching.includes('Water for the dead'), true)
+}
+
+// ── the labels on a faction card can be read ─────────────────────────────
+// Each rule on the card is labelled with the DATA KEY it came from, which is
+// camelCase. Printed with toUpperCase alone those keys run together —
+// KWISATZHADERACH, SPICEBLOW, SHAIHULUD, CAPTUREDLEADERS — and the label is the
+// only thing telling a player which rule they are looking at, so one that has
+// to be decoded is worse than none.
+{
+  // The formatter, against literal expectations rather than against itself.
+  check('a two-word key becomes two words', ruleLabel('kwisatzHaderach'), 'KWISATZ HADERACH')
+  check('...spiceBlow', ruleLabel('spiceBlow'), 'SPICE BLOW')
+  check('...shaiHulud', ruleLabel('shaiHulud'), 'SHAI HULUD')
+  check('...capturedLeaders', ruleLabel('capturedLeaders'), 'CAPTURED LEADERS')
+  check('...and a one-word key is left alone', ruleLabel('karama'), 'KARAMA')
+
+  // And it is what the card actually calls. The advanced entries live on the
+  // BACK, behind useState, so a static render never reaches them — these two
+  // lines are what tie the formatter above to the labels a player sees there.
+  const strip = readFileSync('src/components/dune/OwnStrip.tsx', 'utf8')
+  check('the back labels its entries with it', strip.includes('{ruleLabel(key)} '), true)
+  check('...and the front labels its phases with it', strip.includes('{ruleLabel(phase)} '), true)
+  check('...with no raw key left printed anywhere',
+    /\{(key|phase)\.toUpperCase\(\)\}/.test(strip), false)
+
+  // The FRONT renders statically, so the real path can be checked end to end.
+  const card = (id: FactionId) =>
+    renderToStaticMarkup(createElement(FactionCard, { faction: factionById(id)! }))
+  const fremen = card('fremen')
+  check('the Fremen Shai-Hulud advantage is labelled readably',
+    fremen.includes('SHAI HULUD'), true)
+  check('...and not run together', fremen.includes('SHAIHULUD'), false)
+
+  // NO KEY LEAKS THROUGH UNSPACED on any faction's front.
+  const mashed: string[] = []
+  for (const id of ['atreides', 'harkonnen', 'emperor', 'fremen', 'guild', 'bene-gesserit'] as FactionId[]) {
+    const faction = factionById(id)
+    if (!faction) continue
+    const html = card(id)
+    for (const key of Object.keys(faction.abilities)) {
+      // Only keys with a word boundary can be mashed; the rest are one word.
+      if (!/[a-z][A-Z]/.test(key)) continue
+      if (html.includes(key.toUpperCase())) mashed.push(`${id}:${key}`)
+    }
+  }
+  check('no faction shows a run-together key', mashed, [])
+}
+
+// ── the Emperor's advanced rule says what it is ──────────────────────────
+// It sat under `general`, so the card labelled it GENERAL — a heading that
+// tells a player nothing about which of their rules they are reading. It is
+// the rule about their soldiers, and the Fremen's equivalent has always been
+// under `forces` and opened by naming itself.
+{
+  const emperor = factionById('emperor')!
+  check('the Emperor has no unlabelled prose bucket',
+    'general' in emperor.advanced, false)
+  check('...their Sardaukar rule is filed under forces',
+    typeof emperor.advanced.forces, 'string')
+  check('...and names itself in its first word',
+    emperor.advanced.forces?.startsWith('Sardaukar:'), true)
+  // The rulebook's "if you are playing the advanced game" preamble is dropped:
+  // the entry is only ever shown on the back of the card, which is the advanced
+  // side and says so.
+  check('...without restating that this is the advanced game',
+    /playing the advanced game/.test(emperor.advanced.forces ?? ''), false)
+  // The rule itself survived the move.
+  check('...and still says what a Sardaukar is worth',
+    /worth two normal forces in battle/.test(emperor.advanced.forces ?? ''), true)
+  check('...including the Fremen exception',
+    /just one force against Fremen/.test(emperor.advanced.forces ?? ''), true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
