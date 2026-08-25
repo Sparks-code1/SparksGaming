@@ -25,6 +25,7 @@ import type { FactionId } from '@/types/Dune/Faction'
 import type { GameMode, GamePhase, SectorId, SpiceDeckPublic, TerritoryId } from '@/types/Dune/Game'
 import { SeatLayer, FACTION_LOOK } from './SeatLayer'
 import { SpiceDeckArea } from './SpiceDeckArea'
+import { PhaseTimer } from './PhaseTimer'
 
 const { cx, cy } = DUNE_BOARD
 const PALE = '#f0e2bb'
@@ -87,6 +88,19 @@ export interface DuneBoardProps {
    * a networked game stalls with nobody sure whose move it is.
    */
   awaiting?: FactionId | null
+  /**
+   * When the running phase shuts, or null when nothing is timed.
+   *
+   * On the BOARD, in the band between the two off-board boxes, for the reason
+   * the awaiting ring is: that is where everyone is already looking. A deadline
+   * only the seat with the right panel open can see is a deadline the rest of
+   * the table is surprised by.
+   */
+  closesAt?: number | null
+  /** The window's full length, for the bar. See PhaseTimer. */
+  windowMs?: number
+  /** This client's clock, injected like every other. */
+  now?: number
   /**
    * The phase of the turn, marked on the board's own nine medallions.
    *
@@ -219,6 +233,7 @@ function AwaitingMark({ faction, seating }: {
 export function DuneBoard({
   storm, stacks, spice, seating, deck, mode,
   worms = [], awaiting = null, phase = null, turn = null, interactive = false, children,
+  closesAt = null, windowMs, now = 0,
 }: DuneBoardProps) {
   const [svg, setSvg] = useState<string | null>(null)
 
@@ -305,6 +320,9 @@ export function DuneBoard({
 
         {/* The spice deck and its discards, in the box on the surround. */}
         <SpiceDeckArea mode={mode} deck={deck} />
+        {/* Between the two off-board boxes, in the one band of the lower board
+            with nothing printed in it. */}
+        {phase && <PhaseTimer phase={phase} closesAt={closesAt} windowMs={windowMs} now={now} />}
 
         {worms.map(id => {
           const t = DUNE_TERRITORIES.find(x => x.id === id)
