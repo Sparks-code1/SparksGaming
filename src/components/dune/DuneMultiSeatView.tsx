@@ -19,8 +19,8 @@ import { startMultiSeat, seatLoginsFromEnv } from '@/dev/multiSeat'
 import type { SeatSession } from '@/dev/multiSeat'
 import { DuneGameScreen } from './DuneGameScreen'
 import { DevSeatSwitcher } from './DevSeatSwitcher'
-import CharityPanel from './CharityPanel'
 import { WormPlacementPanel } from './WormPlacementPanel'
+import { dispatchDuneAction } from '@/lib/dune/duneDispatch'
 import type { SpiceBlowPause } from './WormPlacementPanel'
 import type { CharityWindow } from '@/lib/dune/charity'
 import type { ChatMessage } from './ChatPanel'
@@ -66,6 +66,19 @@ export default function DuneMultiSeatView() {
   const [now, setNow] = useState(() => Date.now())
   const [publicRow, setPublicRow] = useState<PublicRow | null>(null)
   const [chat, setChat] = useState<ChatMessage[]>([])
+  const [busy, setBusy] = useState(false)
+  const [refused, setRefused] = useState<string | null>(null)
+  /**
+   * Seats that have answered charity this turn, so the modal comes down.
+   *
+   * LOCAL, and per seat. Passing sends nothing to the server — a claim
+   * declined and a claim never made are the same thing to the rules — so
+   * there is nothing to read back, and this is the only record that a seat is
+   * finished with the window. Keyed by faction because the harness switches
+   * between several in one page; a single boolean would dismiss the modal for
+   * everybody the moment one of them passed.
+   */
+  const [answered, setAnswered] = useState<Record<string, number>>({})
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
@@ -154,6 +167,48 @@ export default function DuneMultiSeatView() {
    * matches.state — that row reaches every client, and the field would be a
    * label on an envelope everyone has already opened.
    */
+  /**
+   * The charity decision for one seat, or null when it has none to make.
+   *
+   * Null when there is no window, when this seat has already answered it, or
+   * when there is no signed-in client to act as — the modal covers the board,
+   * so leaving it up for a seat with nothing to decide would hide the game
+   * behind a dialog nobody can dismiss.
+   */
+  const charityFor = (session: SeatSession | null) => {
+    const window_ = publicRow?.charity
+    if (!window_ || !session?.client) return null
+    if (answered[session.login.faction] === window_.turn) return null
+    return {
+      onClaim: () => void send(session, 'CLAIM_CHARITY'),
+      onPass: () => {
+        setAnswered(a => ({ ...a, [session.login.faction]: window_.turn }))
+        say('passed on charity.')
+      },
+      busy,
+      refused,
+    }
+  }
+
+  /** One action, as this seat, with the refusal shown rather than thrown. */
+  const send = async (session: SeatSession, type: string) => {
+    if (busy) return
+    setBusy(true)
+    setRefused(null)
+    const res = await dispatchDuneAction(matchId, { type }, { client: session.client })
+    setBusy(false)
+    if (!res.ok) {
+      setRefused(res.error?.code ?? 'refused')
+      say(`${type} refused: ${res.error?.message ?? 'unknown'}`)
+      return
+    }
+    // Answered, so the modal comes down. The board comes back on the
+    // changefeed; nothing is advanced here.
+    const turn = publicRow?.charity?.turn
+    if (turn != null) setAnswered(a => ({ ...a, [session.login.faction]: turn }))
+    say(`claimed charity (+${(res.data as { granted?: number })?.granted ?? 0}).`)
+  }
+
   const say = (line: string) => {
     const to = mine?.login.faction
     setChat(c => [...c.slice(-40), {
@@ -165,6 +220,7 @@ export default function DuneMultiSeatView() {
   return (
     <>
       <DuneGameScreen
+        charity={charityFor(mine)}
         state={publicRow ?? PUBLIC_FIXTURE}
         seat={active}
         // ONE SEAT'S ROW, from that seat's own session. The screen has no way to
@@ -180,15 +236,17 @@ export default function DuneMultiSeatView() {
           payload saying so, and without this page holding anything the seat's
           own browser would not. That is the whole point of the harness: six
           real sessions, and the acting one is whichever token is presented. */}
-      {/* TOP LEFT, not bottom. This sat at left:12/bottom:12 with zIndex 40,
-          directly over DevSeatSwitcher at left:10/bottom:10 — covering its first
-          two seat buttons, so the seats it exists to let you act as could not be
-          clicked. The switcher owns the bottom-left corner; this takes the top.
+      {/* TOP RIGHT, and small. It has been round three corners: bottom-left,
+          where it covered DevSeatSwitcher's first two seat buttons; then
+          top-left, where it sat on the chat and buried the messages this
+          harness writes there. The chat owns the left column and the switcher
+          owns the bottom of it, so what is left is the right — over the HUD,
+          which is a list of other seats and the least costly thing to cover.
 
-          Width capped to the chat column's, so it stays over that column rather
-          than reaching across the board in the middle. */}
+          It is also much smaller than it was, most of its contents having
+          become a modal over the board. */}
       <div style={{
-        position: 'fixed', left: 12, top: 12, width: 320, maxHeight: '60vh',
+        position: 'fixed', right: 12, top: 12, width: 240, maxHeight: '60vh',
         overflowY: 'auto', zIndex: 40,
         background: '#0d1220ee', color: PALE, border: '1px solid #ffffff22',
         borderRadius: 8, padding: 10, font: `12px ${SERIF}`,
@@ -212,22 +270,28 @@ export default function DuneMultiSeatView() {
             say={say} />
         )}
 
-        {mine?.client
-          ? <CharityPanel
-              say={say}
-              matchId={matchId}
-              client={mine.client}
-              charity={publicRow?.charity ?? null}
-              // ITS OWN ROW, from its own session — the same secrets the tray
-              // reads. It lets the panel answer "may I claim" without being
-              // told anything about anybody else's purse.
-              own={(mine.secrets ?? null) as DuneSecrets | null}
-              faction={mine.login.faction} />
-          : <p style={{ margin: 0, opacity: 0.7 }}>
-              {mine ? `${mine.login.faction} is still signing in…` : 'pick a seat to act as'}
-            </p>}
-        {/* The running log moved to the chat panel, where a private line can be
-            marked as one. Nothing is duplicated here. */}
+        {/* OPENING AND CLOSING ARE NOT PLAYER MOVES. Claiming and passing now
+            live in the modal over the board, where the decision belongs. What
+            is left here is the phase driving a real game would do for itself —
+            a host, or a clock — and which nothing does yet.
+
+            The running log moved to the chat, where a private line can be
+            marked as one. */}
+        {mine?.client ? (
+          <>
+            <b style={{ display: 'block', marginBottom: 6 }}>CHOAM Charity</b>
+            <button onClick={() => void send(mine, 'OPEN_CHARITY')} disabled={busy}>
+              Open window
+            </button>{' '}
+            <button onClick={() => void send(mine, 'CLOSE_CHARITY')} disabled={busy}>
+              Close window
+            </button>
+          </>
+        ) : (
+          <p style={{ margin: 0, opacity: 0.7 }}>
+            {mine ? `${mine.login.faction} is still signing in…` : 'pick a seat to act as'}
+          </p>
+        )}
       </div>
     </>
   )

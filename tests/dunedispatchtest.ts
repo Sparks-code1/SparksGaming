@@ -147,86 +147,89 @@ const bodyOf = (s: Sent) => JSON.parse(String(s.init.body))
   check('...marked as such', res.error?.code, 'network')
 }
 
-// ── the charity panel actually uses it ────────────────────────────────────
-// The helper existing is not the same as the panel calling it, and a panel that
-// still simulated everything would leave the round trip untested in the one
-// place a person can press it.
+// ── the charity decision, where it is actually made ───────────────────────
+// This used to be a corner panel that dispatched for itself. It is a modal
+// over the board now, and the split moved with it: the modal DRAWS the
+// decision and the harness SENDS it, because dispatching belongs to whoever
+// owns the session rather than to a component that draws a dialog.
 {
-  const panel = readFileSync('src/components/dune/CharityPanel.tsx', 'utf8')
-  check('the panel dispatches', panel.includes('dispatchDuneAction'), true)
-  for (const type of ['OPEN_CHARITY', 'CLAIM_CHARITY', 'CLOSE_CHARITY']) {
-    check(`...including ${type}`, panel.includes(`'${type}'`), true)
-  }
-  // AND PASSES THE CLIENT THROUGH, or the harness is back to acting as one seat.
-  check('...through the seat\'s own client', /\{ client \}/.test(panel), true)
-
-  // The seat picker is simulation-only. Live it would imply a choice that does
-  // not exist: the session decides, and offering a dropdown beside it invites
-  // exactly the "why did my claim go out as p1" confusion.
-  check('the seat dropdown is not offered in live mode',
-    /live \? \([\s\S]{0,400}\) : \([\s\S]{0,200}<select/.test(panel), true)
-
-  // THE BUTTON JUDGES ITS OWN SEAT, and only its own. This used to offer Claim
-  // to everyone on the grounds that eligibility depends on a purse the client
-  // cannot read — true of every OTHER seat, false of this one, whose spice
-  // arrives on its own secrets channel. A Claim whose only outcome is
-  // 'not-eligible' is not caution, it is a button that lies.
-  check('the panel works out its own eligibility',
-    panel.includes('isEligibleForCharity(own ?? null, faction ?? null)'), true)
-  check('...from the same rule the server pays out from',
-    panel.includes("from '@/lib/dune/charity'"), true)
-  // AND IT ASKS THE RULE RATHER THAN COMPARING A NUMBER, which is what keeps
-  // the Bene Gesserit working: they are eligible whatever they hold, so any
-  // check written as a comparison against the threshold would refuse them.
-  check('...rather than comparing spice to the threshold itself',
-    /spice\s*<=\s*CHARITY_TOPS_UP_TO|readSpice\([^)]*\)\s*[<>]/.test(panel), false)
-  // Claim OR Pass, because declining is a decision and the alternative is
-  // staring at an eligible phase until the window shuts.
-  check('an eligible seat is offered a pass as well as a claim',
-    /<button onClick=\{pass\}/.test(panel), true)
-  check('...and an ineligible one is offered no claim at all',
-    /canClaim \? \(/.test(panel), true)
-}
-
-// ── the harness drives, rather than only watching ─────────────────────────
-// The helper taking a client is the mechanism; the harness using it is the
-// point. Before this the harness could switch which seat's SECRETS fed the
-// screen and nothing else — every action still went out on the app's session,
-// so a turn could be watched from six seats and played from one.
-{
+  const modal = readFileSync('src/components/dune/CharityModal.tsx', 'utf8')
   const view = readFileSync('src/components/dune/DuneMultiSeatView.tsx', 'utf8')
 
-  check('the harness renders something that can act', view.includes('CharityPanel'), true)
-  check('...on the ACTIVE seat\'s client', /client=\{mine\.client\}/.test(view), true)
+  // IT COVERS THE BOARD rather than dimming it, unlike the auction. Charity is
+  // two words and a number for fifteen seconds and the board says nothing
+  // about it; an auction is a card you are spending real spice on.
+  check('the modal is drawn over the board', /position: 'absolute', inset: 0/.test(modal), true)
+  check('...opaquely, rather than scrimmed', /background: '#0d1220f2'/.test(modal), true)
+  check('...as a dialog', /role="dialog"/.test(modal) && /aria-modal="true"/.test(modal), true)
 
-  // AND NOT ON A FALLBACK. dispatchDuneAction defaults to the app's own session
-  // when handed none — correct for the app, wrong here: a seat mid-sign-in would
-  // post as whoever this browser happens to be, and the action would SUCCEED
-  // under the wrong seat rather than fail. Acting as the wrong seat is possible
-  // in exactly one place, and this is it.
-  check('...never on the app\'s session by default',
-    /mine\?\.client\s*\n?\s*\? <CharityPanel/.test(view), true)
+  // Claim OR Pass, the two answers there are.
+  check('it offers a claim', modal.includes('Claim CHOAM'), true)
+  check('...and a pass', /onClick=\{onPass\}/.test(modal), true)
 
-  // The public row is read, not invented. A seat that posts an action and
-  // watches a fixture cannot tell a working round trip from a broken one — and
-  // the fixture's `remaining: 21` was the literal permanent "21 LEFT".
-  check('the harness reads the shared row', /from\('matches'\)/.test(view), true)
-  // THE SHAPE, not the word. This matched `/postgres_changes/` alone, which a
-  // sabotage walked straight through: `.on('nothing' as 'postgres_changes', …)`
-  // still contains the string and subscribes to nothing at all.
-  check('...and watches it for changes',
-    /\.on\('postgres_changes',\s*\n?\s*\{ event: 'UPDATE', schema: 'public', table: 'matches'/.test(view),
-    true)
-  check('...and actually subscribes', /\.subscribe\(\)/.test(view), true)
-  check('...rendering it rather than the fixture',
-    /state=\{publicRow \?\? PUBLIC_FIXTURE\}/.test(view), true)
+  // NO CLOCK OF ITS OWN. The countdown is on the board, between the two
+  // off-board boxes, where the whole table reads the same one — a second
+  // countdown here would be a second answer to how long is left.
+  check('it runs no countdown of its own',
+    /closesAt|toFixed|setInterval/.test(modal), false)
 
-  // THE PUBLIC ROW IS READ ON ANY SEAT'S CLIENT, and that is fine — it is
-  // public, identical for everyone. The check is that it does NOT go the other
-  // way: secrets must never be read on a shared or arbitrary client, because
-  // there WHICH session asks is the entire mechanism.
-  check('the harness does not fetch secrets itself',
-    /from\('match_secrets'\)/.test(view), false)
+  // IT JUDGES ITS OWN SEAT, from its own row, and asks the shared rule rather
+  // than comparing a number — which is what keeps the Bene Gesserit working.
+  check('the modal works out its own eligibility',
+    modal.includes('isEligibleForCharity(own, faction)'), true)
+  check('...from the same rule the server pays out from',
+    modal.includes("from '@/lib/dune/charity'"), true)
+  check('...rather than comparing spice to the threshold itself',
+    /readSpice\([^)]*\)\s*[<>]/.test(modal), false)
+  check('...and offers no claim to a seat that cannot claim',
+    /eligible \? \(/.test(modal), true)
+
+  // AND IT SENDS NOTHING ITSELF. Handlers in, actions out — the component that
+  // draws a dialog has no session and no business having one.
+  check('the modal dispatches nothing', /dispatchDuneAction|fetch\(/.test(modal), false)
+
+  // The harness does, through the acting seat's client.
+  check('the harness sends the claim', view.includes("'CLAIM_CHARITY'"), true)
+  check('...through that seat\'s own session',
+    /dispatchDuneAction\(matchId, \{ type \}, \{ client: session\.client \}\)/.test(view), true)
+
+  // PASSING SENDS NOTHING, and there is no PASS action on the server: a claim
+  // declined and a claim never made are the same thing to the rules. What it
+  // does is take the modal down for that seat — which has to be per seat,
+  // because the harness holds six of them in one page and a single flag would
+  // dismiss it for everybody the moment one passed.
+  check('passing sends no action', /'PASS_CHARITY'|type: 'PASS'/.test(view), false)
+  check('...and is remembered per seat',
+    /answered\[session\.login\.faction\] === window_\.turn/.test(view), true)
+  check('...for that turn only, so next turn asks again',
+    /\[session\.login\.faction\]: window_\.turn/.test(view), true)
+
+  // The corner block that used to hold all this is gone from the chat's column.
+  check('the harness no longer renders the old panel',
+    view.includes('CharityPanel'), false)
+  const block = view.slice(view.indexOf("position: 'fixed'"), view.indexOf("position: 'fixed'") + 200)
+  check('what is left of it is out of the chat\'s column', /right: \d+/.test(block), true)
+}
+
+// ── and the old panel keeps only what the dev board uses ──────────────────
+// Its live branch is gone rather than left unreachable. Nothing passed a
+// matchId once the harness moved to the modal, so half the file was code no
+// caller could reach — with tests asserting it, which is the worse half: a
+// check guarding a path nothing runs cannot fail for a real reason.
+{
+  // CODE, NOT PROSE. The header explains that the live branch is gone, and a
+  // search for its vocabulary matched the explanation — the fourth time in this
+  // codebase a check has confirmed a mention rather than a use. Comment lines
+  // come out before anything is asked of the file.
+  const code = (path: string) => readFileSync(path, 'utf8')
+    .split('\n')
+    .filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l))
+    .join('\n')
+
+  const panel = code('src/components/dune/CharityPanel.tsx')
+  check('the dev panel dispatches nothing', /dispatchDuneAction/.test(panel), false)
+  check('...and takes no match or client', /matchId|SupabaseClient/.test(panel), false)
+  check('...keeping the seat picker the simulation needs', /<select/.test(panel), true)
 }
 
 // ── the Fremen answer the pause, and only they ────────────────────────────
