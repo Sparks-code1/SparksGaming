@@ -6,8 +6,9 @@ import {
   shuffle, showing, SHAI_HULUD_COUNT,
 } from '@/lib/dune/spiceBlow'
 import type { SpiceCard } from '@/lib/dune/spiceBlow'
-import { beginDoubleSpiceBlow, placeFremenWorms } from '@/lib/dune/spiceBlow'
-import { isAwaiting, runToSettled } from '@/lib/dune/phase'
+import { beginDoubleSpiceBlow, placeFremenWorms, WORM_SECONDS } from '@/lib/dune/spiceBlow'
+import { BID_SECONDS } from '@/lib/dune/bidding'
+import { isAwaiting, runToSettled, deadlinePassed } from '@/lib/dune/phase'
 import type { Force, SectorId, TerritoryId } from '@/types/Dune/Game'
 
 let pass = true
@@ -570,6 +571,107 @@ function awaitingAgain(carry: Parameters<typeof placeFremenWorms>[0]) {
   })
   check('both piles refused', both.blockedByStorm.map(b => b.territoryId), ['x', 'y'])
   check('...so the board is left bare', both.spiceOnBoard, {})
+}
+
+// ── the survivors, and why the outcome has to hand them over ──────────────
+// A caller that holds the phase in memory can filter its own array by identity:
+// the objects in toTanks ARE the objects in that array. A caller that PAUSED
+// cannot, and the failure is silent — the filter matches nothing and every
+// devoured stack comes back to life on a board nobody is recounting.
+//
+// This is the server's exact situation, so it is checked by doing it rather
+// than by asserting a comment about it.
+{
+  const board = {
+    forces: [at('territory-02', 3), at('territory-04', 5, 'atreides'), at('territory-07', 2)],
+    spiceOnBoard: { 'territory-02': 6 },
+    discardA: [terr('a', 6, 2)], discardB: [terr('b', 6, 4)],
+    storm: STORM_AWAY, firstTurn: false, rng, fremenInPlay: true,
+    deck: [worm, worm, terr('x', 8, 3), worm, terr('y', 6, 5)],
+  }
+  const stopped = beginDoubleSpiceBlow(board)
+  if (!isAwaiting(stopped)) throw new Error('expected a pause to test resuming from')
+
+  // Through the database, as it really goes.
+  const stored = JSON.parse(JSON.stringify(stopped.carry))
+  const done = runToSettled(
+    placeFremenWorms(stored, [HARG], rng), c => placeFremenWorms(c, [], rng))
+
+  // What the phase says survived.
+  check('the finished phase reports the surviving forces', Array.isArray(done.forces), true)
+  check('...and they are fewer than it started with', done.forces.length < board.forces.length, true)
+  const eatenAt = done.toTanks.map(f => f.territoryId).sort()
+  check('...with nothing left standing where something was devoured',
+    done.forces.filter(f => eatenAt.includes(f.territoryId)).length, 0)
+
+  // THE TRAP, demonstrated. This is the line a caller writes by reflex, and
+  // across a round trip it removes nothing at all.
+  const asTheServerSeesThem: Force[] = JSON.parse(JSON.stringify(board.forces))
+  const byIdentity = asTheServerSeesThem.filter(f => !done.toTanks.includes(f))
+  check('filtering by identity across the round trip removes nothing',
+    byIdentity.length, asTheServerSeesThem.length)
+  check('...leaving devoured stacks standing, which is why forces is returned',
+    byIdentity.length > done.forces.length, true)
+}
+
+// ── the Fremen's window ───────────────────────────────────────────────────
+// A required stop with a deadline: the phase cannot go on until an answer
+// exists, and the clock supplies one if they do not. Silence means DECLINED,
+// which is safe here precisely because placing is optional — the rule says the
+// worms CAN be placed, so the default takes nothing that was theirs.
+{
+  check('the window is longer than a bid', WORM_SECONDS > BID_SECONDS, true)
+  check('...a full minute, because this asks which territory, not yes or no',
+    WORM_SECONDS, 60)
+
+  const board = {
+    forces: [at('territory-02', 3)],
+    spiceOnBoard: {},
+    discardA: [terr('a', 6, 2)], discardB: [terr('b', 6, 4)],
+    storm: STORM_AWAY, firstTurn: false, rng, fremenInPlay: true,
+    deck: [worm, worm, terr('x', 8, 3), worm, terr('y', 6, 5)],
+  }
+
+  // WITHOUT a deadline the stop waits forever, which is what a hot-seat game
+  // and resolveDoubleSpiceBlow both want. Unchanged from before.
+  const open = beginDoubleSpiceBlow(board)
+  if (!isAwaiting(open)) throw new Error('expected a pause')
+  check('with no deadline given, the stop has none', open.closesAt, undefined)
+  check('...and is still a required stop', open.need, 'required')
+
+  const CLOSES = 1_700_000_000_000
+  const timed = beginDoubleSpiceBlow({ ...board, closesAt: CLOSES })
+  if (!isAwaiting(timed)) throw new Error('expected a pause')
+  check('a deadline given is a deadline carried', timed.closesAt, CLOSES)
+  // STILL REQUIRED, not offered. An offered window is one nobody owes anything
+  // to; this is an answer that must arrive, and the deadline only decides who
+  // supplies it. deadlinePassed answers for both kinds; windowHasClosed does
+  // not, and answering "no" for a required stop that has plainly expired is the
+  // wrong answer to a reasonable question.
+  check('...on a stop that is still blocked, not merely offered', timed.need, 'required')
+  check('...which a passed deadline is recognised on',
+    deadlinePassed(timed, CLOSES + 1), true)
+  check('...and not before it', deadlinePassed(timed, CLOSES - 1), false)
+
+  // The NEXT pause is re-stamped, the way answerBid re-stamps the auction's.
+  // One deadline carried across both piles would give the Fremen less time for
+  // the second decision than the first, for no reason anyone could explain.
+  const LATER = CLOSES + 60_000
+  const second = placeFremenWorms(timed.carry, [], rng, LATER)
+  if (isAwaiting(second)) {
+    check('the second pile gets a window of its own', second.closesAt, LATER)
+    check('...still required', second.need, 'required')
+  } else {
+    check('the phase settled without a second pause', second.status, 'settled')
+  }
+
+  // DECLINING IS A LEGAL ANSWER, which is the whole reason a deadline is safe
+  // here. An empty list is what the clock sends on their behalf.
+  const declined = runToSettled(
+    placeFremenWorms(timed.carry, [], rng, LATER), c => placeFremenWorms(c, [], rng, LATER))
+  check('declining finishes the phase', declined.devouredByFremen, [])
+  check('...and the worms were still counted as offered',
+    declined.wormsForFremenToPlace > 0, true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

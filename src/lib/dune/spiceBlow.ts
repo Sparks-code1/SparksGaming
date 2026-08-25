@@ -22,7 +22,7 @@ import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import type {
   Force, GameMode, SectorId, SpiceCard, SpiceDeckPublic, TerritoryId,
 } from '@/types/Dune/Game'
-import { awaiting, runToSettled, settled } from './phase'
+import { awaiting, awaitingBy, runToSettled, settled } from './phase'
 import type { Step } from './phase'
 
 // The card type lives in @/types/Dune/Game now, because the public game state
@@ -31,6 +31,21 @@ export type { SpiceCard } from '@/types/Dune/Game'
 
 /** Six worms in the deck, matching the six cards the generator prints. */
 export const SHAI_HULUD_COUNT = 6
+
+/**
+ * How long the Fremen have to place their worms.
+ *
+ * LONGER THAN A BID, deliberately. Bidding asks a number under pressure and
+ * gives 15 seconds; this asks WHICH TERRITORY, off a map of forty-odd, with the
+ * board to read first — the same clock would be a decline dressed up as a
+ * choice.
+ *
+ * Silence means DECLINED, which costs them nothing that was theirs: the rule
+ * says the worms "can be placed", so declining is a legal answer rather than a
+ * forfeit. That is what makes a deadline safe here at all. It would not be safe
+ * on a phase where doing nothing is not a legal move.
+ */
+export const WORM_SECONDS = 60
 
 /** The deck as printed: one card per spice blow, plus the worms. Unshuffled —
  *  ordering is the caller's business, and the caller has the RNG. */
@@ -400,6 +415,15 @@ export interface DoubleBlowInput {
   storm: SectorId
   firstTurn: boolean
   fremenInPlay?: boolean
+  /**
+   * When the Fremen's window shuts, if it shuts at all.
+   *
+   * STAMPED BY THE CALLER, never read from a clock here — the rule every pause
+   * in this codebase follows, because a deadline each client timed for itself
+   * would expire at six different moments. Absent means the stop waits forever,
+   * which is what a hot-seat game and `resolveDoubleSpiceBlow` both want.
+   */
+  closesAt?: number
   rng: () => number
 }
 
@@ -440,6 +464,25 @@ export interface DoubleBlowOutcome {
    * the first thing anyone writes for the placements is `+=`, which is wrong.
    */
   spiceOnBoard: Record<string, number>
+  /**
+   * The forces still standing, after both piles and any Fremen worms.
+   *
+   * THE SURVIVORS, not `toTanks`, and the difference matters as soon as the
+   * phase pauses. In one process a caller can filter its own array by identity
+   * — `forces.filter(f => !out.toTanks.includes(f))` — because the objects in
+   * toTanks ARE the objects in that array.
+   *
+   * A paused phase breaks that. The carry goes to the database and comes back
+   * as new objects, so nothing in toTanks is identical to anything the caller
+   * holds, and the filter silently removes NOTHING: every devoured stack comes
+   * back to life. Value equality is not a fix either — a Force is
+   * {faction, territoryId, sector, count} with no id, so two identical stacks
+   * are indistinguishable and removing "one" removes both.
+   *
+   * So the survivors come back directly. Same argument as spiceOnBoard above,
+   * one step stronger: there identity was merely inconvenient, here it is wrong.
+   */
+  forces: Force[]
   /** Both piles' devoured forces plus the Fremen's, for the tanks. */
   toTanks: Force[]
 }
@@ -480,12 +523,25 @@ function owed(carry: SpiceBlowCarry): number {
   return from?.wormsForFremenToPlace ?? 0
 }
 
-/** Pause if this pile handed worms back, otherwise carry straight on. */
-function pauseOrContinue(carry: SpiceBlowCarry, rng: () => number): SpiceBlowStep {
+/**
+ * Pause if this pile handed worms back, otherwise carry straight on.
+ *
+ * WITH A DEADLINE WHEN ONE IS GIVEN, and it is still a REQUIRED stop either
+ * way: the phase cannot go on until an answer exists. The deadline only decides
+ * who supplies it — the Fremen, or the clock on their behalf, with silence
+ * meaning declined. `offering` would be the wrong shape, because that is a
+ * window nobody owes anything to and this is an answer that must arrive.
+ */
+function pauseOrContinue(
+  carry: SpiceBlowCarry, rng: () => number, closesAt?: number,
+): SpiceBlowStep {
   if (carry.fremenInPlay && owed(carry) > 0) {
-    return awaiting(['fremen'], { kind: 'place-worms', pile: carry.pile, worms: owed(carry) }, carry)
+    const ask = { kind: 'place-worms' as const, pile: carry.pile, worms: owed(carry) }
+    return closesAt == null
+      ? awaiting(['fremen'], ask, carry)
+      : awaitingBy(['fremen'], ask, carry, closesAt)
   }
-  return carry.pile === 'A' ? revealPileB(carry, rng) : finish(carry, rng)
+  return carry.pile === 'A' ? revealPileB(carry, rng, closesAt) : finish(carry, rng)
 }
 
 /**
@@ -497,7 +553,9 @@ function pauseOrContinue(carry: SpiceBlowCarry, rng: () => number): SpiceBlowSte
  * over, which is what "turn one's set-aside applies across both piles" means. A
  * worm ignored once is ignored once.
  */
-function revealPileB(carry: SpiceBlowCarry, rng: () => number): SpiceBlowStep {
+function revealPileB(
+  carry: SpiceBlowCarry, rng: () => number, closesAt?: number,
+): SpiceBlowStep {
   const b = resolveSpiceBlow({
     deck: carry.deck,
     discard: carry.discardB,
@@ -519,7 +577,7 @@ function revealPileB(carry: SpiceBlowCarry, rng: () => number): SpiceBlowStep {
     discardB: b.discard,
     forces: carry.forces.filter(f => !b.toTanks.includes(f)),
     spiceOnBoard: applyBlowToBoard(carry.spiceOnBoard, b),
-  }, rng)
+  }, rng, closesAt)
 }
 
 /** Both piles are done: return the held worms to the deck and report. */
@@ -531,6 +589,8 @@ function finish(carry: SpiceBlowCarry, rng: () => number): SpiceBlowStep {
     deck: held.length ? shuffle([...carry.deck, ...held], rng) : carry.deck,
     discardA: carry.discardA,
     discardB: carry.discardB,
+    // Already filtered, pile by pile and worm by worm, as the phase went.
+    forces: carry.forces,
     a, b,
     nexus: a.nexus || b.nexus,
     reshuffled: a.reshuffled || b.reshuffled,
@@ -580,7 +640,7 @@ export function beginDoubleSpiceBlow(input: DoubleBlowInput): SpiceBlowStep {
     a,
     b: null,
     devouredByFremen: [],
-  }, input.rng)
+  }, input.rng, input.closesAt)
 }
 
 /**
@@ -594,6 +654,16 @@ export function placeFremenWorms(
   carry: SpiceBlowCarry,
   at: readonly TerritoryId[],
   rng: () => number,
+  /**
+   * When the NEXT pause shuts, if there is one.
+   *
+   * Re-stamped per answer rather than carried, the same way answerBid takes a
+   * fresh `closesAt` every time. A deadline computed once at the start of the
+   * phase would already be half spent by the time pile B stopped, and the
+   * Fremen would get less time for the second decision than the first for no
+   * reason anyone could explain.
+   */
+  closesAt?: number,
 ): SpiceBlowStep {
   if (at.length > owed(carry)) {
     throw new Error(
@@ -619,7 +689,7 @@ export function placeFremenWorms(
     devouredByFremen: [...carry.devouredByFremen, ...devoured],
   }
   // Past the pause now, so go on rather than offering the same worms again.
-  return next.pile === 'A' ? revealPileB(next, rng) : finish(next, rng)
+  return next.pile === 'A' ? revealPileB(next, rng, closesAt) : finish(next, rng)
 }
 
 /**

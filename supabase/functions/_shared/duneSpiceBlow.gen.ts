@@ -747,6 +747,7 @@ var DUNE_TERRITORIES = [
 
 // src/lib/dune/phase.ts
 var awaiting = (from, ask, carry) => ({ status: "awaiting", need: "required", from, ask, carry });
+var awaitingBy = (from, ask, carry, closesAt) => ({ status: "awaiting", need: "required", from, ask, carry, closesAt });
 var settled = (result) => ({ status: "settled", result });
 function isAwaiting(step) {
   return step.status === "awaiting";
@@ -764,6 +765,7 @@ function runToSettled(first, answer, limit = 10) {
 
 // src/lib/dune/spiceBlow.ts
 var SHAI_HULUD_COUNT = 6;
+var WORM_SECONDS = 60;
 function buildSpiceDeck() {
   const territories = DUNE_TERRITORIES.flatMap((t) => t.spiceBlow != null && t.spiceSector != null ? [{
     kind: "territory",
@@ -883,13 +885,14 @@ function owed(carry) {
   const from = carry.pile === "A" ? carry.a : carry.b;
   return from?.wormsForFremenToPlace ?? 0;
 }
-function pauseOrContinue(carry, rng) {
+function pauseOrContinue(carry, rng, closesAt) {
   if (carry.fremenInPlay && owed(carry) > 0) {
-    return awaiting(["fremen"], { kind: "place-worms", pile: carry.pile, worms: owed(carry) }, carry);
+    const ask = { kind: "place-worms", pile: carry.pile, worms: owed(carry) };
+    return closesAt == null ? awaiting(["fremen"], ask, carry) : awaitingBy(["fremen"], ask, carry, closesAt);
   }
-  return carry.pile === "A" ? revealPileB(carry, rng) : finish(carry, rng);
+  return carry.pile === "A" ? revealPileB(carry, rng, closesAt) : finish(carry, rng);
 }
-function revealPileB(carry, rng) {
+function revealPileB(carry, rng, closesAt) {
   const b = resolveSpiceBlow({
     deck: carry.deck,
     discard: carry.discardB,
@@ -911,7 +914,7 @@ function revealPileB(carry, rng) {
     discardB: b.discard,
     forces: carry.forces.filter((f) => !b.toTanks.includes(f)),
     spiceOnBoard: applyBlowToBoard(carry.spiceOnBoard, b)
-  }, rng);
+  }, rng, closesAt);
 }
 function finish(carry, rng) {
   const { a, b } = carry;
@@ -921,6 +924,8 @@ function finish(carry, rng) {
     deck: held.length ? shuffle([...carry.deck, ...held], rng) : carry.deck,
     discardA: carry.discardA,
     discardB: carry.discardB,
+    // Already filtered, pile by pile and worm by worm, as the phase went.
+    forces: carry.forces,
     a,
     b,
     nexus: a.nexus || b.nexus,
@@ -963,9 +968,9 @@ function beginDoubleSpiceBlow(input) {
     a,
     b: null,
     devouredByFremen: []
-  }, input.rng);
+  }, input.rng, input.closesAt);
 }
-function placeFremenWorms(carry, at, rng) {
+function placeFremenWorms(carry, at, rng, closesAt) {
   if (at.length > owed(carry)) {
     throw new Error(
       `the Fremen were offered ${owed(carry)} worm(s) from pile ${carry.pile} but tried to place ${at.length}`
@@ -986,7 +991,7 @@ function placeFremenWorms(carry, at, rng) {
     spiceOnBoard,
     devouredByFremen: [...carry.devouredByFremen, ...devoured]
   };
-  return next.pile === "A" ? revealPileB(next, rng) : finish(next, rng);
+  return next.pile === "A" ? revealPileB(next, rng, closesAt) : finish(next, rng);
 }
 function resolveDoubleSpiceBlow(input) {
   return runToSettled(
@@ -996,6 +1001,7 @@ function resolveDoubleSpiceBlow(input) {
 }
 export {
   SHAI_HULUD_COUNT,
+  WORM_SECONDS,
   applyBlowToBoard,
   applySpicePlacement,
   beginDoubleSpiceBlow,
