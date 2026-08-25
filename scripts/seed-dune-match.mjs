@@ -92,6 +92,32 @@ if (emails.length > FACTIONS.length) {
 // Under the threshold and over it, so charity has something to refuse.
 const STARTING_SPICE = [0, 1, 2, 3, 7, 12]
 
+/**
+ * The seats as the whole table sees them.
+ *
+ * WITHOUT THIS THE BOARD IS EMPTY. DuneGameScreen builds its seating from
+ * state.players — `Object.fromEntries(state.players.map(p => [p.seat, p.faction]))`
+ * — and SeatLayer draws a circle for each entry. A match seeded with players:
+ * [] therefore renders a board with nobody on it, which reads exactly like the
+ * harness using some other board component, and is really just a match that
+ * never said who was playing.
+ *
+ * 'player-position-N' HERE, not 'pN'. This is the printed circle a player sits
+ * at — the board coordinate — where player_id is the key their secrets row is
+ * filed under. The two live in different columns and mean different things, and
+ * the harness wants the second one in VITE_DEV_SEATS.
+ */
+const publicPlayers = seats => seats.map((s, i) => ({
+  faction: s.faction,
+  seat: `player-position-${i + 1}`,
+  reserves: 10,
+  // NOT their spice. handCount is a count because the cards are secret; spice
+  // is absent entirely for the same reason, and putting it here would publish
+  // every purse to every client.
+  handCount: 0,
+  ally: null,
+}))
+
 const userIdFor = async email => {
   // listUsers rather than a lookup by email: the admin API has no by-email get,
   // and these projects have few enough users for one page. Same as the privacy
@@ -140,12 +166,12 @@ const state = PHASE === 'blow'
         { faction: 'atreides', territoryId: 'territory-09', sector: 'sector-9', count: 2 },
       ],
       spiceOnBoard: { 'territory-02': 6 },
-      players: [], awaiting: null, shieldWall: 'intact',
+      players: publicPlayers(seats), awaiting: null, shieldWall: 'intact',
     }
   : {
       phase: 'CHOAM Charity', turn: 1, mode: 'advanced', storm: 'sector-18',
       spiceDeck: { remaining: 21, discardA: [], discardB: [] },
-      forces: [], spiceOnBoard: {}, players: [], awaiting: null, shieldWall: 'intact',
+      forces: [], spiceOnBoard: {}, players: publicPlayers(seats), awaiting: null, shieldWall: 'intact',
     }
 
 const { data: match, error: mErr } = await admin.from('matches').insert({
