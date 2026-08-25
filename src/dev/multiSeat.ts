@@ -37,7 +37,19 @@ import type { FactionId } from '@/types/Dune/Faction'
 /** One seat's sign-in, as supplied to the harness. */
 export interface SeatLogin {
   faction: FactionId
-  /** The seat id in the match — 'player-position-N', matching DunePlayerPublic. */
+  /**
+   * The seat id in the match — 'p1'..'p6', matching match_players.player_id.
+   *
+   * NOT DunePlayerPublic.seat, which this used to name. That one is
+   * 'player-position-N', the printed circle a player sits at on the board, and
+   * it is a different thing entirely: this value is compared against the
+   * player_id on the match_secrets row that arrives, to notice a row belonging
+   * to somebody else.
+   *
+   * Getting it wrong does not fail quietly. Every row this seat legitimately
+   * owns is then unrecognised, and the harness reports "RLS is not holding" —
+   * an alarm about the security boundary raised by a typo in an env var.
+   */
   seat: string
   email: string
   password: string
@@ -166,7 +178,9 @@ export function startMultiSeat(
  * scripts/check-seat-privacy.mjs, which already uses SEAT_A_EMAIL and friends —
  * one convention for "the test accounts", not two.
  *
- * VITE_DEV_SEATS is a semicolon-separated list of `faction,seat,email,password`.
+ * VITE_DEV_SEATS is a semicolon-separated list of `faction,seat,email,password`,
+ * where `seat` is the match_players.player_id — 'p1', 'p2' — and not the
+ * board position. scripts/seed-dune-match.mjs prints the line ready to paste.
  */
 export function seatLoginsFromEnv(): SeatLogin[] {
   const raw = import.meta.env.VITE_DEV_SEATS as string | undefined
