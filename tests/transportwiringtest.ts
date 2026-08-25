@@ -274,6 +274,8 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
     const shared = [
       'applySpiceMoves', 'BANK', 'settleAuction', 'beginAuction', 'answerBid',
       'cardsOnOffer', 'BID_SECONDS', 'drawTreachery', 'discardUnsold', 'shuffleWithSeed',
+      'seededRng', 'buildSpiceDeck', 'resolveSpiceBlow', 'resolveDoubleSpiceBlow',
+      'applyBlowToBoard', 'publicSpiceDeck',
     ]
     const used = shared.filter(name => new RegExp(`\\b${name}\\b`).test(fn))
     // The rule is only worth anything if it is looking at names actually in use.
@@ -321,6 +323,77 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
       try { execSync('node scripts/build-edge-shared.mjs --check', { stdio: 'pipe' }); return true }
       catch { return false }
     })(), true)
+}
+
+// ── the spice deck is shared too, and cannot drift ─────────────────────────
+// publicSpiceDeck is the boundary between what the server knows about the deck
+// and what the table sees: the order goes in, a COUNT comes out. A hand-written
+// count on the server is a second answer to "how many are left", and a wrong
+// count looks exactly like a right one — there is nothing to notice.
+{
+  const gen = 'supabase/functions/_shared/duneSpiceBlow.gen.ts'
+  const text = readFileSync(gen, 'utf8')
+  check('the spice deck logic is shared with the server, not re-implemented',
+    text.includes('publicSpiceDeck'), true)
+  check('...and generated rather than hand-copied', /AUTO-GENERATED/.test(text), true)
+  check('...from the file the client uses', text.includes('src/lib/dune/spiceBlow.ts'), true)
+  // The staleness check above covers every target at once, this one included —
+  // it runs build-edge-shared --check, which compares all of them.
+
+  const fn = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  check('the server publishes the deck through the projection',
+    /publicSpiceDeck\(\{/.test(fn), true)
+  // AND NOT BESIDE IT. A remaining count assembled by hand is exactly the copy
+  // this bundle exists to prevent, and `deck.length` written before a draw
+  // rather than after it is the way it goes wrong.
+  check('...and never writes a remaining count of its own',
+    /remaining:\s*[^\n]*length/.test(fn), false)
+
+  // THE ORDER GOES WHERE NOBODY CAN READ IT. match_decks has RLS on and no
+  // policy at all; public state gets the projection and nothing else.
+  check('the deck itself is parked in match_decks',
+    /p_decks:\s*\{\s*spice:/.test(fn), true)
+  const blowCase = fn.slice(fn.indexOf("case 'SPICE_BLOW'"), fn.indexOf("case 'OPEN_BIDDING'"))
+  check('...and the blow case is there to check', blowCase.length > 500, true)
+  // ONCE A TURN. The count alone cannot say whether the blow has happened, so
+  // the turn it was turned for is stamped beside it. Without that a second call
+  // turns a second card and the deck runs down faster than the game does — and
+  // every number involved still looks perfectly reasonable.
+  check('a second blow in one turn is refused',
+    blowCase.includes('already-blown'), true)
+  check('...by comparing the turn it was last turned for',
+    /shown\.turn === turn/.test(blowCase), true)
+
+  // THE FREMEN'S WORMS ARE NOT THE SERVER'S TO DECLINE. Worms after the first
+  // in a pile are theirs to place, and the rule is that they CAN be placed —
+  // declining is a legal choice, which is exactly why a server that resolves
+  // straight through is not picking a safe default but playing a seat's turn.
+  // resolveDoubleSpiceBlow says so in its own docstring: it is the shortcut for
+  // callers with nobody to ask.
+  check('worms owed to a seated Fremen stop the blow',
+    blowCase.includes('fremen-worms-unwired'), true)
+  check('...before anything is written',
+    blowCase.indexOf('fremen-worms-unwired') < blowCase.indexOf('apply_match_write'), true)
+  check('...and only when they are actually at the table',
+    /owedToFremen > 0 && fremenInPlay/.test(blowCase), true)
+
+  // TWO PILES ARE THE ADVANCED GAME'S STRUCTURE. Resolving one of them would
+  // leave discardB permanently empty — the same class of bug as a count that
+  // never moves, and just as quiet.
+  // Sliced at the branch rather than searched within a fixed window: the first
+  // version of this allowed 200 characters between the two, and a comment
+  // explaining WHY there are two piles pushed the call past it. A check that
+  // depends on how much prose sits next to the code is a check that will fail
+  // for the wrong reason.
+  const advancedBranch = blowCase.slice(blowCase.indexOf('if (advanced) {'), blowCase.indexOf('} else {'))
+  check('the advanced game turns both piles',
+    advancedBranch.includes('resolveDoubleSpiceBlow('), true)
+  check('...reading and writing both discard piles',
+    advancedBranch.includes('discardB') && advancedBranch.includes('discardA'), true)
+  check('...and the basic game turns one', blowCase.includes('resolveSpiceBlow({'), true)
+
+  check('...with no deck array written into public state',
+    /p_state:[\s\S]{0,400}spiceDeck: *(nextDeck|deck)\b/.test(blowCase), false)
 }
 
 // ── the write covers all three tables at once ──────────────────────────────

@@ -28,7 +28,10 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { applySpiceMoves, BANK } from '../_shared/duneSpice.gen.ts'
 import { settleAuction } from '../_shared/duneAuction.gen.ts'
 import { beginAuction, answerBid, cardsOnOffer, BID_SECONDS } from '../_shared/duneBidding.gen.ts'
-import { drawTreachery, discardUnsold, shuffleWithSeed } from '../_shared/duneDeck.gen.ts'
+import { drawTreachery, discardUnsold, shuffleWithSeed, seededRng } from '../_shared/duneDeck.gen.ts'
+import {
+  buildSpiceDeck, resolveSpiceBlow, resolveDoubleSpiceBlow, applyBlowToBoard, publicSpiceDeck,
+} from '../_shared/duneSpiceBlow.gen.ts'
 import { prescienceFor, withReveal, PRESCIENT_FACTION } from '../_shared/dunePrescience.gen.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -51,6 +54,20 @@ const CHARITY_TOPS_UP_TO = 2
 const CHARITY_WINDOW_MS = 15_000
 
 interface DuneSecrets { spice?: number }
+// Deliberately minimal, like DuneSecrets above. The real shapes live in
+// types/Dune/Game, which Deno cannot import — that is the whole reason the
+// logic arrives as a generated bundle. These name only the fields this file
+// touches; everything else rides through untyped, and the bundle that reads
+// them is the same one the client runs.
+interface SpiceCardRow { kind: string; [field: string]: unknown }
+interface ForceRow { [field: string]: unknown }
+interface SpiceDeckPublicRow {
+  remaining?: number
+  discardA?: SpiceCardRow[]
+  discardB?: SpiceCardRow[]
+  /** Which turn the blow was last turned for. See the SPICE_BLOW case. */
+  turn?: number
+}
 interface CharityWindow { expiresAt: number; claims: string[]; turn: number }
 
 const readSpice = (s: DuneSecrets | null | undefined): number =>
@@ -248,6 +265,156 @@ Deno.serve(async req => {
     // unless DUNE_DEV_SEEDING is on cannot quietly become the mechanism. When
     // faction setup exists it will write these rows from the faction, and this
     // case should be deleted rather than repurposed.
+    // ── Turn the spice blow ──────────────────────────────────────────────────
+    // WHY THIS EXISTS: the deck area on the board showed a permanent "21 LEFT"
+    // because nothing ever wrote state.spiceDeck. The count has to be PUBLISHED
+    // rather than derived — match_decks has RLS on and no policy at all, so no
+    // client can count what it cannot read — and this is the one place that
+    // knows the deck's order and what the table is allowed to hear about it.
+    //
+    // THE RULES ARE NOT HERE. resolveSpiceBlow is the same bundle the client
+    // runs (npm run build:edge), so a worm devours the same stacks on both
+    // machines. What is here is the part only a server can do: hold the order,
+    // and decide what is said about it.
+    case 'SPICE_BLOW': {
+      if (state.phase !== 'Spice Blow and Nexus') {
+        return json({ error: 'the turn is not at the spice blow', code: 'wrong-phase' }, 409)
+      }
+      const turn = typeof state.turn === 'number' ? state.turn : 0
+      const shown = (state.spiceDeck ?? {}) as SpiceDeckPublicRow
+      // Once a turn. The count alone cannot say whether the blow has happened,
+      // so the turn it was last turned for is stamped beside it — without that,
+      // a second call turns a second card and the deck simply runs down faster
+      // than the game does.
+      if (shown.turn === turn) {
+        return json({ error: 'the blow has already been turned this turn', code: 'already-blown' }, 409)
+      }
+
+      const { data: deckRows } = await admin
+        .from('match_decks').select('deck, cards').eq('match_id', matchId)
+      const piles = Object.fromEntries((deckRows ?? []).map(r => [r.deck, r.cards]))
+
+      // BUILT AND SHUFFLED ON FIRST USE, from the match's own seed — the same
+      // seed the treachery reshuffle uses, so the whole match replays from one
+      // number. `?? []` on a missing pile would deal from an empty deck and
+      // report a deck of nothing as a legal state.
+      const stored = piles.spice as SpiceCardRow[] | undefined
+      const seed = Number(match.rng_seed) + match.action_seq
+      const deck: SpiceCardRow[] = stored?.length
+        ? stored
+        : shuffleWithSeed(seed, buildSpiceDeck())
+
+      const forces = (state.forces ?? []) as ForceRow[]
+      const spiceOnBoard = (state.spiceOnBoard ?? {}) as Record<string, number>
+      const advanced = state.mode === 'advanced'
+      const fremenInPlay = Object.prototype.hasOwnProperty.call(seatOfFaction, 'fremen')
+      const rng = seededRng(seed + 1)
+
+      let nextDeck: SpiceCardRow[]
+      let discardA: SpiceCardRow[]
+      let discardB: SpiceCardRow[]
+      let owedToFremen: number
+      let toTanks: ForceRow[]
+      let placed: unknown
+      let blockedByStorm: unknown
+      let devoured: unknown[]
+      let spiceAfter: Record<string, number>
+
+      try {
+        if (advanced) {
+          // TWO PILES ARE THE ADVANCED GAME'S STRUCTURE, not a detail. Resolving
+          // one of them would leave discardB permanently empty, which is the
+          // same class of bug as the count that never moved.
+          const out = resolveDoubleSpiceBlow({
+            deck, discardA: shown.discardA ?? [], discardB: shown.discardB ?? [],
+            forces, spiceOnBoard, storm: state.storm as number,
+            firstTurn: turn <= 1, fremenInPlay, rng,
+          })
+          nextDeck = out.deck
+          discardA = out.discardA
+          discardB = out.discardB
+          owedToFremen = out.wormsForFremenToPlace
+          toTanks = out.toTanks
+          placed = [out.a.placed, out.b.placed].filter(Boolean)
+          blockedByStorm = out.blockedByStorm
+          devoured = [...out.a.devoured, ...out.b.devoured, ...out.devouredByFremen]
+          // The double blow works the board out itself, across both piles and
+          // any Fremen worms, because doing it by hand means applying two
+          // placements and any number of devours in the right order.
+          spiceAfter = out.spiceOnBoard
+        } else {
+          const out = resolveSpiceBlow({
+            deck, discard: shown.discardA ?? [], forces,
+            mode: 'basic', fremenInPlay, spiceOnBoard,
+            storm: state.storm as number, firstTurn: turn <= 1, rng,
+          })
+          nextDeck = out.deck
+          discardA = out.discard
+          discardB = []
+          owedToFremen = out.wormsForFremenToPlace
+          toTanks = out.toTanks
+          placed = out.placed
+          blockedByStorm = out.blockedByStorm
+          devoured = out.devoured
+          // SET, not add, and the devoured lose theirs first. One call, because
+          // doing it by hand is where the add-versus-set bug lived.
+          spiceAfter = applyBlowToBoard(spiceOnBoard, out)
+        }
+      } catch (e) {
+        return json({ error: String(e), code: 'blow-failed' }, 409)
+      }
+
+      // NOT WIRED, AND SAID SO RATHER THAN DECIDED. Worms after the first in a
+      // pile are the Fremen's to place, and the rule is that they CAN be placed
+      // — declining is legal. So a server that resolves straight through is not
+      // making a safe default, it is playing a seat's turn for them and calling
+      // the result the rules. resolveDoubleSpiceBlow says as much in its own
+      // docstring: it is the shortcut for callers with nobody to ask.
+      //
+      // Refused BEFORE the write, so the deck is untouched and the same blow
+      // can be turned again once the pause protocol exists — the auction
+      // already has the shape it needs (awaiting/answer).
+      if (owedToFremen > 0 && fremenInPlay) {
+        return json({
+          error: `${owedToFremen} worm(s) are the Fremen's to place, and this endpoint cannot ask them yet`,
+          code: 'fremen-worms-unwired',
+        }, 409)
+      }
+
+      // THE PROJECTION, not a hand-written count. The deck goes in and a number
+      // comes out; that asymmetry is the boundary this endpoint exists to hold.
+      const spiceDeck = {
+        ...publicSpiceDeck({ deck: nextDeck, discardA, discardB }),
+        turn,
+      }
+
+      const eaten = new Set(toTanks)
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        // ONE WRITE for the board and the deck. A blow committed without the
+        // spice it placed is a card turned for nothing; spice placed without
+        // the shortened deck deals the same card twice.
+        p_state: {
+          ...state,
+          spiceDeck,
+          forces: forces.filter(f => !eaten.has(f)),
+          spiceOnBoard: spiceAfter,
+        },
+        p_secrets: {},
+        // The ORDER parks where nobody can read it. Everything the table learns
+        // about this deck is the projection above.
+        p_decks: { spice: nextDeck },
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+
+      // What HAPPENED, which is public — these are cards turned face up and
+      // forces removed from a board everyone is looking at. What is left in the
+      // deck is in the projection; its order is in neither.
+      return json({ placed, blockedByStorm, devoured, spiceDeck, version: data[0].version })
+    }
+
     // ── Start the auction ────────────────────────────────────────────────────
     // Cards are drawn HERE, before anyone bids, and parked in match_decks under
     // their own key. Drawing them at the end instead would mean the server chose
