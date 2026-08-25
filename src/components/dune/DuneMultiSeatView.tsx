@@ -65,7 +65,7 @@ export default function DuneMultiSeatView() {
   const [active, setActive] = useState<FactionId | null>(logins[0]?.faction ?? null)
   const [now, setNow] = useState(() => Date.now())
   const [publicRow, setPublicRow] = useState<PublicRow | null>(null)
-  const [log, setLog] = useState<string[]>([])
+  const [chat, setChat] = useState<ChatMessage[]>([])
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
@@ -138,7 +138,29 @@ export default function DuneMultiSeatView() {
   }
 
   const mine = sessions.find(s => s.login.faction === active) ?? null
-  const say = (line: string) => setLog(l => [...l.slice(-6), line])
+
+  /**
+   * A line for the acting seat alone.
+   *
+   * PRIVATE BY DEFAULT HERE, because of what these lines are. "Not eligible for
+   * charity" is a sentence about how much spice somebody holds, and the chat is
+   * the one place such a sentence would sit in front of the whole table. That a
+   * seat CLAIMED is public — the claim is — but what it was worth, and why it
+   * was refused, is not.
+   *
+   * WRITTEN LOCALLY AND NEVER SENT. It is composed from the response this seat
+   * received, which only this seat received. Marking a message private does not
+   * make its transport private, so a line like this must never travel through
+   * matches.state — that row reaches every client, and the field would be a
+   * label on an envelope everyone has already opened.
+   */
+  const say = (line: string) => {
+    const to = mine?.login.faction
+    setChat(c => [...c.slice(-40), {
+      id: `${Date.now()}-${c.length}`, faction: null, from: 'Game',
+      text: line, at: Date.now(), ...(to ? { to } : null),
+    }])
+  }
 
   return (
     <>
@@ -148,7 +170,7 @@ export default function DuneMultiSeatView() {
         // ONE SEAT'S ROW, from that seat's own session. The screen has no way to
         // reach the others: they are behind different clients entirely.
         own={(mine?.secrets ?? null) as DuneSecrets | null}
-        chat={[] as ChatMessage[]}
+        chat={chat}
         now={now} />
       <DevSeatSwitcher sessions={sessions} active={active} onPick={setActive} />
 
@@ -158,8 +180,16 @@ export default function DuneMultiSeatView() {
           payload saying so, and without this page holding anything the seat's
           own browser would not. That is the whole point of the harness: six
           real sessions, and the acting one is whichever token is presented. */}
+      {/* TOP LEFT, not bottom. This sat at left:12/bottom:12 with zIndex 40,
+          directly over DevSeatSwitcher at left:10/bottom:10 — covering its first
+          two seat buttons, so the seats it exists to let you act as could not be
+          clicked. The switcher owns the bottom-left corner; this takes the top.
+
+          Width capped to the chat column's, so it stays over that column rather
+          than reaching across the board in the middle. */}
       <div style={{
-        position: 'fixed', left: 12, bottom: 12, width: 320, zIndex: 40,
+        position: 'fixed', left: 12, top: 12, width: 320, maxHeight: '60vh',
+        overflowY: 'auto', zIndex: 40,
         background: '#0d1220ee', color: PALE, border: '1px solid #ffffff22',
         borderRadius: 8, padding: 10, font: `12px ${SERIF}`,
       }}>
@@ -196,9 +226,8 @@ export default function DuneMultiSeatView() {
           : <p style={{ margin: 0, opacity: 0.7 }}>
               {mine ? `${mine.login.faction} is still signing in…` : 'pick a seat to act as'}
             </p>}
-        <div style={{ marginTop: 8, opacity: 0.7, lineHeight: 1.45 }}>
-          {log.map((line, i) => <div key={i}>{line}</div>)}
-        </div>
+        {/* The running log moved to the chat panel, where a private line can be
+            marked as one. Nothing is duplicated here. */}
       </div>
     </>
   )

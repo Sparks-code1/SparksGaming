@@ -47,6 +47,8 @@ import type { ChatMessage } from './ChatPanel'
 import { PlayerHud } from './PlayerHud'
 import { OwnStrip } from './OwnStrip'
 import { DuneBoard } from './DuneBoard'
+import { CHARITY_WINDOW_MS } from '@/lib/dune/charity'
+import { WORM_SECONDS } from '@/lib/dune/spiceBlow'
 import { BiddingPanel } from './BiddingPanel'
 import type { BiddingPanelProps } from './BiddingPanel'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
@@ -119,13 +121,37 @@ export function DuneGameScreen({
 
   const seating = Object.fromEntries(state.players.map(p => [p.seat, p.faction]))
 
+  /**
+   * Whichever phase is holding a window open, if any.
+   *
+   * ONE CLOCK AT A TIME, because only one phase runs at a time. Charity's
+   * window and the spice blow's pause cannot both be open — they are different
+   * phases — so this picks whichever exists rather than trying to show both.
+   *
+   * Both deadlines are stamped by the server and read from public state, never
+   * computed here: a client that worked out its own would drift from the other
+   * five the moment a tab was backgrounded.
+   */
+  const timed = state as DuneGameState & {
+    charity?: { expiresAt: number }
+    spiceBlow?: { closesAt?: number }
+  }
+  const closesAt = timed.charity?.expiresAt ?? timed.spiceBlow?.closesAt ?? null
+  const windowMs = timed.charity ? CHARITY_WINDOW_MS
+    : timed.spiceBlow ? WORM_SECONDS * 1000
+    : undefined
+
   return (
     <div data-layer="dune-game" style={{
       display: 'flex', flexDirection: 'column', height: '100vh',
       background: '#0d1220', color: '#f0e2bb', overflow: 'hidden',
     }}>
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <ChatPanel messages={chat} collapsed={chatShut} onSend={onSend}
+        {/* WHO IS READING, so a line meant for one seat is not shown to the
+            table. See ChatMessage.to — a refusal says something about a seat's
+            spice, and the chat is the one place a sentence like that would sit
+            in front of everybody. */}
+        <ChatPanel messages={chat} seat={seat} collapsed={chatShut} onSend={onSend}
           onToggle={() => setChatShut(c => !c)} />
 
         <main style={{
@@ -146,7 +172,8 @@ export function DuneGameScreen({
           <DuneBoard
             storm={state.storm} stacks={stacks} spice={state.spiceOnBoard}
             seating={seating} deck={state.spiceDeck} mode={state.mode}
-            awaiting={state.awaiting} phase={state.phase} turn={state.turn} />
+            awaiting={state.awaiting} phase={state.phase} turn={state.turn}
+            closesAt={closesAt} windowMs={windowMs} now={now} />
 
           {/* The auction, over the WHOLE middle column rather than over the
               board's own box. The box is only as wide as the board is tall —

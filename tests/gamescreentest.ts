@@ -18,7 +18,11 @@ import type { DuneGameScreenProps } from '@/components/dune/DuneGameScreen'
 import { PlayerHud } from '@/components/dune/PlayerHud'
 import { OwnStrip, PrivateView, FactionCard, ruleLabel } from '@/components/dune/OwnStrip'
 import { CARD_THUMB, CARD_ZOOM } from '@/components/dune/OwnStrip'
-import { ChatPanel } from '@/components/dune/ChatPanel'
+import { ChatPanel, visibleTo } from '@/components/dune/ChatPanel'
+import type { ChatMessage } from '@/components/dune/ChatPanel'
+import { PhaseTimer, PHASE_TIMER_CENTRE, PHASE_TIMER_HALF_WIDTH } from '@/components/dune/PhaseTimer'
+import type { PhaseTimerProps } from '@/components/dune/PhaseTimer'
+import { flattenPath } from './lib/svgPath'
 import { hudRows, pairAllies, allyOf, strongholdsHeld } from '@/lib/dune/hud'
 import { DUNE_TRACK } from '@/data/dune/boardData'
 import { DUNE_PHASES, KWISATZ_HADERACH_AT } from '@/types/Dune/Game'
@@ -766,6 +770,181 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     /worth two normal forces in battle/.test(emperor.advanced.forces ?? ''), true)
   check('...including the Fremen exception',
     /just one force against Fremen/.test(emperor.advanced.forces ?? ''), true)
+}
+
+// ── a line meant for one seat reaches one seat ────────────────────────────
+// "Not eligible for charity" is a sentence about how much spice somebody
+// holds. Announcing that a seat CLAIMED is public — the claim is — but what it
+// was worth, and why it was refused, is not, and the chat is the one place such
+// a sentence would sit in front of the whole table.
+{
+  const pub: ChatMessage = { id: 'a', faction: null, from: 'Game', text: 'charity opened', at: 1 }
+  const mine: ChatMessage = { id: 'b', faction: null, from: 'Game', text: 'you hold too much', at: 2, to: 'atreides' }
+  const theirs: ChatMessage = { id: 'c', faction: null, from: 'Game', text: 'they hold too much', at: 3, to: 'harkonnen' }
+  const all = [pub, mine, theirs]
+
+  check('a seat sees the public line', visibleTo(all, 'atreides').map(m => m.id).includes('a'), true)
+  check('...and its own private one', visibleTo(all, 'atreides').map(m => m.id).includes('b'), true)
+  check('...and NOT another seat\'s', visibleTo(all, 'atreides').map(m => m.id).includes('c'), false)
+  check('the other seat sees the mirror of that',
+    visibleTo(all, 'harkonnen').map(m => m.id), ['a', 'c'])
+
+  // A SPECTATOR GETS ONLY THE PUBLIC ONES, which is right: they have no hidden
+  // state of their own and are entitled to nobody else's.
+  check('a spectator sees only what everyone sees',
+    visibleTo(all, null).map(m => m.id), ['a'])
+
+  // ABSENT `to` IS PUBLIC, and the filter is written that way round on purpose:
+  // a line that forgets the field is shown rather than hidden, so a missing
+  // mark cannot silently swallow a game announcement.
+  check('an unmarked line is public, not invisible',
+    visibleTo([pub], 'atreides').length, 1)
+
+  // And the panel does not merely filter — it SAYS which lines are private,
+  // because a line only you can see, in the same column as lines everyone can
+  // see, is one people answer out loud.
+  const html = renderToStaticMarkup(createElement(ChatPanel, {
+    messages: all, seat: 'atreides' as FactionId, collapsed: false, onToggle: () => {},
+  }))
+  check('the rendered panel shows the private line', html.includes('you hold too much'), true)
+  check('...and not the other seat\'s', html.includes('they hold too much'), false)
+  check('...and marks it as private where it is read',
+    html.includes('only you') && html.includes('data-private="true"'), true)
+}
+
+// ── the harness says it privately, and never through shared state ─────────
+{
+  const view = readFileSync('src/components/dune/DuneMultiSeatView.tsx', 'utf8')
+  check('the harness writes its lines to the chat', /setChat\(/.test(view), true)
+  check('...addressed to the acting seat', /\.\.\.\(to \? \{ to \} : null\)/.test(view), true)
+  // COMPOSED LOCALLY. Marking a message private does not make its transport
+  // private: matches.state reaches every client, so a line written into it
+  // would be a label on an envelope everybody has already opened.
+  const say = view.slice(view.indexOf('const say = '), view.indexOf('return (', view.indexOf('const say = ')))
+  check('the say helper is there to check', say.length > 60, true)
+  check('...and sends nothing anywhere', /dispatchDuneAction|from\('matches'\)|\.update\(/.test(say), false)
+}
+
+// ── the panel is out of the switcher's way ────────────────────────────────
+// It sat at left:12/bottom:12 over DevSeatSwitcher at left:10/bottom:10,
+// covering the first two seat buttons — so the seats it exists to let you act
+// as could not be clicked.
+{
+  const view = readFileSync('src/components/dune/DuneMultiSeatView.tsx', 'utf8')
+  const switcher = readFileSync('src/components/dune/DevSeatSwitcher.tsx', 'utf8')
+  const corner = (src: string) => ({
+    bottom: /bottom: \d+/.test(src), top: /top: \d+/.test(src),
+  })
+  check('the switcher still owns the bottom corner', corner(switcher).bottom, true)
+  // The harness panel is the only fixed block in the view, so this reads it.
+  const panel = view.slice(view.indexOf("position: 'fixed'"), view.indexOf("position: 'fixed'") + 200)
+  check('the harness panel is there to check', panel.length > 40, true)
+  check('...and does not share that corner', /bottom:/.test(panel), false)
+  // ANY other corner will do. Pinning the exact offset made a check that failed
+  // when the panel moved twelve pixels, which is not the rule — the rule is
+  // that it is not where the switcher is.
+  check('...being anchored from the top instead', /top: \d+/.test(panel), true)
+}
+
+// ── the whole screen keeps a private line private ─────────────────────────
+// The filter working is not the same as the screen using it. Dropping `seat`
+// from the ChatPanel call leaves every private line invisible to the one seat
+// entitled to it, and nothing about the filter itself would notice.
+{
+  const chat: ChatMessage[] = [
+    { id: 'p', faction: null, from: 'Game', text: 'the window is open', at: 1 },
+    { id: 'm', faction: null, from: 'Game', text: 'yours-alone-line', at: 2, to: 'atreides' },
+    { id: 't', faction: null, from: 'Game', text: 'theirs-alone-line', at: 3, to: 'harkonnen' },
+  ]
+  const asAtreides = draw({ chat, seat: 'atreides' as FactionId })
+  check('the screen shows this seat its own private line',
+    asAtreides.includes('yours-alone-line'), true)
+  check('...and never another seat\'s', asAtreides.includes('theirs-alone-line'), false)
+  check('...while the public line reaches both',
+    asAtreides.includes('the window is open'), true)
+
+  const asHarkonnen = draw({ chat, seat: 'harkonnen' as FactionId })
+  check('the other seat sees the mirror of that',
+    asHarkonnen.includes('theirs-alone-line') && !asHarkonnen.includes('yours-alone-line'), true)
+}
+
+// ── the board actually draws the clock ────────────────────────────────────
+// PhaseTimer rendering correctly is not the same as the board rendering it.
+{
+  const running = draw({
+    // CAST, like the screen itself does. The charity window is written by the
+    // server into matches.state and is not in DuneGameState — public state
+    // carries fields the screen type does not name, which is why the screen
+    // reads it through a widened type rather than pretending otherwise.
+    state: { ...base.state, phase: 'CHOAM Charity',
+      charity: { expiresAt: base.now + 9_000, claims: [], turn: 1 } } as DuneGameState,
+  })
+  check('an open window puts a clock on the board',
+    running.includes('data-layer="phase-timer"'), true)
+  check('...counting the seconds left', running.includes('9.0s'), true)
+  // AND NOTHING WHEN NOTHING IS RUNNING, so a stale clock cannot sit at zero
+  // implying a phase that has stalled.
+  check('no window, no clock',
+    draw({}).includes('data-layer="phase-timer"'), false)
+}
+
+// ── the clock is printed between the two off-board boxes ──────────────────
+// MEASURED OFF THE SHIPPED BOARD rather than trusted. The first version derived
+// the gap from DUNE_SPICE_DECK_AREA, which is the largest rectangle INSIDE the
+// spice deck box (x 789.6) and not the box (x 617.6) — it put the clock at
+// x 398 claiming a gap 783 wide, spanning most of the board including the tanks.
+// It only looked right because 398 happens to land inside the real gap.
+{
+  const svg = readFileSync('public/dune-board.svg', 'utf8')
+  const boxes = [...svg.matchAll(/<path d="([^"]+)" fill="#c2bd9e"\/>/g)]
+    .map(m => flattenPath(m[1]))
+    .map(poly => ({
+      x0: Math.min(...poly.map(p => p[0])), x1: Math.max(...poly.map(p => p[0])),
+      y0: Math.min(...poly.map(p => p[1])), y1: Math.max(...poly.map(p => p[1])),
+    }))
+    .sort((a, b) => a.x0 - b.x0)
+  check('both off-board boxes are found', boxes.length, 2)
+
+  const [tanks, deckBox] = boxes
+  const { x, y } = PHASE_TIMER_CENTRE
+  check('the clock sits right of the Tleilaxu Tanks', x > tanks.x1, true)
+  check('...and left of the spice deck', x < deckBox.x0, true)
+  // Centred in the gap, not merely inside it — within a couple of units.
+  check('...centred between them',
+    Math.abs(x - (tanks.x1 + deckBox.x0) / 2) < 2, true)
+  // And on the same band as the boxes, so it reads as part of that row.
+  check('...on the boxes\' own band',
+    y > tanks.y0 && y < tanks.y1, true)
+  check('...vertically centred in it', Math.abs(y - (tanks.y0 + tanks.y1) / 2) < 2, true)
+  // The bar has to fit in the gap it is drawn in.
+  check('the room it claims fits between them',
+    PHASE_TIMER_HALF_WIDTH * 2 <= deckBox.x0 - tanks.x1, true)
+}
+
+// ── the clock counts toward a stamped moment ──────────────────────────────
+{
+  const at = (props: Partial<PhaseTimerProps>) => renderToStaticMarkup(createElement(PhaseTimer, {
+    phase: 'CHOAM Charity', now: 1_000, ...props,
+  } as PhaseTimerProps))
+
+  // NOTHING RATHER THAN ZERO. Most of a turn has no clock running, and a
+  // permanent 0.0s reads as a stuck phase.
+  check('no deadline draws nothing', at({ closesAt: null }), '')
+  check('a running window draws the phase', at({ closesAt: 6_000 }).includes('CHOAM CHARITY'), true)
+  check('...and the seconds left', at({ closesAt: 6_000 }).includes('5.0s'), true)
+  check('...counted from the stamped moment, not a duration',
+    at({ closesAt: 6_000, now: 3_000 }).includes('3.0s'), true)
+  check('an expired window says so', at({ closesAt: 500 }).includes('CLOSED'), true)
+  check('...rather than a negative count', /-\d/.test(at({ closesAt: 500 })), false)
+
+  // THE BAR NEEDS THE WINDOW'S LENGTH. closesAt says when it shuts and nothing
+  // about when it opened; the first version tried to derive the fraction from
+  // it and reduced to remaining/remaining — a bar permanently full beside a
+  // number counting down.
+  check('no bar without a length', at({ closesAt: 6_000 }).includes('#c9542a'), false)
+  check('a bar with one', at({ closesAt: 6_000, windowMs: 10_000 }).includes('#c9542a'), true)
+  const half = at({ closesAt: 6_000, windowMs: 10_000 })
+  check('...half spent is half drawn', /width="90"/.test(half), true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
