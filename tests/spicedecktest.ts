@@ -12,7 +12,8 @@ import { execSync } from 'node:child_process'
 import { flattenPath, inPolygon } from './lib/svgPath'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
-import { SpiceDeckArea, slotLayout } from '@/components/dune/SpiceDeckArea'
+import { SpiceDeckArea } from '@/components/dune/SpiceDeckArea'
+import { SPICE_DECK_LAYOUT, SPICE_CAPTION_ROOM } from '@/data/dune/spiceDeckLayout'
 import type { SpiceDeckAreaProps } from '@/components/dune/SpiceDeckArea'
 import { publicSpiceDeck, buildSpiceDeck } from '@/lib/dune/spiceBlow'
 import { DUNE_SPICE_DECK_AREA } from '@/data/dune/boardData'
@@ -41,12 +42,8 @@ function spiceBoxPolygon(side: 'right' | 'left' = 'right'): [number, number][] {
 }
 
 
-/** What a caption needs beneath a card — CAPTION in the component. */
-const CAPTION_ROOM = 12
-/** The component's own PAD, which the cards and their captions sit inside. */
-const PAD_ROOM = 12
-/** The component's GAP, for the same reason. */
-const GAP_ROOM = 6
+/** What a caption needs beneath a card, from where the layout lives. */
+const CAPTION_ROOM = SPICE_CAPTION_ROOM
 
 let pass = true
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -175,95 +172,119 @@ const draw = (over: Partial<SpiceDeckAreaProps> = {}) =>
   check('...and still carries its caption', m.includes('DISCARD'), true)
 }
 
-// ── the cards land inside the box the board prints ────────────────────────
-// AGAINST THE SHAPE, NOT THE BOUNDING BOX. This is the check that was missing,
-// and its absence cost the first version of this layout: the box is a wedge —
-// the board's rim curves through one corner of it — so its bbox is 351 x 215
-// while the largest rectangle actually inside it is 174 x 144. Cards laid out
-// on the bbox sat on the navy surround, and every assertion passed, because
-// every one of them was measured against the same wrong rectangle.
+// ── the chosen positions land inside the box the board prints ────────────
+// The layout is a table of hand-set numbers now, not a computation — see
+// SPICE_DECK_LAYOUT for why. That changes what there is to check but not how
+// much: a number somebody typed can be outside the box exactly as easily as a
+// number something calculated, and rather more quietly, because nothing
+// recomputes it when the board changes underneath.
 //
-// A rectangle cannot be checked against another rectangle here. It has to be
-// checked against the path the board actually draws.
+// AGAINST THE SHAPE, NOT THE BOUNDING BOX. The box is a wedge — the board's rim
+// curves through one corner of it — so its bbox is 351 x 215 while the largest
+// rectangle actually inside it is 174 x 144. An earlier layout sat on the navy
+// surround with every assertion passing, because all of them were measured
+// against the same wrong rectangle.
 {
   const poly = spiceBoxPolygon()
   check('the printed box can be found and flattened', poly.length > 20, true)
 
-  /** Every corner of every card the layout places. */
-  const corners = (L: ReturnType<typeof slotLayout>, piles: number): [number, number][] => {
-    const out: [number, number][] = []
-    const box = (x: number, y: number, w: number, h: number) =>
-      out.push([x, y], [x + w, y], [x, y + h], [x + w, y + h])
-    box(L.deckX, L.deckY, L.deckW, L.deckH)
-    for (let i = 0; i < piles; i++) {
-      box(L.pileX + i * L.pileStepX, L.pileY + i * L.pileStepY, L.pileW, L.pileH)
-    }
-    return out
+  const corners = (c: { x: number; y: number; w: number; h: number }): [number, number][] =>
+    [[c.x, c.y], [c.x + c.w, c.y], [c.x, c.y + c.h], [c.x + c.w, c.y + c.h]]
+
+  // THE ROOM HAS TO BE ROOM. Every check below reserves CAPTION_ROOM under a
+  // card, so setting it to zero silently turns "the caption fits" into "the
+  // card's bottom edge fits" — the check keeps passing and stops meaning
+  // anything. Nothing else notices, because no layout is wrong for it.
+  check('the caption reserves actual space', CAPTION_ROOM > 0, true)
+
+  for (const [name, card] of Object.entries(SPICE_DECK_LAYOUT)) {
+    check(`${name}: every corner is inside the printed box`,
+      corners(card).filter(p => !inPolygon(p, poly)).length, 0)
+    // The caption hangs below the deck, so its room has to be in there too.
+    check(`...with room beneath it for a caption`,
+      inPolygon([card.x + card.w / 2, card.y + card.h + CAPTION_ROOM], poly), true)
+    check(`...and is big enough to read`, card.w > 30, true)
+    // A card, not a smear: the art is drawn 5:7 and a box far off that ratio
+    // letterboxes or stretches whatever is put in it.
+    const ratio = card.h / card.w
+    check(`...and roughly a card's shape`, ratio > 1.25 && ratio < 1.55, true)
   }
 
-  for (const [slots, piles] of [[2, 1], [3, 2]] as const) {
-    const L = slotLayout(slots)
-    check(`${piles} pile(s): every card corner is inside the printed box`,
-      corners(L, piles).filter(p => !inPolygon(p, poly)).length, 0)
-    // The captions and side labels have to land in there too.
-    check(`...and the deck's caption below it`,
-      inPolygon([L.deckX + L.deckW / 2, L.deckY + L.deckH + CAPTION_ROOM], poly), true)
-    check(`...with cards big enough to read`, L.deckW > 42 && L.pileW > 42, true)
-  }
-
-  // EVERY CARD THE SAME SIZE, which is what decides the arrangement rather
-  // than the other way round. A deck standing up the left with the two piles
-  // stacked beside it let the deck be nearly twice their width — but only by
-  // halving their height, and matching the deck down to them puts every card at
-  // 44 rather than the 51 a row gives. The stack and equal size cannot both be
-  // had, and equal size is the one that was asked for.
-  {
-    for (const [slots, piles] of [[2, 1], [3, 2]] as const) {
-      const L = slotLayout(slots)
-      check(`${piles} pile(s): the deck and the piles are the same size`,
-        [L.pileW === L.deckW, L.pileH === L.deckH], [true, true])
-      check(`...laid out across, not stacked`,
-        [L.pileStepX > 0, L.pileStepY], [true, 0])
-      check(`...on one baseline`, L.pileY, L.deckY)
-    }
-    // Bigger than a stacked pair would be, which is WHY the row won. Derived
-    // from the box rather than compared to a number that goes stale the moment
-    // the padding changes — which is exactly what happened to the last version
-    // of this check.
-    const { height } = DUNE_SPICE_DECK_AREA
-    const stackedW = ((height - PAD_ROOM * 2 - GAP_ROOM) / 2) / (7 / 5)
-    check('three across beats a stacked pair', slotLayout(3).cardW > stackedW, true)
-  }
-
-  // THE WIDTH HALF OF THE FIT. The printed box is short and wide, so its height
-  // binds first and no change to the width term can push a card outside it. A
-  // narrow box is the only way to make that half do anything.
-  {
-    const narrow = { x: 0, y: 0, width: 120, height: 400 }
-    for (const [slots, piles] of [[2, 1], [3, 2]] as const) {
-      const L = slotLayout(slots, narrow)
-      const inside = corners(L, piles).every(([px, py]) =>
-        px >= narrow.x - 0.01 && px <= narrow.x + narrow.width + 0.01
-        && py >= narrow.y - 0.01 && py <= narrow.y + narrow.height + 0.01)
-      check(`${piles} pile(s) fit a narrow box`, inside, true)
+  // NOT ON TOP OF EACH OTHER. Three boxes set by hand can overlap without any
+  // single one of them being wrong, and the result reads as a rendering fault
+  // rather than as a placement someone chose.
+  const boxes = Object.entries(SPICE_DECK_LAYOUT)
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const [an, A] = boxes[i], [bn, B] = boxes[j]
+      const apart = A.x + A.w <= B.x || B.x + B.w <= A.x
+        || A.y + A.h <= B.y || B.y + B.h <= A.y
+      check(`${an} and ${bn} do not overlap`, apart, true)
     }
   }
+}
 
-  // AND THE HEIGHT HALF, in the other direction.
-  {
-    const short = { x: 0, y: 0, width: 400, height: 90 }
-    for (const [slots, piles] of [[2, 1], [3, 2]] as const) {
-      const L = slotLayout(slots, short)
-      const inside = corners(L, piles).every(([, py]) =>
-        py >= short.y - 0.01 && py <= short.y + short.height + 0.01)
-      check(`${piles} pile(s) fit a short box`, inside, true)
-      // AND LEAVE ROOM FOR THE CAPTION inside the padding, which is the only
-      // condition under which the caption term in the fit does anything at all:
-      // against the printed box the width binds, so dropping it changes nothing
-      // and a sabotage of it came back clean.
-      check(`...with room for the caption inside the padding`,
-        L.deckH + CAPTION_ROOM <= short.height - PAD_ROOM * 2 + 0.01, true)
-    }
+// ── the tuning tool is telling the truth ─────────────────────────────────
+// The layout is placed by eye in /spice-deck-editor.html and pasted back into
+// the data module. Its whole value depends on showing the LIVE numbers against
+// the REAL boundary: a tool that opens on a stale copy, or draws a boundary
+// that is not the boundary, keeps working and quietly yields a layout that is
+// wrong in a way that looks carefully placed.
+//
+// Both halves of that have already gone wrong once, so both are checked here.
+{
+  const tool = readFileSync('public/spice-deck-editor.html', 'utf8')
+  check('the tool exists', tool.length > 0, true)
+
+  check('it reads the layout from the source of truth',
+    tool.includes("from '/src/data/dune/spiceDeckLayout.ts'"), true)
+
+  // NOT A .tsx. A page in public/ is served untransformed and never receives
+  // @vitejs/plugin-react's refresh preamble, so importing a component throws
+  // "can't detect preamble" and the tool renders nothing. That is why the
+  // layout lives in a data module at all.
+  check('...and imports no component', /from '\/src\/[^']*\.tsx'/.test(tool), false)
+
+  // ...which only holds while the data module stays plain data. A React import
+  // added to it later would break the tool in the browser and nothing else,
+  // which is the sort of breakage that sits undiscovered for a month.
+  const data = readFileSync('src/data/dune/spiceDeckLayout.ts', 'utf8')
+  check('the layout module pulls in nothing at runtime',
+    /^import (?!type )/m.test(data), false)
+
+  // THE BOUNDARY IS THE PRINTED SHAPE. It was DUNE_SPICE_DECK_AREA at first —
+  // the largest rectangle that fits inside the box. That rectangle is a
+  // sufficient condition and not a necessary one: the box is a wedge, wider
+  // than its inscribed rectangle at nearly every height, so the tool marked
+  // perfectly good placements as errors and the layout it was steering people
+  // towards was needlessly cramped.
+  check('the tool finds the box by the fill the board prints it with',
+    tool.includes("const BOX_FILL = '#c2bd9e'"), true)
+  check('...and asks the path itself what contains what',
+    tool.includes('isPointInFill'), true)
+  // Mention is fine — the comment above BOX_FILL explains why the rectangle is
+  // not the boundary. USE is what must be gone.
+  check('...rather than measuring against the inscribed rectangle',
+    tool.includes('DUNE_SPICE_DECK_AREA.'), false)
+  check('...and does not even load it', tool.includes('boardData.ts'), false)
+
+  // No second copy of the layout, which is the other failure being designed out.
+  check('the tool hard-codes no layout of its own',
+    /const START = \{/.test(tool), false)
+  check('...nor its own caption room',
+    /const CAPTION_ROOM = \d/.test(tool), false)
+
+  // It EXPORTS the shape the source declares. A paste block naming a field the
+  // interface does not have is a compile error at the moment of pasting, which
+  // is the worst moment to discover it.
+  check('...and exports a block shaped like the declaration',
+    tool.includes("export const SPICE_DECK_LAYOUT: Record<'deck' | 'discardA' | 'discardB', SpiceCardBox> = {"),
+    true)
+
+  // And it is a TOOL, not a second source of truth: it hands back text for a
+  // person to paste, and writes nothing itself.
+  for (const verb of ['POST', 'PUT', 'PATCH']) {
+    check(`...and never ${verb}s anything`, tool.includes(`'${verb}'`), false)
   }
 }
 

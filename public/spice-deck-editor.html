@@ -1,0 +1,445 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Dune spice deck editor</title>
+<!--
+  Place and size the three spice-deck cards by eye, then paste the result over
+  SPICE_DECK_LAYOUT in src/components/dune/SpiceDeckArea.tsx.
+
+  Same bargain as label-editor.html: this tool does NOT write anything. It works
+  out what the numbers should be — which is the part that is miserable by hand —
+  and the numbers then live in the source, where nothing recomputes them.
+
+  Every automatic arrangement of these got something wrong, and each fix broke
+  the case the last one was chosen for. The last one satisfied every constraint
+  on paper and still had cards flush against the printed edge, because "inside
+  the box" and "looks placed in the box" are not the same property and only one
+  of them is arithmetic.
+
+  Run the dev server and open  /spice-deck-editor.html
+-->
+<style>
+  :root { --ink:#3f2c1a; --panel:#f6ecd2; --pick:#c0392b }
+  * { box-sizing:border-box }
+  body { margin:0; font:13px/1.5 system-ui,sans-serif; color:var(--ink);
+         background:#1b1b1f; display:flex; height:100vh; overflow:hidden }
+  #stage { flex:1; overflow:auto; display:grid; place-items:center; padding:16px }
+  #stage svg { display:block; background:#fff; box-shadow:0 0 40px #0008 }
+  aside { width:330px; background:var(--panel); padding:14px; overflow:auto;
+          display:flex; flex-direction:column; gap:12px; box-shadow:-4px 0 20px #0006 }
+  h1 { font:600 14px/1.3 system-ui; margin:0 }
+  .hint { font-size:12px; opacity:.75 }
+  fieldset { border:1px solid #0002; border-radius:6px; padding:8px; margin:0 }
+  legend { padding:0 5px; font-weight:600; font-size:12px }
+  label { display:flex; align-items:center; gap:8px; margin:5px 0 }
+  label span:first-child { width:44px; opacity:.8 }
+  input[type=range] { flex:1; min-width:0 }
+  input[type=number] { width:70px; padding:2px 4px; font:inherit }
+  button { font:inherit; padding:4px 9px; border:1px solid #0003; border-radius:5px;
+           background:#fffdf6; cursor:pointer }
+  button:hover { background:#fff }
+  button.primary { background:var(--ink); color:var(--panel); border-color:var(--ink) }
+  button[aria-pressed=true] { background:var(--ink); color:var(--panel) }
+  .row { display:flex; gap:6px; flex-wrap:wrap; align-items:center }
+  textarea { width:100%; height:150px; font:11px/1.45 ui-monospace,monospace;
+             border:1px solid #0003; border-radius:5px; padding:7px; resize:vertical }
+  #sel { font-weight:600 }
+  #warn { color:var(--pick); font-weight:600; min-height:1.4em }
+</style>
+
+<div id="stage">loading /dune-board.svg…</div>
+
+<aside>
+  <h1>Spice deck editor</h1>
+  <p class="hint">Drag a card to move it, drag its corner to resize.
+     Arrow keys nudge, <b>Shift</b> for 5×. <b>Tab</b> cycles cards.
+     The outlined shape is the printed box itself, read off the board.</p>
+
+  <fieldset><legend>View</legend>
+    <label><span>zoom</span><input id="zoom" type="range" min="0.4" max="6" step="0.05"></label>
+    <div class="row">
+      <button id="toDeck">Zoom to deck</button>
+      <button id="whole">Whole board</button>
+    </div>
+  </fieldset>
+
+  <fieldset><legend>Selected</legend>
+    <div id="sel">— nothing selected —</div>
+    <div id="warn"></div>
+  </fieldset>
+
+  <fieldset><legend>Adjust</legend>
+    <label><span>x</span><input id="x" type="range" step="0.5"><input id="xN" type="number" step="0.5"></label>
+    <label><span>y</span><input id="y" type="range" step="0.5"><input id="yN" type="number" step="0.5"></label>
+    <label><span>w</span><input id="w" type="range" min="10" max="174" step="0.5"><input id="wN" type="number" step="0.5"></label>
+    <label><span>h</span><input id="h" type="range" min="10" max="200" step="0.5"><input id="hN" type="number" step="0.5"></label>
+    <div class="row">
+      <button id="lock" aria-pressed="true">Lock 5:7</button>
+      <button id="same">Match deck's size</button>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <button id="reset">Reset all</button>
+    </div>
+  </fieldset>
+
+  <fieldset><legend>Paste over SPICE_DECK_LAYOUT</legend>
+    <textarea id="out" readonly spellcheck="false"></textarea>
+    <div class="row" style="margin-top:6px">
+      <button id="copy" class="primary">Copy</button>
+      <span class="hint">src/data/dune/spiceDeckLayout.ts</span>
+    </div>
+  </fieldset>
+</aside>
+
+<script type="module">
+// THE LIVE VALUES, imported rather than copied.
+//
+// This page has no build step, so the obvious thing is to paste the numbers in
+// as literals — and then the tool disagrees with the source the moment anyone
+// pastes its own output back, which is the one thing it exists to make people
+// do. Vite serves the modules in dev, and dev is the only place this page runs,
+// so it can simply ask.
+//
+// DATA MODULES ONLY. A page in public/ is served untransformed, so it never
+// gets the React refresh preamble, and importing a .tsx fails outright.
+import { SPICE_DECK_LAYOUT, SPICE_CAPTION_ROOM }
+  from '/src/data/dune/spiceDeckLayout.ts'
+
+const $ = s => document.querySelector(s)
+const round = (n, d = 1) => Number(n.toFixed(d))
+const CARD_RATIO = 7 / 5
+/**
+ * Room under a card for its caption.
+ *
+ * The caption is drawn by the component, not here, so without this band a card
+ * can be seated perfectly and still be wrong — the card inside the box and the
+ * words under it outside. Shown as a hatched strip, so it is placed WITH the
+ * card rather than discovered afterwards.
+ */
+const CAPTION_ROOM = SPICE_CAPTION_ROOM
+
+/**
+ * The box the cards must stay inside: THE PRINTED SHAPE, not a rectangle.
+ *
+ * This drew DUNE_SPICE_DECK_AREA at first — the largest rectangle that fits
+ * inside the box. That rectangle is a sufficient condition, not a necessary
+ * one: the box is a wedge, wider than its inscribed rectangle at nearly every
+ * height, so a card can sit well outside the rectangle and still be comfortably
+ * inside the box on the board. Drawing the rectangle as though it were the
+ * boundary reported perfectly good placements as errors.
+ *
+ * So the boundary here is the path the board actually prints, found by its fill
+ * colour, and containment is asked of the path itself — the same question
+ * spicedecktest asks, which is why the two now agree.
+ */
+const BOX_FILL = '#c2bd9e'
+/** @type {SVGPathElement | null} */
+let boxPath = null
+let BOX = { x: 0, y: 0, w: 0, h: 0 }
+
+/** Is this board-space point inside the printed box? */
+function inBox(x, y) {
+  if (!boxPath) return true
+  const p = $('#stage svg').createSVGPoint()
+  p.x = x; p.y = y
+  return boxPath.isPointInFill(p)
+}
+/** What Reset returns to: whatever the source holds right now. */
+const START = SPICE_DECK_LAYOUT
+const LABEL = { deck: 'DECK', discardA: 'DISCARD A', discardB: 'DISCARD B' }
+const COLOUR = { deck: '#1d3f70', discardA: '#a8641b', discardB: '#7a3b8f' }
+
+const cards = JSON.parse(JSON.stringify(START))
+let picked = 'deck'
+let locked = true
+const els = {}
+
+/** Board units per screen pixel, so a drag moves the card under the cursor. */
+function scale() {
+  const svg = $('#stage svg')
+  return svg.viewBox.baseVal.width / svg.getBoundingClientRect().width
+}
+
+function draw() {
+  for (const id of Object.keys(cards)) {
+    const c = cards[id], g = els[id]
+    g.rect.setAttribute('x', c.x); g.rect.setAttribute('y', c.y)
+    g.rect.setAttribute('width', c.w); g.rect.setAttribute('height', c.h)
+    g.tag.setAttribute('x', c.x + c.w / 2); g.tag.setAttribute('y', c.y + c.h / 2)
+    g.tag.style.fontSize = Math.max(5, c.w * 0.13) + 'px'
+    g.cap.setAttribute('x', c.x); g.cap.setAttribute('y', c.y + c.h)
+    g.cap.setAttribute('width', c.w); g.cap.setAttribute('height', CAPTION_ROOM)
+    g.grip.setAttribute('x', c.x + c.w - 5); g.grip.setAttribute('y', c.y + c.h - 5)
+    g.rect.setAttribute('stroke-width', id === picked ? 2.5 : 1.2)
+    g.rect.setAttribute('stroke-dasharray', id === picked ? '' : '4 3')
+    g.grip.style.display = id === picked ? '' : 'none'
+  }
+  syncInputs(); emit(); warn()
+}
+
+function syncInputs() {
+  const c = cards[picked]
+  for (const k of ['x', 'y', 'w', 'h']) { $('#' + k).value = c[k]; $('#' + k + 'N').value = c[k] }
+  $('#sel').textContent = `${LABEL[picked]}  ${round(c.w)} × ${round(c.h)}`
+}
+
+/**
+ * Say when a card has left the box, rather than waiting for the test to.
+ *
+ * Every corner plus the point where the caption sits, against the printed path
+ * — the same five questions spicedecktest asks of the same shape, so a layout
+ * that looks clean here passes there.
+ */
+function warn() {
+  const out = []
+  for (const [id, c] of Object.entries(cards)) {
+    const points = [
+      [c.x, c.y], [c.x + c.w, c.y], [c.x, c.y + c.h], [c.x + c.w, c.y + c.h],
+      [c.x + c.w / 2, c.y + c.h + CAPTION_ROOM],
+    ]
+    if (points.some(([px, py]) => !inBox(px, py))) out.push(LABEL[id])
+  }
+  const overlap = []
+  const list = Object.entries(cards)
+  for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+    const [an, A] = list[i], [bn, B] = list[j]
+    const apart = A.x + A.w <= B.x || B.x + B.w <= A.x || A.y + A.h <= B.y || B.y + B.h <= A.y
+    if (!apart) overlap.push(`${LABEL[an]} / ${LABEL[bn]}`)
+  }
+  $('#warn').textContent = [
+    out.length ? `outside the printed box: ${out.join(', ')}` : '',
+    overlap.length ? `overlapping: ${overlap.join(', ')}` : '',
+  ].filter(Boolean).join(' — ')
+}
+
+function emit() {
+  const row = (id) => {
+    const c = cards[id]
+    return `  ${id}: { x: ${round(c.x)}, y: ${round(c.y)}, w: ${round(c.w)}, h: ${round(c.h)} },`
+  }
+  $('#out').value =
+    `export const SPICE_DECK_LAYOUT: Record<'deck' | 'discardA' | 'discardB', SpiceCardBox> = {\n`
+    + ['deck', 'discardA', 'discardB'].map(row).join('\n')
+    + `\n}`
+}
+
+function setSize(w, h) {
+  const c = cards[picked]
+  c.w = Math.max(10, round(w))
+  c.h = locked ? round(c.w * CARD_RATIO) : Math.max(10, round(h))
+  draw()
+}
+
+// ── the board, and the cards over it ──────────────────────────────────────
+fetch('dune-board.svg')
+  .then(r => r.ok ? r.text() : Promise.reject(r.status))
+  .then(text => {
+    $('#stage').innerHTML = text
+    const svg = $('#stage svg')
+    svg.removeAttribute('width'); svg.removeAttribute('height')
+
+    const NS = 'http://www.w3.org/2000/svg'
+    const layer = document.createElementNS(NS, 'g')
+    svg.appendChild(layer)
+
+    // The printed box, outlined so the boundary you are working to is the one
+    // the board has. Two paths carry this fill — the deck box and the Tleilaxu
+    // tanks, either side of the centre line — so take the right-hand one.
+    boxPath = [...svg.querySelectorAll(`path[fill="${BOX_FILL}"]`)]
+      .filter(p => p.getBBox().x > 485)
+      .sort((a, b) => b.getBBox().width - a.getBBox().width)[0] ?? null
+    if (!boxPath) $('#warn').textContent = 'could not find the printed box'
+    else {
+      const b = boxPath.getBBox()
+      BOX = { x: b.x, y: b.y, w: b.width, h: b.height }
+      const outline = boxPath.cloneNode()
+      outline.setAttribute('fill', '#ffffff44')
+      outline.setAttribute('stroke', '#c0392b'); outline.setAttribute('stroke-width', 0.8)
+      outline.setAttribute('stroke-dasharray', '3 3')
+      outline.style.pointerEvents = 'none'
+      layer.appendChild(outline)
+
+      // The sliders cover the box and a little beyond, so a card can be dragged
+      // out and SEEN to be out rather than silently clamped.
+      $('#x').min = BOX.x - 20; $('#x').max = BOX.x + BOX.w + 20
+      $('#y').min = BOX.y - 20; $('#y').max = BOX.y + BOX.h + 20
+      $('#w').max = BOX.w; $('#h').max = BOX.h
+    }
+
+    for (const id of Object.keys(cards)) {
+      const g = document.createElementNS(NS, 'g')
+      const rect = document.createElementNS(NS, 'rect')
+      rect.setAttribute('rx', 3)
+      rect.setAttribute('fill', COLOUR[id] + 'cc')
+      rect.setAttribute('stroke', '#f0e2bb')
+      rect.style.cursor = 'move'
+      const tag = document.createElementNS(NS, 'text')
+      tag.textContent = LABEL[id]
+      tag.setAttribute('fill', '#f0e2bb')
+      tag.setAttribute('text-anchor', 'middle')
+      tag.setAttribute('dominant-baseline', 'central')
+      tag.style.pointerEvents = 'none'
+      tag.style.fontFamily = 'Georgia, serif'
+      const cap = document.createElementNS(NS, 'rect')
+      cap.setAttribute('fill', COLOUR[id] + '33')
+      cap.setAttribute('stroke', COLOUR[id] + '99')
+      cap.setAttribute('stroke-width', 0.4)
+      cap.setAttribute('stroke-dasharray', '2 2')
+      cap.style.pointerEvents = 'none'
+      const grip = document.createElementNS(NS, 'rect')
+      grip.setAttribute('width', 10); grip.setAttribute('height', 10)
+      grip.setAttribute('fill', '#f0e2bb'); grip.setAttribute('stroke', COLOUR[id])
+      grip.style.cursor = 'nwse-resize'
+      g.append(cap, rect, tag, grip)
+      layer.appendChild(g)
+      els[id] = { g, rect, tag, grip, cap }
+
+      rect.addEventListener('pointerdown', ev => startDrag(ev, id, 'move'))
+      grip.addEventListener('pointerdown', ev => startDrag(ev, id, 'resize'))
+    }
+    zoomToDeck()
+    draw()
+  })
+  .catch(e => { $('#stage').textContent = `could not load dune-board.svg (${e})` })
+
+// ── zoom ──────────────────────────────────────────────────────────────────
+/** Screen pixels per board unit at which the whole board is visible. */
+function fitScale() {
+  const stage = $('#stage').getBoundingClientRect()
+  const vb = $('#stage svg').viewBox.baseVal
+  return Math.min((stage.width - 32) / vb.width, (stage.height - 32) / vb.height)
+}
+
+/** @param {number} mult multiples of fitScale */
+function setZoom(mult, centreOn) {
+  const svg = $('#stage svg')
+  if (!svg) return
+  const vb = svg.viewBox.baseVal
+  const px = fitScale() * mult
+  svg.style.width = vb.width * px + 'px'
+  svg.style.height = vb.height * px + 'px'
+  $('#zoom').value = mult
+  if (centreOn) {
+    // Put the point of interest in the middle of the stage rather than leaving
+    // the reader to find it: at 4x the deck is somewhere off the bottom-right.
+    const stage = $('#stage')
+    stage.scrollLeft = centreOn.x * px - stage.clientWidth / 2 + 16
+    stage.scrollTop = centreOn.y * px - stage.clientHeight / 2 + 16
+  }
+}
+
+/** What is being edited: the cards themselves, captions included. */
+function cardsBBox() {
+  const xs = [], ys = []
+  for (const c of Object.values(cards)) {
+    xs.push(c.x, c.x + c.w)
+    ys.push(c.y, c.y + c.h + CAPTION_ROOM)
+  }
+  const x = Math.min(...xs), y = Math.min(...ys)
+  return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y }
+}
+const cardsMid = () => {
+  const b = cardsBBox()
+  return { x: b.x + b.w / 2, y: b.y + b.h / 2 }
+}
+
+/**
+ * Frame the CARDS, with room around them to drag into.
+ *
+ * Framing the printed box instead put the view too far out to place anything:
+ * the wedge is 351 wide because it reaches away to the left, while the cards
+ * occupy about 140 of that at the right-hand end. Fitting the empty part of the
+ * shape is what made the tool open on a view of the middle of the board.
+ */
+function zoomToDeck() {
+  const b = cardsBBox(), room = 2.4
+  const stage = $('#stage').getBoundingClientRect()
+  const px = Math.min(stage.width / (b.w * room), stage.height / (b.h * room))
+  setZoom(px / fitScale(), cardsMid())
+}
+
+$('#zoom').addEventListener('input', e => setZoom(Number(e.target.value), cardsMid()))
+$('#toDeck').onclick = zoomToDeck
+$('#whole').onclick = () => setZoom(1)
+
+let drag = null
+function startDrag(ev, id, mode) {
+  // WHICH CARD IS UNDER THE CURSOR, not which one was grabbed last. A capture
+  // left open retargets every later pointer event to the element that holds it,
+  // so this listener can fire for a press somewhere else entirely — and it did:
+  // one drag on discard A moved discard B as well, because the press was
+  // delivered to A's rect while the cursor was over B.
+  const under = document.elementFromPoint(ev.clientX, ev.clientY)
+  const real = Object.keys(cards).find(k => els[k].rect === under || els[k].grip === under)
+  if (real) { id = real; mode = els[real].grip === under ? 'resize' : 'move' }
+
+  picked = id
+  const c = cards[id]
+  drag = { mode, sx: ev.clientX, sy: ev.clientY, x: c.x, y: c.y, w: c.w, h: c.h,
+           k: scale(), el: ev.currentTarget, pointerId: ev.pointerId }
+  ev.currentTarget.setPointerCapture(ev.pointerId)
+  ev.preventDefault()
+  draw()
+}
+addEventListener('pointermove', ev => {
+  if (!drag) return
+  const dx = (ev.clientX - drag.sx) * drag.k, dy = (ev.clientY - drag.sy) * drag.k
+  const c = cards[picked]
+  if (drag.mode === 'move') { c.x = round(drag.x + dx); c.y = round(drag.y + dy); draw() }
+  else setSize(drag.w + dx, drag.h + dy)
+})
+addEventListener('pointerup', () => {
+  // RELEASE IT EXPLICITLY. Chrome releases implicitly on pointerup, but not
+  // when the release happens off the window — and a capture that outlives its
+  // gesture silently sends the next press to the wrong card.
+  if (drag) { try { drag.el.releasePointerCapture(drag.pointerId) } catch {} }
+  drag = null
+})
+
+// ── controls ──────────────────────────────────────────────────────────────
+for (const k of ['x', 'y', 'w', 'h']) {
+  const apply = v => {
+    const c = cards[picked]
+    if (k === 'w' || k === 'h') setSize(k === 'w' ? v : c.w, k === 'h' ? v : c.h)
+    else { c[k] = round(v); draw() }
+  }
+  $('#' + k).addEventListener('input', e => apply(Number(e.target.value)))
+  $('#' + k + 'N').addEventListener('input', e => apply(Number(e.target.value)))
+}
+
+$('#lock').onclick = () => {
+  locked = !locked
+  $('#lock').setAttribute('aria-pressed', String(locked))
+  if (locked) setSize(cards[picked].w, 0)
+}
+$('#same').onclick = () => {
+  const d = cards.deck
+  cards[picked].w = d.w; cards[picked].h = d.h
+  draw()
+}
+$('#reset').onclick = () => {
+  Object.assign(cards, JSON.parse(JSON.stringify(START)))
+  draw()
+}
+$('#copy').onclick = async () => {
+  await navigator.clipboard.writeText($('#out').value)
+  $('#copy').textContent = 'Copied'
+  setTimeout(() => ($('#copy').textContent = 'Copy'), 1200)
+}
+
+addEventListener('keydown', ev => {
+  if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'TEXTAREA') return
+  const ids = Object.keys(cards)
+  if (ev.key === 'Tab') {
+    picked = ids[(ids.indexOf(picked) + (ev.shiftKey ? ids.length - 1 : 1)) % ids.length]
+    draw(); ev.preventDefault(); return
+  }
+  const step = ev.shiftKey ? 5 : 1
+  const c = cards[picked]
+  if (ev.key === 'ArrowLeft') c.x = round(c.x - step)
+  else if (ev.key === 'ArrowRight') c.x = round(c.x + step)
+  else if (ev.key === 'ArrowUp') c.y = round(c.y - step)
+  else if (ev.key === 'ArrowDown') c.y = round(c.y + step)
+  else return
+  draw(); ev.preventDefault()
+})
+</script>

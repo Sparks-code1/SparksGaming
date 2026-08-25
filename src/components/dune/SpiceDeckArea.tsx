@@ -25,9 +25,8 @@
  * one. `showing` in lib/dune/spiceBlow is the single answer to that question and
  * this reads it rather than indexing the array itself.
  */
-import { DUNE_SPICE_DECK_AREA } from '@/data/dune/boardData'
-import type { DuneArea } from '@/data/dune/boardData'
 import { showing } from '@/lib/dune/spiceBlow'
+import { SPICE_DECK_LAYOUT } from '@/data/dune/spiceDeckLayout'
 import type { GameMode, SpiceCard, SpiceDeckPublic } from '@/types/Dune/Game'
 
 const INK = '#3f2c1a'
@@ -35,25 +34,10 @@ const SAND = '#f0e2bb'
 const NAVY = '#111a30'
 const SERIF = "Georgia, 'Times New Roman', serif"
 
-/** Cards are 5:7, the ratio the generated card art uses. */
-const CARD_RATIO = 7 / 5
 
 // The printed SPICE DECK label is not a concern here. It sits in the thin tail
 // of the wedge, which is outside this rectangle — the generator puts it there
 // precisely because that is the part of the box no card can occupy.
-/**
- * Margin inside the box, and it is not decoration.
- *
- * At 6 the basic game's two cards spanned 162 of 162 usable — edge to edge with
- * the printed box, touching its sides. Every corner was inside it and every
- * check passed, and it still read as cards that did not fit, because a card
- * flush against the edge of the thing it sits in looks like a card that has
- * overflowed it. The margin is what makes them look placed rather than crammed.
- */
-const PAD = 12
-const GAP = 6
-/** Caption height beneath a slot that has one. */
-const CAPTION = 12
 
 /**
  * The spice spiral, the same curve the board's own marks are drawn from.
@@ -96,46 +80,6 @@ function wrap(text: string, perLine: number): string[] {
   }
   if (line) out.push(line)
   return out
-}
-
-/**
- * Where the deck and the discard pile(s) sit — all the same size, in a row.
- *
- * EQUAL SIZE IS WHAT DECIDES THE ARRANGEMENT. A deck standing up the left with
- * the two piles stacked beside it let the deck be much bigger, but only by
- * making the piles half its height: stacking two cards in a 128-tall box caps
- * each at 61, and matching the deck to them would put every card at 44. In a
- * row all three come out at 51, which is the largest three equal cards this box
- * holds — the stack and equal size cannot both be had.
- *
- * The box is a PARAMETER, defaulting to the printed one. The real box is short
- * and wide enough that its height always binds, so with it alone the width term
- * can never be shown to do anything.
- */
-export function slotLayout(slots: number, area: DuneArea = DUNE_SPICE_DECK_AREA) {
-  const { x, y, width, height } = area
-  const usableW = width - PAD * 2
-  const usableH = height - PAD * 2
-
-  // Bound by BOTH axes: three across run out of width first, two run out of
-  // height. Taking only one of them put cards outside the box in each
-  // direction on separate occasions.
-  const byWidth = ((usableW - GAP * (slots - 1)) / slots) * CARD_RATIO
-  const cardH = Math.min(usableH - CAPTION, byWidth)
-  const cardW = cardH / CARD_RATIO
-  const step = cardW + GAP
-  const rowW = cardW * slots + GAP * (slots - 1)
-  const left = x + (width - rowW) / 2
-  const top = y + (height - cardH - CAPTION) / 2
-
-  return {
-    deckW: cardW, deckH: cardH, deckX: left, deckY: top,
-    pileW: cardW, pileH: cardH, pileX: left + step, pileY: top,
-    // Which way the piles run from the first one. A row, so across.
-    pileStepX: step, pileStepY: 0,
-    sideLabels: false,
-    cardW, cardH, top, left,
-  }
 }
 
 /** The face-down back: navy, a cream rule inside the edge, and the spiral. */
@@ -250,7 +194,7 @@ function Depth({ x, y, w, count }: { x: number; y: number; w: number; count: num
  * The depth marks are drawn BEHIND and offset, which is the only way a pile of
  * one and a pile of nine look different when only the top card is ever visible.
  */
-function Pile({ cards, x, y, w, h, caption, name, sideLabel }: {
+function Pile({ cards, x, y, w, h, caption, name }: {
   cards: readonly SpiceCard[]; x: number; y: number; w: number; h: number
   /** What is printed beside or under the card. Empty draws nothing. */
   caption: string
@@ -262,8 +206,6 @@ function Pile({ cards, x, y, w, h, caption, name, sideLabel }: {
    * name at all is one a screen reader, and a test, cannot tell from the other.
    */
   name: string
-  /** Beside the card rather than under it, where height is the scarce axis. */
-  sideLabel?: boolean
 }) {
   const top = showing(cards)
   return (
@@ -276,12 +218,7 @@ function Pile({ cards, x, y, w, h, caption, name, sideLabel }: {
         ? <CardFace card={top} x={x} y={y} w={w} h={h} />
         : <EmptySlot x={x} y={y} w={w} h={h} />}
       <Depth x={x} y={y} w={w} count={cards.length} />
-      {caption === '' ? null : sideLabel
-        ? <text x={x + w + 4} y={y + h / 2} fontSize={Math.min(10, w * 0.26)} fill={INK}
-            dominantBaseline="central" letterSpacing={0.8} fontFamily={SERIF} opacity={0.85}>
-            {caption}
-          </text>
-        : <Caption x={x} y={y + h + 4} w={w} text={caption} />}
+      {caption === '' ? null : <Caption x={x} y={y + h + 4} w={w} text={caption} />}
       <title>
         {top
           ? `${name}: showing ${top.kind === 'shai-hulud' ? 'Shai-Hulud' : top.name}`
@@ -309,17 +246,17 @@ export interface SpiceDeckAreaProps {
 
 export function SpiceDeckArea({ deck, mode }: SpiceDeckAreaProps) {
   const advanced = mode === 'advanced'
-  const L = slotLayout(advanced ? 3 : 2)
+  const L = SPICE_DECK_LAYOUT
   return (
     <g data-layer="spice-deck" data-mode={mode}>
       {/* The deck itself: face down, and the only thing said about it is how
           much of it is left. */}
       <g>
-        <CardBack x={L.deckX} y={L.deckY} w={L.deckW} h={L.deckH} />
+        <CardBack x={L.deck.x} y={L.deck.y} w={L.deck.w} h={L.deck.h} />
         {/* UNDER THE CARD, not on it. A badge over the back covered the mark
             that says which deck this is, to report a number that changes every
             turn — the two were competing for the same square inch. */}
-        <Caption x={L.deckX} y={L.deckY + L.deckH + 3} w={L.deckW}
+        <Caption x={L.deck.x} y={L.deck.y + L.deck.h + 3} w={L.deck.w}
           text={`${deck.remaining} LEFT`} />
         <title>{`Spice deck: ${deck.remaining} card${deck.remaining === 1 ? '' : 's'} face down`}</title>
       </g>
@@ -329,16 +266,17 @@ export function SpiceDeckArea({ deck, mode }: SpiceDeckAreaProps) {
           label what the arrangement already says, and cost width the cards
           could have. The single pile keeps its word, because one pile beside a
           deck is not self-evidently a discard. */}
-      <Pile cards={deck.discardA} x={L.pileX} y={L.pileY} w={L.pileW} h={L.pileH}
+      <Pile cards={deck.discardA} x={L.discardA.x} y={L.discardA.y}
+        w={L.discardA.w} h={L.discardA.h}
         name={advanced ? 'Discard pile A' : 'Discard pile'}
-        caption={advanced ? '' : 'DISCARD'} sideLabel={L.sideLabels} />
+        caption={advanced ? '' : 'DISCARD'} />
 
       {/* Pile B exists only in the advanced game. Not drawn empty in the basic
           one — an empty slot on the board says "nothing here yet", which is a
           different and wrong thing from "this pile is not in this game". */}
       {advanced && (
-        <Pile cards={deck.discardB} x={L.pileX + L.pileStepX} y={L.pileY + L.pileStepY}
-          w={L.pileW} h={L.pileH} name="Discard pile B" caption="" sideLabel={L.sideLabels} />
+        <Pile cards={deck.discardB} x={L.discardB.x} y={L.discardB.y}
+          w={L.discardB.w} h={L.discardB.h} name="Discard pile B" caption="" />
       )}
     </g>
   )
