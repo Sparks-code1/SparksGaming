@@ -34,6 +34,14 @@
  * phase: whether the auction picks the right winner is the offline suite's
  * question, and whether its outcome is reachable by the wrong seat is this one's.
  *
+ * A SPICE BLOW THAT STOPS gets one too, and for a blunter reason than the rest:
+ * SPICE_BLOW and PLACE_WORMS had never executed at all. Every claim about them
+ * was read off the source, which is the confidence that has already been wrong
+ * here — a patch that silently failed on line endings left the endpoint calling
+ * two functions it never imported, and the whole offline suite stayed green.
+ * The pause write, the read-back of the continuation, and the deadline expiring
+ * are all things that only happen at runtime.
+ *
  * ATREIDES PRESCIENCE gets its own section, because it is the first power that
  * hands ONE SEAT information nobody else has — every other one moves pieces or
  * spice. The reveal travels on that seat's secrets row; the panel takes it as a
@@ -160,6 +168,8 @@ const userIdFor = async email => {
 
 let matchId = null
 let duneMatchId = null
+let blowMatchId = null
+let otherMatchId = null
 let campaignId = null
 // Set by the diagnosis in section 3; the frame checks are meaningless without it.
 let realtimeWorks = false
@@ -965,6 +975,258 @@ try {
     checkGiven(dealt, '...and the auction is closed out of it',
       (after?.state?.auction ?? null) === null,
       () => `state.auction is ${JSON.stringify(after?.state?.auction)}`)
+  }
+
+  // ── 8. a spice blow that stops for the Fremen, run for real ───────────────
+  // SPICE_BLOW and PLACE_WORMS had never executed. Every claim about them —
+  // that the pause is written, that the continuation can be read back, that the
+  // deadline expires — rested on reading the source, and that is exactly the
+  // kind of confidence that has already been wrong here: a patch silently
+  // failed on line endings and left this endpoint calling two functions it
+  // never imported, with the whole offline suite green. Nothing short of the
+  // call catches that.
+  //
+  // TWO MATCHES, because the interesting claims need different seats:
+  //
+  //   the Fremen's own, where A holds that seat and answers the pause;
+  //   somebody else's, where A does not, is refused, and is then allowed once
+  //   the clock has run out.
+  //
+  // Only A's password is read, here as everywhere in this script, so every call
+  // below is A's — which is what makes the refusal meaningful.
+  {
+    const wormCard = { kind: 'shai-hulud' }
+    // Real ids, because resolveSpiceBlow checks territories exist and the worm
+    // devours by territory. HARG is where the forces stand.
+    const HARG = 'territory-02'
+    const blowDeck = [
+      wormCard,
+      wormCard,
+      { kind: 'territory', territoryId: 'territory-07', name: `${TAG}-Cielago`, spice: 8, sector: 'sector-3' },
+      { kind: 'territory', territoryId: 'territory-04', name: `${TAG}-Habbanya`, spice: 6, sector: 'sector-5' },
+    ]
+    // A card nobody may see: it sits under the two worms, so it is still in the
+    // deck when the phase stops, and the whole point of the pause's split is
+    // that this string never reaches a client.
+    const DECK_SECRET = `${TAG}-Cielago`
+
+    // PILE A MUST HAVE A CARD SHOWING. A worm devours what is showing, and
+    // resolveSpiceBlow throws on one drawn over an empty discard — 'turn 1 must
+    // place a territory card first'. Seeded empty, SPICE_BLOW returns
+    // blow-failed, nothing pauses, and every check below fails for a reason
+    // that has nothing to do with what they are testing. Found by running the
+    // fixture through the shared module before spending a live run on it.
+    //
+    // Gara Kulon, deliberately: no forces stand there, so the automatic first
+    // worm eats nothing and the only devouring in this section is the Fremen's.
+    const showingA = [
+      { kind: 'territory', territoryId: 'territory-30', name: `${TAG}-GaraKulon`, spice: 6, sector: 'sector-8' },
+    ]
+
+    /** A Dune match at the spice blow, with the Fremen seated. */
+    const seedBlow = async (fremenIsA) => {
+      const { data: m, error } = await admin.from('matches').insert({
+        campaign_id: campaignId,
+        game_number: fremenIsA ? 3 : 4,
+        status: 'active',
+        state: {
+          // TURN 2, not 1. Turn one sets worms aside and shuffles them back
+          // instead of handing them over, so a first-turn blow would pause for
+          // nobody and this section would pass by testing nothing.
+          phase: 'Spice Blow and Nexus', turn: 2,
+          // ADVANCED, because placing worms is a Fremen advanced advantage. In
+          // the basic game resolveSpiceBlow counts none and there is no pause.
+          mode: 'advanced',
+          storm: 'sector-18',
+          spiceDeck: { remaining: blowDeck.length, discardA: showingA, discardB: [], turn: 1 },
+          forces: [
+            { faction: 'harkonnen', territoryId: HARG, sector: 'sector-3', count: 4 },
+            { faction: 'atreides', territoryId: 'territory-09', sector: 'sector-9', count: 2 },
+          ],
+          spiceOnBoard: { [HARG]: 6 },
+          players: [], awaiting: null, shieldWall: 'intact',
+        },
+      }).select('id').single()
+      if (error) throw new Error(`seed blow match: ${error.message}`)
+
+      await admin.from('match_players').insert([
+        { match_id: m.id, seat: 0, player_id: 'p1', user_id: userA, name: `${TAG}-A`,
+          faction_id: fremenIsA ? 'fremen' : 'atreides' },
+        { match_id: m.id, seat: 1, player_id: 'p2', user_id: userB, name: `${TAG}-B`,
+          faction_id: fremenIsA ? 'atreides' : 'fremen' },
+      ])
+      await admin.from('match_secrets').insert([
+        { match_id: m.id, player_id: 'p1', data: { cards: [], spice: 5 } },
+        { match_id: m.id, player_id: 'p2', data: { cards: [], spice: 5 } },
+      ])
+      // SEEDED, not built on first use. A deck the server shuffles for itself is
+      // a deck whose first two cards are unknown, and this section needs two
+      // worms up front to produce a pause at all.
+      await admin.from('match_decks').insert({ match_id: m.id, deck: 'spice', cards: blowDeck })
+      return m.id
+    }
+
+    const { data: sess3 } = await asA.auth.getSession()
+    const token3 = sess3?.session?.access_token
+    const callOn = async (id, action) => {
+      const res = await fetch(`${URL}/functions/v1/dune-action`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token3}`,
+          apikey: ANON,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ matchId: id, action }),
+      })
+      return { status: res.status, body: await res.json().catch(() => ({})) }
+    }
+
+    // ── A is the Fremen: the pause, and answering it ───────────────────────
+    blowMatchId = await seedBlow(true)
+
+    const blown = await callOn(blowMatchId, { type: 'SPICE_BLOW' })
+    const paused = blown.status === 200 && blown.body?.awaiting === 'fremen'
+    check('CONTROL  SPICE_BLOW ran and stopped for the Fremen', paused,
+      () => `${blown.status}: ${JSON.stringify(blown.body).slice(0, 300)}`
+        + ' — a 500 naming an undefined function means the shared imports are wrong again')
+    checkGiven(paused, 'BLOW-LIVE  it says which pile is asking',
+      blown.body?.pile === 'A', () => `pile was ${JSON.stringify(blown.body?.pile)}`)
+    checkGiven(paused, '...and how many worms are on offer',
+      blown.body?.worms >= 1, () => `worms was ${JSON.stringify(blown.body?.worms)}`)
+    checkGiven(paused, '...with a deadline to answer by',
+      typeof blown.body?.closesAt === 'number' && blown.body.closesAt > Date.now(),
+      () => `closesAt was ${JSON.stringify(blown.body?.closesAt)}`)
+
+    // THE REPLY CARRIES NO DECK. Sabotage appended the carry to this response
+    // and the offline check passed, because it only looked at the opening
+    // fields. This looks at the bytes.
+    checkGiven(paused, 'BLOW-LIVE  the reply names no card still in the deck',
+      !JSON.stringify(blown.body).includes(DECK_SECRET),
+      'the continuation came back in the SPICE_BLOW response')
+
+    // ── what the server wrote, and where ───────────────────────────────────
+    const { data: pausedRow } = await admin.from('matches')
+      .select('state').eq('id', blowMatchId).maybeSingle()
+    const pubPause = pausedRow?.state?.spiceBlow ?? null
+    const wrotePause = !!pubPause
+    check('CONTROL  the pause is in public state', wrotePause,
+      () => `state.spiceBlow is ${JSON.stringify(pubPause)}`)
+    checkGiven(wrotePause, 'BLOW-LIVE  the table is told who it waits on',
+      pausedRow?.state?.awaiting === 'fremen',
+      () => `awaiting is ${JSON.stringify(pausedRow?.state?.awaiting)}`)
+    // THE CARRY IS NOT IN IT. This is the claim the whole split exists for: the
+    // continuation holds the remaining deck in order, so a step written whole
+    // into matches.state would publish the spice deck to every client.
+    checkGiven(wrotePause, 'BLOW-LIVE  and the public row carries no deck',
+      !JSON.stringify(pausedRow?.state ?? {}).includes(DECK_SECRET),
+      'the undrawn deck is in matches.state, which every client receives')
+
+    // CONTROL: there IS something being kept back. "No deck in public state" is
+    // true of a run where the deck was never written anywhere.
+    const { data: heldRows } = await admin.from('match_decks')
+      .select('deck, cards').eq('match_id', blowMatchId)
+    const carryParked = JSON.stringify(heldRows ?? []).includes(DECK_SECRET)
+    check('CONTROL  the continuation is parked in the deck store', carryParked,
+      () => `decks: ${JSON.stringify(heldRows ?? []).slice(0, 200)}`)
+    const { data: decksSeenByA } = await asA.from('match_decks')
+      .select('deck, cards').eq('match_id', blowMatchId)
+    checkGiven(carryParked, 'BLOW-LIVE  and A cannot read it, Fremen or not',
+      !JSON.stringify(decksSeenByA ?? []).includes(DECK_SECRET),
+      'the paused continuation is readable by a seated player')
+
+    // ── the Fremen answer ──────────────────────────────────────────────────
+    // Reading the continuation back out of the store and resuming from it is
+    // the half that only exists at runtime: the carry has been through jsonb,
+    // so every object in it is a new one.
+    const placed = await callOn(blowMatchId, { type: 'PLACE_WORMS', at: [HARG] })
+    const answered = placed.status === 200
+    check('CONTROL  PLACE_WORMS resumed the paused phase', answered,
+      () => `${placed.status}: ${JSON.stringify(placed.body).slice(0, 300)}`
+        + ' — carry-missing here means the continuation could not be read back')
+
+    const { data: doneRow } = await admin.from('matches')
+      .select('state').eq('id', blowMatchId).maybeSingle()
+    const finished = answered && !doneRow?.state?.spiceBlow
+    checkGiven(answered, 'BLOW-LIVE  the pause is cleared when the phase ends', finished,
+      () => `state.spiceBlow is still ${JSON.stringify(doneRow?.state?.spiceBlow)}`)
+    checkGiven(finished, '...and nobody is left being waited on',
+      (doneRow?.state?.awaiting ?? null) === null,
+      () => `awaiting is ${JSON.stringify(doneRow?.state?.awaiting)}`)
+
+    // THE COUNT IS REAL. This is what the whole endpoint was written for: the
+    // board showed a permanent "21 LEFT" because nothing ever wrote this.
+    checkGiven(finished, 'BLOW-LIVE  the deck count is published and has moved',
+      typeof doneRow?.state?.spiceDeck?.remaining === 'number'
+        && doneRow.state.spiceDeck.remaining < blowDeck.length,
+      () => `remaining is ${JSON.stringify(doneRow?.state?.spiceDeck?.remaining)}`
+        + ` from a seeded deck of ${blowDeck.length}`)
+    checkGiven(finished, '...and the discard shows a card face up',
+      (doneRow?.state?.spiceDeck?.discardA ?? []).length > 0,
+      () => `discardA is ${JSON.stringify(doneRow?.state?.spiceDeck?.discardA)}`)
+
+    // THE WORM ATE, AND ACROSS A ROUND TRIP. The forces it devoured came out of
+    // a carry that went through the database, so an identity filter here would
+    // have removed nothing and left them standing — silently, on a board nobody
+    // recounts. This is that bug, checked at the only place it shows.
+    checkGiven(finished, 'BLOW-LIVE  the devoured stack is gone from the board',
+      !(doneRow?.state?.forces ?? []).some(f => f.territoryId === HARG),
+      () => `forces still hold ${JSON.stringify((doneRow?.state?.forces ?? []).filter(f => f.territoryId === HARG))}`)
+    checkGiven(finished, '...and the other stack is untouched',
+      (doneRow?.state?.forces ?? []).some(f => f.faction === 'atreides'),
+      () => `forces are ${JSON.stringify(doneRow?.state?.forces)}`)
+
+    // The finished deck goes back to the store, and the continuation is cleared
+    // with it — a stale carry beside a finished blow is an older answer to what
+    // the deck is.
+    const { data: endDecks } = await admin.from('match_decks')
+      .select('deck, cards').eq('match_id', blowMatchId)
+    checkGiven(finished, 'BLOW-LIVE  the parked continuation is cleared',
+      ((endDecks ?? []).find(d => d.deck === 'spice-blow')?.cards ?? []).length === 0,
+      () => `spice-blow still holds ${JSON.stringify((endDecks ?? []).find(d => d.deck === 'spice-blow')?.cards).slice(0, 200)}`)
+    checkGiven(finished, '...and the deck is still unreadable by A',
+      !JSON.stringify((await asA.from('match_decks').select('deck, cards').eq('match_id', blowMatchId)).data ?? []).includes(DECK_SECRET),
+      'A can read the spice deck after the blow')
+
+    // ── somebody else's worms, and then the clock ──────────────────────────
+    // A is the Atreides in this one. The same call, by the same caller, must be
+    // refused before the deadline and accepted after it — which is the whole
+    // behaviour of a required stop with a deadline, and cannot be shown by
+    // reading the source.
+    otherMatchId = await seedBlow(false)
+    const blown2 = await callOn(otherMatchId, { type: 'SPICE_BLOW' })
+    const paused2 = blown2.status === 200 && blown2.body?.awaiting === 'fremen'
+    check('CONTROL  the blow paused in the second match too', paused2,
+      () => `${blown2.status}: ${JSON.stringify(blown2.body).slice(0, 200)}`)
+
+    const tooSoon = await callOn(otherMatchId, { type: 'PLACE_WORMS', at: [HARG] })
+    checkGiven(paused2, 'BLOW-LIVE  a seat that is not the Fremen is refused',
+      tooSoon.status === 403 && tooSoon.body?.code === 'not-your-decision',
+      () => `${tooSoon.status}: ${JSON.stringify(tooSoon.body).slice(0, 200)}`)
+
+    // The deadline is pushed into the past rather than waited out — a script
+    // that slept sixty seconds would be a script nobody runs.
+    const { data: liveRow } = await admin.from('matches')
+      .select('state, version').eq('id', otherMatchId).maybeSingle()
+    await admin.from('matches').update({
+      state: { ...liveRow.state, spiceBlow: { ...liveRow.state.spiceBlow, closesAt: Date.now() - 1000 } },
+    }).eq('id', otherMatchId)
+
+    const afterClock = await callOn(otherMatchId, { type: 'PLACE_WORMS', at: [HARG] })
+    checkGiven(paused2, 'BLOW-LIVE  ...and allowed once the window has shut',
+      afterClock.status === 200,
+      () => `${afterClock.status}: ${JSON.stringify(afterClock.body).slice(0, 200)}`)
+
+    const { data: expiredRow } = await admin.from('matches')
+      .select('state').eq('id', otherMatchId).maybeSingle()
+    const settledLate = afterClock.status === 200 && !expiredRow?.state?.spiceBlow
+    checkGiven(paused2, '...settling the phase rather than leaving it open', settledLate,
+      () => `state.spiceBlow is ${JSON.stringify(expiredRow?.state?.spiceBlow)}`)
+    // SILENCE MEANT DECLINED. The late request named a territory and it was not
+    // honoured — the worms went unplaced, so the stack it named is still there.
+    // Honouring it would make the deadline advisory.
+    checkGiven(settledLate, 'BLOW-LIVE  a late placement is not honoured',
+      (expiredRow?.state?.forces ?? []).some(f => f.territoryId === HARG),
+      () => 'the territory named after the deadline was devoured anyway')
   }
 
 } catch (e) {
