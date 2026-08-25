@@ -153,6 +153,23 @@ export default function DuneMultiSeatView() {
   const mine = sessions.find(s => s.login.faction === active) ?? null
 
   /**
+   * Whether the seat being acted as is actually in the match.
+   *
+   * A MISMATCH IS SILENT OTHERWISE, and looks like a rendering fault. The tray
+   * is gated on finding this faction in state.players — no row, no faction
+   * card, no leader discs, no spice — so a VITE_DEV_SEATS naming a faction the
+   * match does not seat produces a screen with the middle of it missing and
+   * nothing saying why.
+   *
+   * Easy to arrive at: the seed assigns factions by POSITION in
+   * DUNE_SEED_ACCOUNTS and prints a matching VITE_DEV_SEATS, so reordering the
+   * emails, editing the line by hand, or pointing at a match seeded earlier all
+   * do it.
+   */
+  const seatedFactions = (publicRow?.players ?? []).map(p => p.faction)
+  const notSeated = !!publicRow && !!active && !seatedFactions.includes(active)
+
+  /**
    * A line for the acting seat alone.
    *
    * PRIVATE BY DEFAULT HERE, because of what these lines are. "Not eligible for
@@ -268,6 +285,22 @@ export default function DuneMultiSeatView() {
             client={mine.client}
             mine={mine.login.faction === 'fremen'}
             say={say} />
+        )}
+
+        {/* SAID OUT LOUD, because the alternative is a screen with its middle
+            missing and nothing explaining it. The tray needs this faction to be
+            in state.players; when it is not, there is no faction card, no
+            leader discs and no spice, and that looks like a rendering fault
+            rather than a match this seat is not in. */}
+        {notSeated && (
+          <p style={{
+            margin: '0 0 8px', padding: 8, borderRadius: 6,
+            background: '#5a1d1d', color: '#ffe6e0', lineHeight: 1.45,
+          }}>
+            <b>{active}</b> is not seated in this match. The tray is empty because
+            the match seats {seatedFactions.length ? seatedFactions.join(', ') : 'nobody'}.
+            Check VITE_DEV_SEATS against the line the seed script printed.
+          </p>
         )}
 
         {/* OPENING AND CLOSING ARE NOT PLAYER MOVES. Claiming and passing now

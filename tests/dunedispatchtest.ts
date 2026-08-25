@@ -42,6 +42,21 @@ const recorder = (status = 200, body: unknown = { ok: true }) => {
 }
 const bodyOf = (s: Sent) => JSON.parse(String(s.init.body))
 
+/**
+ * A source file with its comments stripped.
+ *
+ * CODE, NOT PROSE. Checks here ask whether a file DOES something, and a file
+ * that explains at length why it no longer does that thing answers yes to a
+ * plain search. It has happened four times in this codebase: a comment saying
+ * "carries no spice" matching a search for spice, a header explaining that the
+ * live branch is gone matching a search for matchId. Comment lines come out
+ * before anything is asked.
+ */
+const code = (path: string) => readFileSync(path, 'utf8')
+  .split('\n')
+  .filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l))
+  .join('\n')
+
 // ── the acting seat is the session, and only the session ──────────────────
 {
   const { sent, fetchImpl } = recorder()
@@ -217,15 +232,6 @@ const bodyOf = (s: Sent) => JSON.parse(String(s.init.body))
 // caller could reach — with tests asserting it, which is the worse half: a
 // check guarding a path nothing runs cannot fail for a real reason.
 {
-  // CODE, NOT PROSE. The header explains that the live branch is gone, and a
-  // search for its vocabulary matched the explanation — the fourth time in this
-  // codebase a check has confirmed a mention rather than a use. Comment lines
-  // come out before anything is asked of the file.
-  const code = (path: string) => readFileSync(path, 'utf8')
-    .split('\n')
-    .filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l))
-    .join('\n')
-
   const panel = code('src/components/dune/CharityPanel.tsx')
   check('the dev panel dispatches nothing', /dispatchDuneAction/.test(panel), false)
   check('...and takes no match or client', /matchId|SupabaseClient/.test(panel), false)
@@ -325,6 +331,52 @@ const bodyOf = (s: Sent) => JSON.parse(String(s.init.body))
   check('...and assigns no spice', /\bspice\s*:/.test(roster), false)
   check('...nor anyone\'s cards', /\bcards\s*:/.test(roster), false)
   check('...only a hand COUNT', /handCount\s*:/.test(roster), true)
+}
+
+// ── the seeded match gives the screen something to draw ───────────────────
+// A fixture of zeroes renders a HUD of noughts and reads as broken rather than
+// as empty, which is the wrong impression for scaffolding whose whole job is to
+// show the screen working.
+{
+  const seed = code('scripts/seed-dune-match.mjs')
+
+  check('the seed puts forces on the board', /forces: publicForces\(seats\)/.test(seed), true)
+  // STRONGHOLDS ARE FOUR NAMED TERRITORIES and strongholdsHeld counts only
+  // those, so a seed that puts every stack in open sand leaves that column at
+  // zero for everybody and looks exactly like a HUD that cannot count.
+  check('...including stronghold territories',
+    /territory-13|territory-26|territory-38|territory-40/.test(seed), true)
+  check('...and hands that are not all empty', /handCount: \[/.test(seed), true)
+
+  // STILL NO SPICE, and still only a COUNT of cards. Public state reaches every
+  // client; the reason those are absent does not change because the fixture got
+  // richer.
+  const roster = seed
+    .slice(seed.indexOf('const publicPlayers'), seed.indexOf('}))', seed.indexOf('const publicPlayers')))
+  check('the public roster still assigns no spice', /\bspice\s*:/.test(roster), false)
+  check('...nor anyone\'s cards', /\bcards\s*:/.test(roster), false)
+}
+
+// ── a seat the match does not seat says so ────────────────────────────────
+// The tray is gated on finding this faction in state.players — no row, no
+// faction card, no leader discs, no spice. A VITE_DEV_SEATS naming a faction
+// the match never seated therefore produces a screen with its middle missing
+// and nothing at all saying why, which reads as a rendering fault.
+//
+// Easy to arrive at: the seed assigns factions by POSITION in
+// DUNE_SEED_ACCOUNTS, so reordering the emails or editing the printed line by
+// hand is enough.
+{
+  const view = code('src/components/dune/DuneMultiSeatView.tsx')
+  check('the harness notices a seat that is not in the match',
+    /const notSeated =/.test(view), true)
+  check('...by comparing the acting faction against the published roster',
+    /seatedFactions\.includes\(active\)/.test(view), true)
+  check('...and says so rather than rendering nothing',
+    view.includes('is not seated in this match'), true)
+  // NAMING WHO IS SEATED, because "not seated" alone leaves the reader to guess
+  // whether the match is wrong or the env var is.
+  check('...listing who the match does seat', /seatedFactions\.join/.test(view), true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

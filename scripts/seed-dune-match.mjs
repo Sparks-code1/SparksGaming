@@ -114,9 +114,35 @@ const publicPlayers = seats => seats.map((s, i) => ({
   // NOT their spice. handCount is a count because the cards are secret; spice
   // is absent entirely for the same reason, and putting it here would publish
   // every purse to every client.
-  handCount: 0,
+  //
+  // A COUNT WORTH LOOKING AT, though. Seeded at zero the HUD drew a row of
+  // noughts for every seat and read as broken rather than as empty, which is
+  // the wrong impression for scaffolding whose job is to show the screen
+  // working. Varied per seat so the column is legibly per-player.
+  handCount: [2, 4, 1, 3, 0, 5][i] ?? 0,
   ally: null,
 }))
+
+/**
+ * Forces on the board, so the HUD has something to total.
+ *
+ * The four strongholds are Arrakeen, Carthag, Habbanya Sietch and Sietch Tabr,
+ * and strongholdsHeld counts only those — a seed that puts every stack in open
+ * sand leaves the stronghold column at zero for everybody and looks exactly
+ * like a HUD that cannot count. So the first seats get one each.
+ *
+ * PUBLIC, all of it: forces are pieces on a board. Nothing here is hidden, and
+ * nothing hidden goes here.
+ */
+const STRONGHOLDS = ['territory-13', 'territory-26', 'territory-38', 'territory-40']
+const publicForces = seats => seats.flatMap((s, i) => [
+  // One stronghold apiece for as many seats as there are strongholds.
+  ...(i < STRONGHOLDS.length
+    ? [{ faction: s.faction, territoryId: STRONGHOLDS[i], sector: 'sector-10', count: 3 + i }]
+    : []),
+  // And a stack in open sand, so forces-on-board is not just the stronghold.
+  { faction: s.faction, territoryId: 'territory-07', sector: 'sector-3', count: 2 + i },
+])
 
 const userIdFor = async email => {
   // listUsers rather than a lookup by email: the admin API has no by-email get,
@@ -171,7 +197,8 @@ const state = PHASE === 'blow'
   : {
       phase: 'CHOAM Charity', turn: 1, mode: 'advanced', storm: 'sector-18',
       spiceDeck: { remaining: 21, discardA: [], discardB: [] },
-      forces: [], spiceOnBoard: {}, players: publicPlayers(seats), awaiting: null, shieldWall: 'intact',
+      forces: publicForces(seats), spiceOnBoard: { 'territory-07': 8 },
+      players: publicPlayers(seats), awaiting: null, shieldWall: 'intact',
     }
 
 const { data: match, error: mErr } = await admin.from('matches').insert({
