@@ -214,5 +214,62 @@ const bodyOf = (s: Sent) => JSON.parse(String(s.init.body))
     /from\('match_secrets'\)/.test(view), false)
 }
 
+// ── the Fremen answer the pause, and only they ────────────────────────────
+// Worms after the first in a pile are theirs to place, and the rule says they
+// CAN be placed — so declining is a legal answer, not a timeout. A phase that
+// resolved on silence would be deciding for them, which is what the pause is
+// for.
+{
+  const panel = readFileSync('src/components/dune/WormPlacementPanel.tsx', 'utf8')
+
+  check('the panel answers through the dispatcher', panel.includes('dispatchDuneAction'), true)
+  check('...with the action the server names', panel.includes("'PLACE_WORMS'"), true)
+  check('...through the acting seat\'s client', /\{ client \}/.test(panel), true)
+
+  // DECLINING IS AN ANSWER, and it needs its own control. Without one the only
+  // way past a pause is to use worms you may not want to use.
+  check('declining is offered', /send\(\[\]\)/.test(panel), true)
+
+  // THE PANEL NAMES NO SEAT. Whether this client may answer is decided by the
+  // token; `mine` only chooses whether to draw the buttons.
+  check('the payload says who is asking nowhere',
+    /(seat|faction|playerId|actAs)\s*:/.test(panel.slice(panel.indexOf('PLACE_WORMS') - 200, panel.indexOf('PLACE_WORMS') + 200)),
+    false)
+
+  // SHOWN TO EVERYONE, ANSWERABLE BY ONE. Six people round a table can all see
+  // who is being waited on, and hiding it is how a play-by-network game ends up
+  // with everybody waiting on everybody.
+  check('the pause is drawn whether or not it is yours',
+    /\{!mine && ' Waiting on them\.'\}/.test(panel), true)
+  check('...and the controls are not', /\{mine && \(/.test(panel), true)
+
+  // FEWER IS LEGAL, MORE IS NOT — the server refuses an over-placement too, so
+  // this only saves a round trip to be told so.
+  check('more worms than were offered cannot be chosen',
+    /c\.length >= worms \? c :/.test(panel), true)
+
+  const view = readFileSync('src/components/dune/DuneMultiSeatView.tsx', 'utf8')
+  check('the harness can answer a pause', view.includes('WormPlacementPanel'), true)
+  check('...as the Fremen when it is that seat',
+    /mine=\{mine\.login\.faction === 'fremen'\}/.test(view), true)
+}
+
+// ── the pause cannot carry the deck to the table ──────────────────────────
+// The one property worth checking twice. A Step is a single object and it
+// CANNOT be written to a single place: the ask is public, the carry holds the
+// remaining deck in order. Writing the step whole into matches.state would
+// publish the spice deck to every client through the back door of a phase that
+// happens to pause — defeating match_decks without touching it.
+{
+  const panel = readFileSync('src/components/dune/WormPlacementPanel.tsx', 'utf8')
+  // The panel is typed to the ASK, so it could not render a deck if it tried.
+  const pauseShape = panel.slice(panel.indexOf('export interface SpiceBlowPause'),
+    panel.indexOf('export interface WormPlacementPanelProps'))
+  check('the pause the client knows about is the ask alone',
+    /deck|cards|carry/.test(pauseShape), false)
+  check('...naming only the pile and the count',
+    /pile\?: 'A' \| 'B'/.test(pauseShape) && /worms\?: number/.test(pauseShape), true)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 process.exit(pass ? 0 : 1)

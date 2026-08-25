@@ -20,6 +20,8 @@ import type { SeatSession } from '@/dev/multiSeat'
 import { DuneGameScreen } from './DuneGameScreen'
 import { DevSeatSwitcher } from './DevSeatSwitcher'
 import CharityPanel from './CharityPanel'
+import { WormPlacementPanel } from './WormPlacementPanel'
+import type { SpiceBlowPause } from './WormPlacementPanel'
 import type { CharityWindow } from '@/lib/dune/charity'
 import type { ChatMessage } from './ChatPanel'
 
@@ -44,7 +46,7 @@ const PUBLIC_FIXTURE: DuneGameState = {
 
 /** The public row carries fields the screen's type does not name — the charity
  *  window among them, which is public because who has claimed is on the table. */
-type PublicRow = DuneGameState & { charity?: CharityWindow }
+type PublicRow = DuneGameState & { charity?: CharityWindow; spiceBlow?: SpiceBlowPause }
 
 function Notice({ children }: { children: React.ReactNode }) {
   return (
@@ -167,6 +169,19 @@ export default function DuneMultiSeatView() {
             and the action would succeed under the wrong seat rather than fail.
             The one case where acting as the wrong seat is possible is the one
             case this must not reach. */}
+        {/* THE PAUSE IS SHOWN TO EVERY SEAT, and only the Fremen get controls.
+            Six people round a table can all see who is being waited on; hiding
+            it is how a play-by-network game ends up with everybody waiting on
+            everybody. `mine` decides the buttons, not the visibility. */}
+        {publicRow?.spiceBlow && mine?.client && (
+          <WormPlacementPanel
+            pause={publicRow.spiceBlow}
+            matchId={matchId}
+            client={mine.client}
+            mine={mine.login.faction === 'fremen'}
+            say={say} />
+        )}
+
         {mine?.client
           ? <CharityPanel
               say={say}

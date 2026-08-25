@@ -36,11 +36,17 @@ const files = readdirSync(DIR).filter(f => f.endsWith('.png'))
  * Artwork that deliberately matches no leader.
  *
  * The Baron has no disc in Dune — he is the Harkonnen player, not one of their
- * five leaders. The file is kept for a faction-selection screen that does not
- * exist yet, and is named here so it does not read as an oversight and so a
- * SECOND stray file still fails.
+ * five leaders. Edric is a Guild navigator and not one of the Guild's five
+ * either; he is held for something later. Both files are kept for screens that
+ * do not exist yet.
+ *
+ * NAMED ONE BY ONE, not waved through by a pattern. Each entry is a claim that
+ * somebody looked at that file and decided it belongs to nobody — which is the
+ * opposite of the mistake this suite exists to catch, where a portrait sits in
+ * the folder unregistered and nothing says whether that was meant. A second
+ * stray file still fails, because the list is exact.
  */
-const NOT_A_LEADER = ['Baron.png']
+const NOT_A_LEADER = ['Baron.png', 'Edric.png']
 
 const everyLeader = FACTION_IDS.flatMap(id =>
   (factionById(id)?.leaders ?? []).map(l => ({ ...l, faction: id })))
