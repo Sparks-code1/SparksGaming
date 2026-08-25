@@ -17,6 +17,7 @@
 //   A file on disk that nothing registers is the case above: art that was drawn,
 //   committed, and never appeared.
 import { readdirSync, existsSync } from 'node:fs'
+import type { FactionId } from '@/types/Dune/Faction'
 import { LEADER_PORTRAITS, LeaderDisc } from '@/components/dune/LeaderDisc'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
@@ -114,18 +115,30 @@ const everyLeader = FACTION_IDS.flatMap(id =>
 }
 
 // ── how much of the game is covered ───────────────────────────────────────
-// Not a pass/fail on completeness — two Guild leaders have no art yet and that
-// is fine. It prints, so a faction quietly losing its portraits is visible in
-// the run rather than only on the screen.
+// Not a pass/fail on completeness. It prints, so a faction quietly losing its
+// portraits is visible in the run rather than only on the screen.
 {
   for (const id of FACTION_IDS) {
     const leaders = factionById(id)?.leaders ?? []
     const with_ = leaders.filter(l => LEADER_PORTRAITS[l.name]).length
     console.log(`        ${id.padEnd(15)} ${with_}/${leaders.length} portraits`)
   }
-  const total = everyLeader.filter(l => LEADER_PORTRAITS[l.name]).length
+  // THE FALLBACK IS TESTED DIRECTLY, against a leader that does not exist.
+  //
+  // This used to assert `total < everyLeader.length` — that SOME leader still
+  // had no art, so the plain-counter path was being exercised somewhere. That
+  // was a proxy, and it held only while the artwork was incomplete: the last
+  // two Guild portraits arriving turned a passing check into a failing one
+  // without anything about the fallback changing. A check that breaks when the
+  // game gets MORE finished is measuring the wrong thing.
+  const nameless = { name: 'Nobody At All', strength: 3 }
+  const plain = renderToStaticMarkup(createElement(LeaderDisc, {
+    leader: nameless, faction: 'atreides' as FactionId, r: 40,
+  }))
   check('a leader with no portrait still renders as a plain counter',
-    total < everyLeader.length, true)
+    plain.includes('Nobody At All — strength 3'), true)
+  check('...showing its strength', plain.includes('3'), true)
+  check('...and no image', /<image/.test(plain), false)
 }
 
 // ── the other side of the disc ───────────────────────────────────────────

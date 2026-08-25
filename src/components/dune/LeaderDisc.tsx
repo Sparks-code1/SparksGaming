@@ -117,11 +117,15 @@ export const LEADER_PORTRAITS: Record<string, Portrait> = {
   // which is most of why it was never wired up.
   Bashar: { src: '/dune-leaders/Bushar.png', w: 400, h: 500, focusY: 0.52 },
 
-  // Spacing Guild. Three of the five so far — Soo-Soo Sook and the Guild
-  // Representative have no portrait and render as plain faction counters.
+  // Spacing Guild, all five.
   'Staban Tuek': { src: '/dune-leaders/Staban_Tuek.png', w: 400, h: 500, focusY: 0.49 },
   'Master Bewt': { src: '/dune-leaders/Master_Bewt.png', w: 400, h: 500, focusY: 0.55 },
   'Esmar Tuek': { src: '/dune-leaders/Esmar_tuek.png', w: 400, h: 533, focusY: 0.49 },
+  'Soo-Soo Sook': { src: '/dune-leaders/Soo_Soo_Sook.png', w: 400, h: 500, focusY: 0.49 },
+  // The GUILD REPRESENTATIVE IS A LEADER — strength 1, the fifth of the five —
+  // and not a faction namesake like the Baron or the Emperor. Easy to file with
+  // those by the sound of the name, and wrong: he takes a disc and fights.
+  'Guild Representative': { src: '/dune-leaders/Guild_rep.png', w: 400, h: 500, focusY: 0.49 },
 }
 
 // The framings above are derived, not eyeballed: each tall portrait is centred a
