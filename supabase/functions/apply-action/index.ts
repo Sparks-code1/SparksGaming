@@ -247,6 +247,17 @@ Deno.serve(async (req: Request) => {
 
   const { data: match, error: mErr } = await admin.from('matches').select('*').eq('id', matchId).single()
   if (mErr || !match) return json({ error: 'match not found' }, 404)
+  // THE GAME THIS ROW IS, BEFORE ANYTHING READS ITS STATE. `matches` holds both
+  // games; the only gate here used to be status, and a Dune match is seeded
+  // 'active'. gameReducer would then be handed a state with no territories and
+  // no continents, make what it could of it, and write the result back over a
+  // board six other people were playing on.
+  //
+  // Defaulting to 'risk' for a row written before the column existed, which is
+  // what the migration does to the table for the same reason.
+  if ((match.game_type ?? 'risk') !== 'risk') {
+    return json({ error: `that is a ${match.game_type} match`, code: 'wrong-game' }, 409)
+  }
   if (match.status !== 'active') return json({ error: `match not active (${match.status})`, code: 'not-active' }, 409)
   if (!match.state) return json({ error: 'match has no state yet', code: 'not-started' }, 409)
 

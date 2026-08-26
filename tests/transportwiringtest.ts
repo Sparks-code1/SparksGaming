@@ -183,8 +183,13 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
   // which mulberry32 floors to 1 — so every match on the planet would reshuffle
   // into the same order. Deterministic, replayable, and identical everywhere:
   // the one failure a seeded shuffle exists to prevent.
+  // BY THE COLUMNS IT NEEDS, not by the exact list. Pinning the whole string
+  // made adding an unrelated column — game_type, which decides whether this
+  // endpoint should be touching the row at all — look like a broken shuffle.
+  // A missing column still fails, which is the thing this guards.
+  const matchSelect = (/\.select\('([^']*rng_seed[^']*)'\)/.exec(fn) ?? [])[1] ?? ''
   check('the match row is read with the columns the shuffle seeds from',
-    fn.includes("select('state, version, rng_seed, action_seq')"), true)
+    ['state', 'version', 'rng_seed', 'action_seq'].filter(c => !matchSelect.includes(c)), [])
   check('...and the shuffle uses them', fn.includes('shuffleWithSeed(Number(match.rng_seed)'), true)
 
   // The same three-store transaction the Risk side has, for the same reason.

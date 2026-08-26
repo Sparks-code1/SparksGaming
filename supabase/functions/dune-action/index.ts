@@ -150,10 +150,17 @@ Deno.serve(async req => {
     // mulberry32 floors to 1, so every match on the planet reshuffled into the
     // same order. Deterministic, replayable, and identical everywhere: the one
     // failure a seeded shuffle is supposed to prevent.
-    .select('state, version, rng_seed, action_seq')
+    .select('state, version, rng_seed, action_seq, game_type')
     .eq('id', matchId)
     .maybeSingle()
   if (!match) return json({ error: 'no such match', code: 'not-found' }, 404)
+  // THE MIRROR OF THE GUARD IN apply-action, and it matters in this direction
+  // too: a Risk match handed to a Dune phase would have its board overwritten
+  // with a spice deck and an auction. The seat check above has already passed
+  // by here — being seated in a match says nothing about which game it is.
+  if (match.game_type !== 'dune') {
+    return json({ error: `that is a ${match.game_type ?? 'risk'} match`, code: 'wrong-game' }, 409)
+  }
 
   const state = (match.state ?? {}) as Record<string, unknown>
   const now = Date.now()

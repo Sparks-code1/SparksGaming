@@ -280,6 +280,10 @@ export async function createLobby(
     .insert({
       campaign_id: campaignId, game_number: gameNumber,
       status: 'lobby', created_by: user.id, human_slots: humanSlots,
+      // WHICH GAME, said at creation. This module makes Risk matches — its
+      // seats, its factions and the state startLobby writes are all Risk's —
+      // and the row now says so rather than leaving every reader to assume it.
+      game_type: 'risk',
     })
     .select('id, campaign_id, game_number, status, human_slots, created_by')
     .single()

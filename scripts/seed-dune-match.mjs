@@ -274,6 +274,11 @@ const state = PHASE === 'bidding'
 
 const { data: match, error: mErr } = await admin.from('matches').insert({
   campaign_id: RUN, game_number: 1, status: 'active', state,
+  // WITHOUT THIS THE ROW IS A RISK MATCH. It is seeded 'active', which used to
+  // be apply-action's only gate — so a Dune match was one POST away from being
+  // handed to the Risk reducer. Both endpoints check this now, and dune-action
+  // refuses a row that does not say 'dune'.
+  game_type: 'dune',
 }).select('id').single()
 if (mErr) throw new Error(`seed match: ${mErr.message}`)
 
