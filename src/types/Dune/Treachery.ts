@@ -109,3 +109,53 @@ export const TREACHERY_HEADER: Record<TreacheryKind, string> = {
   special: '#1e5c34',
   worthless: '#d4a017',
 }
+
+/**
+ * The word for each kind, as it is printed under a card's name.
+ *
+ * `defense` prints as DEFENSE, which is what the printed cards say: the
+ * physical Shield reads "Defense - Projectile" and the Snooper "Defense -
+ * Poison". It said SHIELD for a while, on the argument that the card answering
+ * a projectile is what a table calls the whole class — but a player holding the
+ * Snooper would then be told they hold a Shield, and matching the card in their
+ * other hand beats matching the slang.
+ *
+ * Changing it again is this one line, and thirty-three cards follow. treacherytest
+ * pins the seven labels the deck may carry, so it fails the moment one moves —
+ * which is the point of pinning them: a wording change should be a decision,
+ * not a diff nobody noticed.
+ */
+export const TREACHERY_KIND_WORD: Record<TreacheryKind, string> = {
+  weapon: 'Weapon',
+  defense: 'Defense',
+  special: 'Special',
+  worthless: 'Worthless Card',
+}
+
+/**
+ * What a card calls itself under its name.
+ *
+ * DERIVED, NEVER TYPED PER CARD — the same argument as TREACHERY_HEADER above,
+ * and it matters more here because this one is words. A subtitle written out
+ * thirty-three times is thirty-three chances to label a poison weapon
+ * "Projectile", and a player reading that label would play a Shield against
+ * it: battle resolution branches on `subtype`, so the label and the rule would
+ * disagree with nothing to catch it. Coming off the same two fields the rules
+ * read, it cannot.
+ *
+ * The class is capitalised from the value rather than mapped, so a new
+ * BattleClass gets a label without anybody having to remember this file.
+ *
+ * A CLASS ONLY WHERE A CLASS DECIDES SOMETHING. Weapons and defences pair up
+ * by it, so theirs is named. Nothing branches on a special's subtype — see
+ * TreacheryCard.subtype — and "Special — Storm" would promise a pairing that
+ * does not exist; the worthless cards carry 'none', and "Worthless — None"
+ * says nothing twice. Both print the bare word.
+ */
+export function cardSubtitle(card: Pick<TreacheryCard, 'kind' | 'subtype'>): string {
+  const word = TREACHERY_KIND_WORD[card.kind]
+  if (card.kind !== 'weapon' && card.kind !== 'defense') return word
+  const cls = card.subtype
+  if (!cls || cls === 'none') return word
+  return `${word} — ${cls.charAt(0).toUpperCase()}${cls.slice(1)}`
+}

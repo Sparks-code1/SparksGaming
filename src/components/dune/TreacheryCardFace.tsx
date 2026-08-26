@@ -15,7 +15,7 @@
  * height until the words fit at a size still worth reading. Anything that only
  * works for the shortest card in the deck is not a layout, it is a coincidence.
  */
-import { TREACHERY_HEADER } from '@/types/Dune/Treachery'
+import { TREACHERY_HEADER, cardSubtitle } from '@/types/Dune/Treachery'
 import type { TreacheryCard } from '@/types/Dune/Treachery'
 
 const SAND = '#f0e2bb'
@@ -31,6 +31,18 @@ const CHAR_W = 0.5
 const LINE_H = 1.28
 
 const ART = { x: 15, y: 50, w: CARD_W - 30 }
+/**
+ * The line under the name, in the band of sand between the header and the art.
+ *
+ * That gap runs from y 38 — where the header path stops — to the top of the art
+ * box at 50, and was empty. Exported so the test can prove the line sits in it
+ * rather than over the header or under the picture: twelve units is enough for
+ * one small line and not enough to be careless with.
+ */
+export const SUBTITLE_Y = 46.8
+export const SUBTITLE_SIZE = 7.2
+/** Where the header band stops and the sand starts — see the path below. */
+export const HEADER_BOTTOM = 38
 /** The name starts here and must stop before the header mark. */
 export const NAME_X = 12
 export const NAME_W = CARD_W - NAME_X - 36
@@ -305,6 +317,7 @@ export function TreacheryCardFace({ card, width = CARD_W }: { card: TreacheryCar
   const textOnly = !card.image
 
   const nameSize = fitNameSize(card.name, NAME_W)
+  const subtitle = cardSubtitle(card)
 
   return (
     <svg viewBox={`0 0 ${CARD_W} ${CARD_H}`} width={width} height={width * (CARD_H / CARD_W)}>
@@ -321,6 +334,21 @@ export function TreacheryCardFace({ card, width = CARD_W }: { card: TreacheryCar
         {card.name.toUpperCase()}
       </text>
       <HeaderMark card={card} />
+
+      {/* WHAT KIND OF CARD THIS IS, in words, under the name.
+          Below the header band rather than inside it. The band carries black
+          text on four different colours and the green buys 2.9:1 against
+          black — fine for a name at 15pt, not for a line at 7. On the sand it
+          reads the same on every card.
+
+          data-subtitle is on the output for the reason data-mark is: the rule
+          being right does not make the card draw it, and a test that only
+          calls cardSubtitle would pass with this element deleted. */}
+      <text data-subtitle={subtitle} x={NAME_X} y={SUBTITLE_Y} fontSize={SUBTITLE_SIZE}
+        fill={BLACK} opacity={0.66} textAnchor="start" letterSpacing={0.45}
+        fontFamily="Georgia, 'Times New Roman', serif">
+        {subtitle}
+      </text>
 
       {card.image && (
         <>

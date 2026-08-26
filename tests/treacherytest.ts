@@ -2,7 +2,7 @@
 // is a list of near-identical objects, which is exactly where one entry drifts
 // from the rest and nothing notices.
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
-import { TREACHERY_HEADER } from '@/types/Dune/Treachery'
+import { TREACHERY_HEADER, TREACHERY_KIND_WORD, cardSubtitle } from '@/types/Dune/Treachery'
 import type { TreacheryCard, TreacheryKind } from '@/types/Dune/Treachery'
 import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { createElement } from 'react'
@@ -12,6 +12,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { TreacheryCardFace } from '@/components/dune/TreacheryCardFace'
 import { layoutCard, fitNameSize, isDrawnHere, artFit, headerMarkFor, CARD_H, NAME_W } from '@/components/dune/TreacheryCardFace'
+import { SUBTITLE_Y, SUBTITLE_SIZE, HEADER_BOTTOM } from '@/components/dune/TreacheryCardFace'
 
 let pass = true
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -189,6 +190,100 @@ check('the Snooper stops poison and says so',
     TREACHERY_CARDS.find(c => c.id === 'lasgun')!), 'bolt')
   check('a poison weapon draws a bare droplet', markOf(
     TREACHERY_CARDS.find(c => c.id === 'chaumas')!), 'droplet')
+}
+
+// ── the subtitle says what kind of card this is ────────────────────────────
+// A player who has to read four sentences of rules to find out whether they
+// are holding a weapon or the defence against one is reading the wrong thing.
+// The line under the name says it in two words.
+//
+// THE POINT IS THAT IT IS DERIVED. A subtitle typed onto thirty-three cards is
+// thirty-three chances to label a poison weapon "Projectile" — and a player
+// reading that label would answer it with a Shield and lose a leader, because
+// battle resolution branches on `subtype` and never reads the label. The
+// checks below are about that disagreement being impossible rather than about
+// any particular wording.
+{
+  const sub = (id: string) => cardSubtitle(TREACHERY_CARDS.find(c => c.id === id)!)
+  check('a projectile weapon names its class', sub('crysknife'), 'Weapon — Projectile')
+  check('a poison weapon names its own', sub('chaumas'), 'Weapon — Poison')
+  check('the Lasgun is a class of one', sub('lasgun'), 'Weapon — Lasgun')
+  check('the Shield answers projectiles', sub('shield'), 'Defense — Projectile')
+  check('the Snooper answers poison', sub('snooper'), 'Defense — Poison')
+  check('a worthless card says so and stops', sub('lalala'), 'Worthless Card')
+  check('a special says only that', sub('karama'), 'Special')
+
+  // ── the label cannot disagree with the field the rules read ──────────────
+  // Not "the label equals what the rule computes", which would be the rule
+  // checked against itself. The claim is that the CLASS the pairing turns on
+  // appears in the words, for every card that has one.
+  const equipment = TREACHERY_CARDS.filter(c => c.kind === 'weapon' || c.kind === 'defense')
+  check('every weapon and defence names the class it pairs on',
+    equipment.filter(c =>
+      !cardSubtitle(c).toLowerCase().endsWith(String(c.subtype).toLowerCase())).map(c => c.id), [])
+  // And the pairing reads off the label too: a Shield and the weapons it stops
+  // carry the same word, which is the same claim the shared header glyph makes.
+  check('the Shield and the projectiles it stops share a word',
+    [sub('shield').split(' — ')[1], sub('crysknife').split(' — ')[1]], ['Projectile', 'Projectile'])
+  check('...and the Snooper and the poisons',
+    [sub('snooper').split(' — ')[1], sub('gomjabbar').split(' — ')[1]], ['Poison', 'Poison'])
+
+  // NOTHING ELSE CLAIMS A CLASS. Nothing branches on a special's subtype, so
+  // "Special — Storm" would promise a pairing the rules do not have; the
+  // worthless cards carry 'none', and "Worthless — None" says nothing twice.
+  check('nothing but equipment claims a class',
+    TREACHERY_CARDS.filter(c => c.kind !== 'weapon' && c.kind !== 'defense'
+      && cardSubtitle(c).includes('—')).map(c => c.id), [])
+
+  // One label, one kind. Two kinds sharing a subtitle would mean the words
+  // cannot tell a player which of the four groups they are holding.
+  const kindsPerLabel = new Map<string, Set<TreacheryKind>>()
+  for (const c of TREACHERY_CARDS) {
+    const label = cardSubtitle(c)
+    kindsPerLabel.set(label, (kindsPerLabel.get(label) ?? new Set()).add(c.kind))
+  }
+  check('no label is shared by two kinds',
+    [...kindsPerLabel].filter(([, ks]) => ks.size > 1).map(([l]) => l), [])
+  check('every kind has a word', Object.values(TREACHERY_KIND_WORD).filter(w => !w), [])
+  // PINNED WORDING, and deliberately so. These seven strings are what a player
+  // reads, and the deck is where a change to them shows up — the defences read
+  // SHIELD for a day before matching the printed cards, and this is the check
+  // that made that a decision rather than a diff.
+  check('the whole deck carries seven labels between it',
+    [...kindsPerLabel.keys()].sort(),
+    ['Defense — Poison', 'Defense — Projectile', 'Special', 'Weapon — Lasgun',
+     'Weapon — Poison', 'Weapon — Projectile', 'Worthless Card'])
+
+  // ── and the card draws it ────────────────────────────────────────────────
+  // The rule being right does not put it on the card. Same lesson as the
+  // header mark above: deleting the element left that suite green.
+  const drawn = (c: TreacheryCard) =>
+    renderToStaticMarkup(createElement(TreacheryCardFace, { card: c }))
+  const subOf = (c: TreacheryCard) =>
+    (/data-subtitle="([^"]+)"/.exec(drawn(c)) ?? [])[1] ?? 'nothing drawn'
+  check('every card draws the label its own two fields ask for',
+    TREACHERY_CARDS.filter(c => subOf(c) !== cardSubtitle(c))
+      .map(c => `${c.id}: drew ${subOf(c)}, rule says ${cardSubtitle(c)}`), [])
+  // The attribute is not the card. Text that never reached the <text> element
+  // would leave the attribute right and the face blank.
+  check('...and prints it where a player can read it',
+    TREACHERY_CARDS.filter(c => !drawn(c).includes(`>${cardSubtitle(c)}</text>`))
+      .map(c => c.id), [])
+
+  // ── in the gap it was drawn for ──────────────────────────────────────────
+  // Twelve units of sand between the header band and the art box. A line that
+  // drifts up sits on a colour it has no contrast against; one that drifts
+  // down goes under the picture.
+  const artTop = Number((/<image[^>]*\by="([\d.]+)"/
+    .exec(drawn(TREACHERY_CARDS.find(c => c.id === 'crysknife')!)) ?? [])[1])
+  check('the art box is where the gap ends', artTop, 50)
+  check('the line clears the header band', SUBTITLE_Y - SUBTITLE_SIZE >= HEADER_BOTTOM, true)
+  check('...and stops short of the picture', SUBTITLE_Y + SUBTITLE_SIZE * 0.3 <= artTop, true)
+  // A text-only card has no picture, and its rules text starts at 56 — the
+  // line must clear that too or it lands on the first sentence.
+  check('...and clears the text on a card with no picture',
+    SUBTITLE_Y + SUBTITLE_SIZE * 0.3 <= layoutCard(
+      TREACHERY_CARDS.find(c => c.id === 'karama')!).textTop, true)
 }
 
 // ── drawn art and supplied art are treated as opposites ────────────────────
