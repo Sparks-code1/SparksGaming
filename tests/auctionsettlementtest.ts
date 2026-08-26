@@ -10,7 +10,7 @@
 // purse is secret, so a card dealt without payment is invisible from every seat;
 // it surfaces as somebody quietly richer several turns later, by which time no
 // log says why.
-import { settleAuction } from '@/lib/dune/auctionSettlement'
+import { settleAuction, bonusCardsDue, BONUS_FACTION } from '@/lib/dune/auctionSettlement'
 import { payForAuction } from '@/lib/dune/spice'
 import type { AuctionResult } from '@/lib/dune/bidding'
 import type { FactionId } from '@/types/Dune/Faction'
@@ -35,8 +35,23 @@ const result = (over: Partial<AuctionResult> = {}): AuctionResult => ({
   ...over,
 })
 
+/**
+ * Hand limits, so the Harkonnen bonus knows where to stop.
+ *
+ * Supplied by default because the bonus is BASIC play: a settlement that does
+ * not mention it is a settlement getting it wrong, and settleAuction refuses
+ * rather than silently skipping it. Cases here that are not about the bonus
+ * still have to account for it, the same way a real caller does.
+ */
+const LIMITS = { atreides: 4, harkonnen: 8, emperor: 4, fremen: 4 }
+/** Cards for the bonus, drawn by the caller in the real thing. */
+const BONUS = ['chaumas', 'chaumurky']
+
 const settle = (over: Partial<Parameters<typeof settleAuction>[0]> = {}) =>
-  settleAuction({ result: result(), cards: CARDS, hands: HANDS, purses: PURSES, seated: SEATED, ...over })
+  settleAuction({
+    result: result(), cards: CARDS, hands: HANDS, purses: PURSES, seated: SEATED,
+    limits: LIMITS, bonus: BONUS, ...over,
+  })
 
 const writesOf = (r: ReturnType<typeof settleAuction>) => {
   if (!r.ok) throw new Error(`expected a settlement, and it was refused: ${r.refusal} — ${r.detail}`)
@@ -149,7 +164,10 @@ check('a winner spending their last spice is fine',
   check('every drawn card was dealt or discarded, none twice',
     [...dealt, ...w.discard].sort(), [...CARDS].sort())
   check('...and the indexes map to the right cards',
-    [w.secrets.harkonnen.hand, w.secrets.emperor.hand], [['lasgun'], ['snooper']])
+    // THE HARKONNEN TAKE TWO. Basic play: a second card with each one they win,
+    // off the draw pile rather than the lot, capped at their limit of eight.
+    [w.secrets.harkonnen.hand, w.secrets.emperor.hand],
+    [['lasgun', 'chaumas'], ['snooper']])
   // The Emperor buying their own card pays the bank, so nobody collects.
   check('the Emperor paid the bank for their own card',
     w.moves.filter(m => m.from === 'emperor').map(m => m.to), ['bank'])
@@ -161,6 +179,58 @@ check('a winner spending their last spice is fine',
   check('every card is discarded', w.discard, CARDS)
   check('...no spice moves', w.moves, [])
   check('...and no secrets row is written at all', Object.keys(w.secrets), [])
+}
+
+
+// ── the Harkonnen take two ────────────────────────────────────────────────
+// BASIC PLAY, not advanced. Their advanced rule is captured leaders; this one
+// applies from the first game, and its absence quietly made them an ordinary
+// bidder for every auction played so far.
+//
+// CAPPED BY THE HAND LIMIT, which for them is eight: holding seven and winning
+// one, they get the one they won and no more.
+{
+  const won = (n: number) => Array.from({ length: n }, () => ({ winner: BONUS_FACTION }))
+
+  check('one win earns a second card', bonusCardsDue(won(1), 1, 8), 1)
+  check('two wins earn two', bonusCardsDue(won(2), 2, 8), 2)
+  // The room is measured AFTER the auction's own cards are counted.
+  check('at the limit, nothing', bonusCardsDue(won(1), 8, 8), 0)
+  check('one short of it, one', bonusCardsDue(won(1), 7, 8), 1)
+  check('two wins with room for one, one', bonusCardsDue(won(2), 7, 8), 1)
+  check('winning nothing earns nothing', bonusCardsDue([], 0, 8), 0)
+  // NOBODY ELSE. A rule that paid every winner would read the same in a game
+  // where only the Harkonnen ever won.
+  check('another faction earns none',
+    bonusCardsDue([{ winner: 'atreides' as FactionId }], 1, 8), 0)
+
+  // Through the settlement, where the card actually reaches a hand.
+  const dealt = (handBefore: string[], bonus: string[]) => settleAuction({
+    result: { turn: 1, awards: [{ index: 0, winner: BONUS_FACTION, price: 2 }], unsold: [], hands: {} },
+    cards: ['won-card'],
+    hands: { harkonnen: handBefore, atreides: [] },
+    purses: { harkonnen: 10, atreides: 10 },
+    seated: ['harkonnen', 'atreides'] as FactionId[],
+    bonus,
+    limits: { harkonnen: 8, atreides: 4 },
+  })
+
+  const roomy = dealt([], ['extra'])
+  check('the winner gets both cards',
+    roomy.ok ? roomy.writes.secrets[BONUS_FACTION].hand : [], ['won-card', 'extra'])
+
+  const full = dealt(['a', 'b', 'c', 'd', 'e', 'f', 'g'], ['extra'])
+  check('holding seven and winning one, they hold eight',
+    full.ok ? full.writes.secrets[BONUS_FACTION].hand.length : 0, 8)
+  check('...and the extra is not among them',
+    full.ok ? full.writes.secrets[BONUS_FACTION].hand.includes('extra') : true, false)
+
+  // REFUSED RATHER THAN SKIPPED when the caller has not drawn what is owed.
+  // Silently dealing one card is how this rule stayed missing in the first
+  // place: everything looks right and a card never arrives.
+  const short = dealt([], [])
+  check('a settlement owing a card it was not given is refused',
+    short.ok ? 'dealt anyway' : short.refusal, 'not-enough-bonus-cards')
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

@@ -35,6 +35,16 @@ export const MINIMUM_OPENING_BID = 1
 /** How long a bidder has before silence passes for them. */
 export const BID_SECONDS = 15
 
+/**
+ * The breath between one card closing and the next opening, in seconds.
+ *
+ * Short on purpose. It is long enough to read a result and glance at a card,
+ * not long enough that six of them add a minute to a phase — and the next
+ * bidder's own window starts when it ends, so nobody pays for it in bidding
+ * time.
+ */
+export const BETWEEN_CARDS_SECONDS = 5
+
 /** What one player is being asked. PUBLIC — it names no card and no purse. */
 export interface BidAsk {
   kind: 'treachery-bid'
@@ -47,6 +57,8 @@ export interface BidAsk {
   minimum: number
   /** Hand sizes, which are public at a table. Never contents. */
   hands: Readonly<Record<string, number>>
+  /** When bidding on this card may begin. See AuctionCarry.pauseUntil. */
+  pauseUntil?: number
 }
 
 export type BidAnswer =
@@ -90,6 +102,19 @@ export interface AuctionCarry {
   toAct: FactionId
   awards: Award[]
   unsold: number[]
+  /**
+   * When the next card may be bid on, if a card has just closed.
+   *
+   * A BREATH BETWEEN CARDS. Without it the next auction opens in the same
+   * frame the last one settled: the seat that just won has a card it has not
+   * looked at and is already being asked for a bid on another, and everyone
+   * else sees the result flash past.
+   *
+   * A MOMENT, STAMPED BY THE CALLER, like every other deadline here — never a
+   * duration counted here, or six clients would start counting at six slightly
+   * different times. Absent when no card has just closed.
+   */
+  pauseUntil?: number
 }
 
 export type BidStep = Step<BidAsk, AuctionCarry, AuctionResult>
@@ -143,6 +168,23 @@ export function cardsOnOffer(
 ): number {
   return order.filter(f => (hands[f] ?? 0) < (limits[f] ?? 0)).length
 }
+
+/**
+ * What a seat has already promised in THIS auction and not yet paid.
+ *
+ * THE AUCTION SETTLES ONCE, AT THE END. Cards close one after another inside a
+ * single step, and nothing reaches match_secrets until the last one is done —
+ * so a seat's stored spice still shows the whole purse while it is winning its
+ * second and third card of the same auction.
+ *
+ * Checking a bid against the stored number alone therefore let a seat bid its
+ * maximum on every card in a row and win them all, promising the same spice
+ * over and over. It could not pay at settlement, which is a refusal several
+ * cards too late — by then the auction is over and the refusal reads as a bug
+ * rather than as a bid nobody could afford.
+ */
+const committedInAuction = (c: AuctionCarry, f: FactionId): number =>
+  c.awards.reduce((n, a) => (a.winner === f ? n + a.price : n), 0)
 
 /** A faction may bid only while it is under its hand limit. */
 const underLimit = (c: Pick<AuctionCarry, 'hands' | 'limits'>, f: FactionId) =>
@@ -206,6 +248,7 @@ const askFor = (c: AuctionCarry): BidAsk => ({
   high: c.high,
   minimum: c.high ? c.high.spice + 1 : MINIMUM_OPENING_BID,
   hands: c.hands,
+  pauseUntil: c.pauseUntil,
 })
 
 /**
@@ -228,6 +271,8 @@ function openCard(c: AuctionCarry, closesAt: number): BidStep {
     }
     const opener = openerFor(next, next.index)
     if (opener) {
+      // pauseUntil rides on the carry closeCard built, so it survives into the
+      // card being opened and is cleared by the next close that has no pause.
       const fresh: AuctionCarry = { ...next, high: null, passed: [], toAct: opener }
       return awaitingBy([opener], askFor(fresh), fresh, closesAt)
     }
@@ -238,17 +283,28 @@ function openCard(c: AuctionCarry, closesAt: number): BidStep {
   }
 }
 
-/** Award the current card and move on. */
-function closeCard(c: AuctionCarry, won: Award | null, closesAt: number): BidStep {
+/**
+ * Award the current card and move on.
+ *
+ * `pause` is the caller's two stamps for the NEXT card: when it may be bid on,
+ * and when its own window then shuts. Both come in rather than being computed,
+ * so the pause does not quietly eat the next bidder's time — their fifteen
+ * seconds start when the pause ends, not when the last card closed.
+ */
+function closeCard(
+  c: AuctionCarry, won: Award | null, closesAt: number,
+  pause?: { until: number; thenClosesAt: number },
+): BidStep {
   const after: AuctionCarry = won
     ? {
       ...c,
       awards: [...c.awards, won],
       hands: { ...c.hands, [won.winner]: (c.hands[won.winner] ?? 0) + 1 },
       index: c.index + 1,
+      pauseUntil: pause?.until,
     }
-    : { ...c, unsold: [...c.unsold, c.index], index: c.index + 1 }
-  return openCard(after, closesAt)
+    : { ...c, unsold: [...c.unsold, c.index], index: c.index + 1, pauseUntil: pause?.until }
+  return openCard(after, pause ? pause.thenClosesAt : closesAt)
 }
 
 /**
@@ -300,10 +356,21 @@ export function answerBid(
   answer: BidAnswer,
   spiceHeld: number,
   closesAt: number,
+  /**
+   * The two stamps for the next card, when this answer closes one.
+   *
+   * Omitted, cards follow one another with no gap — which is what a test or a
+   * replay wants, and what this did before the pause existed.
+   */
+  pause?: { until: number; thenClosesAt: number },
 ): BidOutcome {
   const refuse = (refusal: BidRefusal): BidOutcome =>
     ({ kind: 'refused', refusal, faction: from, step: awaitingBy([carry.toAct], askFor(carry), carry, closesAt) })
 
+  // NOT YET. A card that has just closed leaves a moment for the table to see
+  // what it went for, and the seat that won it to look at what it bought. The
+  // CALLER decides the moment has passed — this module owns no clock — and
+  // supplies a carry whose pauseUntil it has already checked.
   if (from !== carry.toAct) return refuse('not-your-turn')
   if (carry.passed.includes(from)) return refuse('already-passed')
   if (!underLimit(carry, from)) return refuse('at-your-hand-limit')
@@ -311,15 +378,21 @@ export function answerBid(
   if (answer.kind === 'bid') {
     const minimum = carry.high ? carry.high.spice + 1 : MINIMUM_OPENING_BID
     if (!Number.isInteger(answer.spice) || answer.spice < minimum) return refuse('below-the-minimum')
-    // PRIVATE. Refusing this out loud would tell the table the bidder holds less
-    // than they just asked for, which is most of what they were hiding.
-    if (answer.spice > spiceHeld) return refuse('more-than-you-hold')
+    // AGAINST WHAT IS LEFT, not against the stored purse. See
+    // committedInAuction: nothing is paid until the whole auction settles, so
+    // the stored number still counts spice this seat has already promised for
+    // cards it has already won.
+    if (answer.spice > spiceHeld - committedInAuction(carry, from)) {
+      // PRIVATE. Refusing this out loud would tell the table the bidder holds
+      // less than they just asked for, which is most of what they were hiding.
+      return refuse('more-than-you-hold')
+    }
 
     const raised: AuctionCarry = { ...carry, high: { faction: from, spice: answer.spice } }
     const next = nextBidder(raised, from)
     // Nobody left to answer the raise, so it stands.
     if (!next) {
-      return { kind: 'ok', step: closeCard(raised, { index: raised.index, winner: from, price: answer.spice }, closesAt) }
+      return { kind: 'ok', step: closeCard(raised, { index: raised.index, winner: from, price: answer.spice }, closesAt, pause) }
     }
     return { kind: 'ok', step: awaitingBy([next], askFor({ ...raised, toAct: next }), { ...raised, toAct: next }, closesAt) }
   }
@@ -331,8 +404,8 @@ export function answerBid(
     return {
       kind: 'ok',
       step: passedNow.high
-        ? closeCard(passedNow, { index: passedNow.index, winner: passedNow.high.faction, price: passedNow.high.spice }, closesAt)
-        : closeCard(passedNow, null, closesAt),
+        ? closeCard(passedNow, { index: passedNow.index, winner: passedNow.high.faction, price: passedNow.high.spice }, closesAt, pause)
+        : closeCard(passedNow, null, closesAt, pause),
     }
   }
   return { kind: 'ok', step: awaitingBy([next], askFor({ ...passedNow, toAct: next }), { ...passedNow, toAct: next }, closesAt) }

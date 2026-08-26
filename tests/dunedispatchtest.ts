@@ -642,5 +642,44 @@ const code = (path: string) => readFileSync(path, 'utf8')
     /now >= step\.closesAt/.test(view), true)
 }
 
+// ── the auction's server wiring for all of this ───────────────────────────
+{
+  const fn = code('supabase/functions/dune-action/index.ts')
+  const view = code('src/components/dune/DuneMultiSeatView.tsx')
+
+  // THE PAUSE IS ENFORCED WHERE THE CLOCK IS. The module stamps the moment and
+  // owns no clock; the endpoint decides whether it has come.
+  check('the endpoint refuses a bid inside the pause',
+    /code: 'between-cards'/.test(fn), true)
+  check('...comparing its own clock to the stamped moment',
+    /now < pausedUntil/.test(fn), true)
+  check('...and stamps the next card\'s opening', /const opensAt = now \+ BETWEEN_CARDS_SECONDS/.test(fn), true)
+  // THE PAUSE DOES NOT EAT THE NEXT BIDDER'S TIME.
+  check('...with a full window starting after it',
+    /thenClosesAt: opensAt \+ BID_SECONDS \* 1000/.test(fn), true)
+
+  // THE HARKONNEN SECOND CARD comes off the draw pile, which only the server
+  // can see — the lot holds exactly one card per eligible bidder.
+  check('the endpoint works out what the bonus faction is owed',
+    /bonusCardsDue\(/.test(fn), true)
+  check('...draws exactly that many rather than drawing and putting back',
+    /if \(bonusDue > 0\)/.test(fn), true)
+  check('...and shortens the pile in the same write as the hand',
+    /treachery: bonusDraw\.draw/.test(fn), true)
+  // A reshuffle for the bonus moves the discard, so the unsold join what that
+  // left rather than what was there before it.
+  check('...with the unsold added to the discard the draw left',
+    /discardUnsold\(bonusDraw\.discard/.test(fn), true)
+
+  // THE EXPIRED-BID RESOLUTION IS SEAT-AGNOSTIC. It sent the pass from the
+  // ACTIVE session, which worked only when the seat on screen happened to be
+  // the seat to act, and was refused as not-your-turn the rest of the time —
+  // so it looked like a bug in one faction.
+  check('the harness resolves as the seat being waited on',
+    /sessions\.find\(x => x\.login\.faction === waitingOn\)/.test(view), true)
+  check('...falling back to the viewed seat only when that seat is not held',
+    /\?\? mine/.test(view), true)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 process.exit(pass ? 0 : 1)

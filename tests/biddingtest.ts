@@ -7,8 +7,9 @@
 // carry looks exactly like a correct auction from every seat.
 import {
   beginAuction, answerBid, silenceAnswers, cardsOnOffer, MINIMUM_OPENING_BID,
+  BID_SECONDS, BETWEEN_CARDS_SECONDS,
 } from '@/lib/dune/bidding'
-import type { AuctionCarry, BidStep, BidOutcome } from '@/lib/dune/bidding'
+import type { AuctionCarry, BidStep, BidOutcome, BidAnswer } from '@/lib/dune/bidding'
 import { drawTreachery, discardUnsold } from '@/lib/dune/treacheryDeck'
 import { isAwaiting, deadlinePassed } from '@/lib/dune/phase'
 import { FACTIONS, FACTION_IDS } from '@/data/dune/factions'
@@ -379,6 +380,102 @@ check('unsold cards go to the discard, most recent first',
   discardUnsold(['old'], ['fresh']), ['fresh', 'old'])
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
+
+
+// ── a bid is measured against what is LEFT, not what is stored ────────────
+// The auction settles once, at the end. Cards close one after another inside a
+// single step and nothing reaches match_secrets until the last is done — so a
+// seat's stored spice still shows the whole purse while it is winning its
+// second and third card of the same auction.
+//
+// Checking against the stored number alone let a seat bid its maximum on every
+// card in a row and win them all, promising the same spice over and over. It
+// could not pay at settlement, which is a refusal several cards too late.
+{
+  const A = 'atreides' as FactionId, H = 'harkonnen' as FactionId
+  const HELD = 10
+  const at = (s: BidStep) => (s.status === 'awaiting' ? s.carry : null)
+  const go = (s: BidStep, who: FactionId, a: BidAnswer) => {
+    const o = answerBid(at(s)!, who, a, HELD, 9e12)
+    return { step: o.kind === 'ok' ? o.step : s, outcome: o }
+  }
+
+  let step: BidStep = beginAuction({
+    turn: 1, order: [A, H], hands: { atreides: 0, harkonnen: 0 },
+    limits: { atreides: 4, harkonnen: 8 }, closesAt: 9e12,
+  })
+  // Card 1 goes to the Atreides for 8; card 2 opens on the Harkonnen, who pass.
+  step = go(step, A, { kind: 'bid', spice: 8 }).step
+  step = go(step, H, { kind: 'pass' }).step
+  step = go(step, H, { kind: 'pass' }).step
+
+  check('the seat that won is asked again', at(step)?.toAct, A)
+  check('...and its win is on the carry',
+    at(step)?.awards.map(a => a.price), [8])
+
+  const again = go(step, A, { kind: 'bid', spice: 8 }).outcome
+  check('bidding the same spice twice is refused',
+    again.kind === 'refused' ? again.refusal : 'allowed', 'more-than-you-hold')
+  // What is actually left, and no more.
+  check('...but what is left is allowed', go(step, A, { kind: 'bid', spice: 2 }).outcome.kind, 'ok')
+  check('...and one more than that is not',
+    (() => { const o = go(step, A, { kind: 'bid', spice: 3 }).outcome
+      return o.kind === 'refused' ? o.refusal : 'allowed' })(), 'more-than-you-hold')
+
+  // A SEAT THAT HAS PROMISED NOTHING IS UNAFFECTED — the deduction is per seat,
+  // not a pool. Checking otherwise would pass on a rule that charged everybody.
+  let fresh: BidStep = beginAuction({
+    turn: 1, order: [A, H], hands: { atreides: 0, harkonnen: 0 },
+    limits: { atreides: 4, harkonnen: 8 }, closesAt: 9e12,
+  })
+  fresh = go(fresh, A, { kind: 'bid', spice: 8 }).step
+  fresh = go(fresh, H, { kind: 'pass' }).step
+  const rival = answerBid(at(fresh)!, H, { kind: 'bid', spice: 10 }, HELD, 9e12)
+  check('a seat that has promised nothing may still bid its whole purse', rival.kind, 'ok')
+}
+
+// ── a breath between cards ────────────────────────────────────────────────
+// Without it the next card opens in the same frame the last one settled: the
+// seat that just won has a card it has not looked at and is already being asked
+// to bid on another.
+{
+  const A = 'atreides' as FactionId, H = 'harkonnen' as FactionId
+  const NOW = 1_000_000
+  const closesAt = NOW + BID_SECONDS * 1000
+  const opensAt = NOW + BETWEEN_CARDS_SECONDS * 1000
+  const pause = { until: opensAt, thenClosesAt: opensAt + BID_SECONDS * 1000 }
+  const at = (s: BidStep) => (s.status === 'awaiting' ? s.carry : null)
+
+  let step: BidStep = beginAuction({
+    turn: 1, order: [A, H], hands: { atreides: 0, harkonnen: 0 },
+    limits: { atreides: 4, harkonnen: 8 }, closesAt,
+  })
+  let o = answerBid(at(step)!, A, { kind: 'bid', spice: 2 }, 20, closesAt, pause)
+  step = o.kind === 'ok' ? o.step : step
+  o = answerBid(at(step)!, H, { kind: 'pass' }, 20, closesAt, pause)
+  step = o.kind === 'ok' ? o.step : step
+
+  check('a closed card leaves a pause before the next', at(step)?.pauseUntil, opensAt)
+  check('...which the ask carries, so clients can show it',
+    step.status === 'awaiting' ? step.ask.pauseUntil : null, opensAt)
+
+  // THE PAUSE DOES NOT EAT THE NEXT BIDDER'S TIME. Their window starts when it
+  // ends, so a gap between cards costs nobody a second of thinking.
+  check('...and the next window is a full one, starting after it',
+    (step.status === 'awaiting' ? step.closesAt! : 0) - opensAt, BID_SECONDS * 1000)
+
+  // AND IT IS OPTIONAL. A caller with nobody to wait for — a test, a replay —
+  // supplies none and the cards follow one another as they always did.
+  let plain: BidStep = beginAuction({
+    turn: 1, order: [A, H], hands: { atreides: 0, harkonnen: 0 },
+    limits: { atreides: 4, harkonnen: 8 }, closesAt,
+  })
+  let p = answerBid(at(plain)!, A, { kind: 'bid', spice: 2 }, 20, closesAt)
+  plain = p.kind === 'ok' ? p.step : plain
+  p = answerBid(at(plain)!, H, { kind: 'pass' }, 20, closesAt)
+  plain = p.kind === 'ok' ? p.step : plain
+  check('no pause supplied, no pause imposed', at(plain)?.pauseUntil, undefined)
+}
 
 // Not optional: without an exit code the runner counts a failing suite green.
 process.exit(pass ? 0 : 1)

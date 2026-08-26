@@ -152,7 +152,9 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
   // seat being answered for is the one whose turn it is, not the caller. Both
   // are factions, which is what the rule is about.
   check('the bidder is identified by faction, not by seat',
-    /answerBid\(step\.carry, actingFaction/.test(fn), true)
+    // Whitespace-tolerant: the call wrapped across lines when it gained the
+    // pause argument, which is not a change to who is bidding.
+    /answerBid\(\s*step\.carry, actingFaction/.test(fn), true)
   check('...resolved from the caller or from the auction, both factions',
     /const actingFaction = expired \? step\.carry\.toAct : myFaction/.test(fn), true)
   check('...and never by seat id',
@@ -506,7 +508,12 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
   // response and this passed: the check matched the opening fields and said
   // nothing about what came after them. The response goes to a client exactly
   // as public state does, so it is checked the same way — by what is IN it.
-  const pausedReply = publish.slice(publish.indexOf("return json({\n        awaiting: 'fremen'"))
+  // FOUND BY REGEX, NOT BY A LITERAL NEWLINE. This searched for a string
+  // containing "\n" and the working tree is CRLF, so the moment the file was
+  // checked out fresh the index came back -1, the slice was empty, and two
+  // checks failed on the line endings rather than on anything they assert.
+  const replyAt = publish.search(/return json\(\{\s*awaiting: 'fremen'/)
+  const pausedReply = replyAt < 0 ? '' : publish.slice(replyAt)
   const replyBody = pausedReply.slice(0, pausedReply.indexOf('})') + 2)
   check('the paused reply is there to check', replyBody.length > 40, true)
   check('the reply says what is being asked',

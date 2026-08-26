@@ -35,8 +35,14 @@ function payForAuction(awards, seated) {
 }
 
 // src/lib/dune/auctionSettlement.ts
+var BONUS_FACTION = "harkonnen";
+function bonusCardsDue(awards, handAfter, limit) {
+  const won = awards.filter((a) => a.winner === BONUS_FACTION).length;
+  return Math.max(0, Math.min(won, limit - handAfter));
+}
 function settleAuction(input) {
   const { result, cards, hands, purses, seated } = input;
+  const bonus = input.bonus ?? [];
   const offered = result.awards.length + result.unsold.length;
   if (cards.length !== offered) {
     return {
@@ -71,6 +77,19 @@ function settleAuction(input) {
     return secrets[who];
   };
   for (const award of result.awards) touch(award.winner).hand.push(cards[award.index]);
+  {
+    const limit = input.limits?.[BONUS_FACTION] ?? Infinity;
+    const handAfter = (secrets[BONUS_FACTION]?.hand ?? hands[BONUS_FACTION] ?? []).length;
+    const due = bonusCardsDue(result.awards, handAfter, limit);
+    if (due > bonus.length) {
+      return {
+        ok: false,
+        refusal: "not-enough-bonus-cards",
+        detail: `${BONUS_FACTION} is due ${due} extra card(s) and ${bonus.length} were supplied`
+      };
+    }
+    for (let i = 0; i < due; i++) touch(BONUS_FACTION).hand.push(bonus[i]);
+  }
   for (const move of moves) {
     if (move.from !== "bank") touch(move.from);
     if (move.to !== "bank") touch(move.to);
@@ -81,5 +100,7 @@ function settleAuction(input) {
   };
 }
 export {
+  BONUS_FACTION,
+  bonusCardsDue,
   settleAuction
 };

@@ -44,6 +44,32 @@ export type SettlementRefusal =
   | 'wrong-number-of-cards'
   | 'a-card-was-lost'
   | 'a-winner-cannot-pay'
+  | 'not-enough-bonus-cards'
+
+/**
+ * The faction that takes a second card with each one it wins.
+ *
+ * BASIC PLAY, not advanced. Their advanced rule is captured leaders; this one
+ * applies from the first game, and leaving it out quietly made them an ordinary
+ * bidder for every auction played so far.
+ *
+ * CAPPED BY THE HAND LIMIT, which for them is eight. Holding seven and winning
+ * one, they get the one they won and no more — the second card would be a ninth
+ * they are not allowed to hold.
+ */
+export const BONUS_FACTION: FactionId = 'harkonnen'
+
+/** How many extra cards the bonus faction may take from this auction. */
+export function bonusCardsDue(
+  awards: readonly { winner: FactionId }[],
+  handAfter: number,
+  limit: number,
+): number {
+  const won = awards.filter(a => a.winner === BONUS_FACTION).length
+  // Room is measured AFTER the auction's own cards are counted: winning two and
+  // holding six leaves the limit reached, and no bonus at all.
+  return Math.max(0, Math.min(won, limit - handAfter))
+}
 
 export type SettlementResult =
   | { ok: true; writes: AuctionWrites }
@@ -56,6 +82,10 @@ export type SettlementResult =
  * @param hands    every seat's hand before
  * @param purses   every seat's spice before
  * @param seated   who is in the game, so the Emperor's redirect knows
+ * @param bonus    cards drawn for the bonus faction, exactly as many as
+ *                 bonusCardsDue says — the caller draws them, because only it
+ *                 can take them off the pile
+ * @param limits   hand limits, so the bonus stops at one
  */
 export function settleAuction(input: {
   result: AuctionResult
@@ -63,8 +93,11 @@ export function settleAuction(input: {
   hands: Readonly<Record<string, readonly string[]>>
   purses: Purses
   seated: readonly FactionId[]
+  bonus?: readonly string[]
+  limits?: Readonly<Record<string, number>>
 }): SettlementResult {
   const { result, cards, hands, purses, seated } = input
+  const bonus = input.bonus ?? []
 
   // The auction was told how many cards were on offer; this must be that many.
   // A mismatch means the caller drew a different number from the one bid on,
@@ -114,6 +147,24 @@ export function settleAuction(input: {
     return secrets[who]
   }
   for (const award of result.awards) touch(award.winner).hand.push(cards[award.index])
+
+  // ── the second card ────────────────────────────────────────────────────
+  // The bonus faction takes another with each one they win, up to their limit.
+  // Counted off the hand they end the auction with, so winning two while
+  // holding six earns nothing: the limit is reached by the cards they bid for.
+  {
+    const limit = input.limits?.[BONUS_FACTION] ?? Infinity
+    const handAfter = (secrets[BONUS_FACTION]?.hand ?? hands[BONUS_FACTION] ?? []).length
+    const due = bonusCardsDue(result.awards, handAfter, limit)
+    if (due > bonus.length) {
+      return {
+        ok: false,
+        refusal: 'not-enough-bonus-cards',
+        detail: `${BONUS_FACTION} is due ${due} extra card(s) and ${bonus.length} were supplied`,
+      }
+    }
+    for (let i = 0; i < due; i++) touch(BONUS_FACTION).hand.push(bonus[i])
+  }
   // A seat whose only part in this was being paid — the Emperor collecting —
   // still needs its purse written, or the spice arrives nowhere.
   for (const move of moves) {

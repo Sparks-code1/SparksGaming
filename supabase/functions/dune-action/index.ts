@@ -26,8 +26,10 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { applySpiceMoves, BANK } from '../_shared/duneSpice.gen.ts'
-import { settleAuction } from '../_shared/duneAuction.gen.ts'
-import { beginAuction, answerBid, cardsOnOffer, BID_SECONDS } from '../_shared/duneBidding.gen.ts'
+import { settleAuction, bonusCardsDue, BONUS_FACTION } from '../_shared/duneAuction.gen.ts'
+import {
+  beginAuction, answerBid, cardsOnOffer, BID_SECONDS, BETWEEN_CARDS_SECONDS,
+} from '../_shared/duneBidding.gen.ts'
 import { drawTreachery, discardUnsold, shuffleWithSeed, seededRng } from '../_shared/duneDeck.gen.ts'
 import {
   buildSpiceDeck, resolveSpiceBlow, beginDoubleSpiceBlow, placeFremenWorms,
@@ -700,6 +702,20 @@ Deno.serve(async req => {
       // CLOSE_CHARITY and PLACE_WORMS follow, so a match does not hang on
       // whoever happens to be looking at the right screen. Before the deadline
       // it is still the acting seat's decision and nobody else's.
+      // ── THE BREATH BETWEEN CARDS ─────────────────────────────────────────
+      // A card that has just closed leaves a moment before the next may be bid
+      // on, so the seat that won it can look at what it bought and the table
+      // can see what it went for. The module owns no clock, so the check is
+      // here — it stamps pauseUntil, this decides whether that moment has come.
+      const pausedUntil = step.carry?.pauseUntil
+      if (typeof pausedUntil === 'number' && now < pausedUntil) {
+        return json({
+          error: 'the next card is not open yet',
+          code: 'between-cards',
+          opensAt: pausedUntil,
+        }, 409)
+      }
+
       const expired = typeof step.closesAt === 'number' && now >= step.closesAt
       const actingFaction = expired ? step.carry.toAct : myFaction
       // A PASS, whoever asked and whatever they sent. Honouring a late bid
@@ -712,7 +728,13 @@ Deno.serve(async req => {
       // seat's balance standing in for another's.
       const againstPurse = expired ? 0 : purse
 
-      const outcome = answerBid(step.carry, actingFaction, answer, againstPurse, now + BID_SECONDS * 1000)
+      // The two stamps for the NEXT card, if this answer closes one: when it
+      // opens, and when its own window then shuts. Both from this clock, so the
+      // pause does not eat into the next bidder's fifteen seconds.
+      const opensAt = now + BETWEEN_CARDS_SECONDS * 1000
+      const outcome = answerBid(
+        step.carry, actingFaction, answer, againstPurse, now + BID_SECONDS * 1000,
+        { until: opensAt, thenClosesAt: opensAt + BID_SECONDS * 1000 })
 
       // A REFUSAL IS PRIVATE and changes nothing. Saying "more than you hold" to
       // the table would announce roughly what the bidder has, which is most of
@@ -772,11 +794,41 @@ Deno.serve(async req => {
       // which is a SyntaxError the moment the function loads, and tsc does not
       // read this directory.
 
+      // ── THE HARKONNEN SECOND CARD ────────────────────────────────────────
+      // Basic play, not advanced: they take another with each one they win, up
+      // to their hand limit of eight. It comes off the DRAW PILE, not the lot —
+      // the lot holds exactly one card per eligible bidder and every one of
+      // them is accounted for — so the server has to draw it, being the only
+      // party that can see the pile.
+      //
+      // DRAWN TO ORDER rather than drawn and put back: bonusCardsDue says how
+      // many are owed before anything is taken, so no card is pulled off the
+      // pile and returned to a different position.
+      const result = outcome.step.result
+      const handAfter = (hands[BONUS_FACTION]?.length ?? 0)
+        + result.awards.filter((a: { winner: string }) => a.winner === BONUS_FACTION).length
+      const bonusDue = bonusCardsDue(
+        result.awards, handAfter, step.carry.limits?.[BONUS_FACTION] ?? 0)
+
+      const treacheryPile = ((deckNow ?? []).find((r) => r.deck === 'treachery')?.cards ?? []) as string[]
+      let bonusDraw = { drawn: [] as string[], draw: treacheryPile, discard: (state.treacheryDiscard ?? []) as string[] }
+      if (bonusDue > 0) {
+        try {
+          bonusDraw = drawTreachery(
+            treacheryPile, (state.treacheryDiscard ?? []) as string[], bonusDue,
+            (cards) => shuffleWithSeed(Number(match.rng_seed) + match.action_seq, cards))
+        } catch (e) {
+          return json({ error: String(e), code: 'deck-exhausted' }, 409)
+        }
+      }
+
       const settled = settleAuction({
-        result: outcome.step.result,
+        result,
         cards: lot,
         hands,
         purses,
+        bonus: bonusDraw.drawn,
+        limits: step.carry.limits,
         // Who is in the game, for the Emperor redirect. Taken from the auction's
         // own order rather than from whoever happens to have a secrets row.
         seated: step.carry.order,
@@ -841,13 +893,20 @@ Deno.serve(async req => {
               ({ winner: a.winner, price: a.price })),
           },
           // The discard is PUBLIC — a treachery discard is face up at a table.
-          treacheryDiscard: discardUnsold(
-            (state.treacheryDiscard ?? []) as string[], settled.writes.discard),
+          // The bonus draw may have reshuffled the discard back into the pile,
+          // so the unsold cards join what that left rather than what was there
+          // before it.
+          treacheryDiscard: discardUnsold(bonusDraw.discard, settled.writes.discard),
         },
         p_secrets: secretsPatch,
         // The lot is emptied in the same write that deals it out, so a card
-        // cannot be dealt twice by a retry.
-        p_decks: { 'auction-lot': [] },
+        // cannot be dealt twice by a retry. The treachery pile shortens here
+        // too when a bonus card came off it — written in the same transaction
+        // as the hand it went into, or a crash between them deals a card that
+        // is still in the deck.
+        p_decks: bonusDue > 0
+          ? { 'auction-lot': [], treachery: bonusDraw.draw }
+          : { 'auction-lot': [] },
       })
       if (error) return json({ error: error.message }, 500)
       if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)

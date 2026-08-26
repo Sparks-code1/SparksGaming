@@ -222,5 +222,38 @@ check('the seat to act is given the controls', draw().includes('id="dune-bid"'),
   check('...and does not dim the board', /#000000a8/.test(bar), false)
 }
 
+
+// ── the breath between cards ──────────────────────────────────────────────
+// A card that has just closed leaves a moment before the next may be bid on,
+// so the seat that won it can look at what it bought. The server refuses bids
+// inside it; this stops the panel offering a button whose one outcome is that
+// refusal.
+{
+  // The pause is a MOMENT, stamped by the server, counted against this
+  // client's injected clock — `now` is 5_000 in the fixture.
+  const paused = { ...base.ask, pauseUntil: 8_000 }
+
+  const during = draw({ ask: paused })
+  check('the panel says the next card is coming', during.includes('next card in'), true)
+  check('...counting the seconds until it does', during.includes('3s'), true)
+
+  // NO BID CONTROLS, even for the seat whose turn it is — which is the whole
+  // point, and what a sabotage removing `&& !between` walked straight through
+  // because nothing here rendered a paused panel at all.
+  check('...and offers the acting seat no bid', during.includes('Bid'), false)
+  check('...nor a pass', during.includes('Pass'), false)
+
+  // ONCE IT HAS PASSED, the panel is itself again. Checking only the paused
+  // render would pass on a panel that never offered a bid at all.
+  const after = draw({ ask: paused, now: 9_000 })
+  check('after the pause the acting seat may bid again', after.includes('Bid'), true)
+  check('...and the notice is gone', after.includes('next card in'), false)
+
+  // AND A CARD WITH NO PAUSE BEHIND IT is unaffected — most cards have none.
+  const plain = draw({})
+  check('a card with no pause behaves as before', plain.includes('next card in'), false)
+  check('...and still offers a bid', plain.includes('Bid'), true)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 process.exit(pass ? 0 : 1)

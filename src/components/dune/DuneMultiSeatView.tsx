@@ -283,6 +283,31 @@ export default function DuneMultiSeatView() {
   const nameOf = (faction: FactionId) => FACTION_LOOK[faction]?.name ?? faction
 
   /**
+   * End a bid window that has run out, as the seat it is waiting on.
+   *
+   * AS THAT SEAT, not as whoever is being viewed. This sent the pass from the
+   * ACTIVE session, which happened to work whenever the seat on screen was also
+   * the seat to act — and failed the rest of the time as not-your-turn, so it
+   * looked seat-specific: fine for the Atreides, stuck on the Harkonnen.
+   *
+   * The server's timeout path answers for whoever is to act regardless of who
+   * asked, and stays: on six separate machines nobody can act as another seat,
+   * and that is what ends the window there. But it depends on the server
+   * agreeing the deadline has passed, and this client's clock ticks once a
+   * second — so a button that is visible is not proof the server thinks so too.
+   *
+   * Here, the harness holds every seat's session. Passing as the seat whose
+   * turn it actually is is a plain, legal pass that needs no clocks to agree.
+   * Falling back to the viewed seat leaves the server's timeout path to handle
+   * a seat this harness was not given a login for.
+   */
+  const resolveExpiredBid = () => {
+    const waitingOn = publicRow?.auction?.carry?.toAct
+    const actor = sessions.find(x => x.login.faction === waitingOn) ?? mine
+    if (actor?.client) void bid(actor, { kind: 'pass' })
+  }
+
+  /**
    * Whether the auction is waiting past its own deadline.
    *
    * Read off the row rather than timed here, like every other window in this
@@ -572,7 +597,7 @@ export default function DuneMultiSeatView() {
                 away leaves nobody able to press anything and the auction cannot
                 end. This is that button. */}
             {biddingExpired && (
-              <button onClick={() => mine && void bid(mine, { kind: 'pass' })} disabled={busy}>
+              <button onClick={resolveExpiredBid} disabled={busy}>
                 Resolve expired bid
               </button>
             )}

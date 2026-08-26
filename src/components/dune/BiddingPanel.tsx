@@ -224,10 +224,31 @@ export function BiddingPanel(props: BiddingPanelProps) {
   // Arrakeen this turn, who is standing next to your spice. Being unable to look
   // at the map while pricing a card for it is the whole complaint.
   const [shut, setShut] = useState(false)
+  /**
+   * The moment between cards, when the last one has closed and the next is not
+   * open yet.
+   *
+   * READ OFF THE ASK, which the server stamped, and counted against this
+   * client's injected clock like every other window here. Bidding is refused
+   * during it server-side too — this only stops the panel offering a button
+   * whose one outcome is 'between-cards'.
+   */
+  const between = ask.pauseUntil != null && now < ask.pauseUntil
+  const untilNext = ask.pauseUntil != null ? Math.max(0, ask.pauseUntil - now) : 0
+
+  // NOT guarded on the pause: `act` branches on `between` before it reaches
+  // here, so a second guard was dead code — sabotage removing it changed
+  // nothing, which is the only honest reason to find out it was redundant.
   const mine = toAct === seat
   const remaining = ask.cardCount - ask.index - 1
 
-  const act = mine ? (
+  const act = between ? (
+    // WHAT JUST HAPPENED, and how long before the next one. The seat that won
+    // has a card it has not looked at; everybody else has a result to read.
+    <span style={{ opacity: 0.8 }}>
+      next card in {Math.ceil(untilNext / 1000)}s
+    </span>
+  ) : mine ? (
     <>
       <label htmlFor="dune-bid" style={{ fontSize: 12, opacity: 0.8 }}>Bid</label>
       <input id="dune-bid" type="number" min={minimum} max={spice} value={amount}

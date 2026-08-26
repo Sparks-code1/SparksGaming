@@ -14,9 +14,11 @@ var settled = (result) => ({ status: "settled", result });
 // src/lib/dune/bidding.ts
 var MINIMUM_OPENING_BID = 1;
 var BID_SECONDS = 15;
+var BETWEEN_CARDS_SECONDS = 5;
 function cardsOnOffer(order, hands, limits) {
   return order.filter((f) => (hands[f] ?? 0) < (limits[f] ?? 0)).length;
 }
+var committedInAuction = (c, f) => c.awards.reduce((n, a) => a.winner === f ? n + a.price : n, 0);
 var underLimit = (c, f) => (c.hands[f] ?? 0) < (c.limits[f] ?? 0);
 var contenders = (c) => c.order.filter((f) => underLimit(c, f) && !c.passed.includes(f));
 function nextBidder(c, from) {
@@ -45,7 +47,8 @@ var askFor = (c) => ({
   cardCount: c.cardCount,
   high: c.high,
   minimum: c.high ? c.high.spice + 1 : MINIMUM_OPENING_BID,
-  hands: c.hands
+  hands: c.hands,
+  pauseUntil: c.pauseUntil
 });
 function openCard(c, closesAt) {
   let next = c;
@@ -66,14 +69,15 @@ function openCard(c, closesAt) {
     next = { ...next, unsold: [...next.unsold, next.index], index: next.index + 1 };
   }
 }
-function closeCard(c, won, closesAt) {
+function closeCard(c, won, closesAt, pause) {
   const after = won ? {
     ...c,
     awards: [...c.awards, won],
     hands: { ...c.hands, [won.winner]: (c.hands[won.winner] ?? 0) + 1 },
-    index: c.index + 1
-  } : { ...c, unsold: [...c.unsold, c.index], index: c.index + 1 };
-  return openCard(after, closesAt);
+    index: c.index + 1,
+    pauseUntil: pause?.until
+  } : { ...c, unsold: [...c.unsold, c.index], index: c.index + 1, pauseUntil: pause?.until };
+  return openCard(after, pause ? pause.thenClosesAt : closesAt);
 }
 function beginAuction(input) {
   const carry = {
@@ -91,7 +95,7 @@ function beginAuction(input) {
   };
   return openCard(carry, input.closesAt);
 }
-function answerBid(carry, from, answer, spiceHeld, closesAt) {
+function answerBid(carry, from, answer, spiceHeld, closesAt, pause) {
   const refuse = (refusal) => ({ kind: "refused", refusal, faction: from, step: awaitingBy([carry.toAct], askFor(carry), carry, closesAt) });
   if (from !== carry.toAct) return refuse("not-your-turn");
   if (carry.passed.includes(from)) return refuse("already-passed");
@@ -99,11 +103,13 @@ function answerBid(carry, from, answer, spiceHeld, closesAt) {
   if (answer.kind === "bid") {
     const minimum = carry.high ? carry.high.spice + 1 : MINIMUM_OPENING_BID;
     if (!Number.isInteger(answer.spice) || answer.spice < minimum) return refuse("below-the-minimum");
-    if (answer.spice > spiceHeld) return refuse("more-than-you-hold");
+    if (answer.spice > spiceHeld - committedInAuction(carry, from)) {
+      return refuse("more-than-you-hold");
+    }
     const raised = { ...carry, high: { faction: from, spice: answer.spice } };
     const next2 = nextBidder(raised, from);
     if (!next2) {
-      return { kind: "ok", step: closeCard(raised, { index: raised.index, winner: from, price: answer.spice }, closesAt) };
+      return { kind: "ok", step: closeCard(raised, { index: raised.index, winner: from, price: answer.spice }, closesAt, pause) };
     }
     return { kind: "ok", step: awaitingBy([next2], askFor({ ...raised, toAct: next2 }), { ...raised, toAct: next2 }, closesAt) };
   }
@@ -112,13 +118,14 @@ function answerBid(carry, from, answer, spiceHeld, closesAt) {
   if (!next) {
     return {
       kind: "ok",
-      step: passedNow.high ? closeCard(passedNow, { index: passedNow.index, winner: passedNow.high.faction, price: passedNow.high.spice }, closesAt) : closeCard(passedNow, null, closesAt)
+      step: passedNow.high ? closeCard(passedNow, { index: passedNow.index, winner: passedNow.high.faction, price: passedNow.high.spice }, closesAt, pause) : closeCard(passedNow, null, closesAt, pause)
     };
   }
   return { kind: "ok", step: awaitingBy([next], askFor({ ...passedNow, toAct: next }), { ...passedNow, toAct: next }, closesAt) };
 }
 var silenceAnswers = { kind: "pass" };
 export {
+  BETWEEN_CARDS_SECONDS,
   BID_SECONDS,
   MINIMUM_OPENING_BID,
   answerBid,
