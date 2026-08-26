@@ -440,7 +440,7 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
               about your own faction and the first thing a new player does. */}
           <button type="button" onClick={() => setShowStrategy(v => !v)}
             aria-expanded={showStrategy} aria-label="Strategy card"
-            style={cardButton(look.colour, showStrategy)}>How to play them</button>
+            style={cardButton(look.colour, showStrategy)}>Strategy</button>
           {allyFaction && (
             <button type="button" onClick={() => setShowAlliance(v => !v)}
               aria-expanded={showAlliance} aria-label="Alliance card"
