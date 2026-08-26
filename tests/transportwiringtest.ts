@@ -147,9 +147,16 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
   // hand limits and the Emperor's redirect are all keyed by faction. Handing a
   // seat id to answerBid compared 'p1' against 'atreides' and refused every bid
   // as not-your-turn — forever, because nothing could ever match.
+  // A FACTION, whichever one. This named myFaction literally, which stopped
+  // being the whole answer when the deadline path arrived: past closesAt the
+  // seat being answered for is the one whose turn it is, not the caller. Both
+  // are factions, which is what the rule is about.
   check('the bidder is identified by faction, not by seat',
-    fn.includes('answerBid(step.carry, myFaction'), true)
-  check('...and never by seat id', fn.includes('answerBid(step.carry, playerId'), false)
+    /answerBid\(step\.carry, actingFaction/.test(fn), true)
+  check('...resolved from the caller or from the auction, both factions',
+    /const actingFaction = expired \? step\.carry\.toAct : myFaction/.test(fn), true)
+  check('...and never by seat id',
+    /answerBid\(step\.carry, (playerId|seat)\b/.test(fn), false)
   check('the faction is resolved from the roster, not from the request',
     /faction_id/.test(fn) && /factionOfSeat/.test(fn), true)
   // Settlement is keyed by faction going in and by seat coming out, because

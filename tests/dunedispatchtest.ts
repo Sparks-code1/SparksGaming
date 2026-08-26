@@ -581,5 +581,66 @@ const code = (path: string) => readFileSync(path, 'utf8')
     /\}, \[minimum\]\)/.test(panel), true)
 }
 
+// ── an action re-reads the row it changed ─────────────────────────────────
+// The changefeed is the normal path, but a client that has just POSTed knows
+// the row moved. Waiting to be told is how a pass looks like a pass that never
+// registered: the seat that passed still sees its own clock running, the seat
+// that should now be acting still sees itself waiting on somebody who has
+// already answered, nobody can move, and nothing says why.
+//
+// The same argument as the purse, one table over — that one was the seat's own
+// secrets row, this is the public one.
+{
+  const view = code('src/components/dune/DuneMultiSeatView.tsx')
+
+  check('the harness can re-read the shared row', /rereadRow\.current = read/.test(view), true)
+  check('...and a bid does', /await rereadRow\.current\?\.\(\)/.test(view), true)
+  // EVERY action, not just the one that prompted this. A dev control that
+  // opens an auction changes the row exactly as a bid does.
+  check('...as does every action the harness sends',
+    (view.match(/await rereadRow\.current\?\.\(\)/g) ?? []).length >= 3, true)
+  // Cleared on teardown, so a stale closure cannot write into an unmounted view.
+  check('...and it is dropped when the view goes', /rereadRow\.current = null/.test(view), true)
+}
+
+// ── a bid window that expires answers itself ──────────────────────────────
+// awaitingBy says what a timed-out required stop means and names this phase as
+// the case: the phase cannot go on until an answer exists, and if none arrives
+// by closesAt the caller supplies the one the rule says silence means. For
+// bidding that is a pass.
+//
+// Nothing supplied it. answerBid takes closesAt only to stamp the NEXT stop and
+// never reads the current one, and the endpoint did not check either — so an
+// expired window stayed open for ever, waiting on a seat whose time was up.
+{
+  const fn = code('supabase/functions/dune-action/index.ts')
+  const bidCase = fn.slice(fn.indexOf("case 'BID'"), fn.indexOf("case 'SPICE_BLOW'") > fn.indexOf("case 'BID'")
+    ? fn.indexOf("case 'SPICE_BLOW'") : fn.length)
+
+  check('the bid case is there to check', bidCase.length > 400, true)
+  check('the endpoint notices its own deadline',
+    /const expired = typeof step\.closesAt === 'number' && now >= step\.closesAt/.test(bidCase), true)
+  // SILENCE IS A PASS, whoever asked and whatever they sent. Honouring a late
+  // bid would make the deadline advisory, and a window that only sometimes
+  // shuts is not a window.
+  check('...and answers a pass for the seat that did not',
+    /const answer = expired \? \{ kind: 'pass' \} : action\.bid/.test(bidCase), true)
+  check('...on behalf of whoever was to act',
+    /const actingFaction = expired \? step\.carry\.toAct : myFaction/.test(bidCase), true)
+  // The purse is read for the CALLER, who on this path is not the seat being
+  // answered for. A pass spends nothing, so no balance stands in for another's.
+  check('...without one seat\'s purse standing in for another\'s',
+    /const againstPurse = expired \? 0 : purse/.test(bidCase), true)
+
+  // AND SOMETHING HAS TO ASK. The panel offers Bid and Pass only to the seat
+  // whose turn it is, so a seat that has walked away leaves nobody able to
+  // press anything — the server resolving correctly is no use unwitnessed.
+  const view = code('src/components/dune/DuneMultiSeatView.tsx')
+  check('the harness can push an expired auction along',
+    /biddingExpired &&/.test(view), true)
+  check('...deciding that off the stamped deadline, not its own clock',
+    /now >= step\.closesAt/.test(view), true)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 process.exit(pass ? 0 : 1)

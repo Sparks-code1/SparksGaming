@@ -189,6 +189,26 @@ export default function DuneMultiSeatView() {
    * harness on a local machine.
    */
   const readyClient = sessions.find(s => s.userId)?.client
+
+  /**
+   * Read the shared row now, rather than waiting to be told.
+   *
+   * READ-YOUR-OWN-WRITES, FOR THE PUBLIC HALF. The changefeed is the normal
+   * path and this does not replace it — but a client that has just POSTed an
+   * action knows the row changed, and a dropped or delayed frame otherwise
+   * leaves the screen showing the state before its own move.
+   *
+   * That is not a cosmetic staleness. An auction where a pass does not appear
+   * reads as a pass that did not register: the seat that passed still sees its
+   * own clock running, and the seat that should now be acting still sees itself
+   * waiting on somebody who has already answered. Nobody can move, and nothing
+   * says why.
+   *
+   * In a ref so the callbacks below can reach it without re-running the effect
+   * that installs it.
+   */
+  const rereadRow = useRef<(() => Promise<void>) | null>(null)
+
   useEffect(() => {
     if (!matchId || !readyClient) return
     let live = true
@@ -196,15 +216,24 @@ export default function DuneMultiSeatView() {
       const state = (row as { state?: PublicRow } | null)?.state
       if (live && state) setPublicRow(state)
     }
-    void readyClient.from('matches').select('state').eq('id', matchId).maybeSingle()
-      .then(({ data }) => take(data))
+    const read = async () => {
+      const { data } = await readyClient
+        .from('matches').select('state').eq('id', matchId).maybeSingle()
+      take(data)
+    }
+    rereadRow.current = read
+    void read()
     const channel = readyClient
       .channel(`dune-harness:${matchId}:${Math.random().toString(36).slice(2, 10)}`)
       .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'matches', filter: `id=eq.${matchId}` },
         payload => take(payload.new))
       .subscribe()
-    return () => { live = false; void readyClient.removeChannel(channel) }
+    return () => {
+      live = false
+      rereadRow.current = null
+      void readyClient.removeChannel(channel)
+    }
   }, [matchId, readyClient])
 
   if (logins.length === 0) {
@@ -252,6 +281,19 @@ export default function DuneMultiSeatView() {
    */
   /** A faction's printed name, so the chat reads as the table talking. */
   const nameOf = (faction: FactionId) => FACTION_LOOK[faction]?.name ?? faction
+
+  /**
+   * Whether the auction is waiting past its own deadline.
+   *
+   * Read off the row rather than timed here, like every other window in this
+   * codebase: the server stamped the moment, and each client subtracts its own
+   * clock from it.
+   */
+  const biddingExpired = (() => {
+    const step = publicRow?.auction
+    if (!step || step.status !== 'awaiting' || typeof step.closesAt !== 'number') return false
+    return now >= step.closesAt
+  })()
 
   const seatedFactions = (publicRow?.players ?? []).map(p => p.faction)
   const notSeated = !!publicRow && !!active && !seatedFactions.includes(active)
@@ -347,6 +389,9 @@ export default function DuneMultiSeatView() {
     // own. Waiting on the changefeed to say so is how a purse stays visibly
     // full after paying — right in the database, wrong on the screen.
     await seats.current?.refresh(session.login.faction)
+    // AND THE AUCTION ITSELF MOVED, which is public. Without this a pass looks
+    // like a pass that never registered.
+    await rereadRow.current?.()
     say(answer.kind === 'pass' ? 'passed on the card.' : `bid ${answer.spice}.`)
 
     // The settlement is NOT announced here. It is announced off the public
@@ -383,9 +428,13 @@ export default function DuneMultiSeatView() {
       say(`${type} refused: ${res.error?.message ?? 'unknown'}`)
       return
     }
+    // Opening a window, closing one, opening an auction: all of them change the
+    // public row and nothing else.
+    await rereadRow.current?.()
     // Claiming charity pays into this seat's purse, so re-read it for the same
-    // reason a bid does.
+    // reason a bid does — and the claim itself is public, so re-read that too.
     await seats.current?.refresh(session.login.faction)
+    await rereadRow.current?.()
     // Answered, so the modal comes down. The board comes back on the
     // changefeed; nothing is advanced here.
     const turn = publicRow?.charity?.turn
@@ -513,7 +562,20 @@ export default function DuneMultiSeatView() {
                 which seat may drive a phase transition has no answer in the
                 match state yet, and nothing else calls OPEN_BIDDING. */}
             <b style={{ display: 'block', margin: '10px 0 6px' }}>Bidding</b>
-            <button onClick={openBidding} disabled={busy}>Open auction</button>
+            <button onClick={openBidding} disabled={busy}>Open auction</button>{' '}
+
+            {/* PAST THE DEADLINE, ANY SEAT MAY PUSH IT ALONG. awaitingBy says a
+                timed-out stop still needs an answer and the caller supplies the
+                one silence means — a pass, for bidding. The server applies that
+                whoever asks, but something has to ask: the panel offers Bid and
+                Pass only to the seat whose turn it is, so a seat that has walked
+                away leaves nobody able to press anything and the auction cannot
+                end. This is that button. */}
+            {biddingExpired && (
+              <button onClick={() => mine && void bid(mine, { kind: 'pass' })} disabled={busy}>
+                Resolve expired bid
+              </button>
+            )}
           </>
         ) : (
           <p style={{ margin: 0, opacity: 0.7 }}>

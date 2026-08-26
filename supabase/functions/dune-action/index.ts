@@ -685,7 +685,34 @@ Deno.serve(async req => {
         .from('match_decks').select('deck, cards').eq('match_id', matchId)
       const lot = ((deckNow ?? []).find((r) => r.deck === 'auction-lot')?.cards ?? []) as string[]
 
-      const outcome = answerBid(step.carry, myFaction, action.bid, purse, now + BID_SECONDS * 1000)
+      // ── THE DEADLINE ANSWERS FOR A SEAT THAT DID NOT ────────────────────
+      // awaitingBy says what a timed-out stop means, and names this phase as
+      // the case: the phase cannot go on until an answer exists, and if none
+      // arrives by closesAt the caller supplies the one the rule says silence
+      // means. For bidding that is a PASS.
+      //
+      // Nothing supplied it. answerBid takes closesAt only to stamp the NEXT
+      // stop and never reads the current one, and this case did not check
+      // either — so a window that expired stayed open for ever, waiting on a
+      // seat whose time was already up. The auction simply could not end.
+      //
+      // ANY SEAT MAY PUSH IT ALONG once the clock has run out, the same rule
+      // CLOSE_CHARITY and PLACE_WORMS follow, so a match does not hang on
+      // whoever happens to be looking at the right screen. Before the deadline
+      // it is still the acting seat's decision and nobody else's.
+      const expired = typeof step.closesAt === 'number' && now >= step.closesAt
+      const actingFaction = expired ? step.carry.toAct : myFaction
+      // A PASS, whoever asked and whatever they sent. Honouring a late bid
+      // would make the deadline advisory, and a window that only sometimes
+      // shuts is not a window.
+      const answer = expired ? { kind: 'pass' } : action.bid
+      // The purse is read for the CALLER, and on the timeout path the caller is
+      // not the seat being answered for. A pass spends nothing and answerBid
+      // never looks at it, so the timed-out path passes zero rather than one
+      // seat's balance standing in for another's.
+      const againstPurse = expired ? 0 : purse
+
+      const outcome = answerBid(step.carry, actingFaction, answer, againstPurse, now + BID_SECONDS * 1000)
 
       // A REFUSAL IS PRIVATE and changes nothing. Saying "more than you hold" to
       // the table would announce roughly what the bidder has, which is most of
