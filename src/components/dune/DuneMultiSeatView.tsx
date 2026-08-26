@@ -21,12 +21,12 @@ import { DuneGameScreen } from './DuneGameScreen'
 import { DevSeatSwitcher } from './DevSeatSwitcher'
 import { WormPlacementPanel } from './WormPlacementPanel'
 import { dispatchDuneAction } from '@/lib/dune/duneDispatch'
-import type { SpiceBlowPause } from './WormPlacementPanel'
-import type { CharityWindow } from '@/lib/dune/charity'
 import { factionById } from '@/data/dune/factions'
 import { FACTION_LOOK } from './SeatLayer'
-import type { BidAsk, AuctionCarry } from '@/lib/dune/bidding'
 import type { BidRefusal } from '@/lib/dune/bidding'
+import { watchDuneMatch } from '@/lib/dune/matchFeed'
+import { openAuction, openCharity, auctionExpired, seatedIn, winLines } from '@/lib/dune/publicRow'
+import type { PublicRow } from '@/lib/dune/publicRow'
 import type { ChatMessage } from './ChatPanel'
 
 const PALE = '#f0e2bb'
@@ -48,35 +48,10 @@ const PUBLIC_FIXTURE: DuneGameState = {
   players: [], forces: [], spiceOnBoard: {}, awaiting: null,
 }
 
-/** The public row carries fields the screen's type does not name — the charity
- *  window among them, which is public because who has claimed is on the table. */
-/** The auction as public state carries it: a Step, ask and carry and all. */
-/**
- * The settlement, as the whole table receives it.
- *
- * WINNER AND PRICE ONLY. Not the card — the auction is card-blind and the card
- * is now in a hand nobody else may read — and not the lot index, which is a
- * position in a pile no client can see.
- */
-interface LastAuction {
-  turn: number
-  /** Server timestamp, and the key that says which settlement this is. */
-  at: number
-  awards: { winner: FactionId; price: number }[]
-}
-
-interface AuctionStep {
-  status: string
-  ask?: BidAsk
-  carry?: AuctionCarry
-  closesAt?: number
-}
-type PublicRow = DuneGameState & {
-  charity?: CharityWindow
-  spiceBlow?: SpiceBlowPause
-  auction?: AuctionStep
-  lastAuction?: LastAuction
-}
+// The row's shape and everything derived from it live in lib/dune/publicRow,
+// shared with the real screen. The harness having its own opinion about what
+// "the auction is open" means is how it comes to prove something the app does
+// not do.
 
 function Notice({ children }: { children: React.ReactNode }) {
   return (
@@ -166,9 +141,7 @@ export default function DuneMultiSeatView() {
     // Set BEFORE announcing: announce() calls setChat, which re-renders, and a
     // guard written afterwards would let the second pass through.
     announced.current = last.at
-    for (const award of last.awards) {
-      announce(`${nameOf(award.winner)} wins a card for ${award.price} spice.`)
-    }
+    for (const line of winLines(last, nameOf)) announce(line)
     // announce and nameOf are stable for the life of the view; the row is what
     // this watches.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -211,29 +184,11 @@ export default function DuneMultiSeatView() {
 
   useEffect(() => {
     if (!matchId || !readyClient) return
-    let live = true
-    const take = (row: unknown) => {
-      const state = (row as { state?: PublicRow } | null)?.state
-      if (live && state) setPublicRow(state)
-    }
-    const read = async () => {
-      const { data } = await readyClient
-        .from('matches').select('state').eq('id', matchId).maybeSingle()
-      take(data)
-    }
-    rereadRow.current = read
-    void read()
-    const channel = readyClient
-      .channel(`dune-harness:${matchId}:${Math.random().toString(36).slice(2, 10)}`)
-      .on('postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'matches', filter: `id=eq.${matchId}` },
-        payload => take(payload.new))
-      .subscribe()
-    return () => {
-      live = false
-      rereadRow.current = null
-      void readyClient.removeChannel(channel)
-    }
+    // ON ANY SEAT'S CLIENT, deliberately: matches.state is public, so every
+    // session sees the identical row and it does not matter which one asks.
+    const feed = watchDuneMatch(matchId, { client: readyClient, onRow: setPublicRow })
+    rereadRow.current = feed.reread
+    return () => { rereadRow.current = null; feed.stop() }
   }, [matchId, readyClient])
 
   if (logins.length === 0) {
@@ -314,14 +269,10 @@ export default function DuneMultiSeatView() {
    * codebase: the server stamped the moment, and each client subtracts its own
    * clock from it.
    */
-  const biddingExpired = (() => {
-    const step = publicRow?.auction
-    if (!step || step.status !== 'awaiting' || typeof step.closesAt !== 'number') return false
-    return now >= step.closesAt
-  })()
+  const biddingExpired = auctionExpired(publicRow, now)
 
   const seatedFactions = (publicRow?.players ?? []).map(p => p.faction)
-  const notSeated = !!publicRow && !!active && !seatedFactions.includes(active)
+  const notSeated = !!publicRow && !!active && !seatedIn(publicRow, active)
 
   /**
    * A line for the acting seat alone.
@@ -347,9 +298,9 @@ export default function DuneMultiSeatView() {
    * behind a dialog nobody can dismiss.
    */
   const charityFor = (session: SeatSession | null) => {
-    const window_ = publicRow?.charity
-    if (!window_ || !session?.client) return null
-    if (answered[session.login.faction] === window_.turn) return null
+    if (!session?.client) return null
+    const window_ = openCharity(publicRow, answered[session.login.faction])
+    if (!window_) return null
     return {
       onClaim: () => void send(session, 'CLAIM_CHARITY'),
       onPass: () => {
@@ -375,16 +326,15 @@ export default function DuneMultiSeatView() {
    * seat that is not entitled to it has nothing to be careless with.
    */
   const biddingFor = (session: SeatSession | null) => {
-    const step = publicRow?.auction
-    if (!step || step.status !== 'awaiting' || !step.ask || !step.carry) return null
-    if (!session?.client) return null
-    const carry = step.carry
+    const open = openAuction(publicRow)
+    if (!open || !session?.client) return null
+    const carry = open.carry
     return {
-      ask: step.ask,
+      ask: open.ask,
       order: carry.order,
       toAct: carry.toAct,
       passed: carry.passed,
-      closesAt: step.closesAt ?? 0,
+      closesAt: open.closesAt,
       refusal: bidRefusal[session.login.faction] ?? null,
       onBid: (spice: number) => void bid(session, { kind: 'bid' as const, spice }),
       onPass: () => void bid(session, { kind: 'pass' as const }),

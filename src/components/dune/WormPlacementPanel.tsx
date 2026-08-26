@@ -21,14 +21,15 @@ import { useState } from 'react'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import { dispatchDuneAction } from '@/lib/dune/duneDispatch'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SpiceBlowPause } from '@/lib/dune/publicRow'
 
-/** The pause as public state carries it. */
-export interface SpiceBlowPause {
-  turn: number
-  pile?: 'A' | 'B'
-  worms?: number
-  from?: string[]
-}
+/**
+ * The pause as public state carries it.
+ *
+ * DEFINED WITH THE ROW, not here, because the row is what it describes and two
+ * screens read it. Re-exported so this panel's props still read as one unit.
+ */
+export type { SpiceBlowPause } from '@/lib/dune/publicRow'
 
 export interface WormPlacementPanelProps {
   pause: SpiceBlowPause | null

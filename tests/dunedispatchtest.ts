@@ -216,16 +216,23 @@ const code = (path: string) => readFileSync(path, 'utf8')
       && (view.match(/client: session\.client/g) ?? []).length
          === (view.match(/dispatchDuneAction\(/g) ?? []).length, true)
 
+  const rowLib = code('src/lib/dune/publicRow.ts')
+
   // PASSING SENDS NOTHING, and there is no PASS action on the server: a claim
   // declined and a claim never made are the same thing to the rules. What it
   // does is take the modal down for that seat — which has to be per seat,
   // because the harness holds six of them in one page and a single flag would
   // dismiss it for everybody the moment one passed.
   check('passing sends no action', /'PASS_CHARITY'|type: 'PASS'/.test(view), false)
+  // THE RECORD IS THE HARNESS'S, THE COMPARISON IS THE READER'S. openCharity
+  // lives in lib/dune/publicRow because the real screen asks the same question
+  // — and it is the same question only while both hand it the same thing.
   check('...and is remembered per seat',
-    /answered\[session\.login\.faction\] === window_\.turn/.test(view), true)
+    /openCharity\(publicRow, answered\[session\.login\.faction\]\)/.test(view), true)
   check('...for that turn only, so next turn asks again',
     /\[session\.login\.faction\]: window_\.turn/.test(view), true)
+  check('...with the reader comparing it against the window\'s own turn',
+    /answeredTurn === window_\.turn/.test(rowLib), true)
 
   // The corner block that used to hold all this is gone from the chat's column.
   check('the harness no longer renders the old panel',
@@ -293,10 +300,14 @@ const code = (path: string) => readFileSync(path, 'utf8')
 // publish the spice deck to every client through the back door of a phase that
 // happens to pause — defeating match_decks without touching it.
 {
-  const panel = readFileSync('src/components/dune/WormPlacementPanel.tsx', 'utf8')
-  // The panel is typed to the ASK, so it could not render a deck if it tried.
-  const pauseShape = panel.slice(panel.indexOf('export interface SpiceBlowPause'),
-    panel.indexOf('export interface WormPlacementPanelProps'))
+  // READ WHERE THE TYPE LIVES, which is now beside the row it describes —
+  // src/lib/dune/publicRow. The panel re-exports it, and a check pointed at the
+  // re-export would be reading an import line rather than a shape.
+  const row = readFileSync('src/lib/dune/publicRow.ts', 'utf8')
+  // The client is typed to the ASK, so it could not render a deck if it tried.
+  const pauseShape = row.slice(row.indexOf('export interface SpiceBlowPause'),
+    row.indexOf('export interface LastAuction'))
+  check('the pause type is where the row is described', pauseShape.length > 0, true)
   check('the pause the client knows about is the ask alone',
     /deck|cards|carry/.test(pauseShape), false)
   check('...naming only the pile and the count',
@@ -382,10 +393,13 @@ const code = (path: string) => readFileSync(path, 'utf8')
 // hand is enough.
 {
   const view = code('src/components/dune/DuneMultiSeatView.tsx')
+  const rowLib = code('src/lib/dune/publicRow.ts')
   check('the harness notices a seat that is not in the match',
     /const notSeated =/.test(view), true)
   check('...by comparing the acting faction against the published roster',
-    /seatedFactions\.includes\(active\)/.test(view), true)
+    /seatedIn\(publicRow, active\)/.test(view), true)
+  check('...which is the public players list and nothing else',
+    /row\.players\.some\(p => p\.faction === faction\)/.test(rowLib), true)
   check('...and says so rather than rendering nothing',
     view.includes('is not seated in this match'), true)
   // NAMING WHO IS SEATED, because "not seated" alone leaves the reader to guess
@@ -396,9 +410,16 @@ const code = (path: string) => readFileSync(path, 'utf8')
 // ── the harness drives the auction ────────────────────────────────────────
 {
   const view = code('src/components/dune/DuneMultiSeatView.tsx')
+  const rowLib = code('src/lib/dune/publicRow.ts')
 
   check('the harness builds the auction from public state',
-    /const step = publicRow\?\.auction/.test(view), true)
+    /openAuction\(publicRow\)/.test(view), true)
+  // AND THE READER TAKES IT OFF THE STEP, which is where the server writes it.
+  // A reader that invented any of this would be inventing whose turn it is.
+  check('...off the step the server published',
+    /const step = row\?\.auction/.test(rowLib), true)
+  check('...only while it is actually waiting on somebody',
+    /step\.status !== 'awaiting'/.test(rowLib), true)
   check('...and passes it to the screen', /bidding=\{biddingFor\(mine\)\}/.test(view), true)
   check('...sending bids and passes as actions',
     view.includes("type: 'BID'"), true)
@@ -490,8 +511,19 @@ const code = (path: string) => readFileSync(path, 'utf8')
   // else and can only ever see its own row.
   const refreshFn = harness.slice(harness.indexOf('async refresh('), harness.indexOf('publish()', harness.indexOf('async refresh(')))
   check('...through that seat\'s own session', /session\.client/.test(refreshFn), true)
+  // THE READER IS SHARED with the real screen — see readOwnSecrets — so the
+  // check follows it there. What the harness supplies is its own seat and its
+  // own client; what the reader does is ask for that seat's row.
   check('...for that seat\'s row alone',
-    /\.eq\('player_id', session\.login\.seat\)/.test(refreshFn), true)
+    /readOwnSecrets\(matchId, session\.login\.seat, session\.client\)/.test(refreshFn), true)
+  const reader = code('src/lib/secretsSync.ts')
+  check('...and the reader asks for exactly that row',
+    /\.eq\('player_id', playerId\)/.test(reader), true)
+  // WHAT MAKES IT SAFE IS THE SESSION, not that narrowing. A client-side filter
+  // that looked like it was doing the work would be the more dangerous thing to
+  // have written, so the reader takes the caller's client and defaults to the
+  // app's rather than reaching for anything privileged.
+  check('...on the caller\'s own session', /client \?\? supabase/.test(reader), true)
   // THE SAME OBJECTS the changefeed mutates. A copy kept beside them would be
   // a second answer, and the next published frame would silently win.
   check('...writing where the changefeed writes', /session\.secrets =/.test(refreshFn), true)
@@ -553,7 +585,7 @@ const code = (path: string) => readFileSync(path, 'utf8')
   // hears every sale twice.
   const effect = view.slice(view.indexOf('const last = publicRow'), view.indexOf('}, [publicRow'))
   check('...with the guard set before anything is said',
-    effect.indexOf('announced.current = last.at') < effect.indexOf('for (const award'), true)
+    effect.indexOf('announced.current = last.at') < effect.indexOf('for (const line'), true)
 
   // PUBLIC, unlike say(). Most of what this harness reports is private — a
   // charity refusal says roughly what a seat holds — so the announcement has
@@ -595,7 +627,8 @@ const code = (path: string) => readFileSync(path, 'utf8')
 {
   const view = code('src/components/dune/DuneMultiSeatView.tsx')
 
-  check('the harness can re-read the shared row', /rereadRow\.current = read/.test(view), true)
+  check('the harness can re-read the shared row',
+    /rereadRow\.current = feed\.reread/.test(view), true)
   check('...and a bid does', /await rereadRow\.current\?\.\(\)/.test(view), true)
   // EVERY action, not just the one that prompted this. A dev control that
   // opens an auction changes the row exactly as a bid does.
@@ -641,7 +674,9 @@ const code = (path: string) => readFileSync(path, 'utf8')
   check('the harness can push an expired auction along',
     /biddingExpired &&/.test(view), true)
   check('...deciding that off the stamped deadline, not its own clock',
-    /now >= step\.closesAt/.test(view), true)
+    /auctionExpired\(publicRow, now\)/.test(view), true)
+  check('...which is a comparison against the server\'s moment',
+    /now >= step\.closesAt/.test(code('src/lib/dune/publicRow.ts')), true)
 }
 
 // ── the auction's server wiring for all of this ───────────────────────────

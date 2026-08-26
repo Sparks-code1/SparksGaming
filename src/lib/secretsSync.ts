@@ -61,6 +61,39 @@ const toRow = (r: RawRow): SecretsRow | null =>
  * caller should hear about it rather than have it quietly filtered away. That is
  * what `onForeignRow` is for.
  */
+/**
+ * This seat's own secrets row, read now.
+ *
+ * READ-YOUR-OWN-WRITES, and the reason it exists beside a changefeed: a client
+ * that has just POSTed an action knows its row changed and should not wait on a
+ * frame to find out what. A dropped or delayed UPDATE otherwise shows up as
+ * spice that never leaves the winner's purse — right in the database, wrong on
+ * the screen, which is the most misleading way for this to fail.
+ *
+ * THROUGH THE CALLER'S OWN SESSION, so it reads under the same RLS as the
+ * changefeed and can only ever return that session's row. `playerId` narrows
+ * the query for cost, never for safety: the policy is what makes another seat's
+ * row unreachable, and a client-side filter that looked like it was doing the
+ * work would be the more dangerous thing to have written.
+ *
+ * Null when there is nothing there or the read fails — a caller re-reading
+ * after its own write should keep what it already had rather than blank the
+ * tray on a hiccup.
+ */
+export async function readOwnSecrets(
+  matchId: string, playerId: string, client?: SupabaseClient,
+): Promise<Secrets | null> {
+  const db: SupabaseClient = client ?? supabase
+  const { data, error } = await db
+    .from('match_secrets')
+    .select('player_id, data')
+    .eq('match_id', matchId)
+    .eq('player_id', playerId)
+    .maybeSingle()
+  if (error || !data) return null
+  return (data.data ?? {}) as Secrets
+}
+
 export function startSecretsSync(
   matchId: string,
   handlers: SecretsSyncHandlers & {

@@ -30,7 +30,7 @@
 import { createClient } from '@supabase/supabase-js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { SUPABASE_URL } from '@/lib/supabase'
-import { startSecretsSync } from '@/lib/secretsSync'
+import { startSecretsSync, readOwnSecrets } from '@/lib/secretsSync'
 import type { Secrets, SecretsStatus } from '@/lib/secretsSync'
 import type { FactionId } from '@/types/Dune/Faction'
 
@@ -192,17 +192,15 @@ export function startMultiSeat(
     async refresh(faction) {
       const session = sessions.find(s => s.login.faction === faction)
       if (!session || cancelled) return
-      const { data, error } = await session.client
-        .from('match_secrets')
-        .select('player_id, data')
-        .eq('match_id', matchId)
-        .eq('player_id', session.login.seat)
-        .maybeSingle()
-      if (error || !data || cancelled) return
+      // THE SHARED READER, so the harness and the real screen cannot come to
+      // disagree about what "read my own row" means. It goes through this
+      // SEAT'S own client, which is what makes the harness safe.
+      const row = await readOwnSecrets(matchId, session.login.seat, session.client)
+      if (!row || cancelled) return
       // THE SAME OBJECTS the changefeed mutates, so the two paths cannot
       // disagree about what this seat holds. A copy kept beside them would be
       // a second answer, and the next published frame would silently win.
-      session.secrets = (data.data ?? {}) as Secrets
+      session.secrets = row
       publish()
     },
   }
