@@ -40,6 +40,43 @@ function bonusCardsDue(awards, handAfter, limit) {
   const won = awards.filter((a) => a.winner === BONUS_FACTION).length;
   return Math.max(0, Math.min(won, limit - handAfter));
 }
+function settleCard(input) {
+  const { award, card, hands, purses, seated } = input;
+  const bonus = input.bonus ?? [];
+  const moves = payForAuction([award], seated);
+  const paid = applySpiceMoves(purses, moves);
+  if (!paid.ok) {
+    return {
+      ok: false,
+      refusal: "a-winner-cannot-pay",
+      detail: `${paid.move.from} owes ${paid.move.amount} and cannot pay it (${paid.refusal})`
+    };
+  }
+  const secrets = {};
+  const touch = (who) => {
+    if (!secrets[who]) {
+      secrets[who] = { hand: [...hands[who] ?? []], spice: paid.purses[who] ?? 0 };
+    }
+    return secrets[who];
+  };
+  touch(award.winner).hand.push(card);
+  for (const move of moves) {
+    if (move.from !== "bank") touch(move.from);
+    if (move.to !== "bank") touch(move.to);
+  }
+  const limit = input.limits?.[BONUS_FACTION] ?? Infinity;
+  const handAfter = (secrets[BONUS_FACTION]?.hand ?? hands[BONUS_FACTION] ?? []).length;
+  const due = bonusCardsDue([award], handAfter, limit);
+  if (due > bonus.length) {
+    return {
+      ok: false,
+      refusal: "not-enough-bonus-cards",
+      detail: `${BONUS_FACTION} is due ${due} extra card(s) and ${bonus.length} were supplied`
+    };
+  }
+  for (let i = 0; i < due; i++) touch(BONUS_FACTION).hand.push(bonus[i]);
+  return { ok: true, writes: { secrets, discard: [], moves } };
+}
 function settleAuction(input) {
   const { result, cards, hands, purses, seated } = input;
   const bonus = input.bonus ?? [];
@@ -60,39 +97,36 @@ function settleAuction(input) {
       detail: `indices accounted for were [${claimed}], expected [${expected}]`
     };
   }
-  const moves = payForAuction(result.awards, seated);
-  const paid = applySpiceMoves(purses, moves);
-  if (!paid.ok) {
-    return {
-      ok: false,
-      refusal: "a-winner-cannot-pay",
-      detail: `${paid.move.from} owes ${paid.move.amount} and cannot pay it (${paid.refusal})`
-    };
-  }
+  let runningHands = { ...hands };
+  let runningPurses = { ...purses };
   const secrets = {};
-  const touch = (who) => {
-    if (!secrets[who]) {
-      secrets[who] = { hand: [...hands[who] ?? []], spice: paid.purses[who] ?? 0 };
+  const moves = [];
+  let bonusTaken = 0;
+  for (const award of result.awards) {
+    const before = (runningHands[BONUS_FACTION] ?? []).length;
+    const one = settleCard({
+      award,
+      card: cards[award.index],
+      hands: runningHands,
+      purses: runningPurses,
+      seated,
+      // The bonus cards not yet used, so a second award takes the ones after
+      // the first's rather than dealing the same card twice.
+      bonus: bonus.slice(bonusTaken),
+      limits: input.limits
+    });
+    if (!one.ok) return one;
+    const bonusHand = one.writes.secrets[BONUS_FACTION]?.hand;
+    if (bonusHand) {
+      const ownCard = award.winner === BONUS_FACTION ? 1 : 0;
+      bonusTaken += Math.max(0, bonusHand.length - before - ownCard);
     }
-    return secrets[who];
-  };
-  for (const award of result.awards) touch(award.winner).hand.push(cards[award.index]);
-  {
-    const limit = input.limits?.[BONUS_FACTION] ?? Infinity;
-    const handAfter = (secrets[BONUS_FACTION]?.hand ?? hands[BONUS_FACTION] ?? []).length;
-    const due = bonusCardsDue(result.awards, handAfter, limit);
-    if (due > bonus.length) {
-      return {
-        ok: false,
-        refusal: "not-enough-bonus-cards",
-        detail: `${BONUS_FACTION} is due ${due} extra card(s) and ${bonus.length} were supplied`
-      };
+    for (const [who, write] of Object.entries(one.writes.secrets)) {
+      secrets[who] = write;
+      runningHands = { ...runningHands, [who]: write.hand };
+      runningPurses = { ...runningPurses, [who]: write.spice };
     }
-    for (let i = 0; i < due; i++) touch(BONUS_FACTION).hand.push(bonus[i]);
-  }
-  for (const move of moves) {
-    if (move.from !== "bank") touch(move.from);
-    if (move.to !== "bank") touch(move.to);
+    moves.push(...one.writes.moves);
   }
   return {
     ok: true,
@@ -102,5 +136,6 @@ function settleAuction(input) {
 export {
   BONUS_FACTION,
   bonusCardsDue,
-  settleAuction
+  settleAuction,
+  settleCard
 };

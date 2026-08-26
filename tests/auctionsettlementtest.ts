@@ -10,7 +10,7 @@
 // purse is secret, so a card dealt without payment is invisible from every seat;
 // it surfaces as somebody quietly richer several turns later, by which time no
 // log says why.
-import { settleAuction, bonusCardsDue, BONUS_FACTION } from '@/lib/dune/auctionSettlement'
+import { settleAuction, settleCard, bonusCardsDue, BONUS_FACTION } from '@/lib/dune/auctionSettlement'
 import { payForAuction } from '@/lib/dune/spice'
 import type { AuctionResult } from '@/lib/dune/bidding'
 import type { FactionId } from '@/types/Dune/Faction'
@@ -231,6 +231,71 @@ check('a winner spending their last spice is fine',
   const short = dealt([], [])
   check('a settlement owing a card it was not given is refused',
     short.ok ? 'dealt anyway' : short.refusal, 'not-enough-bonus-cards')
+}
+
+
+// ── paid when the hammer falls ────────────────────────────────────────────
+// At the table the spice moves as each card is won. Settling the whole auction
+// at the end left a winner's purse reading full while they bid on the next
+// card — they could not see what they had left to bid WITH, which is most of
+// what a player needs to know between cards.
+{
+  const A = 'atreides' as FactionId
+  const seated = [A, BONUS_FACTION] as FactionId[]
+  const limits = { atreides: 4, harkonnen: 8 }
+
+  const one = settleCard({
+    award: { index: 0, winner: A, price: 8 }, card: 'card-one',
+    hands: { atreides: [], harkonnen: [] },
+    purses: { atreides: 10, harkonnen: 10 },
+    seated, limits, bonus: [],
+  })
+  check('one card, paid for on its own', one.ok, true)
+  check('...the purse drops immediately', one.ok ? one.writes.secrets[A].spice : -1, 2)
+  check('...and the card is in hand', one.ok ? one.writes.secrets[A].hand : [], ['card-one'])
+
+  // THE NEXT CARD IS BID FOR OUT OF WHAT IS LEFT, which is the whole point.
+  const two = settleCard({
+    award: { index: 1, winner: A, price: 2 }, card: 'card-two',
+    hands: { atreides: one.ok ? one.writes.secrets[A].hand : [], harkonnen: [] },
+    purses: { atreides: one.ok ? one.writes.secrets[A].spice : 0, harkonnen: 10 },
+    seated, limits, bonus: [],
+  })
+  check('the second card comes out of the remainder',
+    two.ok ? two.writes.secrets[A].spice : -1, 0)
+  check('...and both cards are held',
+    two.ok ? two.writes.secrets[A].hand : [], ['card-one', 'card-two'])
+
+  // THE PAYMENT COMES FIRST. Refusing after handing over a card is the failure
+  // this order exists to make impossible rather than unlikely.
+  const broke = settleCard({
+    award: { index: 0, winner: A, price: 9 }, card: 'card-one',
+    hands: { atreides: [] }, purses: { atreides: 3 }, seated, limits, bonus: [],
+  })
+  check('a winner who cannot pay is refused',
+    broke.ok ? 'dealt anyway' : broke.refusal, 'a-winner-cannot-pay')
+  check('...and nothing is dealt', broke.ok, false)
+
+  // AND THE WHOLE-AUCTION PATH AGREES, because it is the same code folded over
+  // the awards. Two implementations of who pays whom would disagree the first
+  // time either was fixed; this is what says there is only one.
+  const folded = settleAuction({
+    result: {
+      turn: 1,
+      awards: [{ index: 0, winner: A, price: 8 }, { index: 1, winner: A, price: 2 }],
+      unsold: [], hands: {},
+    },
+    cards: ['card-one', 'card-two'],
+    hands: { atreides: [], harkonnen: [] },
+    purses: { atreides: 10, harkonnen: 10 },
+    seated, limits, bonus: [],
+  })
+  check('the whole-auction path reaches the same purse',
+    folded.ok ? folded.writes.secrets[A].spice : -1,
+    two.ok ? two.writes.secrets[A].spice : -2)
+  check('...and the same hand',
+    folded.ok ? folded.writes.secrets[A].hand : [],
+    two.ok ? two.writes.secrets[A].hand : ['differs'])
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

@@ -76,6 +76,80 @@ export type SettlementResult =
   | { ok: false; refusal: SettlementRefusal; detail: string }
 
 /**
+ * One card, paid for and dealt, the moment it is won.
+ *
+ * AT THE TABLE THE SPICE MOVES WHEN THE HAMMER FALLS. Settling the whole
+ * auction at the end meant a winner's purse still read full while they bid on
+ * the next card — they could not see what they had left to bid WITH, which is
+ * most of what a player needs to know between cards.
+ *
+ * This is the primitive; settleAuction folds it over every award, so there is
+ * one implementation of who pays whom and only one place for it to be wrong.
+ *
+ * @param award   the card just won, with its price
+ * @param card    the card at that index
+ * @param hands   every seat's hand as it stands NOW — after any earlier card
+ * @param purses  every seat's spice as it stands NOW, likewise
+ * @param bonus   cards for the bonus faction, as many as bonusCardsDue says
+ */
+export function settleCard(input: {
+  award: { index: number; winner: FactionId; price: number }
+  card: string
+  hands: Readonly<Record<string, readonly string[]>>
+  purses: Purses
+  seated: readonly FactionId[]
+  bonus?: readonly string[]
+  limits?: Readonly<Record<string, number>>
+}): SettlementResult {
+  const { award, card, hands, purses, seated } = input
+  const bonus = input.bonus ?? []
+
+  // THE PAYMENT FIRST. If the winner cannot pay, nothing is dealt — refusing
+  // after handing over a card is the exact failure this guards against, and
+  // doing it in this order makes that impossible rather than unlikely.
+  const moves = payForAuction([award], seated)
+  const paid = applySpiceMoves(purses, moves)
+  if (!paid.ok) {
+    return {
+      ok: false,
+      refusal: 'a-winner-cannot-pay',
+      detail: `${paid.move.from} owes ${paid.move.amount} and cannot pay it (${paid.refusal})`,
+    }
+  }
+
+  const secrets: Record<string, { hand: string[]; spice: number }> = {}
+  const touch = (who: string) => {
+    if (!secrets[who]) {
+      secrets[who] = { hand: [...(hands[who] ?? [])], spice: paid.purses[who] ?? 0 }
+    }
+    return secrets[who]
+  }
+
+  touch(award.winner).hand.push(card)
+  // A seat whose only part was being paid — the Emperor collecting — still
+  // needs its purse written, or the spice arrives nowhere.
+  for (const move of moves) {
+    if (move.from !== 'bank') touch(move.from)
+    if (move.to !== 'bank') touch(move.to)
+  }
+
+  // The bonus faction's second card, counted off the hand they now hold.
+  const limit = input.limits?.[BONUS_FACTION] ?? Infinity
+  const handAfter = (secrets[BONUS_FACTION]?.hand ?? hands[BONUS_FACTION] ?? []).length
+  const due = bonusCardsDue([award], handAfter, limit)
+  if (due > bonus.length) {
+    return {
+      ok: false,
+      refusal: 'not-enough-bonus-cards',
+      detail: `${BONUS_FACTION} is due ${due} extra card(s) and ${bonus.length} were supplied`,
+    }
+  }
+  for (let i = 0; i < due; i++) touch(BONUS_FACTION).hand.push(bonus[i])
+
+  return { ok: true, writes: { secrets, discard: [], moves } }
+}
+
+/**
  * @param result   what the auction decided
  * @param cards    the cards drawn for it, index-aligned with the auction's own
  *                 indices — cards[3] is the card auctioned as index 3
@@ -124,52 +198,48 @@ export function settleAuction(input: {
     }
   }
 
-  // THE PAYMENTS FIRST. If anyone cannot pay, nothing is dealt — refusing after
-  // handing out cards would be the exact failure this function exists to
-  // prevent, and the order is what makes that impossible rather than unlikely.
-  const moves = payForAuction(result.awards, seated)
-  const paid = applySpiceMoves(purses, moves)
-  if (!paid.ok) {
-    return {
-      ok: false,
-      refusal: 'a-winner-cannot-pay',
-      detail: `${paid.move.from} owes ${paid.move.amount} and cannot pay it (${paid.refusal})`,
-    }
-  }
-
-  // Only now the cards. Every seat that gained one or paid one gets a row; a
-  // seat that did neither is left out, so the caller upserts nothing for them.
+  // ── card by card, in the order they were won ─────────────────────────────
+  // FOLDED OVER settleCard rather than repeating it. The server settles each
+  // card the moment it closes, so a winner's purse is right before they bid on
+  // the next one; this path exists for callers holding a whole finished
+  // auction — a test, a replay — and it must reach the same answer, which it
+  // can only be relied on to do by running the same code.
+  //
+  // The running hands and purses are threaded through, so a second card a seat
+  // wins is paid for out of what the first one left them.
+  let runningHands: Record<string, readonly string[]> = { ...hands }
+  let runningPurses: Purses = { ...purses }
   const secrets: Record<string, { hand: string[]; spice: number }> = {}
-  const touch = (who: string) => {
-    if (!secrets[who]) {
-      secrets[who] = { hand: [...(hands[who] ?? [])], spice: paid.purses[who] ?? 0 }
-    }
-    return secrets[who]
-  }
-  for (const award of result.awards) touch(award.winner).hand.push(cards[award.index])
+  const moves: SpiceMove[] = []
+  let bonusTaken = 0
 
-  // ── the second card ────────────────────────────────────────────────────
-  // The bonus faction takes another with each one they win, up to their limit.
-  // Counted off the hand they end the auction with, so winning two while
-  // holding six earns nothing: the limit is reached by the cards they bid for.
-  {
-    const limit = input.limits?.[BONUS_FACTION] ?? Infinity
-    const handAfter = (secrets[BONUS_FACTION]?.hand ?? hands[BONUS_FACTION] ?? []).length
-    const due = bonusCardsDue(result.awards, handAfter, limit)
-    if (due > bonus.length) {
-      return {
-        ok: false,
-        refusal: 'not-enough-bonus-cards',
-        detail: `${BONUS_FACTION} is due ${due} extra card(s) and ${bonus.length} were supplied`,
-      }
+  for (const award of result.awards) {
+    const before = (runningHands[BONUS_FACTION] ?? []).length
+    const one = settleCard({
+      award,
+      card: cards[award.index],
+      hands: runningHands,
+      purses: runningPurses,
+      seated,
+      // The bonus cards not yet used, so a second award takes the ones after
+      // the first's rather than dealing the same card twice.
+      bonus: bonus.slice(bonusTaken),
+      limits: input.limits,
+    })
+    if (!one.ok) return one
+
+    const bonusHand = one.writes.secrets[BONUS_FACTION]?.hand
+    if (bonusHand) {
+      const ownCard = award.winner === BONUS_FACTION ? 1 : 0
+      bonusTaken += Math.max(0, bonusHand.length - before - ownCard)
     }
-    for (let i = 0; i < due; i++) touch(BONUS_FACTION).hand.push(bonus[i])
-  }
-  // A seat whose only part in this was being paid — the Emperor collecting —
-  // still needs its purse written, or the spice arrives nowhere.
-  for (const move of moves) {
-    if (move.from !== 'bank') touch(move.from)
-    if (move.to !== 'bank') touch(move.to)
+
+    for (const [who, write] of Object.entries(one.writes.secrets)) {
+      secrets[who] = write
+      runningHands = { ...runningHands, [who]: write.hand }
+      runningPurses = { ...runningPurses, [who]: write.spice }
+    }
+    moves.push(...one.writes.moves)
   }
 
   return {

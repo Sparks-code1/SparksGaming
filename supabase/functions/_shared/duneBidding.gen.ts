@@ -14,11 +14,10 @@ var settled = (result) => ({ status: "settled", result });
 // src/lib/dune/bidding.ts
 var MINIMUM_OPENING_BID = 1;
 var BID_SECONDS = 15;
-var BETWEEN_CARDS_SECONDS = 5;
+var BETWEEN_CARDS_SECONDS = 15;
 function cardsOnOffer(order, hands, limits) {
   return order.filter((f) => (hands[f] ?? 0) < (limits[f] ?? 0)).length;
 }
-var committedInAuction = (c, f) => c.awards.reduce((n, a) => a.winner === f ? n + a.price : n, 0);
 var underLimit = (c, f) => (c.hands[f] ?? 0) < (c.limits[f] ?? 0);
 var contenders = (c) => c.order.filter((f) => underLimit(c, f) && !c.passed.includes(f));
 function nextBidder(c, from) {
@@ -103,9 +102,7 @@ function answerBid(carry, from, answer, spiceHeld, closesAt, pause) {
   if (answer.kind === "bid") {
     const minimum = carry.high ? carry.high.spice + 1 : MINIMUM_OPENING_BID;
     if (!Number.isInteger(answer.spice) || answer.spice < minimum) return refuse("below-the-minimum");
-    if (answer.spice > spiceHeld - committedInAuction(carry, from)) {
-      return refuse("more-than-you-hold");
-    }
+    if (answer.spice > spiceHeld) return refuse("more-than-you-hold");
     const raised = { ...carry, high: { faction: from, spice: answer.spice } };
     const next2 = nextBidder(raised, from);
     if (!next2) {

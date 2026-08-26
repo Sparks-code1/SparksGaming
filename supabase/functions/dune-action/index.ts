@@ -26,7 +26,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { applySpiceMoves, BANK } from '../_shared/duneSpice.gen.ts'
-import { settleAuction, bonusCardsDue, BONUS_FACTION } from '../_shared/duneAuction.gen.ts'
+import { settleCard, bonusCardsDue, BONUS_FACTION } from '../_shared/duneAuction.gen.ts'
 import {
   beginAuction, answerBid, cardsOnOffer, BID_SECONDS, BETWEEN_CARDS_SECONDS,
 } from '../_shared/duneBidding.gen.ts'
@@ -744,44 +744,21 @@ Deno.serve(async req => {
         return json({ error: 'bid refused', code: outcome.refusal }, 409)
       }
 
-      if (outcome.step.status === 'awaiting') {
-        // The reveal FOLLOWS THE ROW. A card that has closed is no longer the
-        // card up for purchase, and a reveal left pointing at it is one the
-        // Atreides can still read after it has been dealt to somebody else.
-        // Written every time rather than only when the index moves: an upsert
-        // of the same value costs nothing, and "only when it changed" is a
-        // second thing to get right.
-        const nextReveal = prescienceFor({
-          seated: step.carry.order, lot, index: outcome.step.carry.index,
-        })
-        const seatId = seatOfFaction[PRESCIENT_FACTION]
-        let bidSecrets: Record<string, unknown> = {}
-        if (seatId) {
-          const { data: theirs } = await admin
-            .from('match_secrets').select('data')
-            .eq('match_id', matchId).eq('player_id', seatId).maybeSingle()
-          bidSecrets = {
-            [seatId]: withReveal((theirs?.data ?? {}) as Record<string, unknown>, nextReveal),
-          }
-        }
-        const { data, error } = await admin.rpc('apply_match_write', {
-          p_match_id: matchId,
-          p_expected_version: match.version,
-          p_state: { ...state, auction: outcome.step },
-          p_secrets: bidSecrets,
-        })
-        if (error) return json({ error: error.message }, 500)
-        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
-        return json({ auction: outcome.step, version: data[0].version })
-      }
-
-      // ── Settled. Cards, spice and the discard, or none of them ─────────────
+      // ── PAID WHEN THE HAMMER FALLS ──────────────────────────────────────
+      // At the table the spice moves as each card is won. Settling the whole
+      // auction at the end left a winner's purse reading full while they bid
+      // on the next card — they could not see what they had left to bid WITH,
+      // which is most of what a player needs to know between cards.
+      //
+      // So the card that just closed is settled now, on this write, whether the
+      // auction goes on or has finished. Everything else about the settlement —
+      // the payment order, the Emperor's redirect, the Harkonnen's second card
+      // — is settleCard's, so this decides WHEN and not WHAT.
       const { data: allSecrets } = await admin
         .from('match_secrets').select('player_id, data').eq('match_id', matchId)
       // Keyed by FACTION on the way in, because that is what the auction's
       // awards name. Rows whose seat has no faction are skipped rather than
-      // keyed by seat id, which would put two namespaces in one object and make
-      // the mismatch above possible all over again.
+      // keyed by seat id, which would put two namespaces in one object.
       const withFaction = (allSecrets ?? []).filter((r) => factionOfSeat[r.player_id as string])
       const hands = Object.fromEntries(withFaction.map(
         (r) => [factionOfSeat[r.player_id as string], ((r.data ?? {}) as { cards?: string[] }).cards ?? []]))
@@ -789,75 +766,122 @@ Deno.serve(async req => {
         (r) => [factionOfSeat[r.player_id as string], readSpice((r.data ?? {}) as DuneSecrets)]))
       const byId = Object.fromEntries((allSecrets ?? []).map((r) => [r.player_id, r.data ?? {}]))
 
-      // `lot` was read at the top of this case — prescience needs it on the
-      // awaiting path too. Reading it twice declared it twice in one block,
-      // which is a SyntaxError the moment the function loads, and tsc does not
-      // read this directory.
-
-      // ── THE HARKONNEN SECOND CARD ────────────────────────────────────────
-      // Basic play, not advanced: they take another with each one they win, up
-      // to their hand limit of eight. It comes off the DRAW PILE, not the lot —
-      // the lot holds exactly one card per eligible bidder and every one of
-      // them is accounted for — so the server has to draw it, being the only
-      // party that can see the pile.
-      //
-      // DRAWN TO ORDER rather than drawn and put back: bonusCardsDue says how
-      // many are owed before anything is taken, so no card is pulled off the
-      // pile and returned to a different position.
-      const result = outcome.step.result
-      const handAfter = (hands[BONUS_FACTION]?.length ?? 0)
-        + result.awards.filter((a: { winner: string }) => a.winner === BONUS_FACTION).length
-      const bonusDue = bonusCardsDue(
-        result.awards, handAfter, step.carry.limits?.[BONUS_FACTION] ?? 0)
+      // WHICH CARD JUST CLOSED, if any. The awards list only ever grows, so one
+      // more than before means this answer ended a card — and the last entry is
+      // that card. Comparing lengths rather than trusting the status: a card
+      // can close on the answer that also ends the whole auction.
+      const awardsNow = outcome.step.status === 'awaiting'
+        ? outcome.step.carry.awards
+        : outcome.step.result.awards
+      const justClosed = awardsNow.length > step.carry.awards.length
+        ? awardsNow[awardsNow.length - 1]
+        : null
 
       const treacheryPile = ((deckNow ?? []).find((r) => r.deck === 'treachery')?.cards ?? []) as string[]
-      let bonusDraw = { drawn: [] as string[], draw: treacheryPile, discard: (state.treacheryDiscard ?? []) as string[] }
-      if (bonusDue > 0) {
-        try {
-          bonusDraw = drawTreachery(
-            treacheryPile, (state.treacheryDiscard ?? []) as string[], bonusDue,
-            (cards) => shuffleWithSeed(Number(match.rng_seed) + match.action_seq, cards))
-        } catch (e) {
-          return json({ error: String(e), code: 'deck-exhausted' }, 409)
+      let bonusDraw = {
+        drawn: [] as string[], draw: treacheryPile,
+        discard: (state.treacheryDiscard ?? []) as string[],
+      }
+      let paidSecrets: Record<string, unknown> = {}
+      let bonusDue = 0
+
+      if (justClosed) {
+        // The bonus faction's second card, for THIS card only. Drawn to order
+        // so nothing is pulled off the pile and put back somewhere else.
+        const handAfter = (hands[BONUS_FACTION]?.length ?? 0)
+          + (justClosed.winner === BONUS_FACTION ? 1 : 0)
+        bonusDue = bonusCardsDue(
+          [justClosed], handAfter, step.carry.limits?.[BONUS_FACTION] ?? 0)
+        if (bonusDue > 0) {
+          try {
+            bonusDraw = drawTreachery(
+              treacheryPile, (state.treacheryDiscard ?? []) as string[], bonusDue,
+              (cards) => shuffleWithSeed(Number(match.rng_seed) + match.action_seq, cards))
+          } catch (e) {
+            return json({ error: String(e), code: 'deck-exhausted' }, 409)
+          }
+        }
+
+        const paid = settleCard({
+          award: justClosed,
+          card: lot[justClosed.index],
+          hands,
+          purses,
+          bonus: bonusDraw.drawn,
+          limits: step.carry.limits,
+          // Who is in the game, for the Emperor's redirect. From the auction's
+          // own order rather than whoever happens to have a secrets row.
+          seated: step.carry.order,
+        })
+        // Refusing here leaves the auction as it was and nothing dealt, which
+        // is recoverable; dealing half of it would not be.
+        if (!paid.ok) return json({ error: paid.detail, code: paid.refusal }, 409)
+
+        // ...and back to SEAT on the way out, because match_secrets is keyed by
+        // seat. A faction with no seat cannot be written to and is a bug
+        // upstream rather than something to swallow here.
+        for (const [faction, next] of Object.entries(paid.writes.secrets)) {
+          const seatId = seatOfFaction[faction]
+          if (!seatId) {
+            return json({ error: `no seat holds ${faction}`, code: 'unseated-winner' }, 409)
+          }
+          paidSecrets[seatId] = { ...(byId[seatId] ?? {}), cards: next.hand, spice: next.spice }
         }
       }
 
-      const settled = settleAuction({
-        result,
-        cards: lot,
-        hands,
-        purses,
-        bonus: bonusDraw.drawn,
-        limits: step.carry.limits,
-        // Who is in the game, for the Emperor redirect. Taken from the auction's
-        // own order rather than from whoever happens to have a secrets row.
-        seated: step.carry.order,
-      })
-      // Refusing here leaves the auction settled in state and nothing dealt,
-      // which is recoverable; dealing half of it would not be.
-      if (!settled.ok) {
-        return json({ error: settled.detail, code: settled.refusal }, 409)
+      const paidDecks = bonusDue > 0 ? { treachery: bonusDraw.draw } : {}
+
+      if (outcome.step.status === 'awaiting') {
+        // The reveal FOLLOWS THE ROW. A card that has closed is no longer the
+        // card up for purchase, and a reveal left pointing at it is one the
+        // Atreides can still read after it has been dealt to somebody else.
+        const nextReveal = prescienceFor({
+          seated: step.carry.order, lot, index: outcome.step.carry.index,
+        })
+        const seatId = seatOfFaction[PRESCIENT_FACTION]
+        if (seatId) {
+          // MERGED ONTO THE PAYMENT, not written beside it. If this seat also
+          // just won or was paid, its row is already in paidSecrets and writing
+          // the reveal alone would drop the hand and purse just settled.
+          paidSecrets[seatId] = withReveal(
+            (paidSecrets[seatId] ?? byId[seatId] ?? {}) as Record<string, unknown>, nextReveal)
+        }
+        const { data, error } = await admin.rpc('apply_match_write', {
+          p_match_id: matchId,
+          p_expected_version: match.version,
+          p_state: {
+            ...state,
+            auction: outcome.step,
+            // A card sold mid-auction is as public as one sold at the end.
+            ...(justClosed
+              ? {
+                lastAuction: {
+                  turn: state.turn ?? 0,
+                  at: now,
+                  awards: [{ winner: justClosed.winner, price: justClosed.price }],
+                },
+              }
+              : null),
+            // A reshuffle for the bonus moves the discard.
+            ...(bonusDue > 0 ? { treacheryDiscard: bonusDraw.discard } : null),
+          },
+          p_secrets: paidSecrets,
+          p_decks: paidDecks,
+        })
+        if (error) return json({ error: error.message }, 500)
+        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+        return json({ auction: outcome.step, version: data[0].version })
       }
 
-      // ONE transaction for all of it. A card dealt without its payment, or a
-      // payment without its card, is invisible afterwards — both live in secret
-      // rows — so it would surface as somebody quietly richer several turns on.
-      // ...and back to SEAT on the way out, because match_secrets is keyed by
-      // seat. A faction with no seat cannot be written to and is a bug upstream
-      // rather than something to swallow here.
-      const secretsPatch: Record<string, unknown> = {}
-      for (const [faction, next] of Object.entries(settled.writes.secrets)) {
-        const seatId = seatOfFaction[faction]
-        if (!seatId) {
-          return json({ error: `no seat holds ${faction}`, code: 'unseated-winner' }, 409)
-        }
-        secretsPatch[seatId] = { ...(byId[seatId] ?? {}), cards: next.hand, spice: next.spice }
-      }
+      // ── Settled. What is left is the unsold and the closing up ─────────────
+      // The cards and the spice went out one at a time as they were won, so
+      // nothing is dealt here: the auction ends by clearing itself, discarding
+      // what nobody bought, and emptying the lot.
+      const result = outcome.step.result
+      const secretsPatch: Record<string, unknown> = { ...paidSecrets }
       // THE REVEAL IS CLEARED when the auction ends. Nothing is up for purchase
       // any more, and a reveal left behind names a card now sitting in a hand —
-      // possibly somebody else's. The Atreides seat may not be in the patch at
-      // all (they may have won nothing and paid nobody), so it is added rather
-      // than assumed present.
+      // possibly somebody else's.
       const prescientOut = seatOfFaction[PRESCIENT_FACTION]
       if (prescientOut) {
         secretsPatch[prescientOut] = withReveal(
@@ -869,47 +893,38 @@ Deno.serve(async req => {
         p_state: {
           ...state,
           auction: null,
-          // ── What the table saw ─────────────────────────────────────────────
-          // WHO WON AND WHAT THEY PAID ARE PUBLIC. Six people round a table all
-          // watch a card go for nine spice; six people in six browsers do not,
-          // unless the row says so. It was previously written by the client that
-          // made the closing bid, out of its own response — which is the one
-          // client that did not need telling, and the only one that got it.
+          // WHO WON AND WHAT THEY PAID ARE PUBLIC, and every client derives the
+          // same line from this rather than from its own response. Winner and
+          // price only: not the card, which the auction is blind to and which
+          // now sits in a hand nobody else may read.
           //
-          // WINNER AND PRICE ONLY. Not the card, which the auction is blind to
-          // by construction and which now sits in a hand nobody else may read;
-          // not the lot index either, which is a position in a pile clients
-          // cannot see and would say nothing they are entitled to know.
-          //
-          // The timestamp is a de-duplication key, not decoration. The row is re-delivered
-          // on every subsequent change, so a client needs to tell "this is the
-          // settlement I already announced" from "another card just sold" —
-          // and two cards in one turn can go to the same seat for the same
-          // price, which makes the awards themselves an unreliable key.
+          // The timestamp says WHICH settlement, because the row is
+          // re-delivered on every later change and two cards in one turn can go
+          // to the same seat for the same price.
           lastAuction: {
             turn: state.turn ?? 0,
             at: now,
-            awards: outcome.step.result.awards.map((a: { winner: string; price: number }) =>
-              ({ winner: a.winner, price: a.price })),
+            awards: justClosed
+              ? [{ winner: justClosed.winner, price: justClosed.price }]
+              : [],
           },
           // The discard is PUBLIC — a treachery discard is face up at a table.
-          // The bonus draw may have reshuffled the discard back into the pile,
-          // so the unsold cards join what that left rather than what was there
-          // before it.
-          treacheryDiscard: discardUnsold(bonusDraw.discard, settled.writes.discard),
+          // The bonus draw may have reshuffled it back into the pile, so the
+          // unsold join what that left rather than what was there before.
+          treacheryDiscard: discardUnsold(
+            bonusDraw.discard, result.unsold.map((i: number) => lot[i])),
         },
         p_secrets: secretsPatch,
-        // The lot is emptied in the same write that deals it out, so a card
+        // The lot is emptied in the same write that ends the auction, so a card
         // cannot be dealt twice by a retry. The treachery pile shortens here
-        // too when a bonus card came off it — written in the same transaction
-        // as the hand it went into, or a crash between them deals a card that
-        // is still in the deck.
+        // too when a bonus card came off it.
         p_decks: bonusDue > 0
           ? { 'auction-lot': [], treachery: bonusDraw.draw }
           : { 'auction-lot': [] },
       })
       if (error) return json({ error: error.message }, 500)
       if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+
 
       // ── The write says what it did ─────────────────────────────────────────
       // Read back and confirm the two effects that are not visible in the

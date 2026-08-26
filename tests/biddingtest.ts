@@ -382,21 +382,23 @@ check('unsold cards go to the discard, most recent first',
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 
-// ── a bid is measured against what is LEFT, not what is stored ────────────
-// The auction settles once, at the end. Cards close one after another inside a
-// single step and nothing reaches match_secrets until the last is done — so a
-// seat's stored spice still shows the whole purse while it is winning its
-// second and third card of the same auction.
+// ── a bid is measured against the purse it is handed ──────────────────────
+// The module checks a bid against `spiceHeld`, which the caller reads out of
+// the secret store. What makes that the right number is WHEN the store is
+// written: each card is paid for as it closes — see settleCard — so by the
+// time the next card opens, the winner's row has already lost the spice.
 //
-// Checking against the stored number alone let a seat bid its maximum on every
-// card in a row and win them all, promising the same spice over and over. It
-// could not pay at settlement, which is a refusal several cards too late.
+// It was not always so. Settlement ran once at the end of the whole auction,
+// so the stored purse still showed spice already promised, and a seat could
+// bid its maximum on every card in a row and win them all. The module carried
+// the correction then, subtracting what the carry said was owed. Paying per
+// card moved the fix upstream, and the subtraction had to go with it: applied
+// to a purse that has already been debited, it charges the same spice twice.
 {
   const A = 'atreides' as FactionId, H = 'harkonnen' as FactionId
-  const HELD = 10
   const at = (s: BidStep) => (s.status === 'awaiting' ? s.carry : null)
-  const go = (s: BidStep, who: FactionId, a: BidAnswer) => {
-    const o = answerBid(at(s)!, who, a, HELD, 9e12)
+  const go = (s: BidStep, who: FactionId, a: BidAnswer, held: number) => {
+    const o = answerBid(at(s)!, who, a, held, 9e12)
     return { step: o.kind === 'ok' ? o.step : s, outcome: o }
   }
 
@@ -404,35 +406,32 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
     turn: 1, order: [A, H], hands: { atreides: 0, harkonnen: 0 },
     limits: { atreides: 4, harkonnen: 8 }, closesAt: 9e12,
   })
-  // Card 1 goes to the Atreides for 8; card 2 opens on the Harkonnen, who pass.
-  step = go(step, A, { kind: 'bid', spice: 8 }).step
-  step = go(step, H, { kind: 'pass' }).step
-  step = go(step, H, { kind: 'pass' }).step
-
+  // Card 1 goes to the Atreides for 8 out of 10; card 2 opens on the Harkonnen,
+  // who pass, so it is the Atreides' turn again.
+  step = go(step, A, { kind: 'bid', spice: 8 }, 10).step
+  step = go(step, H, { kind: 'pass' }, 10).step
+  step = go(step, H, { kind: 'pass' }, 10).step
   check('the seat that won is asked again', at(step)?.toAct, A)
-  check('...and its win is on the carry',
-    at(step)?.awards.map(a => a.price), [8])
+  check('...and its win is on the carry', at(step)?.awards.map(a => a.price), [8])
 
-  const again = go(step, A, { kind: 'bid', spice: 8 }).outcome
-  check('bidding the same spice twice is refused',
-    again.kind === 'refused' ? again.refusal : 'allowed', 'more-than-you-hold')
-  // What is actually left, and no more.
-  check('...but what is left is allowed', go(step, A, { kind: 'bid', spice: 2 }).outcome.kind, 'ok')
-  check('...and one more than that is not',
-    (() => { const o = go(step, A, { kind: 'bid', spice: 3 }).outcome
-      return o.kind === 'refused' ? o.refusal : 'allowed' })(), 'more-than-you-hold')
+  // THE CALLER NOW HANDS IN 2, the card having been paid for as it closed.
+  check('what is left is biddable', go(step, A, { kind: 'bid', spice: 2 }, 2).outcome.kind, 'ok')
+  const over = go(step, A, { kind: 'bid', spice: 3 }, 2).outcome
+  check('...and a spice more is refused',
+    over.kind === 'refused' ? over.refusal : 'allowed', 'more-than-you-hold')
 
-  // A SEAT THAT HAS PROMISED NOTHING IS UNAFFECTED — the deduction is per seat,
-  // not a pool. Checking otherwise would pass on a rule that charged everybody.
-  let fresh: BidStep = beginAuction({
-    turn: 1, order: [A, H], hands: { atreides: 0, harkonnen: 0 },
-    limits: { atreides: 4, harkonnen: 8 }, closesAt: 9e12,
-  })
-  fresh = go(fresh, A, { kind: 'bid', spice: 8 }).step
-  fresh = go(fresh, H, { kind: 'pass' }).step
-  const rival = answerBid(at(fresh)!, H, { kind: 'bid', spice: 10 }, HELD, 9e12)
-  check('a seat that has promised nothing may still bid its whole purse', rival.kind, 'ok')
+  // AND NOTHING IS SUBTRACTED TWICE. Handed the full 10 — which is what a
+  // caller that had not yet debited would pass — the whole 10 is biddable. The
+  // module trusts the number it is given rather than second-guessing it, and a
+  // leftover correction here would refuse this.
+  check('the purse handed in is taken at face value',
+    go(step, A, { kind: 'bid', spice: 10 }, 10).outcome.kind, 'ok')
+
+  // A seat that has won nothing is unaffected either way.
+  check('a seat that has won nothing may bid its whole purse',
+    go(step, A, { kind: 'pass' }, 2).outcome.kind, 'ok')
 }
+
 
 // ── a breath between cards ────────────────────────────────────────────────
 // Without it the next card opens in the same frame the last one settled: the
@@ -454,6 +453,14 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
   step = o.kind === 'ok' ? o.step : step
   o = answerBid(at(step)!, H, { kind: 'pass' }, 20, closesAt, pause)
   step = o.kind === 'ok' ? o.step : step
+
+  // A LENGTH, checked against a number rather than against itself. Every
+  // other assertion here builds its fixture out of BETWEEN_CARDS_SECONDS, so
+  // changing the constant changes both sides and none of them can fail — the
+  // pause could go to zero with the suite green. Five seconds was not long
+  // enough to read a card, which is what the gap is for.
+  check('the pause is long enough to read a card', BETWEEN_CARDS_SECONDS >= 10, true)
+  check('...and not so long it stalls the phase', BETWEEN_CARDS_SECONDS <= 30, true)
 
   check('a closed card leaves a pause before the next', at(step)?.pauseUntil, opensAt)
   check('...which the ask carries, so clients can show it',

@@ -38,12 +38,15 @@ export const BID_SECONDS = 15
 /**
  * The breath between one card closing and the next opening, in seconds.
  *
- * Short on purpose. It is long enough to read a result and glance at a card,
- * not long enough that six of them add a minute to a phase — and the next
- * bidder's own window starts when it ends, so nobody pays for it in bidding
- * time.
+ * LONG ENOUGH TO READ A CARD, which five seconds was not. The winner has
+ * something new in hand and a decision to make about the next card — whether
+ * they still want it, and what they have left to want it with — and that is a
+ * card to read rather than a result to glance at.
+ *
+ * It costs nobody bidding time: the next bidder's own window starts when this
+ * ends, not when the last card closed.
  */
-export const BETWEEN_CARDS_SECONDS = 5
+export const BETWEEN_CARDS_SECONDS = 15
 
 /** What one player is being asked. PUBLIC — it names no card and no purse. */
 export interface BidAsk {
@@ -168,23 +171,6 @@ export function cardsOnOffer(
 ): number {
   return order.filter(f => (hands[f] ?? 0) < (limits[f] ?? 0)).length
 }
-
-/**
- * What a seat has already promised in THIS auction and not yet paid.
- *
- * THE AUCTION SETTLES ONCE, AT THE END. Cards close one after another inside a
- * single step, and nothing reaches match_secrets until the last one is done —
- * so a seat's stored spice still shows the whole purse while it is winning its
- * second and third card of the same auction.
- *
- * Checking a bid against the stored number alone therefore let a seat bid its
- * maximum on every card in a row and win them all, promising the same spice
- * over and over. It could not pay at settlement, which is a refusal several
- * cards too late — by then the auction is over and the refusal reads as a bug
- * rather than as a bid nobody could afford.
- */
-const committedInAuction = (c: AuctionCarry, f: FactionId): number =>
-  c.awards.reduce((n, a) => (a.winner === f ? n + a.price : n), 0)
 
 /** A faction may bid only while it is under its hand limit. */
 const underLimit = (c: Pick<AuctionCarry, 'hands' | 'limits'>, f: FactionId) =>
@@ -378,15 +364,19 @@ export function answerBid(
   if (answer.kind === 'bid') {
     const minimum = carry.high ? carry.high.spice + 1 : MINIMUM_OPENING_BID
     if (!Number.isInteger(answer.spice) || answer.spice < minimum) return refuse('below-the-minimum')
-    // AGAINST WHAT IS LEFT, not against the stored purse. See
-    // committedInAuction: nothing is paid until the whole auction settles, so
-    // the stored number still counts spice this seat has already promised for
-    // cards it has already won.
-    if (answer.spice > spiceHeld - committedInAuction(carry, from)) {
-      // PRIVATE. Refusing this out loud would tell the table the bidder holds
-      // less than they just asked for, which is most of what they were hiding.
-      return refuse('more-than-you-hold')
-    }
+    // AGAINST WHAT THE CALLER SAYS IS HELD, which is now the truth between
+    // cards as well as between auctions.
+    //
+    // This used to subtract what the seat had already promised in this auction,
+    // because nothing was paid until the whole auction settled and the stored
+    // purse still showed spice already spoken for. Payment happens as each card
+    // closes now — see settleCard — so the purse handed in has already lost it,
+    // and subtracting again would charge the same spice twice and refuse bids
+    // the seat can plainly afford.
+    //
+    // PRIVATE. Refusing this out loud would tell the table the bidder holds
+    // less than they just asked for, which is most of what they were hiding.
+    if (answer.spice > spiceHeld) return refuse('more-than-you-hold')
 
     const raised: AuctionCarry = { ...carry, high: { faction: from, spice: answer.spice } }
     const next = nextBidder(raised, from)

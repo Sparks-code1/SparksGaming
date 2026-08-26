@@ -522,8 +522,10 @@ const code = (path: string) => readFileSync(path, 'utf8')
   check('the settlement is written to public state', /\blastAuction: \{/.test(fn), true)
   const published = fn.slice(fn.indexOf('lastAuction: {'), fn.indexOf('treacheryDiscard', fn.indexOf('lastAuction: {')))
   check('...the block is there to check', published.length > 40, true)
-  check('...naming the winner', /winner: a\.winner/.test(published), true)
-  check('...and the price', /price: a\.price/.test(published), true)
+  // The award is named directly now rather than mapped over a list: settlement
+  // happens per card, so there is one award to publish, not a batch.
+  check('...naming the winner', /winner: justClosed\.winner/.test(published), true)
+  check('...and the price', /price: justClosed\.price/.test(published), true)
 
   // WINNER AND PRICE ONLY. Not the card, which the auction is blind to and
   // which now sits in a hand nobody else may read; not the lot index either,
@@ -666,10 +668,42 @@ const code = (path: string) => readFileSync(path, 'utf8')
     /if \(bonusDue > 0\)/.test(fn), true)
   check('...and shortens the pile in the same write as the hand',
     /treachery: bonusDraw\.draw/.test(fn), true)
+  // PER CARD, not per auction. The bonus is drawn for the card that just
+  // closed, so a seat winning two gets one with each rather than both at the
+  // end — and cannot be handed a card the limit no longer has room for.
+  check('...for the card that just closed',
+    /bonusCardsDue\(\s*\[justClosed\]/.test(fn), true)
   // A reshuffle for the bonus moves the discard, so the unsold join what that
   // left rather than what was there before it.
   check('...with the unsold added to the discard the draw left',
-    /discardUnsold\(bonusDraw\.discard/.test(fn), true)
+    /discardUnsold\(\s*bonusDraw\.discard/.test(fn), true)
+
+  // ── PAID WHEN THE HAMMER FALLS ─────────────────────────────────────────
+  // At the table the spice moves as each card is won. Settling the whole
+  // auction at the end left a winner's purse reading full while they bid on the
+  // next card — they could not see what they had left to bid WITH.
+  check('the endpoint settles one card at a time', /settleCard\(/.test(fn), true)
+  // THE GUARD, not just the call. Disabling it to `if (false)` leaves
+  // settleCard sitting there unreachable, which every search for the name
+  // still finds — the fourth or fifth time a check here has confirmed a
+  // mention rather than something that runs.
+  check('...when a card actually closed', /if \(justClosed\) \{/.test(fn), true)
+  check('...and no longer only at the end', /settleAuction\(/.test(fn), false)
+  // WHICH card closed: the awards list only grows, so one more than before
+  // means this answer ended a card, and the last entry is that card.
+  check('...working out which card just closed',
+    /awardsNow\.length > step\.carry\.awards\.length/.test(fn), true)
+  check('...from the carry or the result, whichever this answer produced',
+    /outcome\.step\.status === 'awaiting'\s*\?\s*outcome\.step\.carry\.awards/.test(fn), true)
+  // AND IT IS WRITTEN ON THE CONTINUING WRITE, not held back to the end —
+  // which is the entire point of the change.
+  check('...writing the payment while the auction goes on',
+    /p_secrets: paidSecrets,/.test(fn), true)
+  // THE REVEAL IS MERGED ONTO IT. A seat that just won and is also the
+  // prescient one would otherwise have its new hand and purse overwritten by a
+  // row carrying only the reveal.
+  check('...with the reveal merged onto the payment, not written over it',
+    /withReveal\(\s*\(paidSecrets\[seatId\] \?\? byId\[seatId\]/.test(fn), true)
 
   // THE EXPIRED-BID RESOLUTION IS SEAT-AGNOSTIC. It sent the pass from the
   // ACTIVE session, which worked only when the seat on screen happened to be
