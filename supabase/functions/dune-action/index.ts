@@ -790,6 +790,29 @@ Deno.serve(async req => {
         p_state: {
           ...state,
           auction: null,
+          // ── What the table saw ─────────────────────────────────────────────
+          // WHO WON AND WHAT THEY PAID ARE PUBLIC. Six people round a table all
+          // watch a card go for nine spice; six people in six browsers do not,
+          // unless the row says so. It was previously written by the client that
+          // made the closing bid, out of its own response — which is the one
+          // client that did not need telling, and the only one that got it.
+          //
+          // WINNER AND PRICE ONLY. Not the card, which the auction is blind to
+          // by construction and which now sits in a hand nobody else may read;
+          // not the lot index either, which is a position in a pile clients
+          // cannot see and would say nothing they are entitled to know.
+          //
+          // The timestamp is a de-duplication key, not decoration. The row is re-delivered
+          // on every subsequent change, so a client needs to tell "this is the
+          // settlement I already announced" from "another card just sold" —
+          // and two cards in one turn can go to the same seat for the same
+          // price, which makes the awards themselves an unreliable key.
+          lastAuction: {
+            turn: state.turn ?? 0,
+            at: now,
+            awards: outcome.step.result.awards.map((a: { winner: string; price: number }) =>
+              ({ winner: a.winner, price: a.price })),
+          },
           // The discard is PUBLIC — a treachery discard is face up at a table.
           treacheryDiscard: discardUnsold(
             (state.treacheryDiscard ?? []) as string[], settled.writes.discard),

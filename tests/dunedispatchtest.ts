@@ -502,34 +502,67 @@ const code = (path: string) => readFileSync(path, 'utf8')
     (view.match(/seats\.current\?\.refresh/g) ?? []).length >= 2, true)
 }
 
-// ── a win is announced, and only what is public ───────────────────────────
-// Who won and what they paid are public at a table. The CARD is not — the
-// auction is card-blind by construction and the winner's hand is theirs alone.
+// ── a win reaches the whole table, off the public row ─────────────────────
+// Who won and what they paid are public: six people round a table all watch a
+// card go for nine spice. Six people in six browsers do not, unless the row
+// says so.
+//
+// THIS WAS COMPOSED LOCALLY, by whichever client made the closing bid, out of
+// the response only that client received. So the winner — the one seat that
+// already knew — was the only seat told, and on separate machines nobody else
+// would ever see the line. Every client receives the row; every client now
+// derives the same line from it.
 {
+  const fn = code('supabase/functions/dune-action/index.ts')
   const view = code('src/components/dune/DuneMultiSeatView.tsx')
 
-  // WHAT IT SAYS, not how it words it. Pinning the verb failed on a rewrite
-  // that changed nothing about the rule — which is that a win is announced,
-  // naming who won and what they paid.
-  const winLine = view.slice(view.indexOf('announce(`'), view.indexOf('announce(`') + 200)
-  check('the harness announces a win', winLine.length > 20, true)
-  check('...naming the winner', /nameOf\(award\.winner\)/.test(winLine), true)
-  check('...and the price', /award\.price/.test(winLine), true)
-  check('...and calling it spice', /spice/.test(winLine), true)
+  // The server has to publish it before anyone can derive it.
+  // \b, or _lastAuction slips past — an underscore is a word character, so the
+  // boundary is what distinguishes the real field from a disabled copy of it.
+  check('the settlement is written to public state', /\blastAuction: \{/.test(fn), true)
+  const published = fn.slice(fn.indexOf('lastAuction: {'), fn.indexOf('treacheryDiscard', fn.indexOf('lastAuction: {')))
+  check('...the block is there to check', published.length > 40, true)
+  check('...naming the winner', /winner: a\.winner/.test(published), true)
+  check('...and the price', /price: a\.price/.test(published), true)
+
+  // WINNER AND PRICE ONLY. Not the card, which the auction is blind to and
+  // which now sits in a hand nobody else may read; not the lot index either,
+  // which is a position in a pile clients cannot see.
+  check('...and no card', /\bcards?\b/.test(published), false)
+  check('...nor the lot index', /\bindex\b/.test(published), false)
+
+  // A KEY THAT SAYS WHICH SETTLEMENT. The row is re-delivered on every later
+  // change, so a client needs to tell "the one I announced" from "another card
+  // just sold" — and two cards in one turn can go to the same seat for the same
+  // price, which makes the awards themselves an unreliable key.
+  check('...stamped so a client can tell one settlement from the next',
+    /at: now/.test(published), true)
+
+  // And the client derives it rather than being handed it.
+  // THE ASSIGNMENT, not a mention. The effect's dependency array names the
+  // same field, so a body gutted to `const last = null` still matched a search
+  // for it and the check passed on a harness announcing nothing.
+  check('the harness announces off the row',
+    /const last = publicRow\?\.lastAuction/.test(view), true)
+  check('...once per settlement', /announced\.current = last\.at/.test(view), true)
+
+  // AND THE GUARD IS SET FIRST. announce() calls setChat, which re-renders; a
+  // guard written after the loop lets the second pass through and the table
+  // hears every sale twice.
+  const effect = view.slice(view.indexOf('const last = publicRow'), view.indexOf('}, [publicRow'))
+  check('...with the guard set before anything is said',
+    effect.indexOf('announced.current = last.at') < effect.indexOf('for (const award'), true)
 
   // PUBLIC, unlike say(). Most of what this harness reports is private — a
-  // charity refusal says roughly what a seat holds — so the announcement needs
-  // its own path rather than the one that addresses a single seat.
-  const announce = view.slice(view.indexOf('const announce ='), view.indexOf('const say ='))
-  check('the announcement is there to check', announce.length > 60, true)
-  check('...and addresses nobody in particular', /\bto\b/.test(announce), false)
-
-  // AND NAMES NO CARD. The award carries an index into a lot nobody may read;
-  // putting a card in this line would hand the table something no seat is
-  // entitled to, in the one place everybody reads.
-  const line = view.slice(view.indexOf('for (const award of'), view.indexOf('for (const award of') + 400)
-  check('...and never the card', /\bcard\.|cards\[|TREACHERY_CARDS/.test(line), false)
+  // charity refusal says roughly what a seat holds — so the announcement has
+  // its own path, and that path must not acquire a recipient.
+  const announceFn = view.slice(view.indexOf('const announce ='), view.indexOf('const say ='))
+  check('the announcement is there to check', announceFn.length > 60, true)
+  check('...and addresses nobody in particular', /\bto\b/.test(announceFn), false)
+  check('...and no longer off its own response',
+    /res\.data as \{ awards/.test(view), false)
 }
+
 
 // ── the bid box follows the standing bid ──────────────────────────────────
 // useState(minimum) reads its argument once, so the box kept whatever the

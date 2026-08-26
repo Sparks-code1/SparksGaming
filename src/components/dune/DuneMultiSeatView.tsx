@@ -51,8 +51,19 @@ const PUBLIC_FIXTURE: DuneGameState = {
 /** The public row carries fields the screen's type does not name — the charity
  *  window among them, which is public because who has claimed is on the table. */
 /** The auction as public state carries it: a Step, ask and carry and all. */
-/** What the server hands back when a bid closes a card. */
-interface Award { index: number; winner: FactionId; price: number }
+/**
+ * The settlement, as the whole table receives it.
+ *
+ * WINNER AND PRICE ONLY. Not the card — the auction is card-blind and the card
+ * is now in a hand nobody else may read — and not the lot index, which is a
+ * position in a pile no client can see.
+ */
+interface LastAuction {
+  turn: number
+  /** Server timestamp, and the key that says which settlement this is. */
+  at: number
+  awards: { winner: FactionId; price: number }[]
+}
 
 interface AuctionStep {
   status: string
@@ -64,6 +75,7 @@ type PublicRow = DuneGameState & {
   charity?: CharityWindow
   spiceBlow?: SpiceBlowPause
   auction?: AuctionStep
+  lastAuction?: LastAuction
 }
 
 function Notice({ children }: { children: React.ReactNode }) {
@@ -128,6 +140,39 @@ export default function DuneMultiSeatView() {
     seats.current = live
     return () => { live.stop(); seats.current = null }
   }, [matchId, logins])
+
+  /**
+   * The settlement already announced, so it is said once.
+   *
+   * The row is re-delivered on every subsequent change, and a client that
+   * announced on every delivery would repeat the same sale until the next
+   * phase. Keyed on the server's timestamp rather than on the awards, because
+   * two cards in one turn can go to the same seat for the same price.
+   */
+  const announced = useRef<number | null>(null)
+
+  /**
+   * A finished auction, told to the whole table.
+   *
+   * FROM THE PUBLIC ROW, which is the point. This used to be composed by
+   * whichever client made the closing bid, out of the response only that client
+   * received — so on six separate machines the winner alone would see it, and
+   * the one seat that already knew was the only one told. Every client receives
+   * this row, so every client derives the same line from it.
+   */
+  useEffect(() => {
+    const last = publicRow?.lastAuction
+    if (!last || last.at === announced.current) return
+    // Set BEFORE announcing: announce() calls setChat, which re-renders, and a
+    // guard written afterwards would let the second pass through.
+    announced.current = last.at
+    for (const award of last.awards) {
+      announce(`${nameOf(award.winner)} wins a card for ${award.price} spice.`)
+    }
+    // announce and nameOf are stable for the life of the view; the row is what
+    // this watches.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publicRow?.lastAuction?.at])
 
   /**
    * The shared row, read and then watched.
@@ -304,14 +349,9 @@ export default function DuneMultiSeatView() {
     await seats.current?.refresh(session.login.faction)
     say(answer.kind === 'pass' ? 'passed on the card.' : `bid ${answer.spice}.`)
 
-    // THE SETTLEMENT, when this bid ended the auction. The server returns the
-    // awards to whoever made the closing move; every other seat learns of it
-    // from the public row, so in a real six-browser game this line would come
-    // from the changefeed rather than from here. In one browser holding six
-    // sessions it is the same chat either way.
-    for (const award of (res.data as { awards?: Award[] })?.awards ?? []) {
-      announce(`${nameOf(award.winner)} wins a card for ${award.price} spice.`)
-    }
+    // The settlement is NOT announced here. It is announced off the public
+    // row, by every client, so six machines say the same thing — see the
+    // effect below.
   }
 
   /**
