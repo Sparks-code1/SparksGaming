@@ -358,11 +358,13 @@ export function TreacheryCardFace({ card, width = CARD_W }: { card: TreacheryCar
  * Same footprint as the face, because the two swap places in the same slot: a
  * card that changed size when it turned over would move everything beside it.
  *
- * Deliberately featureless. A back exists to be identical to every other back —
- * anything distinguishing on it, even a corner mark, is a way to tell one card
- * from another without turning it over, which is the whole thing the auction is
- * built on. The pattern is generated from the geometry rather than from the
- * card, so there is nothing here that COULD vary per card.
+ * IDENTICAL ON EVERY CARD, which is the rule that matters. A back exists to
+ * be indistinguishable from every other back — anything that varies on it, even
+ * a corner mark, is a way to tell one card from another without turning it
+ * over, and the auction is built on nobody being able to. The word TREACHERY
+ * and the pattern under it are the same on all of them and are generated from
+ * the geometry rather than from the card, so there is nothing here that COULD
+ * vary: the component does not even take a card.
  */
 export function TreacheryCardBack({ width = CARD_W }: { width?: number }) {
   const step = 14
@@ -385,6 +387,22 @@ export function TreacheryCardBack({ width = CARD_W }: { width?: number }) {
       </g>
       <rect x="12" y="12" width={CARD_W - 24} height={CARD_H - 24} rx="5"
         fill="none" stroke="#00000055" strokeWidth="2" />
+
+      {/* The name, across the middle. Set on a band so it reads against the
+          hatching rather than fighting it. */}
+      <rect x="12" y={CARD_H / 2 - 26} width={CARD_W - 24} height={52}
+        fill="#1c140b" opacity="0.82" />
+      <text x={CARD_W / 2} y={CARD_H / 2} textAnchor="middle" dominantBaseline="central"
+        fontFamily="Georgia, 'Times New Roman', serif" fontSize={CARD_W * 0.15} letterSpacing={CARD_W * 0.028}
+        fill="#c9a34a" fontWeight="bold">
+        TREACHERY
+      </text>
+      {/* Rules either side of it, so the word sits in a device rather than
+          floating on the pattern. */}
+      <line x1="26" y1={CARD_H / 2 - 30} x2={CARD_W - 26} y2={CARD_H / 2 - 30}
+        stroke="#c9a34a" strokeWidth="1.5" opacity="0.75" />
+      <line x1="26" y1={CARD_H / 2 + 30} x2={CARD_W - 26} y2={CARD_H / 2 + 30}
+        stroke="#c9a34a" strokeWidth="1.5" opacity="0.75" />
     </svg>
   )
 }

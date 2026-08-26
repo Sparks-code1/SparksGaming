@@ -21,7 +21,7 @@
  * follows: the deadline was stamped once by the server, and a component that
  * measured its own duration would count differently on every machine.
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { SeatMark, FACTION_LOOK } from './SeatLayer'
 import { TreacheryCardFace, TreacheryCardBack, CARD_W, CARD_H } from './TreacheryCardFace'
 import { MINIMUM_OPENING_BID } from '@/lib/dune/bidding'
@@ -203,6 +203,21 @@ export function BiddingPanel(props: BiddingPanelProps) {
   } = props
   const minimum = ask.high ? ask.high.spice + 1 : MINIMUM_OPENING_BID
   const [amount, setAmount] = useState(minimum)
+
+  /**
+   * Follow the standing bid, so the next player can just press Bid.
+   *
+   * useState(minimum) reads its argument ONCE. The box therefore kept whatever
+   * the minimum was when the panel first mounted — through every raise by
+   * everybody else — and the next bidder had to retype a number the auction
+   * already knew. One more than the standing bid is what they almost always
+   * want, and it is exactly what the server will accept.
+   *
+   * Keyed on the minimum rather than on every render, so a player who types 12
+   * keeps 12 until somebody actually raises. When one does, their old number is
+   * stale anyway — it was an answer to a different price.
+   */
+  useEffect(() => { setAmount(minimum) }, [minimum])
   // SHUT, not gone. An auction cannot be dismissed — you bid or you pass — but
   // it can be got out of the way. The panel covers the middle of the board, and
   // the board is how you decide what a card is worth: whether you can reach

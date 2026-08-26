@@ -32,6 +32,7 @@ import type { DuneSecrets } from '@/lib/dune/charity'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { factionById, findLeader } from '@/data/dune/factions'
 import { TraitorCard, TraitorCardBack, TRAITOR_RULES } from '@/components/dune/TraitorCard'
+import { TreacheryCardBack } from '@/components/dune/TreacheryCardFace'
 import { FACTION_LOOK } from '@/components/dune/SeatLayer'
 import type { FactionId } from '@/types/Dune/Faction'
 
@@ -943,6 +944,22 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   check('...nor outside the phase',
     draw({ charity: { onClaim: () => {}, onPass: () => {} } })
       .includes('data-layer="charity-modal"'), false)
+}
+
+// ── the back of a treachery card says what it is ──────────────────────────
+// It was deliberately featureless, on the argument that a back exists to be
+// identical to every other back. That argument is about what VARIES, not about
+// whether anything is printed: the word is the same on all of them.
+{
+  const back = renderToStaticMarkup(createElement(TreacheryCardBack, {}))
+  check('the back is lettered', back.includes('TREACHERY'), true)
+
+  // AND IDENTICAL ON EVERY CARD, which is the rule that matters. The component
+  // takes no card, so nothing on it COULD vary — and nothing card-specific has
+  // crept in.
+  const anyCardName = TREACHERY_CARDS.some(c => back.includes(c.name))
+  check('...and names no card', anyCardName, false)
+  check('...taking no card to name', /card/i.test(back.slice(0, 200)) && back.includes('face down'), true)
 }
 
 // ── the clock is printed between the two off-board boxes ──────────────────
