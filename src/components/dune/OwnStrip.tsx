@@ -25,6 +25,12 @@
  * closable. A player can park their faction card at the side and leave it up all
  * game, which is what you do with the real one.
  *
+ * THE STRATEGY CARD IS THE ONE THAT COVERS. It hangs off the same panel, under
+ * the faction card, and opens over everything instead of into a corner: it is
+ * several hundred words you read once between turns, where the faction card is
+ * a reference you keep beside you. Read in a 420px panel it is a column five
+ * words wide. See StrategyCard.
+ *
  * The room that frees goes to the leader discs, which now render large enough
  * to read a strength off. Every battle in Dune is a leader plus a number, and a
  * disc too small to read the number on is a decoration.
@@ -43,6 +49,7 @@ import { FACTION_LOOK, SeatMark, SeatFilters } from './SeatLayer'
 import { LeaderDisc } from './LeaderDisc'
 import { TraitorCard } from './TraitorCard'
 import { TreacheryCardFace, TreacheryCardBack } from './TreacheryCardFace'
+import { StrategyOverlay } from './StrategyCard'
 
 const PALE = '#f0e2bb'
 const SERIF = "Georgia, 'Times New Roman', serif"
@@ -365,6 +372,7 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
   // any state anybody else can see.
   const [showFaction, setShowFaction] = useState(false)
   const [showAlliance, setShowAlliance] = useState(false)
+  const [showStrategy, setShowStrategy] = useState(false)
   const [zoom, setZoom] = useState<TreacheryCard | null>(null)
   const faction = factionById(seat)
   const allyFaction = ally ? factionById(ally) : null
@@ -428,6 +436,11 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
           <button type="button" onClick={() => setShowFaction(v => !v)}
             aria-expanded={showFaction} aria-label="Faction card"
             style={cardButton(look.colour, showFaction)}>{look.name}</button>
+          {/* UNDER THE FACTION CARD, because it is the second thing you want
+              about your own faction and the first thing a new player does. */}
+          <button type="button" onClick={() => setShowStrategy(v => !v)}
+            aria-expanded={showStrategy} aria-label="Strategy card"
+            style={cardButton(look.colour, showStrategy)}>How to play them</button>
           {allyFaction && (
             <button type="button" onClick={() => setShowAlliance(v => !v)}
               aria-expanded={showAlliance} aria-label="Alliance card"
@@ -491,6 +504,12 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
           onClose={() => setShowFaction(false)}>
           <FactionCard faction={faction} />
         </DraggableResizable>
+      )}
+
+      {/* OVER EVERYTHING, unlike the two panels above — see the note at the
+          top of this file. Only ever rendered when asked for, like them. */}
+      {showStrategy && (
+        <StrategyOverlay faction={seat} onClose={() => setShowStrategy(false)} />
       )}
 
       {showAlliance && allyFaction && (

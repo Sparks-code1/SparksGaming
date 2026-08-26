@@ -19,6 +19,8 @@
 import { readdirSync, existsSync } from 'node:fs'
 import type { FactionId } from '@/types/Dune/Faction'
 import { LEADER_PORTRAITS, LeaderDisc } from '@/components/dune/LeaderDisc'
+import { FACTION_FIGURES, FigureDisc, portraitPlacement } from '@/components/dune/LeaderDisc'
+import type { Portrait } from '@/components/dune/LeaderDisc'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { FACTION_IDS, factionById } from '@/data/dune/factions'
@@ -34,51 +36,54 @@ const DIR = 'public/dune-leaders'
 const files = readdirSync(DIR).filter(f => f.endsWith('.png'))
 
 /**
- * Artwork that deliberately matches no leader.
+ * Two tables, and every picture belongs to one of them.
  *
- * A FACTION'S OWN FIGURE IS NOT ONE OF ITS LEADERS, and three of these are
- * that. The Baron is the Harkonnen player and has no disc; the Emperor is the
- * same, his five being Hasimir Fenring, Captain Aramsham, Caid, Burseg and
- * Bashar; and Reverend Mother Mohiam is the Bene Gesserit's, theirs being
- * Mother Ramallo, Wanna Yueh, Margot Lady Fenring, Princess Irulan and Alia.
- * Each is the person their faction IS, which is exactly why none of them takes
- * a disc and fights.
+ * THERE USED TO BE AN EXCLUSION LIST HERE — Baron.png, Edric.png, Emperor.png
+ * and Mother_Mohiam.png, four files named one by one as belonging to nobody,
+ * "kept for screens that do not exist yet". The strategy card is that screen,
+ * and FACTION_FIGURES is where they went, so the list is gone and the rule is
+ * absolute again: a file in the folder is claimed by a leader or by a faction,
+ * or the suite says so.
  *
- * EDRIC IS THE ODD ONE OUT, and the distinction is worth keeping rather than
- * flattening into "not a leader". He is a Guild navigator — not the Guild's
- * own figure either, that being the Guild Representative, who IS one of their
- * five and does have a portrait. Edric is simply held for something later.
- *
- * All four are kept for screens that do not exist yet.
- *
- * NAMED ONE BY ONE, not waved through by a pattern. Each entry is a claim that
- * somebody looked at that file and decided it belongs to nobody — which is the
- * opposite of the mistake this suite exists to catch, where a portrait sits in
- * the folder unregistered and nothing says whether that was meant. A second
- * stray file still fails, because the list is exact.
+ * A FACTION'S OWN FIGURE IS NOT ONE OF ITS LEADERS, which is the whole reason
+ * for the second table. The Baron is the Harkonnen PLAYER and has no disc; the
+ * Emperor is the same, his five being Hasimir Fenring, Captain Aramsham, Caid,
+ * Burseg and Bashar; Mohiam is the Bene Gesserit's, theirs being Mother
+ * Ramallo, Wanna Yueh, Margot Lady Fenring, Princess Irulan and Alia; and
+ * Edric represents the Guild without being the Guild Representative, who IS one
+ * of their five and does fight. None of them takes a disc.
  */
-const NOT_A_LEADER = ['Baron.png', 'Edric.png', 'Emperor.png', 'Mother_Mohiam.png']
+const fileOf = (src: string) => src.split('/').pop()!
+const leaderFiles = new Set(Object.values(LEADER_PORTRAITS).map(p => fileOf(p.src)))
+const figureFiles = new Set(
+  Object.values(FACTION_FIGURES).flatMap(f => (f.portrait ? [fileOf(f.portrait.src)] : [])))
 
 const everyLeader = FACTION_IDS.flatMap(id =>
   (factionById(id)?.leaders ?? []).map(l => ({ ...l, faction: id })))
 
-// ── the exclusions mean something ─────────────────────────────────────────
-// The list is enumerated one by one so each entry is a claim somebody made
-// about a file. That is only worth anything while every entry is doing work: a
-// name whose file has gone, or a name that is ALSO registered as a leader's
-// portrait, is an entry that excludes nothing and quietly makes the list
-// longer and less trustworthy.
-//
-// Sabotage found the second case — adding a registered portrait to the list
-// changed no outcome, because a registered file never appears in the
-// pointing-at-nobody list to be excluded from in the first place.
+// ── a figure is not a leader ──────────────────────────────────────────────
+// The two tables must not overlap in either direction. The same picture in
+// both would put the Baron on a disc in the Tleilaxu Tanks; the same NAME in
+// both would mean somebody had made the faction's own figure fight.
 {
-  const missing = NOT_A_LEADER.filter(f => !files.includes(f))
-  check('every excluded file is actually there', missing, [])
+  check('there are figures to check', figureFiles.size > 0, true)
+  check('no figure picture is also a leader portrait',
+    [...figureFiles].filter(f => leaderFiles.has(f)).sort(), [])
 
-  const registered = new Set(Object.values(LEADER_PORTRAITS).map(p => p.src.split('/').pop()))
-  const both = NOT_A_LEADER.filter(f => registered.has(f))
-  check('...and none of them is a registered portrait too', both, [])
+  const leaderNames = new Set(everyLeader.map(l => l.name))
+  check('...and no figure is one of the five who fight',
+    Object.values(FACTION_FIGURES).filter(f => leaderNames.has(f.name)).map(f => f.name), [])
+
+  // EVERY faction, including the two with no picture yet: a faction with no
+  // figure at all has a strategy card with a blank where it says who they are.
+  check('every faction has a figure',
+    FACTION_IDS.filter(id => !FACTION_FIGURES[id]?.name), [])
+  check('every registered figure picture is on disk',
+    [...figureFiles].filter(f => !files.includes(f)), [])
+  check('...by an absolute path',
+    Object.values(FACTION_FIGURES)
+      .filter(f => f.portrait && !f.portrait.src.startsWith('/'))
+      .map(f => f.name), [])
 }
 
 // ── the table points at files that exist ──────────────────────────────────
@@ -112,9 +117,11 @@ const everyLeader = FACTION_IDS.flatMap(id =>
     .map(l => `${l.name} (${stems.get(key(l.name))})`)
   check('no leader has artwork nobody points at', unregistered, [])
 
-  // And the reverse: a file matching no leader at all. One is expected.
-  const claimed = new Set(Object.values(LEADER_PORTRAITS).map(p => p.src.split('/').pop()))
-  const orphans = files.filter(f => !claimed.has(f) && !NOT_A_LEADER.includes(f))
+  // And the reverse: a file claimed by neither table. NONE is expected now —
+  // see the note above. Paul and Liet-Kynes have no picture yet, so this is
+  // also what will speak up the day one is dropped into the folder and nobody
+  // registers it, which is the mistake this whole suite exists to catch.
+  const orphans = files.filter(f => !leaderFiles.has(f) && !figureFiles.has(f))
   check('no artwork is left pointing at nobody', orphans, [])
 }
 
@@ -124,8 +131,17 @@ const everyLeader = FACTION_IDS.flatMap(id =>
 // rather than trusted.
 {
   const { readFileSync } = await import('node:fs')
+  // BOTH TABLES. The figures are framed by the same three knobs and cropped by
+  // the same arithmetic, so a wrong size crops a face there exactly as it does
+  // here — and two of the four are the shapes most likely to expose it, the
+  // folder's only landscape picture and its tallest.
+  const every: [string, Portrait][] = [
+    ...Object.entries(LEADER_PORTRAITS),
+    ...Object.values(FACTION_FIGURES)
+      .flatMap(f => (f.portrait ? [[f.name, f.portrait] as [string, Portrait]] : [])),
+  ]
   const wrong: string[] = []
-  for (const [name, p] of Object.entries(LEADER_PORTRAITS)) {
+  for (const [name, p] of every) {
     const buf = readFileSync('public' + p.src)
     // IHDR is the first chunk: width and height are bytes 16..24.
     const w = buf.readUInt32BE(16), h = buf.readUInt32BE(20)
@@ -136,9 +152,38 @@ const everyLeader = FACTION_IDS.flatMap(id =>
   // The focus is a fraction of the height. Outside 0..1 it points off the
   // picture, and the shift uncovers faction colour behind the portrait.
   check('every focus is on the picture',
-    Object.entries(LEADER_PORTRAITS)
-      .filter(([, p]) => p.focusY != null && (p.focusY < 0 || p.focusY > 1))
-      .map(([n]) => n), [])
+    every.filter(([, p]) => (p.focusY != null && (p.focusY < 0 || p.focusY > 1))
+      || (p.focusX != null && (p.focusX < 0 || p.focusX > 1))).map(([n]) => n), [])
+
+  // ── the crop covers the circle ──────────────────────────────────────────
+  // THE PROPERTY THE ARITHMETIC EXISTS FOR, checked against every picture
+  // rather than against the formula. A portrait shifted to put a face in the
+  // middle must still reach the circle's edge on all four sides; where it does
+  // not, faction colour shows through the picture and reads as a rendering
+  // fault. Landscape and very tall sources are where a rule of thumb fails,
+  // and the figures brought one of each into the folder.
+  const R = 50
+  check('every picture still covers its circle after the shift',
+    every.filter(([, p]) => {
+      const box = portraitPlacement(p, R)
+      return !(box.x <= -R && box.y <= -R
+        && box.x + box.width >= R && box.y + box.height >= R)
+    }).map(([n]) => n), [])
+
+  // AND THE SHIFT IS THE ONE THE ENTRY ASKED FOR. Covering is necessary and
+  // not sufficient: hard-coding the focus to the middle of every picture still
+  // covers every circle, and simply ignores the one knob each entry has. What
+  // the focus MEANS is that the point it names lands at the centre of the
+  // circle, so that is what is asserted — the numbers here are the difference
+  // between a face and a collar.
+  check('every picture is shifted to the point its entry names',
+    every.filter(([, p]) => {
+      const box = portraitPlacement(p, R)
+      const atX = (0 - box.x) / box.width
+      const atY = (0 - box.y) / box.height
+      return Math.abs(atX - (p.focusX ?? 0.5)) > 0.001
+        || Math.abs(atY - (p.focusY ?? 0.5)) > 0.001
+    }).map(([n]) => n), [])
 }
 
 // ── how much of the game is covered ───────────────────────────────────────
@@ -150,6 +195,11 @@ const everyLeader = FACTION_IDS.flatMap(id =>
     const with_ = leaders.filter(l => LEADER_PORTRAITS[l.name]).length
     console.log(`        ${id.padEnd(15)} ${with_}/${leaders.length} portraits`)
   }
+  for (const id of FACTION_IDS) {
+    const f = FACTION_FIGURES[id]
+    console.log(`        ${id.padEnd(15)} figure: ${f.name}${f.portrait ? '' : ' (no picture yet)'}`)
+  }
+
   // THE FALLBACK IS TESTED DIRECTLY, against a leader that does not exist.
   //
   // This used to assert `total < everyLeader.length` — that SOME leader still
@@ -166,6 +216,31 @@ const everyLeader = FACTION_IDS.flatMap(id =>
     plain.includes('Nobody At All — strength 3'), true)
   check('...showing its strength', plain.includes('3'), true)
   check('...and no image', /<image/.test(plain), false)
+}
+
+// ── the figure disc ──────────────────────────────────────────────────────
+// Two paths, and the one without a picture is the one that will rot: it is the
+// state Paul and Liet-Kynes are in today and the state nothing will be in once
+// somebody draws them, so it is rendered here rather than relied on.
+{
+  const drawn = (id: FactionId) =>
+    renderToStaticMarkup(createElement(FigureDisc, { faction: id, r: 40 }))
+
+  const baron = drawn('harkonnen' as FactionId)
+  check('a figure with a picture draws it', /<image[^>]+Baron\.png/.test(baron), true)
+  check('...and says whose face it is', baron.includes('Baron Vladimir Harkonnen'), true)
+
+  const paul = drawn('atreides' as FactionId)
+  // NO PORTRAIT — not "no image". The Atreides mark is itself a supplied
+  // picture (see IMAGE_MARKS in SeatLayer), so the disc carries an <image>
+  // either way; what must not be on it is a face out of the leader folder.
+  check('a figure with none draws no portrait',
+    /<image[^>]+dune-leaders/.test(paul), false)
+  // The faction's mark instead — the same drawing as the back of its leaders'
+  // discs, which is what data-face="down" identifies. A bare coloured circle
+  // would read as a picture that failed to load.
+  check('...and falls back to the faction mark', paul.includes('data-face="down"'), true)
+  check('...while still naming them', paul.includes('Paul Atreides'), true)
 }
 
 // ── the other side of the disc ───────────────────────────────────────────
