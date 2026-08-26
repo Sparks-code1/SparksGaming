@@ -32,7 +32,7 @@ import type { DuneSecrets } from '@/lib/dune/charity'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { factionById, findLeader } from '@/data/dune/factions'
 import { TraitorCard, TraitorCardBack, TRAITOR_RULES } from '@/components/dune/TraitorCard'
-import { TreacheryCardBack } from '@/components/dune/TreacheryCardFace'
+import { TreacheryCardBack, LETTERING_W, CARD_W } from '@/components/dune/TreacheryCardFace'
 import { FACTION_LOOK } from '@/components/dune/SeatLayer'
 import type { FactionId } from '@/types/Dune/Faction'
 
@@ -960,6 +960,17 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   const anyCardName = TREACHERY_CARDS.some(c => back.includes(c.name))
   check('...and names no card', anyCardName, false)
   check('...taking no card to name', /card/i.test(back.slice(0, 200)) && back.includes('face down'), true)
+
+  // AND IT FITS. The word was sized as a fraction of the card width with
+  // tracking to match — about 201 units for nine capitals in a card 168 wide —
+  // so centred it overflowed both ends and clipped to "reacher". Checked
+  // against the card rather than by eye, and drawn with textLength so the
+  // renderer squeezes it to exactly that width whatever font it has.
+  check("the lettering is given an explicit width", back.includes('textLength='), true)
+  check("...that fits inside the card", LETTERING_W < CARD_W - 24, true)
+  check("...with room either side", (CARD_W - 24 - LETTERING_W) / 2 >= 10, true)
+  check("...and is allowed to squeeze to hit it",
+    back.includes('lengthAdjust="spacingAndGlyphs"'), true)
 }
 
 // ── the clock is printed between the two off-board boxes ──────────────────

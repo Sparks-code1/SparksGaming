@@ -366,6 +366,15 @@ export function TreacheryCardFace({ card, width = CARD_W }: { card: TreacheryCar
  * the geometry rather than from the card, so there is nothing here that COULD
  * vary: the component does not even take a card.
  */
+/**
+ * How wide the word is drawn, inside the band and inside the card.
+ *
+ * Exported so the test can check it against the card rather than trusting the
+ * number: a back whose lettering overflows clips to the middle of the word,
+ * which looks like a rendering fault and is really an arithmetic one.
+ */
+export const LETTERING_W = CARD_W - 52
+
 export function TreacheryCardBack({ width = CARD_W }: { width?: number }) {
   const step = 14
   const lines: JSX.Element[] = []
@@ -388,20 +397,32 @@ export function TreacheryCardBack({ width = CARD_W }: { width?: number }) {
       <rect x="12" y="12" width={CARD_W - 24} height={CARD_H - 24} rx="5"
         fill="none" stroke="#00000055" strokeWidth="2" />
 
-      {/* The name, across the middle. Set on a band so it reads against the
+      {/* The name, across the middle, on a band so it reads against the
           hatching rather than fighting it. */}
-      <rect x="12" y={CARD_H / 2 - 26} width={CARD_W - 24} height={52}
+      <rect x="12" y={CARD_H / 2 - 17} width={CARD_W - 24} height={34}
         fill="#1c140b" opacity="0.82" />
+
+      {/* textLength IS THE POINT, not the font size.
+          This was set at CARD_W * 0.15 with tracking to match — about 25pt with
+          4.7 between letters, which needs roughly 201 units for nine capitals in
+          a card 168 wide. Centred, it overflowed both ends and clipped to
+          "reacher".
+          Sizing by eye only moves the problem: glyph widths differ by font, and
+          Georgia may not be installed. textLength tells the renderer the exact
+          width the word must occupy and lengthAdjust lets it squeeze both the
+          spacing and the glyphs to hit it, so it fits whatever is available to
+          draw with. The font size below is now only a starting shape. */}
       <text x={CARD_W / 2} y={CARD_H / 2} textAnchor="middle" dominantBaseline="central"
-        fontFamily="Georgia, 'Times New Roman', serif" fontSize={CARD_W * 0.15} letterSpacing={CARD_W * 0.028}
+        fontFamily="Georgia, 'Times New Roman', serif" fontSize={17}
+        textLength={LETTERING_W} lengthAdjust="spacingAndGlyphs"
         fill="#c9a34a" fontWeight="bold">
         TREACHERY
       </text>
       {/* Rules either side of it, so the word sits in a device rather than
           floating on the pattern. */}
-      <line x1="26" y1={CARD_H / 2 - 30} x2={CARD_W - 26} y2={CARD_H / 2 - 30}
+      <line x1="26" y1={CARD_H / 2 - 21} x2={CARD_W - 26} y2={CARD_H / 2 - 21}
         stroke="#c9a34a" strokeWidth="1.5" opacity="0.75" />
-      <line x1="26" y1={CARD_H / 2 + 30} x2={CARD_W - 26} y2={CARD_H / 2 + 30}
+      <line x1="26" y1={CARD_H / 2 + 21} x2={CARD_W - 26} y2={CARD_H / 2 + 21}
         stroke="#c9a34a" strokeWidth="1.5" opacity="0.75" />
     </svg>
   )
