@@ -11,12 +11,12 @@
  * a match id there is nothing to sign in as, and a harness that silently shows
  * an empty board is worse than one that explains itself.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FactionId } from '@/types/Dune/Faction'
 import type { DuneGameState } from '@/types/Dune/Game'
 import type { DuneSecrets } from '@/lib/dune/charity'
 import { startMultiSeat, seatLoginsFromEnv } from '@/dev/multiSeat'
-import type { SeatSession } from '@/dev/multiSeat'
+import type { SeatSession, MultiSeat } from '@/dev/multiSeat'
 import { DuneGameScreen } from './DuneGameScreen'
 import { DevSeatSwitcher } from './DevSeatSwitcher'
 import { WormPlacementPanel } from './WormPlacementPanel'
@@ -24,6 +24,7 @@ import { dispatchDuneAction } from '@/lib/dune/duneDispatch'
 import type { SpiceBlowPause } from './WormPlacementPanel'
 import type { CharityWindow } from '@/lib/dune/charity'
 import { factionById } from '@/data/dune/factions'
+import { FACTION_LOOK } from './SeatLayer'
 import type { BidAsk, AuctionCarry } from '@/lib/dune/bidding'
 import type { BidRefusal } from '@/lib/dune/bidding'
 import type { ChatMessage } from './ChatPanel'
@@ -50,6 +51,9 @@ const PUBLIC_FIXTURE: DuneGameState = {
 /** The public row carries fields the screen's type does not name — the charity
  *  window among them, which is public because who has claimed is on the table. */
 /** The auction as public state carries it: a Step, ask and carry and all. */
+/** What the server hands back when a bid closes a card. */
+interface Award { index: number; winner: FactionId; price: number }
+
 interface AuctionStep {
   status: string
   ask?: BidAsk
@@ -111,9 +115,18 @@ export default function DuneMultiSeatView() {
     return () => clearInterval(t)
   }, [])
 
+  /**
+   * The live harness, kept so a seat's own row can be re-read on demand.
+   *
+   * In a ref rather than state: nothing renders off it, and putting it in
+   * state would re-run this effect on the very change it produces.
+   */
+  const seats = useRef<MultiSeat | null>(null)
   useEffect(() => {
     if (!matchId || logins.length === 0) return
-    return startMultiSeat(matchId, logins, setSessions)
+    const live = startMultiSeat(matchId, logins, setSessions)
+    seats.current = live
+    return () => { live.stop(); seats.current = null }
   }, [matchId, logins])
 
   /**
@@ -192,6 +205,9 @@ export default function DuneMultiSeatView() {
    * emails, editing the line by hand, or pointing at a match seeded earlier all
    * do it.
    */
+  /** A faction's printed name, so the chat reads as the table talking. */
+  const nameOf = (faction: FactionId) => FACTION_LOOK[faction]?.name ?? faction
+
   const seatedFactions = (publicRow?.players ?? []).map(p => p.faction)
   const notSeated = !!publicRow && !!active && !seatedFactions.includes(active)
 
@@ -282,7 +298,20 @@ export default function DuneMultiSeatView() {
       setBidRefusal(r => ({ ...r, [session.login.faction]: (res.error?.code ?? null) as BidRefusal | null }))
       return
     }
+    // WINNING AN AUCTION SPENDS SPICE, and the row that changed is this seat's
+    // own. Waiting on the changefeed to say so is how a purse stays visibly
+    // full after paying — right in the database, wrong on the screen.
+    await seats.current?.refresh(session.login.faction)
     say(answer.kind === 'pass' ? 'passed on the card.' : `bid ${answer.spice}.`)
+
+    // THE SETTLEMENT, when this bid ended the auction. The server returns the
+    // awards to whoever made the closing move; every other seat learns of it
+    // from the public row, so in a real six-browser game this line would come
+    // from the changefeed rather than from here. In one browser holding six
+    // sessions it is the same chat either way.
+    for (const award of (res.data as { awards?: Award[] })?.awards ?? []) {
+      announce(`${nameOf(award.winner)} wins a card for ${award.price} spice.`)
+    }
   }
 
   /**
@@ -314,11 +343,35 @@ export default function DuneMultiSeatView() {
       say(`${type} refused: ${res.error?.message ?? 'unknown'}`)
       return
     }
+    // Claiming charity pays into this seat's purse, so re-read it for the same
+    // reason a bid does.
+    await seats.current?.refresh(session.login.faction)
     // Answered, so the modal comes down. The board comes back on the
     // changefeed; nothing is advanced here.
     const turn = publicRow?.charity?.turn
     if (turn != null) setAnswered(a => ({ ...a, [session.login.faction]: turn }))
     say(`claimed charity (+${(res.data as { granted?: number })?.granted ?? 0}).`)
+  }
+
+  /**
+   * A line the whole table may read.
+   *
+   * SEPARATE FROM say(), which addresses the acting seat alone. Most of what
+   * this harness reports is private — a charity refusal says roughly what a
+   * seat holds — but an auction result is not: who won and what they paid are
+   * public at a table, and announcing them to one seat would be the wrong way
+   * round.
+   *
+   * WHAT IT NAMES IS THE WINNER AND THE PRICE, never the card. The auction is
+   * card-blind by construction and the winner's hand is theirs alone; a line
+   * naming the card would hand the table something no seat is entitled to and
+   * would do it in the one place everybody reads.
+   */
+  const announce = (line: string) => {
+    setChat(c => [...c.slice(-40), {
+      id: `${Date.now()}-${c.length}`, faction: null, from: 'Game',
+      text: line, at: Date.now(),
+    }])
   }
 
   const say = (line: string) => {

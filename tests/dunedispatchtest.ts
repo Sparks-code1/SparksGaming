@@ -475,5 +475,78 @@ const code = (path: string) => readFileSync(path, 'utf8')
   check('...and no auction lot is seeded directly', /'auction-lot'/.test(seed), false)
 }
 
+// ── the winner's purse is re-read, not waited for ─────────────────────────
+// Winning an auction spends spice, and the row that changes is the winner's
+// own. The changefeed is the normal path, but a client that has just POSTed
+// the action knows something changed and should not sit waiting on a frame to
+// find out what — a dropped or delayed UPDATE shows up as spice that never
+// leaves the purse, which is right in the database and wrong on the screen.
+{
+  const view = code('src/components/dune/DuneMultiSeatView.tsx')
+  const harness = code('src/dev/multiSeat.ts')
+
+  check('the harness can re-read one seat\'s row', /refresh\(faction: FactionId\)/.test(harness), true)
+  // ON THAT SEAT'S OWN CLIENT, so it reads under the same RLS as everything
+  // else and can only ever see its own row.
+  const refreshFn = harness.slice(harness.indexOf('async refresh('), harness.indexOf('publish()', harness.indexOf('async refresh(')))
+  check('...through that seat\'s own session', /session\.client/.test(refreshFn), true)
+  check('...for that seat\'s row alone',
+    /\.eq\('player_id', session\.login\.seat\)/.test(refreshFn), true)
+  // THE SAME OBJECTS the changefeed mutates. A copy kept beside them would be
+  // a second answer, and the next published frame would silently win.
+  check('...writing where the changefeed writes', /session\.secrets =/.test(refreshFn), true)
+
+  check('a bid re-reads the purse it may have spent',
+    /await seats\.current\?\.refresh\(session\.login\.faction\)/.test(view), true)
+  check('...and so does a charity claim',
+    (view.match(/seats\.current\?\.refresh/g) ?? []).length >= 2, true)
+}
+
+// ── a win is announced, and only what is public ───────────────────────────
+// Who won and what they paid are public at a table. The CARD is not — the
+// auction is card-blind by construction and the winner's hand is theirs alone.
+{
+  const view = code('src/components/dune/DuneMultiSeatView.tsx')
+
+  // WHAT IT SAYS, not how it words it. Pinning the verb failed on a rewrite
+  // that changed nothing about the rule — which is that a win is announced,
+  // naming who won and what they paid.
+  const winLine = view.slice(view.indexOf('announce(`'), view.indexOf('announce(`') + 200)
+  check('the harness announces a win', winLine.length > 20, true)
+  check('...naming the winner', /nameOf\(award\.winner\)/.test(winLine), true)
+  check('...and the price', /award\.price/.test(winLine), true)
+  check('...and calling it spice', /spice/.test(winLine), true)
+
+  // PUBLIC, unlike say(). Most of what this harness reports is private — a
+  // charity refusal says roughly what a seat holds — so the announcement needs
+  // its own path rather than the one that addresses a single seat.
+  const announce = view.slice(view.indexOf('const announce ='), view.indexOf('const say ='))
+  check('the announcement is there to check', announce.length > 60, true)
+  check('...and addresses nobody in particular', /\bto\b/.test(announce), false)
+
+  // AND NAMES NO CARD. The award carries an index into a lot nobody may read;
+  // putting a card in this line would hand the table something no seat is
+  // entitled to, in the one place everybody reads.
+  const line = view.slice(view.indexOf('for (const award of'), view.indexOf('for (const award of') + 400)
+  check('...and never the card', /\bcard\.|cards\[|TREACHERY_CARDS/.test(line), false)
+}
+
+// ── the bid box follows the standing bid ──────────────────────────────────
+// useState(minimum) reads its argument once, so the box kept whatever the
+// minimum was when the panel mounted — through every raise by everybody else —
+// and the next bidder had to retype a number the auction already knew.
+//
+// A SOURCE CHECK, DELIBERATELY. This suite renders to static markup, which
+// mounts fresh every time; on a fresh mount useState(minimum) alone already
+// yields the right number, so a rendered assertion passes just as happily
+// against the bug. What distinguishes them is a re-render with a NEW minimum
+// and no remount, which needs a live renderer this suite does not have.
+{
+  const panel = code('src/components/dune/BiddingPanel.tsx')
+  check('the amount follows the minimum', /useEffect\(\(\) => \{ setAmount\(minimum\) \}, \[minimum\]\)/.test(panel), true)
+  check('...keyed on the minimum alone, so typing survives until a raise',
+    /\}, \[minimum\]\)/.test(panel), true)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 process.exit(pass ? 0 : 1)

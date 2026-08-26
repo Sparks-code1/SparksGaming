@@ -103,18 +103,37 @@ export function createSeatClient(seat: string): SupabaseClient {
   })
 }
 
+/** What the harness hands back: how to stop, and how to re-read a seat's row. */
+export interface MultiSeat {
+  stop(): void
+  /**
+   * Re-read one seat's secrets from its own session, now.
+   *
+   * READ-YOUR-OWN-WRITES. The changefeed is the normal path and this does not
+   * replace it, but a client that has just POSTed an action knows something
+   * changed and should not be left waiting on a frame to find out what. A
+   * dropped or delayed UPDATE then shows up as spice that never leaves the
+   * winner's purse — the row is right in the database and wrong on the screen,
+   * which is the most misleading way for this to fail.
+   *
+   * Goes through the SEAT'S OWN CLIENT, so it reads under the same RLS as
+   * everything else and can only ever see that seat's row.
+   */
+  refresh(faction: FactionId): Promise<void>
+}
+
 /**
  * Sign every seat in and open its own secrets channel.
  *
- * Returns a stop function. Each seat is independent: one failing to sign in
- * leaves the others working, and says so, rather than taking the harness down —
- * a missing test account is the commonest thing to get wrong here.
+ * Each seat is independent: one failing to sign in leaves the others working,
+ * and says so, rather than taking the harness down — a missing test account is
+ * the commonest thing to get wrong here.
  */
 export function startMultiSeat(
   matchId: string,
   logins: readonly SeatLogin[],
   onChange: (sessions: SeatSession[]) => void,
-): () => void {
+): MultiSeat {
   assertDev()
 
   const sessions: SeatSession[] = logins.map(login => ({
@@ -164,10 +183,28 @@ export function startMultiSeat(
       })
   }
 
-  return () => {
-    cancelled = true
-    for (const stop of stops) stop()
-    for (const session of sessions) void session.client.auth.signOut()
+  return {
+    stop() {
+      cancelled = true
+      for (const stop of stops) stop()
+      for (const session of sessions) void session.client.auth.signOut()
+    },
+    async refresh(faction) {
+      const session = sessions.find(s => s.login.faction === faction)
+      if (!session || cancelled) return
+      const { data, error } = await session.client
+        .from('match_secrets')
+        .select('player_id, data')
+        .eq('match_id', matchId)
+        .eq('player_id', session.login.seat)
+        .maybeSingle()
+      if (error || !data || cancelled) return
+      // THE SAME OBJECTS the changefeed mutates, so the two paths cannot
+      // disagree about what this seat holds. A copy kept beside them would be
+      // a second answer, and the next published frame would silently win.
+      session.secrets = (data.data ?? {}) as Secrets
+      publish()
+    },
   }
 }
 
