@@ -38,7 +38,7 @@ import {
 import { prescienceFor, withReveal, PRESCIENT_FACTION } from '../_shared/dunePrescience.gen.ts'
 import {
   openingPosition, answerFremenPlacement, answerPrediction, answerTraitor,
-  answerAdvisorPlacement, defaultFremenPlacement, defaultTraitor,
+  answerAdvisorPlacement, shipAdvisor, defaultFremenPlacement, defaultTraitor,
   defaultAdvisorPlacement, defaultOrder, settle, answerable, allReady,
   starredOf, SETUP_SECONDS,
 } from '../_shared/duneSetup.gen.ts'
@@ -477,6 +477,7 @@ Deno.serve(async req => {
       const expired = typeof setup.closesAt === 'number' && now >= setup.closesAt
       if (expired || everyoneReady) {
         let forces = [...((state.forces ?? []) as unknown[])]
+        let players = [...((state.players ?? []) as { faction: string; reserves: number }[])]
         // IN DEPENDENCY ORDER, which is what defaultOrder is for. The advisor's
         // own default reads the board the Fremen's writes: placed first, it
         // would be alone in a territory the Fremen were about to walk into, and
@@ -486,7 +487,11 @@ Deno.serve(async req => {
           if (decision.kind === 'fremen-placement') {
             forces = [...forces, ...defaultFremenPlacement(decision.faction, mode)]
           } else if (decision.kind === 'advisor-placement') {
-            forces = [...forces, ...defaultAdvisorPlacement(decision.faction, forces)]
+            // THE SAME TOKEN, WHOEVER PUT IT THERE. A default that skipped the
+            // reserve would make running out of time worth a spare force.
+            const silent = defaultAdvisorPlacement(decision.faction, forces)
+            forces = [...forces, ...silent]
+            players = shipAdvisor(players, decision.faction, silent)
           } else if (decision.kind === 'traitor') {
             const seatId = seatOfFaction[decision.faction]
             const row = (rows[seatId] ?? {}) as { traitorsDealt?: string[] }
@@ -497,7 +502,7 @@ Deno.serve(async req => {
           // A prediction nobody made is no prediction, which costs them one
           // route to victory and nothing else. There is nothing to write.
         }
-        nextState = { ...state, forces }
+        nextState = { ...state, forces, players }
         outstanding = []
       } else if (action.answer === 'ready') {
         // Recorded above; nothing else changes until the last seat says it.
@@ -545,7 +550,17 @@ Deno.serve(async req => {
             (state.forces ?? []) as unknown[],
           )
           if (!placed.ok) return json({ error: 'that placement is not legal', code: placed.refusal }, 409)
-          nextState = { ...state, forces: [...((state.forces ?? []) as unknown[]), ...placed.value] }
+          // OUT OF THEIR RESERVES. The advisor is one of the faction's twenty
+          // tokens standing on the board rather than waiting off it — see
+          // shipAdvisor. Adding it to the map without taking it off the pile
+          // is how a faction ends up playing a token up on the table.
+          nextState = {
+            ...state,
+            forces: [...((state.forces ?? []) as unknown[]), ...placed.value],
+            players: shipAdvisor(
+              (state.players ?? []) as { faction: string; reserves: number }[],
+              myFaction, placed.value),
+          }
         } else if (action.answer === 'prediction') {
           const seated = (roster ?? [])
             .map((r: { faction_id?: string }) => r.faction_id)

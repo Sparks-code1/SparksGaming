@@ -253,14 +253,18 @@ export function treacheryDeck(): string[] {
  * twice is a starting position that disagrees with the rules card the player is
  * holding.
  */
-export function fixedPlacement(faction: FactionId, mode: GameMode): Force | null {
+export function fixedPlacement(faction: FactionId): Force | null {
   const f = factionById(faction)
   if (!f) return null
-  // THE ADVANCED GAME REPLACES THEIRS WITH A CHOICE. factions.ts puts the Bene
-  // Gesserit in the Polar Sink, which is the basic rule and stays the basic
-  // rule; in the advanced game that one force is an advisor placed wherever
-  // they like, and placing it here would put them in two places at once.
-  if (faction === ADVISOR_FACTION && mode === 'advanced') return null
+  // THE ADVANCED GAME ADDS TO THEIRS, it does not replace it. The Bene
+  // Gesserit hold the Polar Sink in both games — factions.ts says so and that
+  // is the basic rule — and the advanced advisor is a SECOND force, sent out
+  // to a territory of their choosing. This used to return null in the advanced
+  // game on the reading that the advisor WAS their one force, which left them
+  // off the Polar Sink entirely and a token short on the planet.
+  //
+  // Where the advisor's token comes from is answered by shipAdvisor: out of
+  // reserves, so the twenty a faction owns stays twenty.
   const { placement, onPlanet } = f.forces
   if (placement.kind !== 'fixed' || onPlanet <= 0) return null
   return {
@@ -348,7 +352,7 @@ export function openingPosition(input: {
   // The forces the rules place. The Fremen's are absent until answered — see
   // the note at the top of this file.
   const forces = seats
-    .map(s => fixedPlacement(s.faction, mode))
+    .map(s => fixedPlacement(s.faction))
     .filter((f): f is Force => f !== null)
 
   // ── the decks ────────────────────────────────────────────────────────────
@@ -606,6 +610,32 @@ export function answerAdvisorPlacement(
       posture: postureFor(forces, choice.territoryId, faction),
     }],
   }
+}
+
+/**
+ * The reserve the advisor came out of.
+ *
+ * A FACTION OWNS TWENTY TOKENS and no more. The advisor is not a free piece
+ * conjured for the advanced game: it is one of the twenty, standing on the
+ * board instead of waiting off it, so the reserve it left has to go down by
+ * the same one it went up by. Miss this and the Bene Gesserit quietly play the
+ * whole game a token richer than everybody else.
+ *
+ * Takes the placed forces rather than a bare number so it cannot disagree with
+ * what was actually put on the board.
+ */
+export function shipAdvisor<P extends { faction: FactionId; reserves: number }>(
+  players: readonly P[], faction: FactionId, placed: readonly Force[],
+): P[] {
+  const sent = placed
+    .filter(f => f.faction === faction)
+    .reduce((n, f) => n + f.count, 0)
+  if (sent <= 0) return [...players]
+  return players.map(p => p.faction === faction
+    // NEVER BELOW EMPTY. A reserve that goes negative is a token that never
+    // existed being spent, and it would be spent silently.
+    ? { ...p, reserves: Math.max(0, p.reserves - sent) }
+    : p)
 }
 
 /**

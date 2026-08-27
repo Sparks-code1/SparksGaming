@@ -38,8 +38,11 @@ const STATE: DuneGameState = {
   spiceDeck: {
     remaining: 11,
     discardA: [{
-      kind: 'territory', territoryId: 'territory-20', name: 'Hagga Basin',
-      spice: 6, sector: 'sector-11',
+      // HAGGA BASIN IS territory-11, and its spice falls in 13. This card
+      // named territory-20 — Habbanya Erg — so the fixture's own discard pile
+      // disagreed with its own board.
+      kind: 'territory', territoryId: 'territory-11', name: 'Hagga Basin',
+      spice: 6, sector: 'sector-13',
     }],
     discardB: [{ kind: 'shai-hulud' }],
   },
@@ -53,16 +56,35 @@ const STATE: DuneGameState = {
     { faction: 'spacing-guild', seat: 'player-position-5', reserves: 9, handCount: 4, ally: null },
     { faction: 'bene-gesserit', seat: 'player-position-6', reserves: 14, handCount: 0, ally: null },
   ],
+  // REAL (TERRITORY, SECTOR) PAIRS. Every stack in here used to name a sector
+  // its territory does not overlap — Arrakeen in 9, Habbanya Erg in 11 — which
+  // the board quietly forgave by falling back to the territory centroid. So the
+  // preview has never drawn a stack where the real geometry puts it, and the
+  // cell layout it is now meant to exercise would have been exercising a
+  // fallback instead.
+  //
+  // AND TWO SHAPES THAT USED TO BE MISSING, both of which the board gets wrong
+  // in ways nothing here would have caught:
+  //
+  //   Habbanya Erg 16 holds three factions, one of them a Bene Gesserit
+  //   advisor. Every stack in this fixture stood alone, so the board it showed
+  //   was the board where nothing is happening — and a second faction drawn
+  //   exactly on top of the first survived every look at this screen.
+  //
+  //   Old Gap holds two factions in two different sectors: one place for a
+  //   battle, two places for the storm.
   forces: [
     f('atreides', 'territory-13', 'sector-10', 6),
-    f('atreides', 'territory-13', 'sector-9', 2),
-    f('harkonnen', 'territory-12', 'sector-10', 5),
-    f('emperor', 'territory-20', 'sector-11', 4),
-    f('fremen', 'territory-32', 'sector-14', 7),
-    f('fremen', 'territory-27', 'sector-13', 3),
-    f('spacing-guild', 'territory-41', 'sector-17', 2),
+    f('harkonnen', 'territory-12', 'sector-11', 5),
+    f('emperor', 'territory-20', 'sector-16', 4),
+    f('harkonnen', 'territory-20', 'sector-16', 3),
+    { ...f('bene-gesserit', 'territory-20', 'sector-16', 1), posture: 'advisor' as const },
+    f('atreides', 'territory-27', 'sector-9', 2),
+    f('fremen', 'territory-27', 'sector-11', 3),
+    f('fremen', 'territory-32', 'sector-4', 7),
+    f('spacing-guild', 'territory-41', 'sector-14', 2),
   ],
-  spiceOnBoard: { 'territory-20': 6, 'territory-32': 10 },
+  spiceOnBoard: { 'territory-11': 6, 'territory-32': 10 },
   awaiting: 'harkonnen',
 }
 

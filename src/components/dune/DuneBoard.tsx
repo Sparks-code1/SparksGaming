@@ -62,6 +62,100 @@ export function cellAt(territoryId: string, sector: string) {
   return t?.cells.find(c => c.sector === sector)?.at ?? t?.centroid ?? null
 }
 
+/**
+ * How much room that cell has before its bubbles cross into another territory.
+ *
+ * The fallback is for the centroid path above: a sector that is not one of the
+ * territory's own has no cell and no measurement, so it gets a modest number
+ * rather than either extreme — nothing should be laid out generously on the
+ * strength of a lookup that already failed.
+ */
+export function cellRoom(territoryId: string, sector: string): number {
+  const t = DUNE_TERRITORIES.find(x => x.id === territoryId)
+  return t?.cells.find(c => c.sector === sector)?.room ?? 14
+}
+
+/** The bubble as it has always been drawn, when a faction stands alone. */
+export const BUBBLE_R = 9
+/**
+ * The smallest a bubble may be squeezed to.
+ *
+ * A FLOOR RATHER THAN A FIT AT ANY COST. Some cells are slivers — the tightest
+ * on the board has barely a pixel of clearance — and a layout that always fit
+ * would draw six dots too small to carry a number, which loses the one thing
+ * the bubble exists to say. Past this point the cluster is allowed to sit proud
+ * of a small territory instead: overflowing a border is a thing you can see and
+ * reason about, and a faction you cannot see at all is not.
+ */
+export const BUBBLE_MIN_R = 6.5
+/** A little daylight, so neighbouring bubbles read as two and not a peanut. */
+const GAP = 1.06
+
+export interface StackSlot { x: number; y: number; r: number }
+
+/**
+ * Where each faction's bubble goes when several share one cell.
+ *
+ * WHY THIS EXISTS. Every stack used to be drawn at the cell's anchor point —
+ * the same coordinates for all of them — so a second faction landed exactly on
+ * top of the first and the board showed one. The Bene Gesserit advisor covering
+ * the Atreides at setup was how it surfaced, but nothing about it was to do
+ * with setup: any two factions in a territory drew as one, at any point in the
+ * game. Two factions in a territory is the precondition for a battle, so a
+ * board that draws them as one is a board that hides the fights.
+ *
+ * A RING, evenly spaced from the anchor. n bubbles of radius r keep clear of
+ * each other when their centres sit r/sin(π/n) out, which is where the spread
+ * below comes from; the bubbles then shrink until the whole ring fits the room
+ * the cell has, down to the floor above. Slot 0 is at the top and they run
+ * clockwise, so a given set of factions always lays out the same way — a board
+ * whose pieces move when nothing moved is a board you cannot read at a glance.
+ *
+ * A LONE STACK IS UNTOUCHED: same point, same size as it has always been. It
+ * has always sat proud of the tightest cells and nobody has ever needed it to
+ * do otherwise, so this fixes the crowd without redrawing the quiet 90%.
+ */
+export function fanOut(n: number, room: number): StackSlot[] {
+  if (n <= 0) return []
+  if (n === 1) return [{ x: 0, y: 0, r: BUBBLE_R }]
+  const spread = GAP / Math.sin(Math.PI / n)
+  const r = Math.max(BUBBLE_MIN_R, Math.min(BUBBLE_R, room / (1 + spread)))
+  const d = r * spread
+  return Array.from({ length: n }, (_, i) => {
+    const a = -Math.PI / 2 + (i * 2 * Math.PI) / n
+    return { x: d * Math.cos(a), y: d * Math.sin(a), r }
+  })
+}
+
+/**
+ * The stacks standing in each cell, in a fixed order.
+ *
+ * BY CELL, not by territory: troops occupy a (territory, sector) pair, and two
+ * sectors of one territory are two places the storm treats differently. They
+ * are one place for a battle, which is a thing the board says by drawing them
+ * inside one outline.
+ *
+ * Sorted by faction so the ring is stable between renders — the same six
+ * factions in the same cell must not swap seats because a server sent them in
+ * a different order.
+ */
+export function stacksByCell(
+  stacks: readonly DuneBoardStack[],
+): [string, DuneBoardStack[]][] {
+  const cells = new Map<string, DuneBoardStack[]>()
+  for (const s of stacks) {
+    if (s.count <= 0) continue
+    const key = `${s.territoryId}|${s.sector}`
+    const at = cells.get(key)
+    if (at) at.push(s); else cells.set(key, [s])
+  }
+  for (const group of cells.values()) {
+    group.sort((a, b) => (a.faction ?? '~').localeCompare(b.faction ?? '~')
+      || (a.posture ?? '').localeCompare(b.posture ?? ''))
+  }
+  return [...cells.entries()]
+}
+
 export interface DuneBoardStack {
   territoryId: string
   sector: string
@@ -264,6 +358,19 @@ export function DuneBoard({
 
   const wedge = stormWedge(storm)
 
+  /** Every occupied cell, with a place worked out for each faction in it. */
+  const laidOut = stacksByCell(stacks).map(([key, group]) => {
+    const [territoryId, sector] = key.split('|')
+    return {
+      key, group,
+      at: cellAt(territoryId, sector),
+      slots: fanOut(group.length, cellRoom(territoryId, sector)),
+    }
+  })
+  /** How far each cell's bubbles reach, for anything drawn near them. */
+  const crowding = new Map(laidOut.map(c =>
+    [c.key, Math.max(0, ...c.slots.map(s => Math.hypot(s.x, s.y) + s.r))]))
+
   return (
     // PINNED, not sized. Both layers fill the positioned box they are given and
     // scale themselves down to fit it — a percentage height resolves here
@@ -304,54 +411,76 @@ export function DuneBoard({
           ))}
         </defs>
 
-        {stacks.map(s => {
-          const at = cellAt(s.territoryId, s.sector)
-          if (!at || s.count <= 0) return null
-          const advisor = s.posture === 'advisor'
-          const starred = s.starred ?? 0
-          return (
-            <g key={`${s.territoryId}|${s.sector}|${s.faction ?? ''}`}
-              data-posture={advisor ? 'advisor' : undefined}
-              data-starred={starred > 0 ? starred : undefined}>
-              <circle cx={at.x} cy={at.y} r="9"
-                fill={advisor && s.faction
-                  ? `url(#advisor-check-${s.faction})`
-                  : s.faction ? FACTION_LOOK[s.faction].colour : '#1d3f70'}
-                stroke={PALE} strokeWidth="1.5" />
-              <text x={at.x} y={at.y} fontSize="10"
-                fill={advisor ? '#1a1208' : PALE}
-                stroke={advisor ? PALE : undefined} strokeWidth={advisor ? 2.4 : undefined}
-                paintOrder="stroke"
-                textAnchor="middle" dominantBaseline="central"
-                fontFamily="Georgia, serif">{s.count}</text>
-              {/* THE ELITES ARE IN THIS STACK. A star badge, with the number
-                  beside it when the stack is mixed — three Fedaykin standing
-                  with seven plain is a different thing from ten plain, and the
-                  storm does not care but every battle plan does. */}
-              {starred > 0 && (
-                <g>
-                  <title>{`${starred} elite of ${s.count}`}</title>
-                  <circle cx={at.x + 8} cy={at.y - 8} r={starred >= s.count ? 5.2 : 6.4}
-                    fill="#3f2c1a" stroke="#f0c93f" strokeWidth="1" />
-                  <text x={at.x + 8} y={at.y - 8} fontSize="7.5" fill="#f0c93f"
-                    textAnchor="middle" dominantBaseline="central"
-                    fontFamily="Georgia, serif">
-                    {starred >= s.count ? '★' : `★${starred}`}
-                  </text>
-                </g>
-              )}
-            </g>
-          )
+{/* ONE BUBBLE PER FACTION, laid out per CELL rather than per stack — see
+            fanOut. Drawing each stack at the cell's anchor put them on top of
+            one another, so a contested territory showed a single faction. */}
+        {laidOut.map(({ key, group, at, slots }) => {
+          if (!at) return null
+          return group.map((s, i) => {
+            const slot = slots[i]
+            const x = at.x + slot.x
+            const y = at.y + slot.y
+            // EVERYTHING ON THE BUBBLE SCALES WITH IT. A badge kept at its
+            // full size on a squeezed bubble covers the number underneath.
+            const k = slot.r / BUBBLE_R
+            const advisor = s.posture === 'advisor'
+            const starred = s.starred ?? 0
+            return (
+              <g key={`${key}|${s.faction ?? ''}|${s.posture ?? ''}`}
+                data-cell={key}
+                data-posture={advisor ? 'advisor' : undefined}
+                data-starred={starred > 0 ? starred : undefined}>
+                {/* WHOSE IT IS, in words, for the crowded cells where the ring
+                    has shrunk the colour discs to something you would want to
+                    hover to be sure of. */}
+                <title>{`${s.faction ? FACTION_LOOK[s.faction].name : 'Forces'}: ${s.count}`}</title>
+                <circle cx={x} cy={y} r={slot.r}
+                  fill={advisor && s.faction
+                    ? `url(#advisor-check-${s.faction})`
+                    : s.faction ? FACTION_LOOK[s.faction].colour : '#1d3f70'}
+                  stroke={PALE} strokeWidth={1.5 * k} />
+                <text x={x} y={y} fontSize={10 * k}
+                  fill={advisor ? '#1a1208' : PALE}
+                  stroke={advisor ? PALE : undefined} strokeWidth={advisor ? 2.4 * k : undefined}
+                  paintOrder="stroke"
+                  textAnchor="middle" dominantBaseline="central"
+                  fontFamily="Georgia, serif">{s.count}</text>
+                {/* THE ELITES ARE IN THIS STACK. A star badge, with the number
+                    beside it when the stack is mixed — three Fedaykin standing
+                    with seven plain is a different thing from ten plain, and the
+                    storm does not care but every battle plan does. */}
+                {starred > 0 && (
+                  <g>
+                    <title>{`${starred} elite of ${s.count}`}</title>
+                    <circle cx={x + 8 * k} cy={y - 8 * k}
+                      r={(starred >= s.count ? 5.2 : 6.4) * k}
+                      fill="#3f2c1a" stroke="#f0c93f" strokeWidth={k} />
+                    <text x={x + 8 * k} y={y - 8 * k} fontSize={7.5 * k} fill="#f0c93f"
+                      textAnchor="middle" dominantBaseline="central"
+                      fontFamily="Georgia, serif">
+                      {starred >= s.count ? '★' : `★${starred}`}
+                    </text>
+                  </g>
+                )}
+              </g>
+            )
+          })
         })}
 
         {Object.entries(spice).map(([id, n]) => {
           const t = DUNE_TERRITORIES.find(x => x.id === id)
-          const at = t ? cellAt(id, t.spiceSector ?? '') ?? t.centroid : null
+          const sector = t?.spiceSector ?? ''
+          const at = t ? cellAt(id, sector) ?? t.centroid : null
           if (!at || n <= 0) return null
+          // PUSHED CLEAR OF THE FORCES STANDING HERE. The token sat at a fixed
+          // offset that used to clear a single bubble; a ring of six reaches
+          // past it, and spice drawn over a stack hides the stack.
+          const reach = crowding.get(`${id}|${sector}`) ?? 0
+          const off = Math.max(15, reach + 11)
           return (
             <g key={id}>
-              <circle cx={at.x + 15} cy={at.y - 13} r="10" fill="#c98a1e" stroke="#3f2c1a" strokeWidth="1.4" />
-              <text x={at.x + 15} y={at.y - 13} fontSize="11" fill="#3f2c1a" textAnchor="middle"
+              <circle cx={at.x + off} cy={at.y - off * 0.87} r="10" fill="#c98a1e" stroke="#3f2c1a" strokeWidth="1.4" />
+              <text x={at.x + off} y={at.y - off * 0.87} fontSize="11" fill="#3f2c1a" textAnchor="middle"
                 dominantBaseline="central" fontWeight="bold" fontFamily="Georgia, serif">{n}</text>
             </g>
           )

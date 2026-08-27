@@ -14,6 +14,7 @@ import {
   defaultFremenPlacement, defaultTraitor, settle, isOutstanding,
   distributeAmong, traitorDeck, treacheryDeck, defaultSector, startingTreachery, starredOf, allReady,
   answerAdvisorPlacement, defaultAdvisorPlacement, postureFor, answerable, defaultOrder,
+  shipAdvisor,
   TRAITORS_DEALT, KEEPS_ALL_TRAITORS, ADVISOR_FACTION, SETUP_SECONDS, PREDICTION_TURNS,
 } from '@/lib/dune/setup'
 import { strongholdsHeld } from '@/lib/dune/hud'
@@ -650,8 +651,16 @@ const deal = (over: Partial<Parameters<typeof openingPosition>[0]> = {}) =>
   check('...and nothing to decide about it',
     basic.state.setup.outstanding.some(d => d.kind === 'advisor-placement'), false)
 
-  // ADVANCED: nothing placed, and a decision instead.
-  check('in the advanced game nothing is placed for them', bgIn(advanced), null)
+  // ADVANCED: the same Polar Sink force, AND a decision on top of it.
+  //
+  // THE ADVISOR IS A SECOND FORCE. This block used to assert the opposite —
+  // that the advanced game placed nothing and the advisor was their one force
+  // — which left them off the Polar Sink and a token short on the planet. The
+  // basic placement is not replaced by the advanced game; it is added to.
+  check('in the advanced game they hold the Polar Sink too',
+    bgIn(advanced)?.territoryId, placement.kind === 'fixed' ? placement.territoryId : null)
+  check('...with the same one force', bgIn(advanced)?.count, 1)
+  check('...standing as a fighter', bgIn(advanced)?.posture ?? 'fighter', 'fighter')
   check('...and they owe a placement',
     isOutstanding(advanced.state.setup.outstanding, 'advisor-placement', ADVISOR_FACTION), true)
 
@@ -664,6 +673,44 @@ const deal = (over: Partial<Parameters<typeof openingPosition>[0]> = {}) =>
   const afterFremen = settle(advanced.state.setup.outstanding, 'fremen-placement', 'fremen' as FactionId)
   check('...and can be, once the Fremen have placed',
     answerable(afterFremen, 'advisor-placement', ADVISOR_FACTION), true)
+
+  // ── AND THE ADVISOR IS ONE OF THEIR TWENTY ──────────────────────────────
+  // Not a free piece conjured for the advanced game. The reserve it leaves has
+  // to go down by the one the board goes up by, or the Bene Gesserit play the
+  // whole game a token richer than everybody else — the sort of edge nobody
+  // notices because it never appears as an event, only as a number.
+  {
+    const bg = advanced.state.players.find(p => p.faction === ADVISOR_FACTION)!
+    const card = factionById(ADVISOR_FACTION)!.forces
+    check('before the advisor goes out they hold their full reserve',
+      bg.reserves, card.reserves)
+    check('...and one token on the planet', bgIn(advanced)?.count, 1)
+
+    const sent = answerAdvisorPlacement(
+      ADVISOR_FACTION, { territoryId: 'territory-20' }, advanced.state.forces)
+    check('the advisor is placeable', sent.ok, true)
+    const after = sent.ok ? shipAdvisor(advanced.state.players, ADVISOR_FACTION, sent.value) : []
+    const bgAfter = after.find(p => p.faction === ADVISOR_FACTION)!
+    check('...and comes out of the reserve', bgAfter.reserves, card.reserves - 1)
+    // TWENTY, BEFORE AND AFTER. The one number that must not move.
+    const onPlanet = (fs: readonly { faction: string; count: number }[]) =>
+      fs.filter(f => f.faction === ADVISOR_FACTION).reduce((n, f) => n + f.count, 0)
+    check('...leaving the twenty they own still twenty',
+      bgAfter.reserves + onPlanet([...advanced.state.forces, ...(sent.ok ? sent.value : [])]),
+      card.reserves + card.onPlanet)
+
+    // NOBODY ELSE IS TOUCHED by a Bene Gesserit token moving.
+    check('...and no other seat loses anything',
+      after.filter(p => p.faction !== ADVISOR_FACTION)
+        .map(p => p.reserves),
+      advanced.state.players.filter(p => p.faction !== ADVISOR_FACTION)
+        .map(p => p.reserves))
+    // A RESERVE NEVER GOES NEGATIVE, whatever it is handed.
+    check('...and a reserve is never spent past empty',
+      shipAdvisor([{ faction: ADVISOR_FACTION, reserves: 0 }], ADVISOR_FACTION,
+        [{ faction: ADVISOR_FACTION, territoryId: 'territory-03', sector: 'sector-1', count: 3 }])[0].reserves,
+      0)
+  }
 
   // NO FREMEN, NOTHING TO WAIT FOR. A table without them must not leave the
   // Bene Gesserit blocked on an answer nobody is going to give.
@@ -813,6 +860,14 @@ const deal = (over: Partial<Parameters<typeof openingPosition>[0]> = {}) =>
     /answerAdvisorPlacement\([\s\S]{0,200}state\.forces/.test(answerCase), true)
   check('...as the seat the server says is asking',
     /answerAdvisorPlacement\(\s*myFaction/.test(answerCase), true)
+  // AND THE TOKEN COMES OFF THE PILE. shipAdvisor holds the rule; what is
+  // checked here is that the endpoint actually calls it on BOTH routes onto
+  // the board. Miss either and the Bene Gesserit play a token up — silently,
+  // because it never appears as an event, only as a number nobody recounts.
+  check('an answered advisor comes out of reserves too',
+    /players: shipAdvisor\(/.test(answerCase), true)
+  check('the clock pays for the advisor out of reserves too',
+    /players = shipAdvisor\(players, decision\.faction, silent\)/.test(answerCase), true)
   // AND THE TIMED-OUT PATH RESOLVES IN ORDER.
   check('the defaults run in dependency order',
     /for \(const decision of defaultOrder\(outstanding\)\)/.test(answerCase), true)

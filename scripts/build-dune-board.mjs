@@ -591,7 +591,17 @@ for (const t of territories) {
       }
       pick = best ?? pts[0]
     }
-    t.cells.push({ n: s.n, share: s.share, at: pick })
+    // HOW MUCH ROOM THIS CELL HAS, so the board can fan several factions
+    // around the anchor without pushing any of them over the border into a
+    // territory they are not in. Measured to the TERRITORY's edge, not the
+    // sector's: which territory a bubble is in decides whether there is a
+    // battle, so that is the line that must never be crossed, while which
+    // sector it is in is carried by the anchor the fan is centred on.
+    //
+    // Off the outline rather than a hand-tuned number per territory: the
+    // small ones are small in the artwork, and a table of guesses is a table
+    // that disagrees with the board the moment either is redrawn.
+    t.cells.push({ n: s.n, share: s.share, at: pick, room: edgeDistance(pick, t.poly) })
   }
   for (const s of t.sectors) {
     if (s.share < OVERLAP_REVIEW) borderline.push({ id: t.id, sector: s.n, share: s.share })
@@ -1740,7 +1750,14 @@ lines.push(`}`)
 lines.push(``)
 lines.push(`/** A (territory, sector) pair — the actual unit of occupancy. 'at' is where`)
 lines.push(` *  to draw the stack; areaShare is how much of the territory this cell is. */`)
-lines.push(`export interface DuneCell { sector: string; at: { x: number; y: number }; areaShare: number }`)
+lines.push(`export interface DuneCell {`)
+lines.push(`  sector: string`)
+lines.push(`  at: { x: number; y: number }`)
+lines.push(`  areaShare: number`)
+lines.push(`  /** Distance from 'at' to the territory's edge: the largest disc that`)
+lines.push(`   *  fits here. What the board fans several factions' bubbles inside. */`)
+lines.push(`  room: number`)
+lines.push(`}`)
 lines.push(``)
 lines.push(`export interface DuneSector { id: string; number: number; fromBearing: number; toBearing: number }`)
 lines.push(`export interface DuneMarker { id: string; x: number; y: number }`)
@@ -1783,7 +1800,7 @@ for (const t of territories) {
   lines.push(`    adjacent: [${t.adjacent.map(q).join(', ')}],`)
   lines.push(`    cells: [`)
   for (const c of t.cells) {
-    lines.push(`      { sector: ${q(`sector-${c.n}`)}, at: { x: ${round(c.at[0])}, y: ${round(c.at[1])} }, areaShare: ${round(c.share, 3)} },`)
+    lines.push(`      { sector: ${q(`sector-${c.n}`)}, at: { x: ${round(c.at[0])}, y: ${round(c.at[1])} }, areaShare: ${round(c.share, 3)}, room: ${round(c.room, 1)} },`)
   }
   lines.push(`    ],`)
   lines.push(`  },`)
