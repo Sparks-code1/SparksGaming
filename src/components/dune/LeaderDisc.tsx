@@ -189,12 +189,15 @@ export function portraitPlacement(portrait: Portrait, pr: number, cx = 0, cy = 0
  * the Guild's representative in the same sense — not the Guild Representative,
  * who is one of their five and does fight.
  *
- * TWO HAVE NO PICTURE YET. Paul and Liet-Kynes are named and drawn as the
- * faction's mark instead of a face, which is an obvious gap rather than a wrong
- * face — the alternative was borrowing a leader's portrait and captioning it
- * with somebody else's name. Drop Paul.png or Liet_Kynes.png into
- * public/dune-leaders and leaderportraittest will fail until it is registered
- * here, which is the same rule the leaders live under.
+ * ALL SIX HAVE A PICTURE. Paul and Liet-Kynes were the two gaps, drawn as the
+ * faction's mark instead of a face; their artwork arrived and the orphan check
+ * in leaderportraittest is what said so — the files were in the folder, nothing
+ * pointed at them, and the suite went red until these two rows existed. That is
+ * the rule the leaders live under and it worked in both directions.
+ *
+ * The fallback path is still real and still tested: FigureDisc draws the
+ * faction's mark for any figure without a portrait, which is what the next
+ * faction added to the game will get.
  *
  * The framings are the same knobs LEADER_PORTRAITS uses, and needed here more
  * than there: Emperor.png is the only landscape picture in the folder and Edric
@@ -208,8 +211,19 @@ export interface FactionFigure {
 }
 
 export const FACTION_FIGURES: Record<FactionId, FactionFigure> = {
-  atreides: { name: 'Paul Atreides' },
-  fremen: { name: 'Liet-Kynes' },
+  // The largest source in the folder at 1122x1402, and close-framed already —
+  // head and shoulders against sand. Cropped to the top 60% so the face sits a
+  // little above the disc's centre, as the other portraits do.
+  atreides: {
+    name: 'Paul Atreides',
+    portrait: { src: '/dune-leaders/Paul_Atreides.png', w: 1122, h: 1402, focusX: 0.52, focusY: 0.30 },
+  },
+  // Same 400x500 shape as Stilgar and Mohiam, but framed higher in its own
+  // canvas — hence a tighter crop than theirs rather than the same number.
+  fremen: {
+    name: 'Liet-Kynes',
+    portrait: { src: '/dune-leaders/Liet_Kynes.png', w: 400, h: 500, focusY: 0.28 },
+  },
   // Square, and the head sits above the middle of it — the lift is small
   // because the picture is already close-framed.
   harkonnen: {
@@ -249,11 +263,11 @@ export const FACTION_FIGURES: Record<FactionId, FactionFigure> = {
  * would read as a picture that failed to load.
  */
 export function FigureDisc(
-  { faction, r = 60 }: { faction: FactionId; r?: number },
+  { faction, r = 60, figure = FACTION_FIGURES[faction] }:
+  { faction: FactionId; r?: number; figure?: FactionFigure },
 ) {
   const id = useId()
   const clip = `figure-clip-${id}`
-  const figure = FACTION_FIGURES[faction]
   const look = FACTION_LOOK[faction]
   const portrait = figure.portrait
   // Nearly the whole disc: there is no name inside the rim to leave room for,

@@ -117,10 +117,12 @@ const everyLeader = FACTION_IDS.flatMap(id =>
     .map(l => `${l.name} (${stems.get(key(l.name))})`)
   check('no leader has artwork nobody points at', unregistered, [])
 
-  // And the reverse: a file claimed by neither table. NONE is expected now —
-  // see the note above. Paul and Liet-Kynes have no picture yet, so this is
-  // also what will speak up the day one is dropped into the folder and nobody
-  // registers it, which is the mistake this whole suite exists to catch.
+  // And the reverse: a file claimed by neither table. NONE is expected.
+  //
+  // THIS ONE HAS ALREADY EARNED ITS KEEP. Paul and Liet-Kynes were the two
+  // figures with no artwork; the files arrived in the folder, nothing pointed
+  // at them, and this is the check that went red and said so rather than the
+  // strategy card quietly going on showing a faction mark.
   const orphans = files.filter(f => !leaderFiles.has(f) && !figureFiles.has(f))
   check('no artwork is left pointing at nobody', orphans, [])
 }
@@ -230,17 +232,34 @@ const everyLeader = FACTION_IDS.flatMap(id =>
   check('a figure with a picture draws it', /<image[^>]+Baron\.png/.test(baron), true)
   check('...and says whose face it is', baron.includes('Baron Vladimir Harkonnen'), true)
 
-  const paul = drawn('atreides' as FactionId)
+  // ── THE FALLBACK, against a figure that has no picture ──────────────────
+  // AGAINST A MADE-UP ONE, not against whichever faction happens to be
+  // unfinished. This was written against the Atreides while Paul had no
+  // artwork, and the artwork arriving turned a passing check into a failing
+  // one without anything about the fallback changing — the same mistake, in
+  // the same file, that the leader fallback check below already records.
+  // A check that breaks when the game gets MORE finished is measuring the
+  // wrong thing.
+  const nobody = renderToStaticMarkup(createElement(FigureDisc, {
+    faction: 'atreides' as FactionId, r: 40, figure: { name: 'Nobody At All' },
+  }))
   // NO PORTRAIT — not "no image". The Atreides mark is itself a supplied
   // picture (see IMAGE_MARKS in SeatLayer), so the disc carries an <image>
   // either way; what must not be on it is a face out of the leader folder.
   check('a figure with none draws no portrait',
-    /<image[^>]+dune-leaders/.test(paul), false)
+    /<image[^>]+dune-leaders/.test(nobody), false)
   // The faction's mark instead — the same drawing as the back of its leaders'
   // discs, which is what data-face="down" identifies. A bare coloured circle
   // would read as a picture that failed to load.
-  check('...and falls back to the faction mark', paul.includes('data-face="down"'), true)
-  check('...while still naming them', paul.includes('Paul Atreides'), true)
+  check('...and falls back to the faction mark', nobody.includes('data-face="down"'), true)
+  check('...while still naming them', nobody.includes('Nobody At All'), true)
+
+  // And every real figure now has one, which is the state the fallback is NOT
+  // for. Printed rather than asserted, so a faction losing its portrait is
+  // visible in the run.
+  const paul = drawn('atreides' as FactionId)
+  check('the Atreides figure has a face now',
+    /<image[^>]+Paul_Atreides\.png/.test(paul), true)
 }
 
 // ── the other side of the disc ───────────────────────────────────────────
