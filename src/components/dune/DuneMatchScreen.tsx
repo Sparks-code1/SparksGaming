@@ -59,6 +59,8 @@ import type { DuneSecrets } from '@/lib/dune/charity'
 import type { FactionId } from '@/types/Dune/Faction'
 import type { BidRefusal } from '@/lib/dune/bidding'
 import { advanceHold, phaseWindowOpen, phaseAfter } from '@/lib/dune/phaseAdvance'
+import { revivableLeaders, REVIVAL_CAP } from '@/lib/dune/revival'
+import { factionById } from '@/data/dune/factions'
 import { DuneGameScreen } from './DuneGameScreen'
 import type { PlacedForce } from './SetupWindow'
 import { WormPlacementPanel } from './WormPlacementPanel'
@@ -350,8 +352,31 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
   const hold = row && !row.winner ? advanceHold(row, now) : null
   const amHost = row?.host ? seat?.faction === row.host : true
   const stormOwed = row?.phase === 'Storm' && row.stormMoved !== row.turn
+  /** Whether this seat has anything to raise: dead forces, or a leader the
+   *  open gate offers. Decides the panel AND the notice board opening at all —
+   *  a seat with buttons behind a box that never renders has no buttons. */
+  const canRevive = row?.phase === 'Revival' && !!seat && (() => {
+    const held = row.tanks?.forces?.[seat.faction]
+    return (!!held && held.plain + held.starred > 0)
+      || (row.tanks ? revivableLeaders(row.tanks, seat.faction).length > 0 : false)
+  })()
   const mayAdvance = !!seat && !!row && !row.winner
     && !hold && (amHost || !phaseWindowOpen(row, now))
+
+  /**
+   * ONE PRESS, ONE FORCE. The server prices every press — the sheet's free
+   * ones first, two spice after — and the caps are its to enforce; offering a
+   * quantity picker here would be a second copy of arithmetic the refusal
+   * codes already speak. The response's cost is said back to this seat alone.
+   */
+  const revive = async (what: { plain?: number; starred?: number } | { leader: string }) => {
+    const res = await send({ type: 'REVIVE', ...what })
+    if (!res) { say('revival refused.'); return }
+    const said = res.data as { cost?: number; leader?: string }
+    say(said.leader
+      ? `revived ${said.leader} (${said.cost} spice).`
+      : `revived a force${said.cost ? ` (${said.cost} spice)` : ' (free)'}.`)
+  }
 
   const advance = async () => {
     const res = await send({ type: 'ADVANCE_PHASE' })
@@ -500,7 +525,7 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
    * notices moved to 52, and 52 is where a two-player table keeps its button.
    */
   const notices = (setup || row?.spiceBlow || expired || spectating || notSeated || feed !== 'live'
-    || row?.winner || row?.stormReport?.turn === row?.turn || mayAdvance || hold)
+    || row?.winner || row?.stormReport?.turn === row?.turn || mayAdvance || hold || canRevive)
     ? (
         <div data-layer="dune-notices" style={{
           padding: 10, font: `12px ${SERIF}`, color: PALE,
@@ -643,6 +668,59 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
               }[hold.code] ?? hold.code}
             </p>
           )}
+          {/* ── REVIVAL: the Tanks pay out ──────────────────────────────
+              Shown to a seat with dead to raise, while the turn is at the
+              phase. The Tanks are public — the counts here are on the table
+              for everyone — but the buttons are this seat's own. */}
+          {canRevive && seat && row && (() => {
+            const held = row.tanks?.forces?.[seat.faction] ?? { plain: 0, starred: 0 }
+            const ledger = row.revival?.turn === row.turn ? row.revival.done : {}
+            const mine = ledger[seat.faction] ?? { forces: 0, starred: 0 }
+            const room = REVIVAL_CAP - mine.forces
+            const free = Math.max(0, (factionById(seat.faction)?.freeRevivals ?? 0) - mine.forces)
+            const leaders = row.tanks ? revivableLeaders(row.tanks, seat.faction) : []
+            if (held.plain + held.starred === 0 && leaders.length === 0) return null
+            return (
+              <div style={{
+                margin: '0 0 8px', padding: 8, borderRadius: 6, background: '#1d2a44',
+                lineHeight: 1.6,
+              }}>
+                <b style={{ display: 'block', marginBottom: 2 }}>Revival</b>
+                Your tanks: {held.plain} plain{held.starred > 0 ? `, ${held.starred} starred` : ''}.
+                {room <= 0
+                  ? ' Your three are back for this turn.'
+                  : ` ${room} more may return${free > 0 ? ` (${free} free)` : ' (2 spice each)'}.`}
+                <span style={{ display: 'block', marginTop: 4 }}>
+                  {held.plain > 0 && room > 0 && (
+                    <button disabled={busy} onClick={() => void revive({ plain: 1 })}
+                      style={{ marginRight: 6 }}>
+                      Revive 1{free > 0 ? ' (free)' : ' (2 spice)'}
+                    </button>
+                  )}
+                  {held.starred > 0 && room > 0 && mine.starred < 1 && (
+                    <button disabled={busy} onClick={() => void revive({ starred: 1 })}>
+                      Revive 1 starred{free > 0 ? ' (free)' : ' (2 spice)'}
+                    </button>
+                  )}
+                </span>
+                {leaders.length > 0 && !mine.leader && (
+                  <span style={{ display: 'block', marginTop: 6 }}>
+                    {/* ONE A TURN, at fighting strength — the price is on the
+                        disc, so it is printed on the button. */}
+                    {leaders.map(l => (
+                      <button key={l.name} disabled={busy}
+                        onClick={() => void revive({ leader: l.name })}
+                        style={{ display: 'block', width: '100%', textAlign: 'left', marginTop: 3 }}>
+                        Revive {l.name} ({factionById(seat.faction)?.leaders
+                          .find(x => x.name === l.name)?.strength} spice)
+                      </button>
+                    ))}
+                  </span>
+                )}
+              </div>
+            )
+          })()}
+
           {mayAdvance && (
             <div style={{ margin: '0 0 8px' }}>
               <button onClick={() => void advance()} disabled={busy}

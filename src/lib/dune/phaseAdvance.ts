@@ -17,9 +17,12 @@
  *   CHOAM Charity    — opens the claim window, which shuts on its own clock.
  *   Bidding          — draws the lot and opens the auction, which runs on the
  *                      bid clock until it settles.
- *   Revival, Shipment and Movement, Battles — NOT BUILT YET, and honest about
- *                      it: they enter, hold a short window so the table sees
- *                      where the turn is, and advance. Placeholders, not rules.
+ *   Revival          — the Tanks pay out: see lib/dune/revival and the
+ *                      REVIVE action. The phase itself holds nothing — reviving
+ *                      is optional — so the look-window is its clock.
+ *   Shipment and Movement, Battles — NOT BUILT YET, and honest about it: they
+ *                      enter, hold a short window so the table sees where the
+ *                      turn is, and advance. Placeholders, not rules.
  *   Spice Collection — pays the documented city income (advanced game); the
  *                      board-spice half of the phase is not built and is
  *                      SAID to be not built rather than guessed at.
@@ -44,6 +47,8 @@ import {
 } from './storm'
 import type { StormOutcome } from './storm'
 import { strongholdsHeld } from './hud'
+import { bankDead } from './revival'
+import type { Tanks } from './revival'
 import { factionById } from '@/data/dune/factions'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 
@@ -75,6 +80,7 @@ export interface PhaseClock { turn: number; phase: GamePhase; closesAt: number }
 export interface AdvanceState {
   phase: GamePhase
   turn: number
+  tanks?: Tanks
   mode: GameMode
   storm: SectorId
   shieldWall: ShieldWall
@@ -211,7 +217,7 @@ export interface StormReport {
  */
 export function stormEntry(state: AdvanceState, roll: number): {
   patch: Pick<AdvanceState, 'storm' | 'forces' | 'stormMoved'> & {
-    spiceOnBoard: Record<string, number>; stormReport: StormReport
+    spiceOnBoard: Record<string, number>; stormReport: StormReport; tanks: Tanks
   }
   outcome: StormOutcome
 } {
@@ -225,6 +231,9 @@ export function stormEntry(state: AdvanceState, roll: number): {
       storm: outcome.to,
       forces: outcome.forcesAfter,
       spiceOnBoard: outcome.spiceOnBoard,
+      // INTO THE TANKS, not into thin air. Revival reads this; a storm that
+      // reports its dead without banking them is a storm that cremates.
+      tanks: bankDead(state.tanks, outcome.killed),
       stormMoved: state.turn,
       stormReport: {
         turn: state.turn, roll, from: outcome.from, to: outcome.to,

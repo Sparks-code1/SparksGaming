@@ -46,6 +46,9 @@ import {
   charityGrant, isEligibleForCharity, readSpice, CHARITY_TOPS_UP_TO, CHARITY_WINDOW_MS,
 } from '../_shared/duneCharity.gen.ts'
 import {
+  bankDead, reviveForces, reviveLeader, emptyTanks,
+} from '../_shared/duneRevival.gen.ts'
+import {
   phaseAfter, advanceHold, phaseWindowOpen, rollStorm, stormEntry, cityIncome,
   mentatVerdict, biddingOpening, PHASE_SECONDS, TURN_LIMIT,
 } from '../_shared/dunePhase.gen.ts'
@@ -199,6 +202,8 @@ Deno.serve(async req => {
     spiceDeck: Record<string, unknown>
     spiceOnBoard: Record<string, number>
     forces: ForceRow[]
+    /** Who the worms ate, for the Tanks. The blow's toTanks list. */
+    dead?: ForceRow[]
     deck: SpiceCardRow[]
     said: Record<string, unknown>
   }): Promise<Response> => {
@@ -214,6 +219,10 @@ Deno.serve(async req => {
         spiceDeck: { ...done.spiceDeck, turn: done.turn },
         spiceOnBoard: done.spiceOnBoard,
         forces: done.forces,
+        // THE DEVOURED GO TO THE TANKS, in the same write that removed them
+        // from the board — split across two, a crash between cremates them.
+        tanks: bankDead(
+          (baseState.tanks ?? emptyTanks()) as never, (done.dead ?? []) as never),
         awaiting: null,
       },
       p_secrets: {},
@@ -286,11 +295,13 @@ Deno.serve(async req => {
       forces: ForceRow[]; spiceOnBoard: Record<string, number>
       a?: unknown; b?: unknown; nexus?: boolean
       blockedByStorm?: unknown; devouredByFremen?: unknown
+      toTanks?: ForceRow[]
     }
     return await commitBlow({
       turn,
       spiceDeck: publicSpiceDeck({ deck: out.deck, discardA: out.discardA, discardB: out.discardB }),
       spiceOnBoard: out.spiceOnBoard,
+      dead: out.toTanks ?? [],
       // THE SURVIVORS, returned by the phase rather than filtered here. The
       // carry has been to the database and back, so nothing in toTanks is
       // identical to anything in state.forces and a filter on it would remove
@@ -393,6 +404,7 @@ Deno.serve(async req => {
         // doing it by hand is where the add-versus-set bug lived.
         spiceOnBoard: applyBlowToBoard(spiceOnBoard, out),
         forces: forces.filter(f => !eaten.has(f)),
+        dead: out.toTanks,
         deck: out.deck,
         said: { placed: out.placed, blockedByStorm: out.blockedByStorm, devoured: out.devoured },
       })
@@ -1534,6 +1546,91 @@ Deno.serve(async req => {
         default:
           return await plainly({ placeholder: true })
       }
+    }
+
+    // ── Revival: the Tanks pay out ───────────────────────────────────────────
+    // Forces to RESERVES, never the board; spice to the BANK, never the
+    // Emperor — that redirect is treachery's alone. The rules live in the
+    // shared bundle (lib/dune/revival); what is here is the part only a
+    // server can do: the purse, and the per-turn ledger.
+    case 'REVIVE': {
+      if (state.phase !== 'Revival') {
+        return json({ error: 'the turn is not at revival', code: 'wrong-phase' }, 409)
+      }
+      const turn = typeof state.turn === 'number' ? state.turn : 0
+      const tanks = (state.tanks ?? emptyTanks()) as never
+      // THE TURN'S LEDGER, stamped like charity's window: last turn's
+      // revivals never count against this turn's allowance.
+      const ledger = state.revival as
+        { turn: number; done: Record<string, { forces: number; starred: number; leader?: string }> } | undefined
+      const done = ledger?.turn === turn ? { ...ledger.done } : {}
+      const soFar = done[myFaction] ?? { forces: 0, starred: 0 }
+
+      // The purse, theirs alone, read to be spent.
+      const { data: row } = await admin
+        .from('match_secrets').select('data')
+        .eq('match_id', matchId).eq('player_id', playerId).maybeSingle()
+      const secrets = (row?.data ?? {}) as DuneSecrets
+      const spice = readSpice(secrets)
+
+      // ── which revival this is ──────────────────────────────────────────
+      const asked = action.leader
+        ? reviveLeader({
+            faction: myFaction as never, tanks, leader: String(action.leader), soFar, spice,
+          })
+        : reviveForces({
+            faction: myFaction as never, tanks,
+            plain: Number(action.plain ?? 0), starred: Number(action.starred ?? 0),
+            soFar, spice,
+          })
+      if (!asked.ok) {
+        return json({ error: 'that revival is not legal', code: asked.refusal }, 409)
+      }
+
+      // TO THE BANK. Not the Emperor: their redirect is written on the
+      // treachery rules and nowhere else.
+      const moved = applySpiceMoves(
+        { [playerId]: spice },
+        asked.cost > 0
+          ? [{ from: playerId, to: BANK, amount: asked.cost, reason: 'revival' }]
+          : [],
+      )
+      if (!moved.ok) return json({ error: 'the spice could not move', code: moved.refusal }, 500)
+
+      // TO RESERVES, never the board. The board changes only by shipment.
+      const players = ((state.players ?? []) as {
+        faction: string; reserves: number; reservesStarred?: number
+      }[]).map(p => {
+        if (p.faction !== myFaction || 'leader' in asked) return p
+        const back = (asked as { toReserves: { plain: number; starred: number } }).toReserves
+        return {
+          ...p,
+          reserves: p.reserves + back.plain,
+          ...(back.starred > 0
+            ? { reservesStarred: (p.reservesStarred ?? 0) + back.starred }
+            : null),
+        }
+      })
+
+      done[myFaction] = asked.done
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state, tanks: asked.tanks, players,
+          revival: { turn, done },
+        },
+        p_secrets: { [playerId]: { ...secrets, spice: moved.purses[playerId] } },
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      // The cost is the caller's own business and goes back to them alone —
+      // like charity's grant, it is not written where the table reads.
+      return json({
+        cost: asked.cost,
+        ...('leader' in asked ? { leader: asked.leader } : { toReserves: asked.toReserves }),
+        version: data[0].version,
+      })
     }
 
     case 'SEED_SPICE': {

@@ -393,7 +393,7 @@ const at = (phase: GamePhase, over: Partial<AdvanceState> = {}): AdvanceState =>
 // ── the endpoint drives it ────────────────────────────────────────────────
 {
   const fn = code('supabase/functions/dune-action/index.ts')
-  const advCase = fn.slice(fn.indexOf("case 'ADVANCE_PHASE'"), fn.indexOf("case 'SEED_SPICE'"))
+  const advCase = fn.slice(fn.indexOf("case 'ADVANCE_PHASE'"), fn.indexOf("case 'REVIVE'"))
   check('the endpoint has the advance', advCase.length > 800, true)
 
   // WHO. The host's faction from the state; the row's creator for a match

@@ -118,6 +118,17 @@ const TARGETS = [
     exportName: 'openingPosition',
   },
   {
+    entry: 'src/lib/dune/revival.ts',
+    out: 'supabase/functions/_shared/duneRevival.gen.ts',
+    what: 'revival',
+    // The caps, the free allowance, the starred limit and the leader cycle
+    // are one set of rules. A second copy on the server would be a second
+    // answer to "may this come back", and the two would disagree the first
+    // time either was fixed.
+    mustExport: /export\s*\{[^}]*reviveForces/,
+    exportName: 'reviveForces',
+  },
+  {
     entry: 'src/lib/dune/phaseAdvance.ts',
     out: 'supabase/functions/_shared/dunePhase.gen.ts',
     what: 'phase loop',

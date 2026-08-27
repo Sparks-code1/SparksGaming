@@ -1203,6 +1203,25 @@ var FACTIONS = {
 };
 var factionById = (id) => FACTIONS[id] ?? null;
 
+// src/lib/dune/revival.ts
+var emptyTanks = () => ({ forces: {}, leaders: {} });
+function bankDead(tanks, killed) {
+  const next = {
+    ...tanks ?? emptyTanks(),
+    forces: { ...tanks?.forces ?? {} }
+  };
+  for (const k of killed) {
+    if (!k.faction || k.count <= 0) continue;
+    const held = next.forces[k.faction] ?? { plain: 0, starred: 0 };
+    const starred = Math.min(k.count, k.starred ?? 0);
+    next.forces[k.faction] = {
+      plain: held.plain + (k.count - starred),
+      starred: held.starred + starred
+    };
+  }
+  return next;
+}
+
 // src/lib/dune/phaseAdvance.ts
 var TURN_LIMIT = 10;
 var WIN_STRONGHOLDS = 3;
@@ -1259,6 +1278,9 @@ function stormEntry(state, roll) {
       storm: outcome.to,
       forces: outcome.forcesAfter,
       spiceOnBoard: outcome.spiceOnBoard,
+      // INTO THE TANKS, not into thin air. Revival reads this; a storm that
+      // reports its dead without banking them is a storm that cremates.
+      tanks: bankDead(state.tanks, outcome.killed),
       stormMoved: state.turn,
       stormReport: {
         turn: state.turn,

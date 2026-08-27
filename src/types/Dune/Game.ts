@@ -340,6 +340,28 @@ export interface DuneGameState {
     spiceCleared: { territoryId: string; amount: number }[]
   }
   /**
+   * The Tleilaxu Tanks: the dead, waiting on revival.
+   *
+   * PUBLIC, because at a table the Tanks sit in the open — everyone can count
+   * the forces in them and read the leader discs. Fed by every killer (the
+   * storm, the worms; battles when they land) and drained by the Revival
+   * phase. See lib/dune/revival for the shape and every rule.
+   */
+  tanks?: {
+    forces: Record<string, { plain: number; starred: number }>
+    leaders: Record<string, { name: string; faceDown?: boolean }[]>
+    leaderRevivalOpen?: string[]
+  }
+  /**
+   * What each faction has revived THIS turn, for the caps: three forces, one
+   * starred, one leader. Stamped with the turn the way charity's window is,
+   * so last turn's revivals never count against this turn's allowance.
+   */
+  revival?: {
+    turn: number
+    done: Record<string, { forces: number; starred: number; leader?: string }>
+  }
+  /**
    * The current phase's look-at-it window — see PHASE_SECONDS in
    * lib/dune/phaseAdvance. Before it shuts only the host advances; after it,
    * anyone. Carries its own (turn, phase) so a clock outliving its phase
