@@ -65,7 +65,14 @@ Starts the Vite dev server and opens the app in an Electron window pointed at it
 ## Auto-updates
 
 The installed app updates itself from **GitHub Releases**
-(`sparks-code1/risk-legacy-digital`), via `electron-updater`.
+(`sparks-code1/SparksGaming`), via `electron-updater`.
+
+**The repo was renamed** from `risk-legacy-digital` (2026-08-27). Installed
+builds from before the rename carry the old name in their baked-in
+`app-update.yml` and reach releases through GitHub's rename redirect — checked
+live, the old URL 301s to a 200. That redirect lasts only as long as no new
+repository takes the old name, so `risk-legacy-digital` must never be reused
+under this account while any pre-rename install is out there.
 
 **What players see.** A few seconds after launch the app quietly checks for a
 newer release. If there is one it downloads in the background — a small pill in
@@ -115,7 +122,7 @@ Two things silently stop clients seeing a release. Both look like success locall
 Check what a client actually sees. This must return **200**:
 
 ```bash
-curl -sI -o /dev/null -w "%{http_code}\n" https://github.com/sparks-code1/risk-legacy-digital/releases/latest/download/latest.yml
+curl -sI -o /dev/null -w "%{http_code}\n" https://github.com/sparks-code1/SparksGaming/releases/latest/download/latest.yml
 ```
 
 Also: the build fails if the Vite **dev server** is running — its file watcher

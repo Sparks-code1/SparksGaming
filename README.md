@@ -1,8 +1,7 @@
-# risk-legacy-digital
-Risk legacy on computer
-# Risk Legacy Digital
+# SparksGaming
 
-A digital recreation of Risk Legacy built with React, TypeScript, PixiJS, and Supabase.
+Board games on computer: a digital recreation of **Risk Legacy**, and **Dune**
+in progress — built with React, TypeScript, PixiJS, and Supabase.
 
 ## How to Run
 1. Clone the repo
