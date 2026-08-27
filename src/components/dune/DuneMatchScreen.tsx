@@ -51,7 +51,8 @@ import {
 } from '@/lib/dune/publicRow'
 import type { PublicRow } from '@/lib/dune/publicRow'
 import { dispatchDuneAction } from '@/lib/dune/duneDispatch'
-import { watchDuneChat, sayToTable, mergeChat, sayable } from '@/lib/dune/duneChat'
+import { watchDuneChat, sayTo, mergeChat, sayable } from '@/lib/dune/duneChat'
+import type { ChatScope } from '@/lib/dune/duneChat'
 import type { ChatFeed } from '@/lib/dune/duneChat'
 import type { DuneAction } from '@/lib/dune/duneDispatch'
 import type { DuneSecrets } from '@/lib/dune/charity'
@@ -85,9 +86,20 @@ function Notice({ children }: { children: React.ReactNode }) {
 
 export interface DuneMatchScreenProps {
   matchId: string
+  /**
+   * Leave the game.
+   *
+   * THE MATCH DOES NOT END. Five other people are still playing it, and the
+   * seat stays yours — walking away from the table is not resigning from the
+   * game, exactly as Risk's "← Menu" leaves a game running and resumable.
+   * Absent means no way out is offered, which is what a standalone route gets.
+   */
+  onExit?(): void
 }
 
-export function DuneMatchScreen({ matchId }: DuneMatchScreenProps) {
+export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
+  /** Confirmed before it happens — see the note where it is drawn. */
+  const [leaving, setLeaving] = useState(false)
   const [user, setUser] = useState<AuthUser | null | undefined>(undefined)
   const [seat, setSeat] = useState<MySeat | null | undefined>(undefined)
   const [row, setRow] = useState<PublicRow | null>(null)
@@ -196,11 +208,11 @@ export function DuneMatchScreen({ matchId }: DuneMatchScreenProps) {
    * rather than refusing what they type: the insert policy would refuse it
    * anyway, and a chat box that swallows what you write is worse than none.
    */
-  const speak = async (text: string) => {
+  const speak = async (text: string, scope: ChatScope = { kind: 'table' }) => {
     if (!seat || sending || !sayable(text)) return
     setSending(true)
     try {
-      await sayToTable(matchId, { playerId: seat.playerId, faction: seat.faction }, text)
+      await sayTo(matchId, { playerId: seat.playerId, faction: seat.faction }, text, scope)
       // READ-YOUR-OWN-WRITES, like everything else here: a line that does not
       // appear reads as a line that was not sent, and people say it twice.
       await talk.current?.reread()
@@ -246,6 +258,17 @@ export function DuneMatchScreen({ matchId }: DuneMatchScreenProps) {
     for (const line of winLines(last, nameOf)) announce(line)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [row?.lastAuction?.at])
+
+  /**
+   * Everybody else at the table, for addressing a line to one of them.
+   *
+   * OFF THE PUBLIC ROW, which is where the seating already is — no extra query
+   * and nothing private in it. Yourself excluded: whispering to yourself is a
+   * note, and the panel is not a notebook.
+   */
+  const others = (row?.players ?? [])
+    .filter(p => p.faction !== seat?.faction)
+    .map(p => ({ playerId: p.seat, name: nameOf(p.faction) }))
 
   const setup = openSetup(row)
   const auction = useMemo(() => openAuction(row), [row])
@@ -333,7 +356,8 @@ export function DuneMatchScreen({ matchId }: DuneMatchScreenProps) {
         seat={seat?.faction ?? null}
         own={own}
         chat={chat}
-        onSend={seat ? (text: string) => void speak(text) : undefined}
+        onSend={seat ? (text: string, scope: ChatScope) => void speak(text, scope) : undefined}
+        talkingTo={seat ? others : []}
         now={now}
         charity={charityWindow && seat ? {
           onClaim: () => void claimCharity(),
@@ -351,6 +375,59 @@ export function DuneMatchScreen({ matchId }: DuneMatchScreenProps) {
           onBid: (spice: number) => void bid({ kind: 'bid', spice }),
           onPass: () => void bid({ kind: 'pass' }),
         } : null} />
+
+      {/* THE WAY OUT.
+          Beside everything else in the corner, and it CONFIRMS FIRST: it sits
+          near controls that get pressed in a hurry, and leaving mid-auction
+          because a finger slipped is the sort of thing that ends an evening.
+          The game is never lost either way — the match runs on without you and
+          the seat stays yours, which is what the confirmation says rather than
+          leaving somebody to guess. Risk's "← Menu" works the same way. */}
+      {onExit && (
+        <button type="button" onClick={() => setLeaving(true)}
+          aria-label="Leave this game"
+          style={{
+            position: 'fixed', left: 12, bottom: 12, zIndex: 40,
+            font: `12px ${SERIF}`, padding: '6px 12px', borderRadius: 5,
+            cursor: 'pointer', background: '#0d1220ee', color: PALE,
+            border: '1px solid #ffffff26',
+          }}>
+          ← Leave
+        </button>
+      )}
+
+      {leaving && onExit && (
+        <div role="dialog" aria-modal="true" aria-label="Leave this game"
+          onClick={e => { if (e.target === e.currentTarget) setLeaving(false) }}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 60, background: '#0d1220e8',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18,
+          }}>
+          <div style={{
+            maxWidth: 420, background: '#151d30', color: PALE, borderRadius: 10,
+            border: '1px solid #ffffff22', padding: '22px 24px', font: `14px ${SERIF}`,
+          }}>
+            <b style={{ font: `600 17px ${SERIF}`, display: 'block', marginBottom: 10 }}>
+              Leave this game?
+            </b>
+            <p style={{ margin: '0 0 18px', opacity: 0.8, lineHeight: 1.55 }}>
+              The game carries on without you and your seat stays yours — your
+              spice, your cards and your forces are all where you left them. Come
+              back to it from the Dune screen whenever you like.
+            </p>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button type="button" onClick={() => setLeaving(false)} style={{
+                flex: 1, font: `600 13px ${SERIF}`, padding: '9px', borderRadius: 6,
+                cursor: 'pointer', border: '1px solid #c9542a', background: '#c9542a', color: '#fff',
+              }}>Keep playing</button>
+              <button type="button" onClick={onExit} style={{
+                flex: 1, font: `13px ${SERIF}`, padding: '9px', borderRadius: 6,
+                cursor: 'pointer', border: '1px solid #ffffff33', background: 'transparent', color: PALE,
+              }}>Leave</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* THE THINGS THE BOARD CANNOT SAY, in one corner and only when they
           apply. The right-hand column is the HUD, the left is the chat, so

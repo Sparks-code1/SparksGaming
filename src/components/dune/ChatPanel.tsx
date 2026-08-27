@@ -36,6 +36,17 @@ export const CHAT_MIN_WIDTH = 196
 
 export interface ChatMessage {
   id: string
+  /**
+   * Who this line was for. Absent means the whole table.
+   *
+   * A LABEL, NOT A FILTER — see scopeLabel. What a session receives is decided
+   * by the select policy on match_chat, so a line being here means it was meant
+   * for this seat; the scope tells the reader who ELSE heard it, which is most
+   * of what decides whether they repeat it.
+   */
+  scope?: ChatScope
+  /** The seat a player-scoped line was sent to, by player id. */
+  toPlayer?: string
   /** Whose it is. Null for the game's own announcements. */
   faction: FactionId | null
   /** Shown when there is no faction — 'Game', a spectator's name. */
@@ -63,6 +74,22 @@ export interface ChatMessage {
   to?: FactionId
 }
 
+/**
+ * Who a line was for, as the row says.
+ *
+ * A LABEL, NOT A FILTER. What a session receives is decided by the select
+ * policy on match_chat — see lib/dune/duneChat — so a line being here means it
+ * was meant for this seat. The marking tells the reader whether the rest of the
+ * table heard it, which is most of what decides what they say next.
+ */
+export type ChatScope = 'table' | 'alliance' | 'player'
+
+/** What the composer hands back: the scope, and who if it needs one. */
+export type ChatSendScope =
+  | { kind: 'table' }
+  | { kind: 'alliance' }
+  | { kind: 'player'; playerId: string }
+
 export interface ChatPanelProps {
   messages: readonly ChatMessage[]
   /**
@@ -75,7 +102,21 @@ export interface ChatPanelProps {
   collapsed: boolean
   onToggle(): void
   /** Absent for a spectator, who may read but not speak. */
-  onSend?: (text: string) => void
+  /**
+   * Say something. The scope says who to.
+   *
+   * Absent for a spectator, who gets no composer at all rather than a box that
+   * cannot be typed in.
+   */
+  onSend?: (text: string, scope: ChatSendScope) => void
+  /**
+   * Who is at the table, for addressing a line to one of them.
+   *
+   * Names rather than factions, because that is what a player recognises in a
+   * dropdown — and it is the player id the row is keyed by. Empty means no
+   * whispering, which is what a lobby-less or one-player table gets.
+   */
+  talkingTo?: readonly { playerId: string; name: string }[]
   /** Shown on the spine while collapsed. */
   unread?: number
 }
@@ -95,11 +136,54 @@ export function visibleTo(
   // shown unless it names somebody else, so a line that forgets the field is
   // public rather than invisible. The opposite default would hide game
   // announcements the moment anyone forgot to mark them.
+  //
+  // THIS FILTER IS ONLY FOR THE GAME'S OWN NOTICES. A line off the transport
+  // was already decided by the select policy on match_chat — what a session may
+  // not read never reaches it — and none of them carries `to` at all, so they
+  // all pass here. A whisper you SENT arrives back the same way, because the
+  // policy lets you read your own lines whatever their scope.
+  //
+  // A CLAUSE THAT ALMOST WENT IN HERE: `|| m.faction === seat`, to keep your own
+  // lines. It was unnecessary — see above — and it leaked: a game notice has no
+  // faction and a spectator has no seat, so null === null showed every private
+  // notice to every spectator. The suite caught it. Left written down because
+  // it looks obviously right.
   return messages.filter(m => m.to == null || m.to === seat)
 }
 
-export function ChatPanel({ messages, seat, collapsed, onToggle, onSend, unread = 0 }: ChatPanelProps) {
+/**
+ * How a line is labelled, from the reader's side.
+ *
+ * Nothing is labelled for a line the whole table heard — the absence is the
+ * message. Everything else says what kind of privacy it had, because a reader
+ * deciding whether to repeat something needs to know who else already knows.
+ */
+export function scopeLabel(
+  m: ChatMessage, seat: FactionId | null | undefined,
+): string | null {
+  if (m.scope === 'alliance') return 'alliance'
+  if (m.scope === 'player') {
+    return m.faction === seat ? `to ${m.toPlayer ?? 'them'}` : 'privately'
+  }
+  // The game's own notices, which never travelled at all.
+  if (m.to != null) return 'only you'
+  return null
+}
+
+export function ChatPanel({
+  messages, seat, collapsed, onToggle, onSend, unread = 0, talkingTo = [],
+}: ChatPanelProps) {
   const [draft, setDraft] = useState('')
+  /**
+   * Who the next line is for.
+   *
+   * STICKY, deliberately. Scheming is a conversation rather than a remark, and
+   * re-picking the recipient before every line is how somebody eventually sends
+   * the wrong one to the whole table. It is shown beside the box at all times
+   * so the stickiness is never a surprise.
+   */
+  const [scope, setScope] = useState<ChatScope>('table')
+  const [toPlayer, setToPlayer] = useState<string | null>(null)
   const shown = visibleTo(messages, seat)
   const foot = useRef<HTMLDivElement | null>(null)
 
@@ -177,7 +261,13 @@ export function ChatPanel({ messages, seat, collapsed, onToggle, onSend, unread 
             <b style={{ color: m.faction ? FACTION_LOOK[m.faction].colour : PALE }}>
               {m.faction ? FACTION_LOOK[m.faction].name : m.from ?? 'Game'}
             </b>
-            {m.to && <span style={{ opacity: 0.6 }}> · only you</span>}
+            {/* WHO ELSE HEARD IT. Nothing is shown for a line the table heard
+                — the absence is the message — and everything else says what
+                kind of privacy it had, because a reader deciding whether to
+                repeat something needs to know who already knows. */}
+            {scopeLabel(m, seat) && (
+              <span style={{ opacity: 0.6 }}> · {scopeLabel(m, seat)}</span>
+            )}
             {'  '}
             <span style={{ opacity: 0.92 }}>{m.text}</span>
           </p>
@@ -193,12 +283,58 @@ export function ChatPanel({ messages, seat, collapsed, onToggle, onSend, unread 
             e.preventDefault()
             const text = draft.trim()
             if (!text) return
-            onSend(text)
+            // A PLAYER SCOPE WITH NOBODY NAMED would be a line the database
+            // refuses and the sender thinks they sent. Fall back to the table
+            // rather than swallowing it — saying it too loudly is recoverable,
+            // saying it into nothing is not.
+            onSend(text, scope === 'player' && toPlayer
+              ? { kind: 'player', playerId: toPlayer }
+              : scope === 'alliance' ? { kind: 'alliance' } : { kind: 'table' })
             setDraft('')
           }}
-          style={{ display: 'flex', borderTop: '1px solid #ffffff1f' }}>
+          style={{ borderTop: '1px solid #ffffff1f' }}>
+          {/* WHO IT IS FOR, above the box and always visible. The scope is
+              sticky — scheming is a conversation, not a remark — and a sticky
+              setting you cannot see is how somebody eventually tells the whole
+              table what they meant to whisper. */}
+          <div data-layer="chat-scope" style={{
+            display: 'flex', gap: 4, padding: '5px 8px 0', alignItems: 'center', flexWrap: 'wrap',
+          }}>
+            {([['table', 'Table'], ['alliance', 'Alliance']] as const).map(([k, label]) => (
+              <button key={k} type="button" onClick={() => setScope(k)}
+                aria-pressed={scope === k} aria-label={`Say to ${label}`}
+                style={{
+                  background: scope === k ? '#ffffff1f' : 'transparent', color: PALE,
+                  border: '1px solid #ffffff26', borderRadius: 4,
+                  padding: '2px 7px', fontSize: 10.5, cursor: 'pointer',
+                }}>{label}</button>
+            ))}
+            {talkingTo.length > 0 && (
+              <select
+                aria-label="Whisper to"
+                value={scope === 'player' ? (toPlayer ?? '') : ''}
+                onChange={e => {
+                  const who = e.target.value
+                  setToPlayer(who || null)
+                  setScope(who ? 'player' : 'table')
+                }}
+                style={{
+                  background: scope === 'player' ? '#ffffff1f' : 'transparent', color: PALE,
+                  border: '1px solid #ffffff26', borderRadius: 4,
+                  padding: '2px 5px', fontSize: 10.5,
+                }}>
+                <option value="">Whisper…</option>
+                {talkingTo.map(p => (
+                  <option key={p.playerId} value={p.playerId}>{p.name}</option>
+                ))}
+              </select>
+            )}
+          </div>
+          <div style={{ display: 'flex' }}>
           <input value={draft} onChange={e => setDraft(e.target.value)}
-            aria-label="Message" placeholder="Say something…"
+            aria-label="Message"
+            placeholder={scope === 'alliance' ? 'To your alliance…'
+              : scope === 'player' ? 'Whisper…' : 'Say something…'}
             style={{
               flex: 1, minWidth: 0, background: 'transparent', border: 'none',
               color: PALE, padding: '8px 10px', fontSize: 12.5,
@@ -207,6 +343,7 @@ export function ChatPanel({ messages, seat, collapsed, onToggle, onSend, unread 
             background: 'none', border: 'none', color: PALE, cursor: 'pointer',
             padding: '0 11px', fontSize: 13,
           }}>Send</button>
+          </div>
         </form>
       )}
     </section>

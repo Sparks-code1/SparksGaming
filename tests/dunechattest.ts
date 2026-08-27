@@ -14,6 +14,8 @@
 // there is no column for them to reach.
 import { readFileSync } from 'node:fs'
 import { toMessage, mergeChat, sayable, MAX_CHAT } from '@/lib/dune/duneChat'
+import { visibleTo, scopeLabel } from '@/components/dune/ChatPanel'
+import type { FactionId } from '@/types/Dune/Faction'
 import type { ChatMessage } from '@/components/dune/ChatPanel'
 
 let pass = true
@@ -172,13 +174,122 @@ const row = (over: Partial<Parameters<typeof toMessage>[0]> = {}) => {
   // A SPECTATOR HAS NO BOX rather than a box that swallows what they type: the
   // insert policy would refuse it, and a refusal after the fact is worse.
   check('...which a spectator does not get', /onSend=\{seat \? [^}]*: undefined\}/.test(screen), true)
-  check('what it sends goes to the table', /sayToTable\(matchId, \{ playerId: seat\.playerId/.test(screen), true)
+  check('what it sends goes to the table',
+    /sayTo\(matchId, \{ playerId: seat\.playerId, faction: seat\.faction \}, text, scope\)/.test(screen), true)
   // MERGED, so the lines this client composed about its own turn survive.
   check('...and arriving lines are merged rather than replacing the list',
     /setChat\(c => mergeChat\(c, lines\)\)/.test(screen), true)
   // READ-YOUR-OWN-WRITES, as everywhere else here.
   check('...and a sent line is read back rather than waited for',
     /await talk\.current\?\.reread\(\)/.test(screen), true)
+}
+
+// ── three scopes, and the database decides ────────────────────────────────
+// THE CLAIM THE WHOLE FEATURE RESTS ON. A client filtering its own inbox is a
+// client that could choose not to: the rows would already be on the machine,
+// one devtools tab away. What a seat may not read must never reach it.
+{
+  const sql = readFileSync('supabase/migrations/20260827140000_dune_private_talk.sql', 'utf8')
+  const clean = sql.replace(/^\s*--.*$/gm, '')
+  const chat = code('src/lib/dune/duneChat.ts')
+
+  check('a line carries who it is for', /add column if not exists scope text/.test(sql), true)
+  check('...one of the three', /scope in \('table', 'alliance', 'player'\)/.test(sql), true)
+  // A NAMED RECIPIENT EXACTLY WHEN THERE IS ONE. 'table' plus a recipient is a
+  // line that reads as private and is not — the most dangerous shape this row
+  // could take, so the database refuses it rather than trusting the writer.
+  check('...with a recipient exactly when the scope has one',
+    /\(scope = 'player' and to_player_id is not null\)[\s\S]{0,120}\(scope <> 'player' and to_player_id is null\)/.test(clean), true)
+
+  // ── the read policy is the enforcement ──────────────────────────────────
+  const readPolicy = clean.slice(clean.indexOf('create policy "seated read chat"'),
+    clean.indexOf('drop policy if exists "seated write chat"'))
+  check('the read policy is there to check', readPolicy.length > 120, true)
+  check('you must be at the table at all', /is_seated_in\(match_id\)/.test(readPolicy), true)
+  check('...a table line reaches everybody there', /scope = 'table'/.test(readPolicy), true)
+  // YOUR OWN, ALWAYS — or the line you just sent vanishes as you send it.
+  check('...your own lines are always yours', /user_id = auth\.uid\(\)/.test(readPolicy), true)
+  check('...a whisper reaches the seat it names',
+    /scope = 'player' and to_player_id = my_seat_in\(match_id\)/.test(readPolicy), true)
+  check('...and an alliance line reaches your ally',
+    /scope = 'alliance' and allied_with_seat\(match_id, player_id\)/.test(readPolicy), true)
+
+  // AND NOTHING ELSE. A fourth branch, or a stray 'or true', would be the whole
+  // thing undone — this is the check that the list above is exhaustive.
+  check('...and there is no other way in',
+    (readPolicy.match(/\bor\b/g) ?? []).length, 3)
+
+  // ── the alliance is the game's, and both halves must agree ──────────────
+  check('an alliance is read off the match state',
+    /state->'players'/.test(clean), true)
+  // ONE-SIDED IS NOT AN ALLIANCE. Otherwise declaring yourself somebody's
+  // friend would be enough to read their post.
+  check('...and only counts when both name each other',
+    /me\.ally = theirs\.faction_id[\s\S]{0,80}them\.ally = mine\.faction_id/.test(clean), true)
+  check('the helpers are definer functions, to break the recursion',
+    (clean.match(/security definer/g) ?? []).length >= 2, true)
+  check('...and are not handed to anonymous callers',
+    /\banon\b/i.test(sql), false)
+
+  // ── writing ─────────────────────────────────────────────────────────────
+  const writePolicy = clean.slice(clean.indexOf('create policy "seated write chat"'),
+    clean.indexOf('comment on column match_chat.scope'))
+  check('the write policy is there to check', writePolicy.length > 100, true)
+  check('a line is still the caller\'s own', /user_id = auth\.uid\(\)/.test(writePolicy), true)
+  check('...at a table they are at', /is_seated_in\(match_id\)/.test(writePolicy), true)
+  // A RECIPIENT WHO IS NOT AT THE TABLE is a line nobody will ever read, sitting
+  // in the log looking as though it had been delivered.
+  check('...naming somebody who is actually there',
+    /p\.player_id = match_chat\.to_player_id/.test(writePolicy), true)
+
+  // ── and the client writes what it says it writes ────────────────────────
+  check('the transport sends the scope', /scope: scope\.kind,/.test(chat), true)
+  check('...and a recipient only for a whisper',
+    /to_player_id: scope\.kind === 'player' \? scope\.playerId : null,/.test(chat), true)
+  check('...and reads both back', /scope, to_player_id/.test(chat), true)
+}
+
+// ── what a reader is told about who else heard it ─────────────────────────
+// A LABEL, NEVER A FILTER. A line being on screen means the policy allowed it;
+// the marking tells the reader who ELSE knows, which is most of what decides
+// whether they repeat it.
+{
+  const line = (over: Partial<ChatMessage>): ChatMessage =>
+    ({ id: 'x', faction: 'atreides' as FactionId, from: 'p1', text: 't', at: 1, ...over })
+
+  check('a table line is not marked at all',
+    scopeLabel(line({ scope: 'table' }), 'fremen' as FactionId), null)
+  check('an alliance line says so',
+    scopeLabel(line({ scope: 'alliance' }), 'fremen' as FactionId), 'alliance')
+  // THE TWO SIDES OF A WHISPER READ DIFFERENTLY: the sender needs to know who
+  // they sent it to, the receiver only that nobody else heard it.
+  check('a whisper you received says it was private',
+    scopeLabel(line({ scope: 'player' }), 'fremen' as FactionId), 'privately')
+  check('...and one you sent says who to',
+    scopeLabel(line({ scope: 'player', toPlayer: 'p2' }), 'atreides' as FactionId), 'to p2')
+  // The game's own notices, which never travelled.
+  check('a local notice still says it is yours alone',
+    scopeLabel(line({ faction: null, to: 'fremen' as FactionId }), 'fremen' as FactionId), 'only you')
+
+  // ── AND THE CLIENT FILTER STILL ONLY GUARDS THE LOCAL ONES ──────────────
+  // A clause almost went in here to keep your own lines — it was unnecessary,
+  // because transport lines carry no recipient at all, and it leaked: a notice
+  // has no faction and a spectator has no seat, so null === null showed every
+  // private notice to every spectator.
+  const notice: ChatMessage = {
+    id: 'n', faction: null, from: 'Game', text: 'you hold too much spice',
+    at: 1, to: 'atreides' as FactionId,
+  }
+  const whisper: ChatMessage = {
+    id: 'w', faction: 'harkonnen' as FactionId, from: 'p2', text: 'ally with me',
+    at: 2, scope: 'player', toPlayer: 'p1',
+  }
+  check('a spectator sees no private notice', visibleTo([notice], null).length, 0)
+  check('...and the seat it is for does', visibleTo([notice], 'atreides' as FactionId).length, 1)
+  // A whisper that ARRIVED was already allowed by the policy, so the filter
+  // must not second-guess it — it carries no `to` and passes.
+  check('a whisper that reached this session is shown',
+    visibleTo([whisper], 'atreides' as FactionId).length, 1)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

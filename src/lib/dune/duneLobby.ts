@@ -206,11 +206,16 @@ export function duneReadiness(lobby: Pick<Lobby, 'seats'>): DuneReadiness {
  * that is not "ask a friend to read you your own code".
  */
 export async function myDuneLobbies(): Promise<DuneTable[]> {
+  // TABLES AND GAMES BOTH. A lobby is one you have not started; an ACTIVE match
+  // is one you walked away from, and leaving a game you cannot get back into is
+  // worse than having no way to leave at all. The select policy shows a lobby
+  // only to people at it and an active match only to its players, so this is
+  // exactly the list of Dune this account is part of.
   const { data, error } = await supabase
     .from('matches')
-    .select('id')
+    .select('id, status')
     .eq('game_type', 'dune')
-    .eq('status', 'lobby')
+    .in('status', ['lobby', 'active'])
     .order('created_at', { ascending: false })
     .limit(20)
   if (error || !data) return []

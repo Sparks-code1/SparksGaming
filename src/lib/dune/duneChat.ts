@@ -7,20 +7,27 @@
  * is a negotiation — alliances are proposed, argued over and agreed out loud,
  * between turns, and a table where nobody can speak cannot have one.
  *
- * PUBLIC LINES ONLY, and that is a rule rather than a limitation.
+ * THREE SCOPES, AND THE DATABASE DECIDES WHO GETS WHAT.
  *
- * ChatMessage carries `to`, for lines addressed to a single seat — "not
- * eligible for charity" is the case that forced it, being a sentence about how
- * much spice somebody holds. Those are composed by the client that received the
- * refusal, out of a response only that client got, and they must never travel:
- * marking a message private does not make its transport private, and a
- * recipient field on a shared row is a label on an envelope everybody has
- * already opened.
+ *   'table'    everybody at the table
+ *   'alliance' you and whoever you are allied with
+ *   'player'   you and one named seat
  *
- * So they do not come through here, and match_chat has no column for a
- * recipient. A field that cannot be set cannot be misused, and the absence is
- * the thing that keeps it true rather than the discipline of whoever writes the
- * next caller.
+ * Scheming is most of Dune: an alliance is negotiated in private and betrayed
+ * in public, and a game where every word is overheard has no negotiation in it.
+ *
+ * THE SCOPING IS NOT THIS MODULE'S. A client filtering its own inbox is a
+ * client that could choose not to — the rows would already be on the machine,
+ * one devtools tab away. The select policy on match_chat decides what a session
+ * receives, so what a seat may not read never reaches it. Everything here is
+ * about SAYING; the reading is the database's.
+ *
+ * WHAT STILL NEVER TRAVELS is the game's own private notices. "Not eligible for
+ * charity" is a sentence about how much spice somebody holds, derived from a
+ * response only that client received — it is composed locally and stays there.
+ * That is a different thing from a player choosing to whisper, and the two are
+ * kept apart deliberately: one is a fact the server told you alone, the other
+ * is something you decided to say.
  *
  * WHAT IS SAID IS KEPT. There is no update or delete policy on the table, so a
  * line said at the table stays said — somebody agreeing to an alliance and then
@@ -37,22 +44,35 @@ export const MAX_CHAT = 500
 /** How many lines are read back when a screen opens. */
 const BACKLOG = 60
 
+/** Who a line is for. */
+export type ChatScope =
+  | { kind: 'table' }
+  | { kind: 'alliance' }
+  | { kind: 'player'; playerId: string }
+
 interface ChatRow {
   id: number | string
   player_id: string
   faction_id: string | null
   body: string
   said_at: string
+  scope?: string | null
+  to_player_id?: string | null
 }
 
 /**
  * One stored line, as the panel wants it.
  *
- * `to` IS NEVER SET HERE, and cannot be: nothing in the row says who a line was
- * for, because nothing public ever should. A line off this transport is a line
- * the whole table may read, which is the only kind that travels.
+ * THE SCOPE IS CARRIED SO THE PANEL CAN LABEL IT, never so it can filter by it.
+ * A line that arrived is a line this session was allowed to have; the marking
+ * tells the reader whether the rest of the table heard it, which changes what
+ * you say next.
+ *
+ * An older row with no scope is a table line — that is what every row written
+ * before the scopes existed was.
  */
 export function toMessage(row: ChatRow): ChatMessage {
+  const scope = row.scope === 'alliance' || row.scope === 'player' ? row.scope : 'table'
   return {
     id: `chat-${row.id}`,
     faction: (row.faction_id && row.faction_id !== 'unassigned'
@@ -60,6 +80,8 @@ export function toMessage(row: ChatRow): ChatMessage {
     from: row.player_id,
     text: row.body,
     at: new Date(row.said_at).getTime(),
+    scope,
+    ...(row.to_player_id ? { toPlayer: row.to_player_id } : null),
   }
 }
 
@@ -104,7 +126,7 @@ export function watchDuneChat(
     if (stopped) return
     const { data, error } = await db
       .from('match_chat')
-      .select('id, player_id, faction_id, body, said_at')
+      .select('id, player_id, faction_id, body, said_at, scope, to_player_id')
       .eq('match_id', matchId)
       .order('said_at', { ascending: false })
       .limit(BACKLOG)
@@ -143,27 +165,46 @@ export function sayable(text: string): boolean {
 }
 
 /**
- * Say something to the table.
+ * Say something, to whoever the scope says.
  *
  * THE SEAT IS THE SERVER'S BUSINESS. `user_id` defaults to auth.uid() in the
  * column and the insert policy checks it, so a client cannot post as anybody
  * else however it fills this in. What is passed is who they are AT THE TABLE,
  * which is public and is only there so a line survives its author leaving.
+ *
+ * THE SCOPE IS WRITTEN, NOT ENFORCED, here. What it buys the sender is that the
+ * row says who it was meant for; what stops anybody else reading it is the
+ * select policy. This function being wrong would send a line to the wrong
+ * audience — it could not let anybody read one they were not sent.
  */
-export async function sayToTable(
+export async function sayTo(
   matchId: string,
   who: { playerId: string; faction: FactionId | null },
   text: string,
+  scope: ChatScope = { kind: 'table' },
   client?: SupabaseClient,
 ): Promise<void> {
   const db: SupabaseClient = client ?? supabase
   const body = text.trim()
   if (!sayable(body)) return
+  // A RECIPIENT EXACTLY WHEN THERE IS ONE. The column has a check constraint
+  // saying the same thing, because a 'table' line carrying a recipient reads as
+  // private and is not — the most dangerous shape this row could take.
   const { error } = await db.from('match_chat').insert({
     match_id: matchId,
     player_id: who.playerId,
     faction_id: who.faction,
     body,
+    scope: scope.kind,
+    to_player_id: scope.kind === 'player' ? scope.playerId : null,
   })
   if (error) throw new Error(`Could not say that: ${error.message}`)
 }
+
+/** Kept for callers that only ever speak to the room. */
+export const sayToTable = (
+  matchId: string,
+  who: { playerId: string; faction: FactionId | null },
+  text: string,
+  client?: SupabaseClient,
+) => sayTo(matchId, who, text, { kind: 'table' }, client)

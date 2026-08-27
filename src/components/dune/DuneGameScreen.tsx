@@ -43,7 +43,7 @@ import type { DuneGameState } from '@/types/Dune/Game'
 import type { DuneSecrets } from '@/lib/dune/charity'
 import { hudRows, allyOf } from '@/lib/dune/hud'
 import { ChatPanel } from './ChatPanel'
-import type { ChatMessage } from './ChatPanel'
+import type { ChatMessage, ChatSendScope } from './ChatPanel'
 import { PlayerHud } from './PlayerHud'
 import { OwnStrip } from './OwnStrip'
 import { DuneBoard } from './DuneBoard'
@@ -83,7 +83,17 @@ export interface DuneGameScreenProps {
    */
   own: DuneSecrets | null
   chat: readonly ChatMessage[]
-  onSend?: (text: string) => void
+  /**
+   * Say something, and who to.
+   *
+   * PASSED STRAIGHT THROUGH. Which audience a line reaches is decided by the
+   * row it is written to and the policy that reads it back — see
+   * lib/dune/duneChat — so this screen has no opinion about it and should not
+   * acquire one.
+   */
+  onSend?: (text: string, scope: ChatSendScope) => void
+  /** Who else is at the table, for addressing a line to one of them. */
+  talkingTo?: readonly { playerId: string; name: string }[]
   /**
    * The live auction, or null.
    *
@@ -113,7 +123,7 @@ export interface DuneGameScreenProps {
 }
 
 export function DuneGameScreen({
-  state, seat, own, chat, onSend, bidding = null, charity = null, now,
+  state, seat, own, chat, onSend, talkingTo, bidding = null, charity = null, now,
 }: DuneGameScreenProps) {
   const [chatShut, setChatShut] = useState(false)
   const rows = hudRows(state)
@@ -169,7 +179,7 @@ export function DuneGameScreen({
             spice, and the chat is the one place a sentence like that would sit
             in front of everybody. */}
         <ChatPanel messages={chat} seat={seat} collapsed={chatShut} onSend={onSend}
-          onToggle={() => setChatShut(c => !c)} />
+          talkingTo={talkingTo} onToggle={() => setChatShut(c => !c)} />
 
         <main style={{
           // ITS BASIS IS THE BOARD'S IDEAL WIDTH — the width a board as tall as

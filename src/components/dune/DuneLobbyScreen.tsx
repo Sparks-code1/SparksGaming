@@ -366,7 +366,7 @@ export function DuneLobbyScreen({ onPlay, onExit }: DuneLobbyScreenProps) {
       {mine !== null && mine.length > 0 && (
         <>
           <h2 style={{ font: `600 12px ${SERIF}`, letterSpacing: 1.4, opacity: 0.5, margin: '0 0 10px' }}>
-            TABLES YOU ARE AT
+            YOUR GAMES
           </h2>
           <ul data-layer="dune-my-tables" style={{ listStyle: 'none', padding: 0, margin: '0 0 16px' }}>
             {mine.map(l => (
@@ -380,12 +380,23 @@ export function DuneLobbyScreen({ onPlay, onExit }: DuneLobbyScreenProps) {
                 <span style={{ fontSize: 12, opacity: 0.55 }}>
                   {l.seats.length}/{l.humanSlots}
                 </span>
-                {l.joinCode && (
+                {/* A GAME IN PROGRESS HAS NO CODE TO SHOW — nobody else can
+                    join it — so the status takes that place instead. */}
+                {l.status === 'lobby' && l.joinCode ? (
                   <span style={{ fontSize: 12, opacity: 0.45, letterSpacing: 2 }}>{l.joinCode}</span>
+                ) : (
+                  <span style={{ fontSize: 11.5, opacity: 0.5, letterSpacing: 1 }}>in progress</span>
                 )}
                 <button type="button" disabled={busy} style={{ ...button(false), marginLeft: 'auto' }}
-                  onClick={() => setMatchId(l.matchId)}>
-                  Back to it
+                  onClick={() => {
+                    // A GAME GOES STRAIGHT BACK TO THE BOARD; a table opens its
+                    // waiting room. Sending somebody to a lobby for a game that
+                    // has already been dealt would show them a room with no
+                    // seats in it and no way on.
+                    if (l.status === 'lobby') setMatchId(l.matchId)
+                    else onPlay(l.matchId)
+                  }}>
+                  {l.status === 'lobby' ? 'Back to it' : 'Rejoin'}
                 </button>
               </li>
             ))}

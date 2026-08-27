@@ -172,8 +172,8 @@ const seat = (over: Partial<LobbySeat> = {}): LobbySeat => {
   const src = code('src/lib/dune/duneLobby.ts')
   check('the lobby is created with no campaign', /campaign_id: null,/.test(src), true)
   check('...and says which game it is', /game_type: 'dune',/.test(src), true)
-  check('...and your own tables are found by that rather than by campaign',
-    /\.eq\('game_type', 'dune'\)[\s\S]{0,80}\.eq\('status', 'lobby'\)/.test(src), true)
+  check('...and your own games are found by that rather than by campaign',
+    /\.eq\('game_type', 'dune'\)/.test(src), true)
 
   // THE COLUMN HAS TO ALLOW IT. Risk's queries all name their campaign and a
   // null never matches an equality test, so they cannot see these rows.
@@ -272,7 +272,7 @@ const seat = (over: Partial<LobbySeat> = {}): LobbySeat => {
     /dune-open-tables/.test(screen), false)
   // What is left is a way back to your own, which is a different thing.
   check('what is listed is the tables you are at', /myDuneLobbies/.test(src), true)
-  check('...and the screen says so', /TABLES YOU ARE AT/.test(screen), true)
+  check('...and the screen says so', /YOUR GAMES/.test(screen), true)
 
   // JOINING GOES THROUGH THE SERVER, because the row is not readable until you
   // are seated. A client-side filter would be no gate at all: anything the
@@ -488,6 +488,58 @@ const seat = (over: Partial<LobbySeat> = {}): LobbySeat => {
   check('the screen shows which it is', /data-layer="dune-mode"/.test(screen), true)
   check('...and lets anybody at the table change it',
     /setDuneMode\(matchId, m\)/.test(screen), true)
+}
+
+// ── there is a way out, and a way back ────────────────────────────────────
+// AN EXIT YOU CANNOT COME BACK THROUGH is worse than no exit: leaving would
+// mean abandoning a seat with your spice, your cards and your forces in it.
+{
+  const src = code('src/lib/dune/duneLobby.ts')
+  const screen = code('src/components/dune/DuneLobbyScreen.tsx')
+  const match = code('src/components/dune/DuneMatchScreen.tsx')
+  const app = code('src/App.tsx')
+
+  // THE LIST IS GAMES AS WELL AS TABLES. A match you walked away from is
+  // 'active', and listing only lobbies would strand it.
+  check('the list covers games in progress as well as tables',
+    /\.in\('status', \['lobby', 'active'\]\)/.test(src), true)
+  check('...and the screen tells them apart',
+    /l\.status === 'lobby' \? 'Back to it' : 'Rejoin'/.test(screen), true)
+  // A DEALT GAME GOES TO THE BOARD, not to a waiting room it has left behind —
+  // that would be a room with no seats in it and no way on.
+  check('...sending a game straight to the board',
+    /if \(l\.status === 'lobby'\) setMatchId\(l\.matchId\)[\s\S]{0,60}else onPlay\(l\.matchId\)/.test(screen), true)
+
+  // THE EXIT ITSELF, which confirms first: it sits near controls pressed in a
+  // hurry, and leaving mid-auction because a finger slipped ends an evening.
+  // SCOPED TO THE BUTTON. "Leave this game" is on the button AND on the dialog
+  // it opens, so searching the file found it either way — relabelling the
+  // button walked through, and so did wiring it straight to onExit.
+  const leaveButton = match.slice(match.indexOf('{onExit && ('),
+    match.indexOf('{leaving && onExit && ('))
+  check('the leave button is there to check', leaveButton.length > 60, true)
+  check('the match screen offers a way out',
+    /aria-label="Leave this game"/.test(leaveButton), true)
+  // ASKING FIRST IS THE BUTTON'S JOB. It sits near controls pressed in a hurry,
+  // and leaving mid-auction because a finger slipped ends an evening.
+  check('...which asks rather than leaving',
+    /onClick=\{\(\) => setLeaving\(true\)\}/.test(leaveButton), true)
+  check('...and does not go straight out',
+    /onClick=\{onExit\}/.test(leaveButton), false)
+  check('...with a dialog behind it', /\{leaving && onExit && \(/.test(match), true)
+  check('...and says the game carries on without them',
+    /The game carries on without you and your seat stays yours/.test(match), true)
+  // NOT OFFERED WHEN THERE IS NOWHERE TO GO. The standalone ?dune-match route
+  // has no screen behind it.
+  check('...and is absent when the caller gives it nowhere to go',
+    /\{onExit && \(/.test(match), true)
+
+  check('the app gives it somewhere to go', /onExit=\{\(\) => \{/.test(app), true)
+  check('...back to the Dune screen', /setScreen\('dune-lobby'\)/.test(app), true)
+  // AND THE URL GOES WITH IT, or a refresh drops them straight back into the
+  // game they just left.
+  check('...clearing the query flag on the way',
+    /replaceState\(null, '', window\.location\.pathname\)/.test(app), true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

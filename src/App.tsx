@@ -464,7 +464,22 @@ export default function App() {
         }} />
     )
   } else if (screen === 'dune-match' && duneMatch) {
-    content = <DuneMatchScreen matchId={duneMatch} />
+    content = (
+      <DuneMatchScreen
+        matchId={duneMatch}
+        onExit={() => {
+          // BACK TO THE DUNE SCREEN, not out of Dune altogether: the commonest
+          // reason to leave a game is to get at another one. The match is not
+          // ended and the seat is still theirs — it is listed there under
+          // YOUR GAMES with a Rejoin beside it.
+          //
+          // The query flag goes with it, or a refresh would drop straight back
+          // into the game they just left.
+          window.history.replaceState(null, '', window.location.pathname)
+          setDuneMatch(null)
+          setScreen('dune-lobby')
+        }} />
+    )
   } else if (screen === 'player-slots') {
     content = (
       <PlayerSlotsScreen
