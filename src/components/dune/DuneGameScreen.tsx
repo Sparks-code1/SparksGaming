@@ -201,14 +201,17 @@ export function DuneGameScreen({
   const timed = state as DuneGameState & {
     charity?: { expiresAt: number }
     spiceBlow?: { closesAt?: number }
+    phaseClock?: { closesAt?: number }
     setup?: SetupWindowState
   }
   // SETUP IS THE FOURTH ONE, and it cannot overlap the other three: nothing has
   // been played yet. It goes on the same board clock rather than into the setup
   // panel because the deadline belongs to the TABLE — everybody is waiting on
   // it, including the seats that owe nothing and have no panel to read.
+  // The phase's own look-window comes LAST: any real window outranks it,
+  // since while charity is open the phase clock has already served its turn.
   const closesAt = timed.charity?.expiresAt ?? timed.spiceBlow?.closesAt
-    ?? timed.setup?.closesAt ?? null
+    ?? timed.setup?.closesAt ?? timed.phaseClock?.closesAt ?? null
   const windowMs = timed.charity ? CHARITY_WINDOW_MS
     : timed.spiceBlow ? WORM_SECONDS * 1000
     : timed.setup ? SETUP_SECONDS * 1000

@@ -180,6 +180,10 @@ export interface SpiceDeckPublic {
   discardA: SpiceCard[]
   /** The second pile. Advanced only — empty, and not drawn, in the basic game. */
   discardB: SpiceCard[]
+  /** Which turn the blow was last turned for. Stamped by the server when it
+   *  commits a blow; how "has this turn's blow happened" is asked, since the
+   *  count alone cannot say. Absent before the first blow. */
+  turn?: number
 }
 
 /**
@@ -312,6 +316,46 @@ export interface DuneGameState {
    */
   host?: FactionId
 
+  /**
+   * Which turn the storm last moved for.
+   *
+   * The same idiom as spiceDeck.turn: the phase's work is stamped with the
+   * turn it was done for, because the phase POINTER cannot say whether the
+   * work happened — a match dealt into Storm has not rolled, and a match
+   * advanced into Storm has. Absent before the first roll.
+   */
+  stormMoved?: number
+  /**
+   * What the last storm did, for the table to read. Public — the dials are
+   * rolled in the open at a table. Replaced each turn, so it is always the
+   * CURRENT turn's weather or last turn's, never a history.
+   */
+  stormReport?: {
+    turn: number
+    roll: number
+    from: SectorId
+    to: SectorId
+    swept: SectorId[]
+    killed: Force[]
+    spiceCleared: { territoryId: string; amount: number }[]
+  }
+  /**
+   * The current phase's look-at-it window — see PHASE_SECONDS in
+   * lib/dune/phaseAdvance. Before it shuts only the host advances; after it,
+   * anyone. Carries its own (turn, phase) so a clock outliving its phase
+   * reads as expired rather than as fresh.
+   */
+  phaseClock?: { turn: number; phase: GamePhase; closesAt: number }
+  /**
+   * Set once, at the Mentat Pause that ends the game, and never cleared.
+   * Everything that reads the match — the screen, the advance loop — treats
+   * its presence as the game being over.
+   */
+  winner?: {
+    factions: FactionId[]
+    reason: 'strongholds' | 'prediction' | 'fremen-default' | 'guild-default' | 'most-strongholds'
+    turn: number
+  }
   /**
    * The seat the game is waiting on, or null.
    *

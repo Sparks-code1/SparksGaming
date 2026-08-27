@@ -118,6 +118,17 @@ const TARGETS = [
     exportName: 'openingPosition',
   },
   {
+    entry: 'src/lib/dune/phaseAdvance.ts',
+    out: 'supabase/functions/_shared/dunePhase.gen.ts',
+    what: 'phase loop',
+    // The loop decides who may move the turn and when a pause holds it. A
+    // second copy on the server would be a second answer to "may the host
+    // advance yet", and the client showing a live button the server refuses
+    // is exactly the bug the host work fixed once already.
+    mustExport: /export\s*\{[^}]*advanceHold/,
+    exportName: 'advanceHold',
+  },
+  {
     entry: 'src/lib/stateView.ts',
     out: 'supabase/functions/_shared/stateView.gen.ts',
     what: 'state projections',

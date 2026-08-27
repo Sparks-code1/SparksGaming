@@ -45,6 +45,10 @@ import {
 import {
   charityGrant, isEligibleForCharity, readSpice, CHARITY_TOPS_UP_TO, CHARITY_WINDOW_MS,
 } from '../_shared/duneCharity.gen.ts'
+import {
+  phaseAfter, advanceHold, phaseWindowOpen, rollStorm, stormEntry, cityIncome,
+  mentatVerdict, biddingOpening, PHASE_SECONDS, TURN_LIMIT,
+} from '../_shared/dunePhase.gen.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -171,6 +175,14 @@ Deno.serve(async req => {
   const state = (match.state ?? {}) as Record<string, unknown>
   const now = Date.now()
 
+  // WHAT THE NEXT WRITE BUILDS ON. Every helper below spreads this rather than
+  // `state`, and for every case but one the two are the same object. The one:
+  // ADVANCE_PHASE moves the phase pointer and then runs the entered phase's
+  // own work — the blow, the auction — and that work's write has to carry the
+  // moved pointer IN THE SAME TRANSACTION. Two writes would version-race, and
+  // a pointer landing without its phase's work is a phase that half-happened.
+  let baseState = state
+
   // ── Committing a spice blow, paused or finished ────────────────────────────
   // Both halves of the phase end here, so there is one answer to what the table
   // is told and one answer to where the deck lives.
@@ -190,7 +202,7 @@ Deno.serve(async req => {
     deck: SpiceCardRow[]
     said: Record<string, unknown>
   }): Promise<Response> => {
-    const rest = { ...state }
+    const rest = { ...baseState }
     // The pause is over, so it stops being said. Left behind, the table would
     // read a phase still waiting on a seat that has already answered.
     delete rest.spiceBlow
@@ -246,7 +258,7 @@ Deno.serve(async req => {
         p_match_id: matchId,
         p_expected_version: match.version,
         p_state: {
-          ...state,
+          ...baseState,
           spiceBlow: {
             turn, pile: ask.pile, worms: ask.worms, from: step.from ?? ['fremen'],
             // THE DEADLINE COMES FROM THE STEP, which got it from this request.
@@ -291,6 +303,184 @@ Deno.serve(async req => {
         devouredByFremen: out.devouredByFremen,
       },
     })
+  }
+
+  /**
+   * Turn this turn's spice blow — the whole phase, pauses included.
+   *
+   * A FUNCTION rather than only a case because two things start it: the
+   * SPICE_BLOW action (the dev harness, or any seat pushing a phase the
+   * advance entered without turning), and ADVANCE_PHASE entering the phase,
+   * which sets baseState to carry the moved pointer and calls this so the
+   * pointer and the cards land in one write.
+   */
+  const turnTheBlow = async (): Promise<Response> => {
+      if (baseState.phase !== 'Spice Blow and Nexus') {
+        return json({ error: 'the turn is not at the spice blow', code: 'wrong-phase' }, 409)
+      }
+      const turn = typeof baseState.turn === 'number' ? baseState.turn : 0
+      const shown = (baseState.spiceDeck ?? {}) as SpiceDeckPublicRow
+      // Once a turn. The count alone cannot say whether the blow has happened,
+      // so the turn it was last turned for is stamped beside it — without that,
+      // a second call turns a second card and the deck simply runs down faster
+      // than the game does.
+      if (shown.turn === turn) {
+        return json({ error: 'the blow has already been turned this turn', code: 'already-blown' }, 409)
+      }
+      // AND NOT WHILE ONE IS HALF-DONE. A blow begun again mid-pause would draw
+      // from the pre-pause deck and strand the carry holding the real one.
+      if (baseState.spiceBlow) {
+        return json({ error: 'the blow is waiting on the Fremen', code: 'blow-in-progress' }, 409)
+      }
+
+      const { data: deckRows } = await admin
+        .from('match_decks').select('deck, cards').eq('match_id', matchId)
+      const piles = Object.fromEntries((deckRows ?? []).map(r => [r.deck, r.cards]))
+
+      // BUILT AND SHUFFLED ON FIRST USE, from the match's own seed — the same
+      // seed the treachery reshuffle uses, so the whole match replays from one
+      // number. `?? []` on a missing pile would deal from an empty deck and
+      // report a deck of nothing as a legal state.
+      const stored = piles.spice as SpiceCardRow[] | undefined
+      const seed = Number(match.rng_seed) + match.action_seq
+      const deck: SpiceCardRow[] = stored?.length
+        ? stored
+        : shuffleWithSeed(seed, buildSpiceDeck())
+
+      const forces = (baseState.forces ?? []) as ForceRow[]
+      const spiceOnBoard = (baseState.spiceOnBoard ?? {}) as Record<string, number>
+      const fremenInPlay = Object.prototype.hasOwnProperty.call(seatOfFaction, 'fremen')
+
+      // ── the advanced game: two piles, and a stop between them ────────────
+      if (baseState.mode === 'advanced') {
+        let step
+        try {
+          step = beginDoubleSpiceBlow({
+            deck, discardA: shown.discardA ?? [], discardB: shown.discardB ?? [],
+            forces, spiceOnBoard, storm: baseState.storm as number,
+            firstTurn: turn <= 1, fremenInPlay, rng: seededRng(seed),
+            closesAt: now + WORM_SECONDS * 1000,
+          })
+        } catch (e) {
+          return json({ error: String(e), code: 'blow-failed' }, 409)
+        }
+        return await publishBlowStep(step, turn, seed, 0)
+      }
+
+      // ── the basic game: one pile, and it cannot stop ─────────────────────
+      // Placing worms is a Fremen ADVANCED advantage — resolveSpiceBlow only
+      // counts them when mode is 'advanced' — so a basic blow runs to the end
+      // by construction rather than by hoping.
+      let out
+      try {
+        out = resolveSpiceBlow({
+          deck, discard: shown.discardA ?? [], forces,
+          mode: 'basic', fremenInPlay, spiceOnBoard,
+          storm: baseState.storm as number, firstTurn: turn <= 1, rng: seededRng(seed),
+        })
+      } catch (e) {
+        return json({ error: String(e), code: 'blow-failed' }, 409)
+      }
+      // Identity is sound HERE and only here: toTanks holds the very objects
+      // this same request parsed out of baseState.forces. The advanced path cannot
+      // do this, because its carry has been to the database and back — see the
+      // note on DoubleBlowOutcome.forces.
+      const eaten = new Set(out.toTanks)
+      return await commitBlow({
+        turn,
+        spiceDeck: publicSpiceDeck({ deck: out.deck, discardA: out.discard, discardB: [] }),
+        // SET, not add, and the devoured lose theirs first. One call, because
+        // doing it by hand is where the add-versus-set bug lived.
+        spiceOnBoard: applyBlowToBoard(spiceOnBoard, out),
+        forces: forces.filter(f => !eaten.has(f)),
+        deck: out.deck,
+        said: { placed: out.placed, blockedByStorm: out.blockedByStorm, devoured: out.devoured },
+      })
+  }
+
+  /**
+   * Draw the lot and open the auction.
+   *
+   * A FUNCTION rather than only a case, for the reason turnTheBlow is: the
+   * OPEN_BIDDING action still takes the harness's client-computed inputs, and
+   * ADVANCE_PHASE entering Bidding calls this with inputs computed from the
+   * match itself — biddingOpening — under a baseState carrying the moved
+   * pointer, so the pointer and the lot land in one write.
+   */
+  const openTheAuction = async (
+    order: string[], hands: Record<string, number>, limits: Record<string, number>,
+  ): Promise<Response> => {
+      if (baseState.phase !== 'Bidding') {
+        return json({ error: 'the turn is not at bidding', code: 'wrong-phase' }, 409)
+      }
+      if (baseState.auction) {
+        return json({ error: 'bidding has already opened this turn', code: 'already-opened' }, 409)
+      }
+
+      const count = cardsOnOffer(order, hands, limits)
+      if (count === 0) {
+        // Every hand full. Nothing is drawn and nothing is discarded — offering
+        // cards nobody may take would take real cards out of the deck and turn
+        // them face up for nobody's benefit.
+        return json({ error: 'every hand is full, so no cards are auctioned', code: 'no-cards' }, 409)
+      }
+
+      const { data: deckRows } = await admin
+        .from('match_decks').select('deck, cards').eq('match_id', matchId)
+      const piles = Object.fromEntries((deckRows ?? []).map((r) => [r.deck, r.cards as string[]]))
+      let deal
+      try {
+        deal = drawTreachery(
+          piles.treachery ?? [], (state.treacheryDiscard ?? []) as string[], count,
+          (cards) => shuffleWithSeed(Number(match.rng_seed) + match.action_seq, cards),
+        )
+      } catch (e) {
+        return json({ error: String(e), code: 'deck-exhausted' }, 409)
+      }
+
+      const step = beginAuction({
+        turn: baseState.turn ?? 0, order, hands, limits,
+        closesAt: now + BID_SECONDS * 1000,
+      })
+
+      // ── Atreides prescience ─────────────────────────────────────────────
+      // The card about to be bid on, written into the Atreides seat's own row.
+      // Only that seat, only that card, and only if they are at the table.
+      //
+      // MERGED, not replaced. p_secrets upserts the whole data blob, so writing
+      // { prescience } alone would take that seat's hand and purse with it —
+      // this is the smallest write in the phase and the easiest place to lose
+      // everything else.
+      const openIndex = step.status === 'awaiting' ? step.carry.index : -1
+      const openReveal = prescienceFor({ seated: order, lot: deal.drawn, index: openIndex })
+      const prescientSeat = seatOfFaction[PRESCIENT_FACTION]
+      let openSecrets: Record<string, unknown> = {}
+      if (openReveal && prescientSeat) {
+        const { data: theirs } = await admin
+          .from('match_secrets').select('data')
+          .eq('match_id', matchId).eq('player_id', prescientSeat).maybeSingle()
+        openSecrets = {
+          [prescientSeat]: withReveal((theirs?.data ?? {}) as Record<string, unknown>, openReveal),
+        }
+      }
+
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        // The STEP is public — it names no card. The reshuffle may have emptied
+        // the discard, so that goes back too.
+        p_state: { ...baseState, auction: step, treacheryDiscard: deal.discard },
+        // The reveal rides in the SAME transaction as the lot it names. Written
+        // separately, a crash between them leaves the Atreides reading a card
+        // from an auction that never opened.
+        p_secrets: openSecrets,
+        // The drawn cards park where nobody can read them, beside the pile they
+        // came out of, in the same transaction that shortened it.
+        p_decks: { treachery: deal.draw, 'auction-lot': deal.drawn },
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ auction: step, version: data[0].version })
   }
 
   switch (action.type) {
@@ -725,87 +915,7 @@ Deno.serve(async req => {
     // back, and only then is pile B revealed — per pile, because a discard pile
     // is one blow. That pause is data: see publishBlowStep below.
     case 'SPICE_BLOW': {
-      if (state.phase !== 'Spice Blow and Nexus') {
-        return json({ error: 'the turn is not at the spice blow', code: 'wrong-phase' }, 409)
-      }
-      const turn = typeof state.turn === 'number' ? state.turn : 0
-      const shown = (state.spiceDeck ?? {}) as SpiceDeckPublicRow
-      // Once a turn. The count alone cannot say whether the blow has happened,
-      // so the turn it was last turned for is stamped beside it — without that,
-      // a second call turns a second card and the deck simply runs down faster
-      // than the game does.
-      if (shown.turn === turn) {
-        return json({ error: 'the blow has already been turned this turn', code: 'already-blown' }, 409)
-      }
-      // AND NOT WHILE ONE IS HALF-DONE. A blow begun again mid-pause would draw
-      // from the pre-pause deck and strand the carry holding the real one.
-      if (state.spiceBlow) {
-        return json({ error: 'the blow is waiting on the Fremen', code: 'blow-in-progress' }, 409)
-      }
-
-      const { data: deckRows } = await admin
-        .from('match_decks').select('deck, cards').eq('match_id', matchId)
-      const piles = Object.fromEntries((deckRows ?? []).map(r => [r.deck, r.cards]))
-
-      // BUILT AND SHUFFLED ON FIRST USE, from the match's own seed — the same
-      // seed the treachery reshuffle uses, so the whole match replays from one
-      // number. `?? []` on a missing pile would deal from an empty deck and
-      // report a deck of nothing as a legal state.
-      const stored = piles.spice as SpiceCardRow[] | undefined
-      const seed = Number(match.rng_seed) + match.action_seq
-      const deck: SpiceCardRow[] = stored?.length
-        ? stored
-        : shuffleWithSeed(seed, buildSpiceDeck())
-
-      const forces = (state.forces ?? []) as ForceRow[]
-      const spiceOnBoard = (state.spiceOnBoard ?? {}) as Record<string, number>
-      const fremenInPlay = Object.prototype.hasOwnProperty.call(seatOfFaction, 'fremen')
-
-      // ── the advanced game: two piles, and a stop between them ────────────
-      if (state.mode === 'advanced') {
-        let step
-        try {
-          step = beginDoubleSpiceBlow({
-            deck, discardA: shown.discardA ?? [], discardB: shown.discardB ?? [],
-            forces, spiceOnBoard, storm: state.storm as number,
-            firstTurn: turn <= 1, fremenInPlay, rng: seededRng(seed),
-            closesAt: now + WORM_SECONDS * 1000,
-          })
-        } catch (e) {
-          return json({ error: String(e), code: 'blow-failed' }, 409)
-        }
-        return await publishBlowStep(step, turn, seed, 0)
-      }
-
-      // ── the basic game: one pile, and it cannot stop ─────────────────────
-      // Placing worms is a Fremen ADVANCED advantage — resolveSpiceBlow only
-      // counts them when mode is 'advanced' — so a basic blow runs to the end
-      // by construction rather than by hoping.
-      let out
-      try {
-        out = resolveSpiceBlow({
-          deck, discard: shown.discardA ?? [], forces,
-          mode: 'basic', fremenInPlay, spiceOnBoard,
-          storm: state.storm as number, firstTurn: turn <= 1, rng: seededRng(seed),
-        })
-      } catch (e) {
-        return json({ error: String(e), code: 'blow-failed' }, 409)
-      }
-      // Identity is sound HERE and only here: toTanks holds the very objects
-      // this same request parsed out of state.forces. The advanced path cannot
-      // do this, because its carry has been to the database and back — see the
-      // note on DoubleBlowOutcome.forces.
-      const eaten = new Set(out.toTanks)
-      return await commitBlow({
-        turn,
-        spiceDeck: publicSpiceDeck({ deck: out.deck, discardA: out.discard, discardB: [] }),
-        // SET, not add, and the devoured lose theirs first. One call, because
-        // doing it by hand is where the add-versus-set bug lived.
-        spiceOnBoard: applyBlowToBoard(spiceOnBoard, out),
-        forces: forces.filter(f => !eaten.has(f)),
-        deck: out.deck,
-        said: { placed: out.placed, blockedByStorm: out.blockedByStorm, devoured: out.devoured },
-      })
+      return await turnTheBlow()
     }
 
     // ── The Fremen put their worms down ──────────────────────────────────────
@@ -887,80 +997,11 @@ Deno.serve(async req => {
     // may see them: that table has RLS on and no read policy at all, and the
     // auction's own state is public.
     case 'OPEN_BIDDING': {
-      if (state.phase !== 'Bidding') {
-        return json({ error: 'the turn is not at bidding', code: 'wrong-phase' }, 409)
-      }
-      if (state.auction) {
-        return json({ error: 'bidding has already opened this turn', code: 'already-opened' }, 409)
-      }
-
-      const order = (action.order ?? []) as string[]
-      const hands = (action.hands ?? {}) as Record<string, number>
-      const limits = (action.limits ?? {}) as Record<string, number>
-      const count = cardsOnOffer(order, hands, limits)
-      if (count === 0) {
-        // Every hand full. Nothing is drawn and nothing is discarded — offering
-        // cards nobody may take would take real cards out of the deck and turn
-        // them face up for nobody's benefit.
-        return json({ error: 'every hand is full, so no cards are auctioned', code: 'no-cards' }, 409)
-      }
-
-      const { data: deckRows } = await admin
-        .from('match_decks').select('deck, cards').eq('match_id', matchId)
-      const piles = Object.fromEntries((deckRows ?? []).map((r) => [r.deck, r.cards as string[]]))
-      let deal
-      try {
-        deal = drawTreachery(
-          piles.treachery ?? [], (state.treacheryDiscard ?? []) as string[], count,
-          (cards) => shuffleWithSeed(Number(match.rng_seed) + match.action_seq, cards),
-        )
-      } catch (e) {
-        return json({ error: String(e), code: 'deck-exhausted' }, 409)
-      }
-
-      const step = beginAuction({
-        turn: state.turn ?? 0, order, hands, limits,
-        closesAt: now + BID_SECONDS * 1000,
-      })
-
-      // ── Atreides prescience ─────────────────────────────────────────────
-      // The card about to be bid on, written into the Atreides seat's own row.
-      // Only that seat, only that card, and only if they are at the table.
-      //
-      // MERGED, not replaced. p_secrets upserts the whole data blob, so writing
-      // { prescience } alone would take that seat's hand and purse with it —
-      // this is the smallest write in the phase and the easiest place to lose
-      // everything else.
-      const openIndex = step.status === 'awaiting' ? step.carry.index : -1
-      const openReveal = prescienceFor({ seated: order, lot: deal.drawn, index: openIndex })
-      const prescientSeat = seatOfFaction[PRESCIENT_FACTION]
-      let openSecrets: Record<string, unknown> = {}
-      if (openReveal && prescientSeat) {
-        const { data: theirs } = await admin
-          .from('match_secrets').select('data')
-          .eq('match_id', matchId).eq('player_id', prescientSeat).maybeSingle()
-        openSecrets = {
-          [prescientSeat]: withReveal((theirs?.data ?? {}) as Record<string, unknown>, openReveal),
-        }
-      }
-
-      const { data, error } = await admin.rpc('apply_match_write', {
-        p_match_id: matchId,
-        p_expected_version: match.version,
-        // The STEP is public — it names no card. The reshuffle may have emptied
-        // the discard, so that goes back too.
-        p_state: { ...state, auction: step, treacheryDiscard: deal.discard },
-        // The reveal rides in the SAME transaction as the lot it names. Written
-        // separately, a crash between them leaves the Atreides reading a card
-        // from an auction that never opened.
-        p_secrets: openSecrets,
-        // The drawn cards park where nobody can read them, beside the pile they
-        // came out of, in the same transaction that shortened it.
-        p_decks: { treachery: deal.draw, 'auction-lot': deal.drawn },
-      })
-      if (error) return json({ error: error.message }, 500)
-      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
-      return json({ auction: step, version: data[0].version })
+      return await openTheAuction(
+        (action.order ?? []) as string[],
+        (action.hands ?? {}) as Record<string, number>,
+        (action.limits ?? {}) as Record<string, number>,
+      )
     }
 
     // ── One bid or pass ──────────────────────────────────────────────────────
@@ -1256,6 +1297,226 @@ Deno.serve(async req => {
       // Awards are public — who won and for how much was visible at the table.
       // WHICH CARD is not, and is not in this response.
       return json({ awards: outcome.step.result.awards, version: data[0].version })
+    }
+
+    // ── Move the turn along ──────────────────────────────────────────────────
+    // One press, one phase. Entering a phase performs that phase's own work in
+    // the same write — see lib/dune/phaseAdvance for the whole design, and for
+    // why the holds below stop the host too while the look-window stops only
+    // everybody else.
+    case 'ADVANCE_PHASE': {
+      // WHO MAY PRESS. The host's faction, from the state the deal wrote; a
+      // match dealt before hosts existed falls back to the row's creator, and
+      // a row with neither is anybody's — an old table with no host is a table
+      // with no host, not a locked one.
+      const hostFaction = state.host as string | undefined
+      const isHost = hostFaction ? myFaction === hostFaction
+        : match.created_by ? match.created_by === user.id : true
+
+      // THE HOLDS STOP EVERYBODY, the host included: each is a pause the rules
+      // gave to a player, and each has its own after-deadline push any seat
+      // may fire. Advancing over one would play their decision ahead of the
+      // clock that protects it.
+      const hold = advanceHold(state as never, now)
+      if (hold) {
+        const said: Record<string, string> = {
+          'setup-not-finished': 'setup has not finished',
+          'game-over': 'the game is over',
+          'blow-not-turned': 'the spice blow has not been turned',
+          'worms-pending': 'the blow is waiting on the Fremen',
+          'charity-open': 'the charity window is still open',
+          'auction-running': 'the auction is still running',
+        }
+        return json({
+          error: said[hold.code] ?? hold.code, code: hold.code,
+          ...(hold.until ? { until: hold.until } : null),
+        }, 409)
+      }
+
+      // THE LOOK-WINDOW stops only the table: the host is the one seat trusted
+      // to decide the table has seen enough of a phase with nothing left in it.
+      if (!isHost && phaseWindowOpen(state as never, now)) {
+        const clock = state.phaseClock as { closesAt: number }
+        return json({
+          error: 'only the host moves on this early', code: 'phase-window-open',
+          until: clock.closesAt,
+        }, 403)
+      }
+
+      const stamp = (turn: number, phase: string) =>
+        ({ turn, phase, closesAt: now + PHASE_SECONDS * 1000 })
+
+      // ── THE OWED STORM. A match is DEALT into Storm, so nothing ever
+      // entered the phase and nothing rolled. The first press pays that debt
+      // and stays put — the table sees the weather before the turn moves on —
+      // and the stamp below makes the second press subject to the same look-
+      // window as any other phase.
+      if (state.phase === 'Storm' && state.stormMoved !== state.turn) {
+        const roll = rollStorm(
+          Number(state.turn), state.mode as never,
+          seededRng(Number(match.rng_seed) + match.action_seq))
+        const { patch } = stormEntry(state as never, roll)
+        const { data, error } = await admin.rpc('apply_match_write', {
+          p_match_id: matchId,
+          p_expected_version: match.version,
+          p_state: {
+            ...state, ...patch, awaiting: null,
+            phaseClock: stamp(Number(state.turn), 'Storm'),
+          },
+          p_secrets: {},
+        })
+        if (error) return json({ error: error.message }, 500)
+        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+        return json({ phase: 'Storm', turn: state.turn, stormReport: patch.stormReport, version: data[0].version })
+      }
+
+      const target = phaseAfter(state.phase as never)
+      const turn = target.newTurn ? Number(state.turn) + 1 : Number(state.turn)
+
+      // A MATCH FROM BEFORE THE LOOP can sit at Mentat Pause of turn ten with
+      // no winner written — the check below never ran for it. Ending the game
+      // now is the rule it missed, not an eleventh turn.
+      const overrun = target.newTurn && Number(state.turn) >= TURN_LIMIT
+
+      const base: Record<string, unknown> = {
+        ...state, phase: target.phase, turn, awaiting: null,
+        phaseClock: stamp(turn, target.phase),
+      }
+      // An expired charity window is closed by the advance that leaves it, the
+      // way CLOSE_CHARITY would have. The claims stand; the window is over.
+      if (state.phase === 'CHOAM Charity') delete base.charity
+
+      /** The plain write most entries need: the pointer, and nothing else. */
+      const plainly = async (
+        extra: Record<string, unknown> = {}, status?: string,
+        secrets: Record<string, unknown> = {},
+      ) => {
+        const { data, error } = await admin.rpc('apply_match_write', {
+          p_match_id: matchId,
+          p_expected_version: match.version,
+          p_state: { ...base, ...extra },
+          p_secrets: secrets,
+          p_decks: {},
+          ...(status ? { p_status: status } : null),
+        })
+        if (error) return json({ error: error.message }, 500)
+        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+        return json({ phase: target.phase, turn, ...extra, version: data[0].version })
+      }
+
+      /** Read the Bene Gesserit's prediction, theirs alone, for the verdict. */
+      const predictionOf = async (): Promise<{ faction?: string; turn?: number } | null> => {
+        const bgSeat = seatOfFaction['bene-gesserit']
+        if (!bgSeat) return null
+        const { data: row } = await admin
+          .from('match_secrets').select('data')
+          .eq('match_id', matchId).eq('player_id', bgSeat).maybeSingle()
+        return ((row?.data ?? {}) as { prediction?: { faction?: string; turn?: number } })
+          .prediction ?? null
+      }
+
+      /** End the game: the verdict into state, the row to 'complete', one write. */
+      const finish = async (onState: Record<string, unknown>) => {
+        const verdict = mentatVerdict(onState as never, await predictionOf())
+        if (!verdict) return null
+        return await plainly({ winner: verdict }, 'complete')
+      }
+
+      if (overrun) {
+        // The verdict reads the board as it stands, at the turn it stands at.
+        const ended = await finish({ ...state })
+        if (ended) return ended
+      }
+
+      switch (target.phase) {
+        // ── a new turn's weather, rolled as it is entered ──────────────────
+        case 'Storm': {
+          const roll = rollStorm(
+            turn, state.mode as never,
+            seededRng(Number(match.rng_seed) + match.action_seq))
+          const { patch } = stormEntry({ ...base, turn } as never, roll)
+          return await plainly({ ...patch })
+        }
+
+        // ── the cards are turned in the same write as the pointer ──────────
+        case 'Spice Blow and Nexus': {
+          baseState = base
+          return await turnTheBlow()
+        }
+
+        // ── the claim window opens with the phase ──────────────────────────
+        case 'CHOAM Charity': {
+          return await plainly({
+            charity: { expiresAt: now + CHARITY_WINDOW_MS, claims: [], turn },
+          })
+        }
+
+        // ── the lot is drawn with inputs computed from the match ───────────
+        case 'Bidding': {
+          const { data: handRows } = await admin
+            .from('match_secrets').select('player_id, data').eq('match_id', matchId)
+          const cards: Record<string, number> = {}
+          for (const r of handRows ?? []) {
+            const f = factionOfSeat[r.player_id as string]
+            if (f) cards[f] = (((r.data ?? {}) as { cards?: unknown[] }).cards ?? []).length
+          }
+          const opening = biddingOpening({
+            storm: state.storm as never,
+            players: (state.players ?? []) as never,
+            cards,
+          })
+          // EVERY HAND FULL is not a refusal here, the way it is for the
+          // harness's OPEN_BIDDING: the phase still happens, there is simply
+          // nothing to sell, and the turn must not wedge on that.
+          if (cardsOnOffer(opening.order, opening.hands, opening.limits) === 0) {
+            return await plainly({ biddingSkipped: true })
+          }
+          baseState = base
+          return await openTheAuction(opening.order, opening.hands, opening.limits)
+        }
+
+        // ── the documented half of collection pays out ─────────────────────
+        case 'Spice Collection': {
+          const paid = cityIncome(base as never)
+          if (paid.length === 0) return await plainly()
+          const { data: rows } = await admin
+            .from('match_secrets').select('player_id, data').eq('match_id', matchId)
+          const byId = Object.fromEntries(
+            (rows ?? []).map(r => [r.player_id as string, (r.data ?? {}) as DuneSecrets]))
+          const purses = Object.fromEntries(
+            Object.entries(byId).map(([id, d]) => [id, readSpice(d)]))
+          // Through the ledger, like charity: spice ENTERING the game from the
+          // bank, one mover, auditable by reason.
+          const moved = applySpiceMoves(purses, paid.flatMap(p => {
+            const seatId = seatOfFaction[p.faction]
+            return seatId
+              ? [{ from: BANK, to: seatId, amount: p.amount, reason: 'city-income' }]
+              : []
+          }))
+          if (!moved.ok) return json({ error: 'income could not be paid', code: moved.refusal }, 500)
+          const secretsPatch = Object.fromEntries(
+            Object.entries(byId)
+              .filter(([id]) => moved.purses[id] !== purses[id])
+              .map(([id, d]) => [id, { ...d, spice: moved.purses[id] }]))
+          // THE RECEIPT IS PUBLIC on purpose: who occupies a city is on the
+          // board and the payout is printed on it, so the amounts tell nobody
+          // anything their eyes could not.
+          return await plainly({ cityIncome: { turn, paid } }, undefined, secretsPatch)
+        }
+
+        // ── the pause that counts strongholds ──────────────────────────────
+        case 'Mentat Pause': {
+          const ended = await finish(base)
+          return ended ?? await plainly()
+        }
+
+        // ── Revival, Shipment and Movement, Battles: not built, and said ───
+        // They enter, hold the look-window so the table sees where the turn
+        // is, and advance. Rules land here later; the loop does not wait for
+        // them.
+        default:
+          return await plainly({ placeholder: true })
+      }
     }
 
     case 'SEED_SPICE': {

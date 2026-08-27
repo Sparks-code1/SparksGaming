@@ -395,7 +395,10 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
   // policy at all; public state gets the projection and nothing else.
   check('the deck itself is parked in match_decks',
     /p_decks:\s*\{\s*spice:/.test(fn), true)
-  const blowCase = fn.slice(fn.indexOf("case 'SPICE_BLOW'"), fn.indexOf("case 'OPEN_BIDDING'"))
+  // THE BODY MOVED OUT OF THE CASE. The blow became turnTheBlow so the
+  // advance loop can run it under a moved phase pointer; the case is now one
+  // line, and slicing case-to-case would check ninety characters of nothing.
+  const blowCase = fn.slice(fn.indexOf('const turnTheBlow'), fn.indexOf('const openTheAuction'))
   check('...and the blow case is there to check', blowCase.length > 500, true)
   // ONCE A TURN. The count alone cannot say whether the blow has happened, so
   // the turn it was turned for is stamped beside it. Without that a second call
@@ -412,7 +415,7 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
   // nothing could reach. An error code proves a message exists; it says nothing
   // about whether anything can produce it.
   check('...on a condition that can actually fire',
-    /if \(state\.spiceBlow\) \{/.test(blowCase), true)
+    /if \(baseState\.spiceBlow\) \{/.test(blowCase), true)
 
   // ── THE PAUSE ────────────────────────────────────────────────────────────
   // Worms after the first in a pile are the Fremen's to place, and the rule is
@@ -490,7 +493,10 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
   // characters from the start, and adding the deadline pushed the last checks
   // past the end of the window — three of them failed for the length of a
   // comment rather than for anything about the code.
-  const publish = fn.slice(fn.indexOf('const publishBlowStep'), fn.indexOf('switch (action.type)'))
+  // ENDS AT THE NEXT HELPER, not at the switch: turnTheBlow moved in between,
+  // and its basic path legitimately holds the Set-of-toTanks this slice must
+  // prove publishBlowStep does NOT hold.
+  const publish = fn.slice(fn.indexOf('const publishBlowStep'), fn.indexOf('const turnTheBlow'))
   check('the publisher is there to check', publish.length > 800, true)
 
   const pausedState = publish.slice(publish.indexOf('p_state:'), publish.indexOf('p_secrets:'))
@@ -553,7 +559,7 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
     /resumes: held\.resumes \+ 1|held\.resumes \+ 1\)/.test(placeCase), true)
 
   // ── two piles, and one that cannot stop ──────────────────────────────────
-  const advancedBranch = blowCase.slice(blowCase.indexOf("if (state.mode === 'advanced')"), blowCase.indexOf('// ── the basic game'))
+  const advancedBranch = blowCase.slice(blowCase.indexOf("if (baseState.mode === 'advanced')"), blowCase.indexOf('// ── the basic game'))
   check('the advanced game turns both piles',
     advancedBranch.includes('beginDoubleSpiceBlow('), true)
   check('...reading and writing both discard piles',

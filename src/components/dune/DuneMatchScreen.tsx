@@ -58,6 +58,7 @@ import type { DuneAction } from '@/lib/dune/duneDispatch'
 import type { DuneSecrets } from '@/lib/dune/charity'
 import type { FactionId } from '@/types/Dune/Faction'
 import type { BidRefusal } from '@/lib/dune/bidding'
+import { advanceHold, phaseWindowOpen, phaseAfter } from '@/lib/dune/phaseAdvance'
 import { DuneGameScreen } from './DuneGameScreen'
 import type { PlacedForce } from './SetupWindow'
 import { WormPlacementPanel } from './WormPlacementPanel'
@@ -335,6 +336,32 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
   const seatNames = Object.fromEntries(roster.map(r => [r.playerId, r.name]))
 
   const setup = openSetup(row)
+
+  /**
+   * The turn's next step, as this seat may take it.
+   *
+   * THE SAME BUNDLE THE SERVER RUNS decides what holds the phase — a second
+   * opinion here would be a live-looking button the server refuses, which is
+   * the bug the host work fixed once already. What the client adds is only
+   * WHO: the host presses early; anyone presses once the look-window shuts;
+   * a match dealt before hosts existed shows the button to every seat and
+   * lets the server rule.
+   */
+  const hold = row && !row.winner ? advanceHold(row, now) : null
+  const amHost = row?.host ? seat?.faction === row.host : true
+  const stormOwed = row?.phase === 'Storm' && row.stormMoved !== row.turn
+  const mayAdvance = !!seat && !!row && !row.winner
+    && !hold && (amHost || !phaseWindowOpen(row, now))
+
+  const advance = async () => {
+    const res = await send({ type: 'ADVANCE_PHASE' })
+    if (res) {
+      const said = res.data as { phase?: string; stormReport?: { roll?: number } }
+      say(said.stormReport ? `rolled the storm (${said.stormReport.roll}).`
+        : `moved the turn to ${said.phase}.`)
+    }
+  }
+
   const auction = useMemo(() => openAuction(row), [row])
   const charityWindow = openCharity(row, answeredTurn)
   const expired = auctionExpired(row, now)
@@ -582,7 +609,8 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
           apply. The right-hand column is the HUD, the left is the chat, so
           this takes the top right — over a list of other seats, which is the
           least costly thing to cover. */}
-      {(setup || row?.spiceBlow || expired || spectating || notSeated || feed !== 'live') && (
+      {(setup || row?.spiceBlow || expired || spectating || notSeated || feed !== 'live'
+        || row?.winner || row?.stormReport?.turn === row?.turn || mayAdvance || hold) && (
         <div style={{
           // BELOW THE MENU, which took this corner and is drawn over it. A
           // setup prompt or a "you are watching" banner with a button sitting
@@ -642,6 +670,81 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
               <b>{seat?.faction}</b> holds a seat row but is not in the match state, so
               the tray is empty. The match seats {(row?.players ?? []).map(p => p.faction).join(', ') || 'nobody'}.
             </p>
+          )}
+
+          {/* THE GAME IS OVER, and this outranks every control below: there
+              is no next phase, and a board still offering one is a board that
+              disagrees with its own result. */}
+          {row?.winner && (
+            <div style={{
+              margin: '0 0 8px', padding: 8, borderRadius: 6, background: '#2c3a1d',
+              lineHeight: 1.5,
+            }}>
+              <b style={{ display: 'block', marginBottom: 4 }}>
+                {row.winner.factions.map(f => nameOf(f)).join(' and ')} win{row.winner.factions.length === 1 ? 's' : ''}
+              </b>
+              {{
+                strongholds: 'Three strongholds at the Mentat Pause.',
+                prediction: 'The Bene Gesserit foresaw this, and the win is theirs.',
+                'fremen-default': 'The desert endures: the Fremen default victory.',
+                'guild-default': 'Nobody won, so the Guild did.',
+                'most-strongholds': 'Turn ten: the most strongholds takes it.',
+              }[row.winner.reason] ?? row.winner.reason}
+            </div>
+          )}
+
+          {/* WHAT THE STORM DID, this turn. Dead stacks vanish from the board
+              without this — a player who looked away for ten seconds comes
+              back to fewer pieces and no explanation. */}
+          {row?.stormReport && row.stormReport.turn === row.turn && (
+            <div style={{
+              margin: '0 0 8px', padding: 8, borderRadius: 6, background: '#1d2a44',
+              lineHeight: 1.5,
+            }}>
+              <b style={{ display: 'block', marginBottom: 4 }}>
+                The storm rolled {row.stormReport.roll}
+              </b>
+              {row.stormReport.killed.length === 0
+                ? 'Nothing stood in its path.'
+                : row.stormReport.killed.map((k, i) => (
+                  <span key={i} style={{ display: 'block' }}>
+                    {nameOf(k.faction)} lost {k.count} in {k.territoryId}.
+                  </span>
+                ))}
+            </div>
+          )}
+
+          {/* THE TURN'S NEXT STEP. The server rules on every press; what is
+              shown is only whether pressing is worth offering — see the note
+              at `hold`. The hold line is public: six people round a table can
+              all see what the turn is waiting for. */}
+          {hold && !row?.winner && !setup && (
+            <p style={{ margin: '0 0 8px', padding: 7, borderRadius: 5, background: '#1d2a44', opacity: 0.85 }}>
+              {{
+                'blow-not-turned': 'Waiting for the spice blow to be turned.',
+                'worms-pending': 'Waiting on the Fremen and the worms.',
+                'charity-open': 'The charity window is open.',
+                'auction-running': 'The auction is running.',
+                'game-over': 'The game is over.',
+                'setup-not-finished': 'Setting up.',
+              }[hold.code] ?? hold.code}
+            </p>
+          )}
+          {mayAdvance && (
+            <div style={{ margin: '0 0 8px' }}>
+              <button onClick={() => void advance()} disabled={busy}
+                style={{ width: '100%', padding: '6px 8px', cursor: 'pointer' }}>
+                {stormOwed ? 'Roll the storm'
+                  : phaseAfter(row!.phase).newTurn
+                    ? `End turn ${row!.turn}`
+                    : `On to ${phaseAfter(row!.phase).phase}`}
+              </button>
+              {!amHost && (
+                <p style={{ margin: '4px 0 0', opacity: 0.6 }}>
+                  The host has not pressed it, and the window has shut — anyone may.
+                </p>
+              )}
+            </div>
           )}
 
           {/* SHOWN TO EVERY SEAT, and only the Fremen get controls. Six people
