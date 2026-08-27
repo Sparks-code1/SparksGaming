@@ -534,6 +534,32 @@ const seat = (over: Partial<LobbySeat> = {}): LobbySeat => {
   check('...and is absent when the caller gives it nowhere to go',
     /\{onExit && \(/.test(match), true)
 
+  // EVERY ROUTE, not just App's. The Leave button draws only when it is given
+  // somewhere to go, and main.tsx's ?dune-match route passed nothing — so
+  // anybody arriving by link, or by refreshing after App set that flag, got a
+  // match screen with no way out and no sign there had ever been one.
+  const mounts = [
+    ...app.matchAll(/<DuneMatchScreen[\s\S]{0,600}?\/>/g),
+    ...code('src/main.tsx').matchAll(/<DuneMatchScreen[\s\S]{0,600}?\/>/g),
+  ].map(m => m[0])
+  check('every route into a match renders one', mounts.length >= 2, true)
+  check('...and every one of them offers a way out',
+    mounts.filter(m => !/onExit=/.test(m)).length, 0)
+  // AND THE WAY OUT GOES SOMEWHERE. `onExit={() => {}}` satisfies "has an
+  // exit" and leaves somebody pressing a button that does nothing, which is
+  // worse than the missing button it replaced: at least that one was honest.
+  //
+  // SCOPED TO THE HANDLER. Searching the whole mount for a navigation found the
+  // window.location.search in the matchId prop right above it, so an empty
+  // handler passed — the same mistake as every other check in this session that
+  // searched too wide a slice.
+  const exitBody = (mount: string) =>
+    (/onExit=\{([\s\S]*?)\}\s*\/>/.exec(mount) ?? [])[1] ?? ''
+  check('every exit handler is there to read',
+    mounts.filter(m => exitBody(m).length < 5).length, 0)
+  check('...and every one of them actually goes somewhere',
+    mounts.filter(m => !/(setScreen|window\.location)/.test(exitBody(m))).length, 0)
+
   check('the app gives it somewhere to go', /onExit=\{\(\) => \{/.test(app), true)
   check('...back to the Dune screen', /setScreen\('dune-lobby'\)/.test(app), true)
   // AND THE URL GOES WITH IT, or a refresh drops them straight back into the

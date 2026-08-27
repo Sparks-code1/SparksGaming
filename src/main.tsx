@@ -40,7 +40,19 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       ? <Suspense fallback={null}><DuneMultiSeatView /></Suspense>
       : new URLSearchParams(window.location.search).has('dune-match')
       ? <DuneMatchScreen
-          matchId={new URLSearchParams(window.location.search).get('dune-match') ?? ''} />
+          matchId={new URLSearchParams(window.location.search).get('dune-match') ?? ''}
+          /* THIS ROUTE GOES ROUND App, so it has to supply its own way out.
+             DuneMatchScreen draws Leave only when it is given somewhere to go,
+             and without this the button was simply absent — which is what
+             anybody arriving by link or by refresh got, since App sets this
+             query flag on the way into a match and a reload then comes back
+             through here instead of through App.
+
+             Out is the app's own root: dropping the flag and reloading lands on
+             the campaign screen, which is where the Dune entry lives. A
+             pathname assignment rather than history juggling, because this
+             route is reached by a real page load and should leave by one. */
+          onExit={() => { window.location.href = window.location.pathname }} />
       : new URLSearchParams(window.location.search).has('dune-game')
       ? <DuneGameScreenPreview />
       : new URLSearchParams(window.location.search).has('dune')
