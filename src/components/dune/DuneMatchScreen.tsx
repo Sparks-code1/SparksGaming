@@ -59,6 +59,7 @@ import type { DuneSecrets } from '@/lib/dune/charity'
 import type { FactionId } from '@/types/Dune/Faction'
 import type { BidRefusal } from '@/lib/dune/bidding'
 import { DuneGameScreen } from './DuneGameScreen'
+import type { PlacedForce } from './SetupPanel'
 import { WormPlacementPanel } from './WormPlacementPanel'
 import { FACTION_LOOK } from './SeatLayer'
 import SoundSettings from '@/components/SoundSettings'
@@ -392,6 +393,44 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
     say(answer.kind === 'pass' ? 'passed on the card.' : `bid ${answer.spice}.`)
   }
 
+  /**
+   * One setup answer, as this seat.
+   *
+   * THROUGH THE SAME send() AS EVERYTHING ELSE, so a refusal lands in `refused`
+   * and the panel shows it rather than this page inventing a second way to
+   * fail. The server settles the decision and the row comes back with it gone
+   * from `outstanding`, which is what takes the control off the screen — this
+   * never marks anything answered locally. A client that hid its own control
+   * on a request it had not yet been told succeeded would hide it on a request
+   * that was about to be refused.
+   */
+  const answerSetup = async (answer: Record<string, unknown>, line: string) => {
+    const res = await send({ type: 'SETUP_ANSWER', ...answer })
+    say(res ? line : 'the server refused that setup answer.')
+  }
+
+  const setupAnswers = {
+    onFremenPlacement: (at: readonly PlacedForce[]) => void answerSetup(
+      { answer: 'fremen-placement', at },
+      `placed your forces: ${at.map(a => a.count).join(' + ')}.`),
+    onPrediction: (faction: FactionId, turn: number) => void answerSetup(
+      { answer: 'prediction', faction, turn },
+      // NOT WHAT WAS PREDICTED. This line is local, but the prediction is the
+      // one secret that is worthless the moment it is read over a shoulder,
+      // and a chat log scrolls.
+      'your prediction is sealed.'),
+    onTraitor: (keep: string) => void answerSetup(
+      { answer: 'traitor', keep },
+      // AND NOT WHICH LEADER, for the same reason and more of it: a known
+      // traitor is a battle that cannot be lost.
+      'you kept one of your four traitors.'),
+    onAdvisorPlacement: (territoryId: string, sector?: string) => void answerSetup(
+      { answer: 'advisor-placement', territoryId, ...(sector ? { sector } : null) },
+      'your advisor is placed.'),
+    busy,
+    refused,
+  }
+
   // ── what to show before there is a game to show ───────────────────────────
   if (!matchId) {
     return <Notice><b>No match.</b> Open this screen with <code>?dune-match=&lt;id&gt;</code>.</Notice>
@@ -423,6 +462,7 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
         talkingTo={seat ? others : []}
         seatNames={seatNames}
         now={now}
+        setup={seat ? setupAnswers : null}
         charity={charityWindow && seat ? {
           onClaim: () => void claimCharity(),
           onPass: passCharity,
@@ -562,22 +602,24 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
               moving. It says which seats it is waiting on, which is public —
               six people round a table can see who is still placing.
 
-              ANSWERING IS NOT HERE YET. The three answers want three different
-              controls, and until they exist this is the honest half: what is
-              being waited on, and that the clock will answer for anyone who
-              says nothing. */}
+              THE ANSWERING IS NOT HERE. This corner is a notice board; the
+              controls are over the board, where the map they are decided from
+              is — see SetupPanel. What this adds is the half the panel cannot
+              show a seat: who ELSE is still to answer, which is why nothing has
+              started even after you are done. */}
           {setup && (
             <div style={{
               margin: '0 0 8px', padding: 8, borderRadius: 6, background: '#1d2a44',
               lineHeight: 1.5,
             }}>
               <b style={{ display: 'block', marginBottom: 4 }}>Setting up</b>
-              {setupWants(row, seat?.faction ?? null)
-                ? 'You have a setup decision to make. The controls for it are not built yet — the clock will answer for you.'
-                : 'Waiting on '}
-              {!setupWants(row, seat?.faction ?? null) && (
-                <b>{[...new Set(setup.outstanding.map(d => d.faction))].join(', ')}</b>
+              {setupWants(row, seat?.faction ?? null) && (
+                <span style={{ display: 'block', marginBottom: 4 }}>
+                  Your answers are on the panel over the board.
+                </span>
               )}
+              Waiting on <b>{[...new Set(setup.outstanding.map(d => d.faction))].join(', ')}</b>.
+              {' '}The clock answers for whoever says nothing.
             </div>
           )}
 

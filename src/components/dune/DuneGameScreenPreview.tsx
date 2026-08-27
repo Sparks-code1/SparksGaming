@@ -13,8 +13,12 @@
  */
 import { useEffect, useState } from 'react'
 import type { FactionId } from '@/types/Dune/Faction'
-import type { DuneGameState, GameMode } from '@/types/Dune/Game'
+import type { DuneGameState, GameMode, Force } from '@/types/Dune/Game'
 import type { DuneSecrets } from '@/lib/dune/charity'
+import {
+  openingPosition, settle, defaultSector, postureFor, defaultFremenPlacement, SETUP_SECONDS,
+} from '@/lib/dune/setup'
+import type { SetupDecision, SetupWindow } from '@/lib/dune/setup'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { DuneGameScreen } from './DuneGameScreen'
 import type { ChatMessage } from './ChatPanel'
@@ -93,6 +97,31 @@ const BIDDING: Omit<BiddingPanelProps, 'seat' | 'spice' | 'hand' | 'revealed' | 
   onPass: () => {},
 }
 
+/**
+ * A real opening position, for ?dune-game&setup.
+ *
+ * NOT A SECOND FIXTURE. The setup panel draws off `state.setup.outstanding` and
+ * off the four traitors in one seat's own row, and both of those are things
+ * openingPosition produces — so the preview deals a real game rather than
+ * hand-writing a plausible-looking one. A hand-written setup would be the one
+ * arrangement the deal never makes.
+ *
+ * ADVANCED, always. The advisor placement exists in the advanced game only, and
+ * it is the decision worth looking at: it is the one that waits on another
+ * seat. The basic-game toggle is about how the spice deck is laid out and has
+ * nothing to say here, so it stands down while this is running.
+ */
+function dealForPreview() {
+  return openingPosition({
+    seats: STATE.players.map((p, i) => ({
+      faction: p.faction, playerId: `p${i + 1}`, seat: p.seat,
+    })),
+    mode: 'advanced',
+    rng: Math.random,
+    closesAt: Date.now() + SETUP_SECONDS * 1000,
+  })
+}
+
 export default function DuneGameScreenPreview() {
   const q = new URLSearchParams(window.location.search)
   const [now, setNow] = useState(() => Date.now())
@@ -118,14 +147,61 @@ export default function DuneGameScreenPreview() {
   const [card, setCard] = useState(q.get('auction') === 'off' ? -1 : BIDDING.ask.index)
   const running = card >= 0 && card < BIDDING.ask.cardCount
 
+  // ── setting up, at ?dune-game&setup ──────────────────────────────────────
+  // ANSWERS THAT LAND, like the auction's above. The four settle locally: the
+  // decision comes off the outstanding list and any forces it placed go onto
+  // the board, which is what makes the advisor's wait mean anything — place the
+  // Fremen's ten and watch its control open, and its posture line change with
+  // where you put them. None of this is the real thing; the real one is on the
+  // server, and this is how you look at the panel without six accounts.
+  const [dealt] = useState(() => (q.has('setup') ? dealForPreview() : null))
+  const [outstanding, setOutstanding] = useState<SetupDecision[]>(
+    () => dealt?.state.setup.outstanding ?? [])
+  const [placedForces, setPlacedForces] = useState<Force[]>([])
+  const settling = !!dealt && outstanding.length > 0
+  const mySeatId = dealt && seat
+    ? STATE.players.findIndex(p => p.faction === seat) + 1
+    : 0
+  const answer = (kind: SetupDecision['kind'], forces: Force[] = []) => {
+    if (!seat) return
+    setPlacedForces(f => [...f, ...forces])
+    setOutstanding(o => settle(o, kind, seat))
+  }
+
+  const setupState: DuneGameState & { setup?: SetupWindow } = dealt
+    ? { ...dealt.state, mode: 'advanced',
+        forces: [...dealt.state.forces, ...placedForces],
+        setup: { ...dealt.state.setup, outstanding } }
+    : { ...STATE, mode }
+
   return (
     <>
       <DuneGameScreen
-        state={{ ...STATE, mode }}
+        state={settling ? setupState : { ...STATE, mode }}
         seat={seat}
-        own={seat ? OWN : null}
+        own={settling && seat
+          ? (dealt.secrets[`p${mySeatId}`] as DuneSecrets)
+          : seat ? OWN : null}
         chat={CHAT}
         onSend={seat ? () => {} : undefined}
+        setup={settling && seat ? {
+          onFremenPlacement: at => answer('fremen-placement',
+            at.map(a => ({
+              faction: seat,
+              territoryId: a.territoryId as Force['territoryId'],
+              sector: (a.sector ?? defaultSector(a.territoryId)) as Force['sector'],
+              count: a.count,
+            }))),
+          onPrediction: () => answer('prediction'),
+          onTraitor: () => answer('traitor'),
+          onAdvisorPlacement: (territoryId, sector) => answer('advisor-placement', [{
+            faction: seat,
+            territoryId: territoryId as Force['territoryId'],
+            sector: (sector ?? defaultSector(territoryId)) as Force['sector'],
+            count: 1,
+            posture: postureFor([...dealt.state.forces, ...placedForces], territoryId, seat),
+          }]),
+        } : null}
         bidding={running
           ? {
               ...BIDDING,
@@ -139,6 +215,28 @@ export default function DuneGameScreenPreview() {
             }
           : null}
         now={now} />
+      {/* THE OTHER SEAT'S ANSWER, which this page cannot give.
+          The advisor placement waits on the Fremen, and the whole point of the
+          wait is that it is somebody ELSE'S answer — so as the Bene Gesserit
+          there is no way to reach the unblocked control from one browser. This
+          applies the SAME default the clock applies, off the same function the
+          server calls, and then the advisor opens exactly as it would live.
+          The real six-seat version is ?dune-seats. */}
+      {settling && outstanding.some(d => d.kind === 'fremen-placement')
+        && seat !== 'fremen' && (
+        <button type="button"
+          onClick={() => {
+            setPlacedForces(f => [...f, ...defaultFremenPlacement('fremen')])
+            setOutstanding(o => settle(o, 'fremen-placement', 'fremen'))
+          }}
+          style={{
+            position: 'fixed', left: 12, bottom: 44, zIndex: 5,
+            background: '#1b2337', color: '#f0e2bb', border: '1px solid #f0e2bb55',
+            borderRadius: 4, padding: '5px 10px', cursor: 'pointer',
+            font: '12px Georgia, "Times New Roman", serif',
+          }}>let the Fremen answer (their default)</button>
+      )}
+
       {/* The two games, side by side in time. */}
       <label style={{
         position: 'fixed', left: 12, bottom: 10, zIndex: 5,

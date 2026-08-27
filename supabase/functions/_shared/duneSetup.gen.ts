@@ -8,14 +8,6 @@
 // agree.
 
 // src/data/dune/factions.ts
-var FACTION_IDS = [
-  "atreides",
-  "emperor",
-  "spacing-guild",
-  "fremen",
-  "harkonnen",
-  "bene-gesserit"
-];
 var ATREIDES = {
   id: "atreides",
   name: "Atreides",
@@ -29,6 +21,7 @@ var ATREIDES = {
   },
   reservesHeld: "off-planet",
   handLimit: 4,
+  startingTreachery: 1,
   freeRevivals: 2,
   abilities: {
     bidding: "Atreides may look at each Treachery Card as it comes up for purchase before any faction bids on it.",
@@ -63,6 +56,7 @@ var EMPEROR = {
   },
   reservesHeld: "off-planet",
   handLimit: 4,
+  startingTreachery: 1,
   freeRevivals: 1,
   abilities: {
     bidding: "Whenever any other faction pays spice for a Treachery card, they pay it to you instead of the Spice Bank. You may not discount the price of Treachery Cards; the full price must be paid."
@@ -116,6 +110,7 @@ var FREMEN = {
   // ReserveLocation.
   reservesHeld: "on-planet",
   handLimit: 4,
+  startingTreachery: 1,
   freeRevivals: 3,
   abilities: {
     shipment: "You may bring any or all of your reserves for free onto the Great Flat or onto any one territory within two territories of the Great Flat (subject to storm and occupancy rules).",
@@ -155,6 +150,7 @@ var SPACING_GUILD = {
   },
   reservesHeld: "off-planet",
   handLimit: 4,
+  startingTreachery: 1,
   freeRevivals: 1,
   abilities: {
     shipment: "When other factions ship forces on to Dune, from their off-planet reserves, they pay the spice to you instead of to the Spice Bank. You are able to make three types of shipment: (1) you may ship normally from off planet reserves, (2) you may ship any number of forces from any one territory to any other territory on the board, or (3) you may ship any number of forces from any one territory back to your reserves. You pay half the normal fee when shipping your forces, and pay 1 spice for every 2 of your forces shipped back to reserves."
@@ -188,6 +184,7 @@ var BENE_GESSERIT = {
   },
   reservesHeld: "off-planet",
   handLimit: 4,
+  startingTreachery: 1,
   freeRevivals: 1,
   abilities: {
     beforeGame: "When selecting this faction you secretly predict when one other faction will win, choosing the turn number and faction, this will remain a secret until game end. If your prediction is correct, your prediction is revealed and you and your allies win the game and win alone, you cannot predict the spacing-guild or Fremen will win with their special victory conditions",
@@ -232,6 +229,7 @@ var HARKONNEN = {
   },
   reservesHeld: "off-planet",
   handLimit: 8,
+  startingTreachery: 2,
   freeRevivals: 2,
   abilities: {
     traitors: "At the start of the game when you draw 4 Traitor Cards, you keep them all including your own and, any leader cards of other factions can be revealed in a battle as a traitor",
@@ -1314,8 +1312,11 @@ function defaultSector(territoryId) {
   const t = DUNE_TERRITORIES.find((x) => x.id === territoryId);
   return t?.sectors[0] ?? "sector-1";
 }
-function traitorDeck() {
-  return FACTION_IDS.flatMap((id) => (factionById(id)?.leaders ?? []).map((l) => l.name));
+function traitorDeck(seated) {
+  return seated.flatMap((id) => (factionById(id)?.leaders ?? []).map((l) => l.name));
+}
+function startingTreachery(faction) {
+  return factionById(faction)?.startingTreachery ?? 0;
 }
 function treacheryDeck() {
   return TREACHERY_CARDS.flatMap((c) => Array.from({ length: c.copies }, () => c.id));
@@ -1344,22 +1345,28 @@ function openingPosition(input) {
     faction: s.faction,
     seat: s.seat,
     reserves: factionById(s.faction)?.forces.reserves ?? 0,
-    handCount: 0,
+    // HOW MANY, WHICH IS PUBLIC — the cards themselves are dealt below into
+    // that seat's own row. Everyone starts holding one, so everyone can see
+    // that everyone starts holding one.
+    handCount: startingTreachery(s.faction),
     ally: null
   }));
   const forces = seats.map((s) => fixedPlacement(s.faction, mode)).filter((f) => f !== null);
-  const traitors = shuffle(traitorDeck(), rng);
+  const traitors = shuffle(traitorDeck(seats.map((s) => s.faction)), rng);
   const treachery = shuffle(treacheryDeck(), rng);
   const spice = shuffle(buildSpiceDeck(), rng);
   const secrets = {};
   let cut = 0;
+  let drawn = 0;
   for (const s of seats) {
     const dealt = traitors.slice(cut, cut + TRAITORS_DEALT);
     cut += TRAITORS_DEALT;
+    const hand = treachery.slice(drawn, drawn + startingTreachery(s.faction));
+    drawn += hand.length;
     const keepsAll = s.faction === KEEPS_ALL_TRAITORS;
     secrets[s.playerId] = {
       spice: factionById(s.faction)?.startingSpice ?? 0,
-      cards: [],
+      cards: hand,
       traitors: keepsAll ? dealt : [],
       ...keepsAll ? null : { traitorsDealt: dealt }
     };
@@ -1406,7 +1413,7 @@ function openingPosition(input) {
       setup: { outstanding, ...input.closesAt != null ? { closesAt: input.closesAt } : null }
     },
     secrets,
-    decks: { treachery, traitor: traitors.slice(cut), spice }
+    decks: { treachery: treachery.slice(drawn), traitor: traitors.slice(cut), spice }
   };
 }
 var refuse = (refusal) => ({ ok: false, refusal });
@@ -1521,6 +1528,7 @@ export {
   openingPosition,
   postureFor,
   settle,
+  startingTreachery,
   traitorDeck,
   treacheryDeck
 };

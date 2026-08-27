@@ -192,6 +192,20 @@ export interface Faction {
    * to compile rather than default to four and quietly cap the Harkonnen.
    */
   handLimit: number
+  /**
+   * Treachery cards dealt to this faction at setup, and kept.
+   *
+   * One for everyone, TWO for the Harkonnen — their own card says so, in the
+   * same sentence as their hand limit. DATA for the same reason handLimit is:
+   * the first auction is played by six people who are already holding a card,
+   * so the number decides who can afford to pass and who is one card off their
+   * limit before a single bid. Deriving it from `abilities.treachery` would
+   * mean reading an English sentence while dealing.
+   *
+   * Not optional: a faction added without one should fail to compile rather
+   * than default to one and quietly deal the Harkonnen short.
+   */
+  startingTreachery: number
   /** Forces revived free each Revival phase, before paying for more. */
   freeRevivals: number
   abilities: FactionAbilities

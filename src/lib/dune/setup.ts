@@ -1,5 +1,5 @@
 /**
- * The opening position, and the three decisions that make it.
+ * The opening position, and the four decisions that make it.
  *
  * Everything a Dune match needs before its first Storm phase: where each
  * faction's forces stand, what each holds, the storm's starting sector, and the
@@ -19,7 +19,19 @@
  *   go to match_decks, which has RLS on and NO POLICY AT ALL — no seat may read
  *   what the next card is, so there is no seat to scope a policy to.
  *
- * ── THREE DECISIONS, AND WHY THEY PAUSE SETUP ─────────────────────────────
+ * ── WHAT IS DEALT, AND NOT DECIDED ────────────────────────────────────────
+ *
+ * TRAITORS come off ONE deck, cut rather than sampled, so no two seats can hold
+ * the same leader — and the deck holds only the leaders of the factions at this
+ * table, so a four-player game deals from twenty cards and not thirty.
+ *
+ * ONE TREACHERY CARD EACH is dealt at the same time and kept — two for the
+ * Harkonnen, whose card says so. Nobody chooses it and nobody may decline it,
+ * which is why it is not among the decisions below; it is here because it is
+ * part of the opening position and because the first auction is played by a
+ * table already holding cards.
+ *
+ * ── FOUR DECISIONS, AND WHY THEY PAUSE SETUP ──────────────────────────────
  *
  * THE FREMEN DISTRIBUTE TEN FORCES across Sietch Tabr, False Wall South and
  * False Wall West. This has to be settled before the first phase resolves, and
@@ -80,7 +92,7 @@
  *   one territory the storm never touches. Its posture is worked out the same
  *   way a chosen one is.
  */
-import { FACTION_IDS, factionById } from '@/data/dune/factions'
+import { factionById } from '@/data/dune/factions'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import { STORM_START } from '@/lib/dune/storm'
@@ -170,9 +182,32 @@ export function defaultSector(territoryId: string): SectorId {
   return (t?.sectors[0] ?? 'sector-1') as SectorId
 }
 
-/** Every leader in the game, which is exactly the traitor deck. */
-export function traitorDeck(): string[] {
-  return FACTION_IDS.flatMap(id => (factionById(id)?.leaders ?? []).map(l => l.name))
+/**
+ * The traitor deck: one card per leader of every faction AT THIS TABLE.
+ *
+ * SEATED FACTIONS ONLY. The deck is built from who is playing, not from the
+ * six that exist — a four-player game deals from twenty cards, not thirty.
+ * Leaving the absent factions in would mean most seats holding traitors who can
+ * never take the field, which is four dead cards in a hand of four and turns
+ * the single most valuable secret in the game into a coin toss.
+ *
+ * ONE CARD PER LEADER, and it is dealt without replacement below, so no two
+ * seats can hold the same traitor. That is not a nicety: two players each
+ * believing they can call the same leader would both be right, and the first
+ * battle it came up in would have no answer in the rules.
+ */
+export function traitorDeck(seated: readonly FactionId[]): string[] {
+  return seated.flatMap(id => (factionById(id)?.leaders ?? []).map(l => l.name))
+}
+
+/**
+ * How many treachery cards a faction is dealt at setup.
+ *
+ * Off the faction's own card — see Faction.startingTreachery. One each, two for
+ * the Harkonnen.
+ */
+export function startingTreachery(faction: FactionId): number {
+  return factionById(faction)?.startingTreachery ?? 0
 }
 
 /** Every treachery card, one entry per copy, which is the deck as printed. */
@@ -242,7 +277,10 @@ export function openingPosition(input: {
     faction: s.faction,
     seat: s.seat,
     reserves: factionById(s.faction)?.forces.reserves ?? 0,
-    handCount: 0,
+    // HOW MANY, WHICH IS PUBLIC — the cards themselves are dealt below into
+    // that seat's own row. Everyone starts holding one, so everyone can see
+    // that everyone starts holding one.
+    handCount: startingTreachery(s.faction),
     ally: null,
   }))
 
@@ -254,7 +292,7 @@ export function openingPosition(input: {
 
   // ── the decks ────────────────────────────────────────────────────────────
   // Shuffled once, here, and written to match_decks. Nobody may read them.
-  const traitors = shuffle(traitorDeck(), rng)
+  const traitors = shuffle(traitorDeck(seats.map(s => s.faction)), rng)
   const treachery = shuffle(treacheryDeck(), rng)
   const spice = shuffle(buildSpiceDeck(), rng)
 
@@ -262,15 +300,28 @@ export function openingPosition(input: {
   // Four traitors each, off the top of the shuffled deck, into that seat's own
   // row. The Harkonnen keep all four and have nothing to decide, so theirs are
   // kept rather than dealt-pending.
+  //
+  // AND ONE TREACHERY CARD EACH, off the top of that deck, kept. It is not a
+  // decision and never appears in `outstanding` — nobody chooses it and nobody
+  // can decline it — but it is dealt HERE rather than at the first auction,
+  // because it changes that auction: everybody comes to the first card already
+  // holding one, and the Harkonnen come holding two of a possible eight.
+  //
+  // BOTH DECKS ARE CUT, NOT SAMPLED. Each seat's slice is taken in turn and the
+  // remainder is what goes to match_decks, so nothing is dealt twice and the
+  // deck the game draws from afterwards is the deck minus what people hold.
   const secrets: Record<string, SetupSecrets> = {}
   let cut = 0
+  let drawn = 0
   for (const s of seats) {
     const dealt = traitors.slice(cut, cut + TRAITORS_DEALT)
     cut += TRAITORS_DEALT
+    const hand = treachery.slice(drawn, drawn + startingTreachery(s.faction))
+    drawn += hand.length
     const keepsAll = s.faction === KEEPS_ALL_TRAITORS
     secrets[s.playerId] = {
       spice: factionById(s.faction)?.startingSpice ?? 0,
-      cards: [],
+      cards: hand,
       traitors: keepsAll ? dealt : [],
       ...(keepsAll ? null : { traitorsDealt: dealt }),
     }
@@ -321,7 +372,7 @@ export function openingPosition(input: {
       setup: { outstanding, ...(input.closesAt != null ? { closesAt: input.closesAt } : null) },
     },
     secrets,
-    decks: { treachery, traitor: traitors.slice(cut), spice },
+    decks: { treachery: treachery.slice(drawn), traitor: traitors.slice(cut), spice },
   }
 }
 

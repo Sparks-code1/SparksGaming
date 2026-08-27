@@ -51,6 +51,10 @@ import { CHARITY_WINDOW_MS } from '@/lib/dune/charity'
 import { WORM_SECONDS } from '@/lib/dune/spiceBlow'
 import { BiddingPanel } from './BiddingPanel'
 import { CharityModal } from './CharityModal'
+import { SetupPanel } from './SetupPanel'
+import { SETUP_SECONDS } from '@/lib/dune/setup'
+import type { SetupWindow } from '@/lib/dune/setup'
+import type { PlacedForce } from './SetupPanel'
 import type { BiddingPanelProps } from './BiddingPanel'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import type { TreacheryCard } from '@/types/Dune/Treachery'
@@ -121,13 +125,32 @@ export interface DuneGameScreenProps {
     busy?: boolean
     refused?: string | null
   } | null
+  /**
+   * The setup answers, when this seat has any to make.
+   *
+   * HANDLERS ONLY, like charity and for the same reason. WHICH decisions are
+   * outstanding is public and comes off `state.setup`; the four traitors a seat
+   * may keep are private and come off `own`. Neither is passed in — a caller
+   * holding a list of somebody's traitors is the leak this design exists to
+   * make impossible.
+   *
+   * Absent means no panel, which is what a spectator and the preview get.
+   */
+  setup?: {
+    onFremenPlacement(at: readonly PlacedForce[]): void
+    onPrediction(faction: FactionId, turn: number): void
+    onTraitor(keep: string): void
+    onAdvisorPlacement(territoryId: string, sector?: string): void
+    busy?: boolean
+    refused?: string | null
+  } | null
   /** Injected, like every clock in this codebase. */
   now: number
 }
 
 export function DuneGameScreen({
   state, seat, own, chat, onSend, talkingTo, seatNames,
-  bidding = null, charity = null, now,
+  bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
   const [chatShut, setChatShut] = useState(false)
   const rows = hudRows(state)
@@ -166,10 +189,17 @@ export function DuneGameScreen({
   const timed = state as DuneGameState & {
     charity?: { expiresAt: number }
     spiceBlow?: { closesAt?: number }
+    setup?: SetupWindow
   }
-  const closesAt = timed.charity?.expiresAt ?? timed.spiceBlow?.closesAt ?? null
+  // SETUP IS THE FOURTH ONE, and it cannot overlap the other three: nothing has
+  // been played yet. It goes on the same board clock rather than into the setup
+  // panel because the deadline belongs to the TABLE — everybody is waiting on
+  // it, including the seats that owe nothing and have no panel to read.
+  const closesAt = timed.charity?.expiresAt ?? timed.spiceBlow?.closesAt
+    ?? timed.setup?.closesAt ?? null
   const windowMs = timed.charity ? CHARITY_WINDOW_MS
     : timed.spiceBlow ? WORM_SECONDS * 1000
+    : timed.setup ? SETUP_SECONDS * 1000
     : undefined
 
   return (
@@ -239,6 +269,28 @@ export function DuneGameScreen({
               onClaim={charity.onClaim} onPass={charity.onPass}
               busy={charity.busy} refused={charity.refused} />
           )}
+
+          {/* THE SETUP ANSWERS, over the board and not covering it — the Bene
+              Gesserit place their advisor by reading where the Fremen just
+              went, so the map is part of the decision.
+
+              Assembled here for the same reason the auction is: `dealt` is the
+              four traitors out of this seat's own row, and reading it off `own`
+              at the point of use means no caller ever holds it. The panel
+              renders nothing at all for a seat that owes nothing. */}
+          {setup && seat && timed.setup && (
+            <SetupPanel
+              seat={seat}
+              outstanding={timed.setup.outstanding}
+              dealt={dealtTraitors(own)}
+              seated={state.players.map(p => p.faction)}
+              forces={state.forces}
+              onFremenPlacement={setup.onFremenPlacement}
+              onPrediction={setup.onPrediction}
+              onTraitor={setup.onTraitor}
+              onAdvisorPlacement={setup.onAdvisorPlacement}
+              busy={setup.busy} refused={setup.refused} />
+          )}
         </main>
 
         {/* THE RIGHT-HAND COLUMN: everyone else above, then you. Both are about
@@ -288,6 +340,19 @@ export function handOf(own: DuneSecrets | null): TreacheryCard[] {
 export function revealedFor(own: DuneSecrets | null): TreacheryCard | null {
   const id = own?.prescience
   return (id && TREACHERY_CARDS.find(c => c.id === id)) || null
+}
+
+/**
+ * The four traitors this seat may keep one of, or none.
+ *
+ * THE SAME RULE AS PRESCIENCE, and it matters more. The four are written into
+ * one row at the deal and cleared the moment one is kept — the public ask names
+ * none of them, so a seat that has answered, a seat that keeps all four, and a
+ * spectator all read the same empty list here without this having to know which
+ * of the three they are.
+ */
+export function dealtTraitors(own: DuneSecrets | null): string[] {
+  return own?.traitorsDealt ?? []
 }
 
 export default DuneGameScreen

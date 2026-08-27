@@ -21,6 +21,7 @@ import { DuneGameScreen } from './DuneGameScreen'
 import { DevSeatSwitcher } from './DevSeatSwitcher'
 import { WormPlacementPanel } from './WormPlacementPanel'
 import { dispatchDuneAction } from '@/lib/dune/duneDispatch'
+import type { PlacedForce } from './SetupPanel'
 import { factionById } from '@/data/dune/factions'
 import { FACTION_LOOK } from './SeatLayer'
 import type { BidRefusal } from '@/lib/dune/bidding'
@@ -342,6 +343,37 @@ export default function DuneMultiSeatView() {
   }
 
   /**
+   * The setup answers for one seat, or null when it has no client to act as.
+   *
+   * NOT FILTERED HERE. Which of the four this seat owes is decided inside the
+   * panel off public state, and the panel draws nothing at all for a seat that
+   * owes none — so this hands over the four handlers and lets it decide, the
+   * same shape DuneMatchScreen uses.
+   *
+   * THIS IS THE ONE PLACE ALL FOUR CAN BE EXERCISED. Setup deals every seat at
+   * once and the answers are independent: the harness holds six real sessions,
+   * so switching seats above and answering as each is the only way to play a
+   * whole setup through without six browsers.
+   */
+  const setupFor = (session: SeatSession | null) => {
+    if (!session?.client) return null
+    return {
+      onFremenPlacement: (at: readonly PlacedForce[]) =>
+        void send(session, 'SETUP_ANSWER', { answer: 'fremen-placement', at }),
+      onPrediction: (faction: FactionId, turn: number) =>
+        void send(session, 'SETUP_ANSWER', { answer: 'prediction', faction, turn }),
+      onTraitor: (keep: string) =>
+        void send(session, 'SETUP_ANSWER', { answer: 'traitor', keep }),
+      onAdvisorPlacement: (territoryId: string, sector?: string) =>
+        void send(session, 'SETUP_ANSWER', {
+          answer: 'advisor-placement', territoryId, ...(sector ? { sector } : null),
+        }),
+      busy,
+      refused,
+    }
+  }
+
+  /**
    * One bid or pass, as this seat.
    *
    * A REFUSAL IS NOT AN ERROR HERE. "More than you hold" and "not your turn"
@@ -450,6 +482,7 @@ export default function DuneMultiSeatView() {
     <>
       <DuneGameScreen
         charity={charityFor(mine)}
+        setup={setupFor(mine)}
         bidding={biddingFor(mine)}
         state={publicRow ?? PUBLIC_FIXTURE}
         seat={active}

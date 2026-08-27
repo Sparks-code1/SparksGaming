@@ -39,6 +39,15 @@ export interface DuneSecrets extends Secrets {
    */
   traitors?: string[]
   /**
+   * The four dealt at setup, of which one is kept.
+   *
+   * PRESENT ONLY WHILE THE CHOICE IS OUTSTANDING. The server clears it the
+   * moment one is kept — see lib/dune/setup — so a seat that has answered and a
+   * seat that never owed the choice both read the same absence, and the three
+   * that went back cannot be recovered from this row afterwards.
+   */
+  traitorsDealt?: string[]
+  /**
    * The treachery card currently up for auction, for the Atreides alone.
    *
    * Written by the server at OPEN_BIDDING and cleared when the auction settles.

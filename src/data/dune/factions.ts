@@ -35,6 +35,7 @@ export const ATREIDES: Faction = {
   },
   reservesHeld: 'off-planet',
   handLimit: 4,
+  startingTreachery: 1,
   freeRevivals: 2,
   abilities: {
     bidding:
@@ -83,6 +84,7 @@ export const EMPEROR: Faction = {
   },
   reservesHeld: 'off-planet',
   handLimit: 4,
+  startingTreachery: 1,
   freeRevivals: 1,
   abilities: {
     bidding:
@@ -143,6 +145,7 @@ export const FREMEN: Faction = {
   // ReserveLocation.
   reservesHeld: 'on-planet',
   handLimit: 4,
+  startingTreachery: 1,
   freeRevivals: 3,
   abilities: {
     shipment:
@@ -206,6 +209,7 @@ export const SPACING_GUILD: Faction = {
   },
   reservesHeld: 'off-planet',
   handLimit: 4,
+  startingTreachery: 1,
   freeRevivals: 1,
   abilities: {
     shipment:
@@ -260,6 +264,7 @@ export const BENE_GESSERIT: Faction = {
     },
     reservesHeld: 'off-planet',
     handLimit: 4,
+    startingTreachery: 1,
     freeRevivals: 1,
     abilities: {
       beforeGame:
@@ -338,6 +343,7 @@ export const HARKONNEN: Faction = {
     },
     reservesHeld: 'off-planet',
     handLimit: 8,
+    startingTreachery: 2,
     freeRevivals: 2,
     abilities: {
       traitors:

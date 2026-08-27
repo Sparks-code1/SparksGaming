@@ -1,4 +1,4 @@
-// The opening position: what each faction starts with, and the three decisions.
+// The opening position: what each faction starts with, and the four decisions.
 //
 // WHY THIS EXISTS. A match is dealt ONCE. Everything after it — every purse,
 // every battle, every traitor call — is built on top of a position nobody
@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs'
 import {
   openingPosition, answerFremenPlacement, answerPrediction, answerTraitor,
   defaultFremenPlacement, defaultTraitor, settle, isOutstanding,
-  distributeAmong, traitorDeck, treacheryDeck, defaultSector,
+  distributeAmong, traitorDeck, treacheryDeck, defaultSector, startingTreachery,
   answerAdvisorPlacement, defaultAdvisorPlacement, postureFor, answerable, defaultOrder,
   TRAITORS_DEALT, KEEPS_ALL_TRAITORS, ADVISOR_FACTION, SETUP_SECONDS, PREDICTION_TURNS,
 } from '@/lib/dune/setup'
@@ -61,10 +61,34 @@ const deal = (over: Partial<Parameters<typeof openingPosition>[0]> = {}) =>
     p.reserves !== factionById(p.faction)!.forces.reserves)
   check('every seat starts with its faction\'s reserves', wrongReserves.map(p => p.faction), [])
 
-  check('nobody starts holding a treachery card',
-    seats.filter(s => opening.secrets[s.playerId].cards.length > 0), [])
-  check('...and the public row says so too',
-    opening.state.players.filter(p => p.handCount !== 0), [])
+  // EVERYBODY STARTS HOLDING ONE. It is dealt, not chosen, and it is the
+  // reason the first auction is not six empty hands bidding — a seat that
+  // started with nothing would price the first card differently from one
+  // already a quarter of the way to its limit.
+  const wrongHand = seats.filter(s =>
+    opening.secrets[s.playerId].cards.length !== factionById(s.faction)!.startingTreachery)
+  check('every seat is dealt the cards its faction\'s card says', wrongHand.map(s => s.faction), [])
+  check('...which is one each', seats.filter(s => s.faction !== KEEPS_ALL_TRAITORS)
+    .map(s => opening.secrets[s.playerId].cards.length),
+    seats.filter(s => s.faction !== KEEPS_ALL_TRAITORS).map(() => 1))
+  // THE HARKONNEN CARD SAYS TWO, in the same sentence as their hand limit.
+  const harkonnen = seats.find(s => s.faction === KEEPS_ALL_TRAITORS)!
+  check('...and two for the Harkonnen', opening.secrets[harkonnen.playerId].cards.length, 2)
+  // NO CARD IN TWO HANDS. One deck, cut in turn.
+  const opening_hands = seats.flatMap(s => opening.secrets[s.playerId].cards)
+  check('...off one deck, with nothing dealt twice',
+    opening_hands.length - new Set(opening_hands).size,
+    // Duplicates by ID are legitimate — the deck has two Truthtrances — so what
+    // is checked is that no more copies are in hands than the deck prints.
+    opening_hands.filter(id =>
+      opening_hands.filter(x => x === id).length
+        > (TREACHERY_CARDS.find(c => c.id === id)?.copies ?? 0)).length)
+  // HOW MANY IS PUBLIC. What they are is not: the ids live in one row each.
+  const wrongCount = opening.state.players.filter(p =>
+    p.handCount !== factionById(p.faction)!.startingTreachery)
+  check('the public row says how many everyone holds', wrongCount.map(p => p.faction), [])
+  check('...and never which cards they are',
+    opening_hands.filter(id => JSON.stringify(opening.state).includes(`"${id}"`)), [])
 }
 
 // ── the forces the rules place ────────────────────────────────────────────
@@ -130,15 +154,31 @@ const deal = (over: Partial<Parameters<typeof openingPosition>[0]> = {}) =>
   const printed = TREACHERY_CARDS.reduce((n, c) => n + c.copies, 0)
   check('the treachery deck is every copy of every card', treacheryDeck().length, printed)
   check('...which is thirty-three', printed, 33)
-  check('...and the deal shuffles all of them', opening.decks.treachery.length, printed)
-  check('...losing none of them',
-    [...opening.decks.treachery].sort(), [...treacheryDeck()].sort())
+  // WHAT GOES TO match_decks IS THE REST OF IT. Everyone was dealt one at
+  // setup, so the deck the game draws from afterwards is short by exactly what
+  // the table is holding — a deck still holding all thirty-three would be
+  // dealing the same card twice within the first auction.
+  const inHands = seats.reduce((n, s) => n + startingTreachery(s.faction), 0)
+  check('...and the deal takes the opening hands out of it',
+    opening.decks.treachery.length, printed - inHands)
+  check('...losing none of the rest',
+    [...opening.decks.treachery, ...seats.flatMap(s => opening.secrets[s.playerId].cards)].sort(),
+    [...treacheryDeck()].sort())
 
-  // THE TRAITOR DECK IS EVERY LEADER IN THE GAME. Five each, six factions.
+  // THE TRAITOR DECK IS EVERY LEADER AT THE TABLE. Five each.
   const leaders = FACTION_IDS.flatMap(id => factionById(id)!.leaders.map(l => l.name))
-  check('the traitor deck is every leader', traitorDeck().length, leaders.length)
-  check('...which is thirty', leaders.length, 30)
+  check('the traitor deck is every leader in the game',
+    traitorDeck(FACTION_IDS).length, leaders.length)
+  check('...which is thirty at a full table', leaders.length, 30)
   check('...and every name is distinct', new Set(leaders).size, leaders.length)
+  // AND ONLY THE FACTIONS PLAYING. A deck carrying the absent two would deal
+  // most seats traitors who can never take the field — four dead cards in a
+  // hand of four, and the best secret in the game reduced to a coin toss.
+  const four = FACTION_IDS.slice(0, 4)
+  check('a four-player deck is twenty cards, not thirty', traitorDeck(four).length, 20)
+  check('...with nobody in it who is not at the table',
+    traitorDeck(four).filter(n => !four.some(f =>
+      factionById(f)!.leaders.some(l => l.name === n))), [])
 
   check('the spice deck is shuffled and counted',
     opening.state.spiceDeck.remaining, opening.decks.spice.length)
@@ -175,10 +215,10 @@ const deal = (over: Partial<Parameters<typeof openingPosition>[0]> = {}) =>
   check('...off one deck, with no card in two hands',
     new Set(everyone).size, everyone.length)
   check('...all of them real leaders',
-    everyone.filter(n => !traitorDeck().includes(n)), [])
+    everyone.filter(n => !traitorDeck(FACTION_IDS).includes(n)), [])
   // AND THE REST OF THE DECK IS STILL THERE.
   check('what is left is the rest of the deck',
-    opening.decks.traitor.length, traitorDeck().length - seats.length * TRAITORS_DEALT)
+    opening.decks.traitor.length, traitorDeck(FACTION_IDS).length - seats.length * TRAITORS_DEALT)
   check('...with none of the dealt cards in it',
     opening.decks.traitor.filter(n => everyone.includes(n)), [])
 
