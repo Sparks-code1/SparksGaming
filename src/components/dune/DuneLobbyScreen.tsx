@@ -9,6 +9,12 @@
  * server deals — the opening position writes match_secrets and match_decks,
  * and no client may write either. What this screen owns is the choosing.
  *
+ * AND IT NO LONGER LISTS THE WORLD. It used to show every open table on the
+ * deployment, because the select policy showed every open lobby to every
+ * signed-in account. You share a code now; the tables listed here are the ones
+ * you opened or are already sitting at, which is a way back in rather than a
+ * way to find strangers.
+ *
  * ANYBODY SEATED MAY PRESS IT. There is no host privilege in the match state,
  * and a button shown only to the creator would be a rule this screen invented
  * and the server does not enforce — the first person to press it wins, and the
@@ -18,11 +24,13 @@ import { useEffect, useState } from 'react'
 import { getCurrentUser, onAuthChange } from '@/lib/auth'
 import type { AuthUser } from '@/lib/auth'
 import {
-  openDuneLobbies, createDuneLobby, joinDuneLobby, chooseFaction, startDuneMatch,
+  myDuneLobbies, createDuneLobby, joinDuneByCode, chooseFaction, startDuneMatch,
   readDuneLobby, setDuneReady, leaveDuneLobby, subscribeDuneLobby,
-  duneReadiness, freeFactions, DUNE_MIN_SEATS, DUNE_MAX_SEATS,
+  duneReadiness, freeFactions, normaliseCode, duneJoinCode, CODE_LENGTH,
+  randomFreeFaction, duneMode, setDuneMode, DUNE_MIN_SEATS, DUNE_MAX_SEATS,
 } from '@/lib/dune/duneLobby'
-import type { DuneLobby } from '@/lib/dune/duneLobby'
+import type { GameMode } from '@/types/Dune/Game'
+import type { DuneLobby, DuneTable } from '@/lib/dune/duneLobby'
 import { FACTION_IDS } from '@/data/dune/factions'
 import { FACTION_LOOK, SeatMark, SeatFilters } from './SeatLayer'
 import type { FactionId } from '@/types/Dune/Faction'
@@ -73,12 +81,27 @@ export interface DuneLobbyScreenProps {
 
 export function DuneLobbyScreen({ onPlay, onExit }: DuneLobbyScreenProps) {
   const [user, setUser] = useState<AuthUser | null | undefined>(undefined)
-  const [open, setOpen] = useState<DuneLobby[] | null>(null)
+  const [mine, setMine] = useState<DuneTable[] | null>(null)
+  const [code, setCode] = useState('')
+  /**
+   * The code for the table being sat at.
+   *
+   * ITS OWN STATE, not a field on the lobby: the lobby is re-read on every
+   * change to the room, and a code carried on that object would blink out the
+   * first time somebody else pressed Ready.
+   */
+  const [myCode, setMyCode] = useState<string | null>(null)
   const [matchId, setMatchId] = useState<string | null>(null)
   const [lobby, setLobby] = useState<DuneLobby | null>(null)
   const [name, setName] = useState('')
-  const [faction, setFaction] = useState<FactionId>('atreides')
   const [seats, setSeats] = useState(DUNE_MAX_SEATS)
+  /**
+   * The game this table is playing, as the row has it.
+   *
+   * Null while it is being read, and on a server without the column — the
+   * screen shows nothing rather than claiming a game nobody agreed to.
+   */
+  const [mode, setMode] = useState<GameMode | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -90,7 +113,7 @@ export function DuneLobbyScreen({ onPlay, onExit }: DuneLobbyScreenProps) {
   }, [])
 
   const refresh = async () => {
-    setOpen(await openDuneLobbies())
+    setMine(await myDuneLobbies())
   }
   useEffect(() => { if (user) void refresh() }, [user])
 
@@ -99,8 +122,10 @@ export function DuneLobbyScreen({ onPlay, onExit }: DuneLobbyScreenProps) {
   // pressing ready has to show up here without anybody refreshing, or the
   // room is a screenshot rather than a lobby.
   useEffect(() => {
-    if (!matchId) return
+    if (!matchId) { setMyCode(null); setMode(null); return }
     let live = true
+    void duneJoinCode(matchId).then(c => { if (live) setMyCode(c) })
+    void duneMode(matchId).then(m => { if (live) setMode(m) })
     void readDuneLobby(matchId).then(l => { if (live) setLobby(l) })
     const stop = subscribeDuneLobby(matchId, l => { if (live) setLobby(l) })
     return () => { live = false; stop() }
@@ -146,9 +171,29 @@ export function DuneLobbyScreen({ onPlay, onExit }: DuneLobbyScreenProps) {
     return (
       <Frame onExit={onExit}>
         <h1 style={{ font: `600 20px ${SERIF}`, margin: '0 0 4px' }}>The table</h1>
-        <p style={{ opacity: 0.55, fontSize: 12.5, margin: '0 0 18px' }}>
+        <p style={{ opacity: 0.55, fontSize: 12.5, margin: '0 0 14px' }}>
           {lobby.seats.length} of {lobby.humanSlots} seated
         </p>
+
+        {/* THE CODE IS THE INVITATION. Nobody can find this table without it —
+            a Dune lobby is invisible to anybody not already at it — so it is
+            shown large and near the top rather than tucked in a corner. */}
+        {myCode && (
+          <div style={{
+            marginBottom: 20, padding: '12px 14px', borderRadius: 8,
+            background: '#151d30', border: '1px solid #ffffff1f',
+          }}>
+            <div style={{ fontSize: 11, letterSpacing: 1.4, opacity: 0.5, marginBottom: 6 }}>
+              SHARE THIS CODE
+            </div>
+            <b data-layer="dune-join-code" style={{
+              font: `700 26px ${SERIF}`, letterSpacing: 6, display: 'block',
+            }}>{myCode}</b>
+            <div style={{ fontSize: 12, opacity: 0.55, marginTop: 6 }}>
+              Anybody with this can sit down. Without it, nobody can find the table.
+            </div>
+          </div>
+        )}
 
         <ul data-layer="dune-lobby-seats" style={{ listStyle: 'none', padding: 0, margin: '0 0 20px' }}>
           {lobby.seats.map(s => {
@@ -174,6 +219,35 @@ export function DuneLobbyScreen({ onPlay, onExit }: DuneLobbyScreenProps) {
           })}
         </ul>
 
+        {/* WHICH GAME. Basic and advanced are different games, and this used to
+            be decided by whoever pressed Start out of a default nobody saw.
+            Anybody at the table may change it, like Start itself — there is no
+            host in the match state, and six people settle this by talking. */}
+        <h2 style={{ font: `600 12px ${SERIF}`, letterSpacing: 1.4, opacity: 0.5, margin: '0 0 8px' }}>
+          THE GAME
+        </h2>
+        <div data-layer="dune-mode" style={{ display: 'flex', gap: 7, marginBottom: 18 }}>
+          {(['basic', 'advanced'] as const).map(m => (
+            <button key={m} type="button" disabled={busy}
+              aria-pressed={mode === m} aria-label={`${m} game`}
+              onClick={() => void attempt(async () => { await setDuneMode(matchId, m); setMode(m) })}
+              style={{
+                ...button(false), textTransform: 'capitalize',
+                background: mode === m ? '#ffffff1a' : 'transparent',
+                border: `1px solid ${mode === m ? '#c9542a' : '#ffffff33'}`,
+              }}>
+              {m}
+            </button>
+          ))}
+          <span style={{ fontSize: 12, opacity: 0.55, alignSelf: 'center' }}>
+            {mode === 'basic'
+              ? 'No Kwisatz Haderach, Sardaukar, Fedaykin or advisors.'
+              : mode === 'advanced'
+                ? 'The full game, with every faction power.'
+                : ''}
+          </span>
+        </div>
+
         {mine && (
           <>
             <h2 style={{ font: `600 12px ${SERIF}`, letterSpacing: 1.4, opacity: 0.5, margin: '0 0 8px' }}>
@@ -186,6 +260,22 @@ export function DuneLobbyScreen({ onPlay, onExit }: DuneLobbyScreenProps) {
                   taken={!free.includes(f) && mine.factionId !== f}
                   onPick={() => void attempt(() => chooseFaction(matchId, f))} />
               ))}
+              {/* SIX FACTIONS PLAY VERY DIFFERENTLY and picking one is most of a
+                  decision a new player has no basis for making. It only ever
+                  draws from what is free, so it cannot hand somebody a faction
+                  that is taken. */}
+              <button type="button" disabled={busy || free.length === 0}
+                aria-label="Random faction"
+                onClick={() => void attempt(async () => {
+                  const pick = randomFreeFaction(lobby.seats, user.id)
+                  if (!pick) throw new Error('Every faction is taken')
+                  await chooseFaction(matchId, pick)
+                })}
+                style={{
+                  ...button(false), borderLeftWidth: 4, borderLeftColor: '#8a6a2a',
+                }}>
+                🎲 Random
+              </button>
             </div>
           </>
         )}
@@ -240,27 +330,46 @@ export function DuneLobbyScreen({ onPlay, onExit }: DuneLobbyScreenProps) {
           }} />
       </div>
 
-      <h2 style={{ font: `600 12px ${SERIF}`, letterSpacing: 1.4, opacity: 0.5, margin: '0 0 8px' }}>
-        FACTION
-      </h2>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginBottom: 20 }}>
-        {FACTION_IDS.map(f => (
-          <FactionChip key={f} faction={f} chosen={faction === f} taken={false}
-            onPick={() => setFaction(f)} />
-        ))}
-      </div>
-
+      {/* NO FACTION HERE. Choosing before joining meant choosing blind — a
+          Dune table is invisible until you are sitting at it, so somebody
+          picking Atreides had no way to know it was taken and was simply
+          refused. You sit down first and choose at the table. */}
+      {/* JOINING IS BY CODE. There is no list of other people's tables and
+          there should not be — see the note at the top. */}
       <h2 style={{ font: `600 12px ${SERIF}`, letterSpacing: 1.4, opacity: 0.5, margin: '0 0 10px' }}>
-        OPEN TABLES
+        JOIN A TABLE
       </h2>
-      {open === null ? <p style={{ opacity: 0.6 }}>Looking…</p>
-        : open.length === 0 ? (
-          <p style={{ opacity: 0.6, margin: '0 0 16px' }}>
-            Nobody is waiting. Open one and send your friends the link.
-          </p>
-        ) : (
-          <ul data-layer="dune-open-tables" style={{ listStyle: 'none', padding: 0, margin: '0 0 16px' }}>
-            {open.map(l => (
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+        <input value={code} onChange={e => setCode(e.target.value.toUpperCase())}
+          placeholder={'CODE'.padEnd(CODE_LENGTH, '·')} aria-label="Table code"
+          maxLength={CODE_LENGTH + 2}
+          style={{
+            font: `600 16px ${SERIF}`, letterSpacing: 4, padding: '7px 10px', borderRadius: 5,
+            border: '1px solid #ffffff2a', background: '#0d1220', color: PALE, width: 150,
+          }} />
+        <button type="button" style={button(true)}
+          disabled={busy || !name.trim() || normaliseCode(code).length !== CODE_LENGTH}
+          onClick={() => void attempt(async () => {
+            const id = await joinDuneByCode(code, { name: name.trim() })
+            setCode('')
+            setMatchId(id)
+          })}>
+          Sit down
+        </button>
+      </div>
+      <p style={{ opacity: 0.5, fontSize: 12, margin: '0 0 20px', maxWidth: '58ch', lineHeight: 1.5 }}>
+        Whoever opened the table has the code. Tables are not listed — without one
+        there is nothing to find.
+      </p>
+
+      {/* YOUR OWN TABLES, which is a way back in rather than a way to browse. */}
+      {mine !== null && mine.length > 0 && (
+        <>
+          <h2 style={{ font: `600 12px ${SERIF}`, letterSpacing: 1.4, opacity: 0.5, margin: '0 0 10px' }}>
+            TABLES YOU ARE AT
+          </h2>
+          <ul data-layer="dune-my-tables" style={{ listStyle: 'none', padding: 0, margin: '0 0 16px' }}>
+            {mine.map(l => (
               <li key={l.matchId} style={{
                 display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0',
                 borderTop: '1px solid #ffffff14',
@@ -271,17 +380,18 @@ export function DuneLobbyScreen({ onPlay, onExit }: DuneLobbyScreenProps) {
                 <span style={{ fontSize: 12, opacity: 0.55 }}>
                   {l.seats.length}/{l.humanSlots}
                 </span>
-                <button type="button" disabled={busy || !name.trim()} style={{ ...button(false), marginLeft: 'auto' }}
-                  onClick={() => void attempt(async () => {
-                    await joinDuneLobby(l.matchId, { name: name.trim(), playerId: name.trim(), faction })
-                    setMatchId(l.matchId)
-                  })}>
-                  Join
+                {l.joinCode && (
+                  <span style={{ fontSize: 12, opacity: 0.45, letterSpacing: 2 }}>{l.joinCode}</span>
+                )}
+                <button type="button" disabled={busy} style={{ ...button(false), marginLeft: 'auto' }}
+                  onClick={() => setMatchId(l.matchId)}>
+                  Back to it
                 </button>
               </li>
             ))}
           </ul>
-        )}
+        </>
+      )}
 
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
         <label style={{ fontSize: 13, opacity: 0.7 }}>
@@ -299,7 +409,7 @@ export function DuneLobbyScreen({ onPlay, onExit }: DuneLobbyScreenProps) {
         <button type="button" disabled={busy || !name.trim()} style={button(true)}
           onClick={() => void attempt(async () => {
             const made = await createDuneLobby({
-              name: name.trim(), playerId: name.trim(), faction, seats,
+              name: name.trim(), playerId: name.trim(), seats,
             })
             setMatchId(made.matchId)
           })}>

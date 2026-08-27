@@ -9,7 +9,8 @@
 // client write, because the deal touches two tables no client may write at all.
 import { readFileSync } from 'node:fs'
 import {
-  factionRefusal, freeFactions, duneReadiness, DUNE_MIN_SEATS, DUNE_MAX_SEATS,
+  factionRefusal, freeFactions, duneReadiness, newJoinCode, normaliseCode,
+  randomFreeFaction, CODE_LENGTH, DUNE_MIN_SEATS, DUNE_MAX_SEATS,
 } from '@/lib/dune/duneLobby'
 import { nextFreeSeat, MAX_SEATS, UNASSIGNED_FACTION } from '@/lib/lobby'
 import type { LobbySeat } from '@/lib/lobby'
@@ -171,7 +172,7 @@ const seat = (over: Partial<LobbySeat> = {}): LobbySeat => {
   const src = code('src/lib/dune/duneLobby.ts')
   check('the lobby is created with no campaign', /campaign_id: null,/.test(src), true)
   check('...and says which game it is', /game_type: 'dune',/.test(src), true)
-  check('...and is found by that rather than by campaign',
+  check('...and your own tables are found by that rather than by campaign',
     /\.eq\('game_type', 'dune'\)[\s\S]{0,80}\.eq\('status', 'lobby'\)/.test(src), true)
 
   // THE COLUMN HAS TO ALLOW IT. Risk's queries all name their campaign and a
@@ -254,6 +255,239 @@ const seat = (over: Partial<LobbySeat> = {}): LobbySeat => {
   // and a row in the picker would read as a campaign somebody could open.
   check('...as its own thing rather than a campaign',
     /OR PLAY SOMETHING ELSE/.test(between), true)
+}
+
+// ── a table is found by its code, not by browsing ─────────────────────────
+// THE ONE THAT MATTERS IN THIS SECTION. The select policy showed every open
+// lobby to every signed-in account; Risk never noticed because its lobbies are
+// reached through a campaign id you only have if somebody gave you the
+// campaign's code. Dune has no campaign, so the screen listed the deployment.
+{
+  const src = code('src/lib/dune/duneLobby.ts')
+  const screen = code('src/components/dune/DuneLobbyScreen.tsx')
+
+  // NOTHING LISTS OTHER PEOPLE'S TABLES any more.
+  check('the module offers no list of open tables', /openDuneLobbies/.test(src), false)
+  check('...and the screen does not render one',
+    /dune-open-tables/.test(screen), false)
+  // What is left is a way back to your own, which is a different thing.
+  check('what is listed is the tables you are at', /myDuneLobbies/.test(src), true)
+  check('...and the screen says so', /TABLES YOU ARE AT/.test(screen), true)
+
+  // JOINING GOES THROUGH THE SERVER, because the row is not readable until you
+  // are seated. A client-side filter would be no gate at all: anything the
+  // browser filters, the browser could have not filtered.
+  check('joining by code asks the server',
+    /supabase\.rpc\('join_dune_lobby', \{/.test(src), true)
+  check('...passing the code as the credential', /p_code: tidy,/.test(src), true)
+  check('...and never inserting a seat itself',
+    /joinDuneByCode[\s\S]{0,900}from\('match_players'\)\.insert/.test(src), false)
+  check('the screen joins that way too', /joinDuneByCode\(code, \{/.test(screen), true)
+}
+
+// ── the codes themselves ──────────────────────────────────────────────────
+{
+  // READ DOWN A PHONE AND TYPED BY SOMEBODY WHO DID NOT WRITE IT. The pairs
+  // people confuse are worth more than the combinations they cost.
+  const many = Array.from({ length: 400 }, () => newJoinCode())
+  // A LENGTH, checked against a number rather than against itself. Every
+  // assertion below builds its expectation out of CODE_LENGTH, so shortening
+  // the constant changed both sides and none of them could fail — a code could
+  // have gone to three characters with the suite green.
+  check('a code is long enough to be worth having', CODE_LENGTH >= 5, true)
+  check('...and short enough to read down a phone', CODE_LENGTH <= 10, true)
+  check('a code is the length it says', new Set(many.map(c => c.length)), new Set([CODE_LENGTH]))
+  check('...with no O or 0 in it', many.some(c => /[O0]/.test(c)), false)
+  check('...and no I or 1', many.some(c => /[I1]/.test(c)), false)
+  check('...uppercase and alphanumeric throughout',
+    many.every(c => /^[A-Z2-9]+$/.test(c)), true)
+  // NOT THE SAME CODE EVERY TIME, which a constant would also satisfy above.
+  check('...and they differ from each other', new Set(many).size > 350, true)
+  // Deterministic when it is handed a source of randomness, so a test can pin
+  // one rather than hope.
+  check('a fixed source gives a fixed code',
+    newJoinCode(() => 0), 'A'.repeat(CODE_LENGTH))
+
+  // TYPED BY HAND, so compared the way it is read.
+  check('a code is read case-insensitively', normaliseCode('abcdef'), 'ABCDEF')
+  check('...ignoring spacing', normaliseCode(' ab c de f '), 'ABCDEF')
+  check('...and punctuation somebody adds', normaliseCode('AB-CD-EF'), 'ABCDEF')
+
+  check('creating a table mints one',
+    /join_code: newJoinCode\(\),/.test(code('src/lib/dune/duneLobby.ts')), true)
+}
+
+// ── the code rides beside the lobby, never on it ──────────────────────────
+// readLobby is Risk's too. Adding join_code to its select would mean a database
+// without the column erroring on every lobby read in BOTH games — the whole
+// screen gone, for a decoration.
+{
+  const lobby = code('src/lib/lobby.ts')
+  check('Risk\'s lobby read does not ask for the column',
+    /join_code/.test(lobby), false)
+  const src = code('src/lib/dune/duneLobby.ts')
+  check('the Dune side reads it separately', /export async function duneJoinCode/.test(src), true)
+  check('...and treats a failure as simply not having one',
+    /if \(error \|\| !data\) return null/.test(src), true)
+}
+
+// ── the policy, which is where the gate actually is ───────────────────────
+{
+  const raw = readFileSync('supabase/migrations/20260826210000_dune_join_codes.sql', 'utf8')
+  // WITHOUT THE COMMENTS, for the same reason the TypeScript checks strip
+  // theirs: this file explains itself at length, and a structural check that
+  // spans a paragraph of prose is measuring the prose. The comments are still
+  // read below where the CLAIM is about what is written down.
+  const sql = raw.replace(/^\s*--.*$/gm, '')
+
+  check('the column is added', /add column if not exists join_code text/i.test(sql), true)
+  // UNIQUE AMONG OPEN LOBBIES ONLY. A code may be handed out again once its
+  // game is over, and a unique index over everything makes codes scarcer the
+  // longer the deployment runs.
+  check('...and codes are unique while a table is open',
+    /create unique index[\s\S]{0,160}where status = 'lobby'/i.test(sql), true)
+
+  // RISK IS UNTOUCHED. This is the part that would break somebody else's game,
+  // so it is asserted rather than trusted.
+  check('the policy leaves every non-Dune lobby as it was',
+    /coalesce\(game_type, 'risk'\) <> 'dune'/.test(sql), true)
+  check('...and a Dune lobby is visible only to its table',
+    /created_by = auth\.uid\(\)[\s\S]{0,120}is_seated_in\(id\)/.test(sql), true)
+
+  // THE RECURSION. A policy on matches that asks about match_players, whose own
+  // policy asks about matches, is what Postgres refuses outright.
+  check('the seated check is a definer function',
+    /create or replace function is_seated_in[\s\S]{0,200}security definer/i.test(sql), true)
+  // THE POLICY ON matches MUST NOT MENTION match_players. That is the cycle
+  // Postgres refuses: its policy asks about the other table, whose policy asks
+  // back. Scoped to the policy body, because the definer function above it
+  // reads match_players quite legitimately — that is the whole point of it.
+  const lobbyPolicy = sql.slice(sql.indexOf('create policy "authed read lobbies"'),
+    sql.indexOf('drop policy if exists "authed read lobby seats"'))
+  check('the lobby policy is there to check', lobbyPolicy.length > 80, true)
+  check('...so the two policies do not ask each other',
+    /match_players/.test(lobbyPolicy), false)
+
+  // JOINING IS THE SERVER'S. The row cannot be selected, so it cannot be
+  // joined by selecting it.
+  check('joining is a definer function',
+    /create or replace function join_dune_lobby[\s\S]{0,400}security definer/i.test(sql), true)
+  check('...that checks the game as well as the code',
+    /game_type = 'dune'/.test(sql), true)
+  check('...and the table is not full', /taken >= coalesce\(m\.human_slots/.test(sql), true)
+  check('...and the faction is free', /faction_id = p_faction/.test(sql), true)
+  // COMING BACK IS NOT JOINING AGAIN.
+  check('...while somebody already seated is let back in',
+    /already seated is not an error/i.test(raw)
+      && /return m\.id;/.test(sql), true)
+  // AND IT IS NOT EXECUTABLE BY ANYBODY WHO IS NOT SIGNED IN.
+  check('...taken away from everybody first',
+    /revoke all on function join_dune_lobby/i.test(sql), true)
+  check('...and granted to signed-in callers only',
+    /grant execute on function join_dune_lobby\(text, text, text\) to authenticated/i.test(sql), true)
+  // ANON APPEARS NOWHERE IN THE GRANT. Written as a word boundary rather than
+  // as "to anon": the grant that let it in read "to authenticated, anon", which
+  // the narrower pattern walked straight past.
+  check('...never to anonymous ones', /\banon\b/i.test(sql), false)
+}
+
+// ── you sit down first, then choose ───────────────────────────────────────
+// CHOOSING BEFORE JOINING MEANT CHOOSING BLIND. A Dune table is invisible until
+// you are at it — that is what the join code buys — so somebody picking the
+// Atreides had no way to see that it was taken, and was simply refused with no
+// way to find out what was left.
+{
+  const src = code('src/lib/dune/duneLobby.ts')
+  const screen = code('src/components/dune/DuneLobbyScreen.tsx')
+
+  check('joining by code asks for no faction',
+    /joinDuneByCode\(\s*code: string, request: \{ name: string \},/.test(src), true)
+  check('...and sends none to the server', /p_faction: null,/.test(src), true)
+  check('opening a table asks for none either',
+    /createDuneLobby\(input: \{[\s\S]{0,200}faction: FactionId/.test(src), false)
+  check('...seating the host holding the placeholder',
+    /faction_id: UNASSIGNED_FACTION,/.test(src), true)
+  check('the screen no longer offers one before joining',
+    /FACTION<\/h2>/.test(screen), false)
+  check('...and still offers one at the table',
+    /YOUR FACTION/.test(screen), true)
+
+  const sql = readFileSync('supabase/migrations/20260827090000_dune_table_talk.sql', 'utf8')
+  check('the server seats without a faction too',
+    /p_faction text default null/.test(sql), true)
+  check('...refusing one only when it is actually taken',
+    /want is not null and want <> 'unassigned' and exists/.test(sql), true)
+  check('...and never treating the placeholder as taken',
+    /coalesce\(want, 'unassigned'\)/.test(sql), true)
+}
+
+// ── random ────────────────────────────────────────────────────────────────
+// SIX FACTIONS PLAY VERY DIFFERENTLY and picking one is most of a decision a
+// new player has no basis for making.
+{
+  const seated = (factions: string[]) => factions.map((f, i) =>
+    seat({ seat: i, userId: `u${i}`, playerId: `p${i}`, factionId: f }))
+
+  // IT ONLY EVER DRAWS FROM WHAT IS FREE, which is the whole rule: two players
+  // cannot be handed the same faction.
+  const taken = seated(['atreides', 'harkonnen', 'fremen'])
+  for (let i = 0; i < 60; i++) {
+    const pick = randomFreeFaction(taken, 'somebody-else')
+    if (pick && ['atreides', 'harkonnen', 'fremen'].includes(pick)) {
+      check('random never lands on a faction somebody has', pick, 'never happens')
+      break
+    }
+  }
+  check('random draws only from what is free', true, true)
+
+  // YOUR OWN IS FAIR GAME — re-rolling should be able to keep what you have.
+  const mine = seated(['atreides'])
+  const rolls = new Set(Array.from({ length: 80 }, () => randomFreeFaction(mine, 'u0')))
+  check('...including the one you already hold', rolls.has('atreides' as FactionId), true)
+
+  // NOTHING LEFT IS NULL rather than a faction somebody is playing.
+  const full = seated(FACTION_IDS as unknown as string[])
+  check('a full table gives nothing back', randomFreeFaction(full, 'nobody'), null)
+
+  // Deterministic when handed a source of randomness, so this is pinnable.
+  check('a fixed source gives a fixed pick',
+    randomFreeFaction([], 'me', () => 0), FACTION_IDS[0])
+  check('...and reaches the last one too',
+    randomFreeFaction([], 'me', () => 0.999), FACTION_IDS[FACTION_IDS.length - 1])
+
+  const screen = code('src/components/dune/DuneLobbyScreen.tsx')
+  check('the screen offers it', /aria-label="Random faction"/.test(screen), true)
+  check('...and it goes through the same choosing as a chip',
+    /randomFreeFaction\(lobby\.seats, user\.id\)[\s\S]{0,200}chooseFaction\(matchId, pick\)/.test(screen), true)
+  check('...and is offered only while something is free',
+    /disabled=\{busy \|\| free\.length === 0\}/.test(screen), true)
+}
+
+// ── the table agrees which game it is playing ─────────────────────────────
+// Basic and advanced are different games — a different storm die, the Kwisatz
+// Haderach, Sardaukar, Fedaykin, the advisor. It used to be settled by whoever
+// pressed Start, out of a default nobody was shown.
+{
+  const src = code('src/lib/dune/duneLobby.ts')
+  const screen = code('src/components/dune/DuneLobbyScreen.tsx')
+  const sql = readFileSync('supabase/migrations/20260827090000_dune_table_talk.sql', 'utf8')
+
+  check('the mode is on the row', /add column if not exists game_mode/.test(sql), true)
+  check('...and is one of the two games', /game_mode in \('basic', 'advanced'\)/.test(sql), true)
+  check('the lobby writes it when the table is opened', /game_mode: input\.mode \?\? 'advanced',/.test(src), true)
+  check('...and can change it while the table is open',
+    /export async function setDuneMode/.test(src), true)
+  check('...only while it is still a lobby',
+    /update\(\{ game_mode: mode \}\)[\s\S]{0,80}\.eq\('status', 'lobby'\)/.test(src), true)
+
+  // THE DEAL IS THE GAME EVERYBODY WAS LOOKING AT, which is the point: reading
+  // it off the row rather than defaulting in whichever browser pressed Start.
+  check('starting reads the agreed game off the row',
+    /const agreed = mode \?\? \(await duneMode\(matchId\)\) \?\? 'advanced'/.test(src), true)
+  check('...and sends that to the server', /type: 'START_DUNE', mode: agreed/.test(src), true)
+  check('the screen shows which it is', /data-layer="dune-mode"/.test(screen), true)
+  check('...and lets anybody at the table change it',
+    /setDuneMode\(matchId, m\)/.test(screen), true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
