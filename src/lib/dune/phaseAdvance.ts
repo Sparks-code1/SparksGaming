@@ -320,7 +320,8 @@ export const TUEKS_SIETCH = 'territory-33'
 
 export interface Winner {
   factions: FactionId[]
-  reason: 'strongholds' | 'prediction' | 'fremen-default' | 'guild-default' | 'most-strongholds'
+  reason: 'strongholds' | 'prediction' | 'fremen-default' | 'guild-default'
+    | 'most-strongholds' | 'most-spice'
   turn: number
 }
 
@@ -347,13 +348,24 @@ const occupies = (forces: readonly Force[], faction: FactionId, territoryId: str
  * order matters and is fixed. Both texts are in factions.ts under
  * specialVictory, and the suite pins this code to their wording.
  *
- * With neither faction seated, the most strongholds takes it, shared if
- * shared — this implementation's answer to a table the printed rules assume
- * cannot exist, and the one piece of invention here.
+ * With no Guild seated, the ruling's chain runs: most strongholds; a tie is
+ * broken by MOST SPICE AMONG THE TIED; still tied is a shared victory.
+ *
+ * THE SPICE TIEBREAK READS A SECRET. Purses live in match_secrets and reach
+ * exactly one browser each, so the judging happens here, server-side, from a
+ * map the caller reads with the service role — and what leaves is the VERDICT
+ * and nothing else. The returned object carries who won and why; no amount,
+ * no ordering beyond what the result itself implies. That is the whole
+ * contract: a table can learn that the Atreides purse beat the Harkonnen one,
+ * because the win says so, and cannot learn either number.
  */
 export function mentatVerdict(
   state: Pick<AdvanceState, 'turn' | 'forces' | 'players'>,
   prediction: { faction?: string; turn?: number } | null,
+  /** Purses by faction, for the tie among the most-strongholds. Server-read;
+   *  never published. Absent, a tie simply shares — a caller without the
+   *  secrets (a test, a replay of public state) still gets a lawful verdict. */
+  spice?: Readonly<Record<string, number>> | null,
 ): Winner | null {
   const forces = state.forces ?? []
   const seated = (state.players ?? []).map(p => p.faction)
@@ -399,5 +411,16 @@ export function mentatVerdict(
 
   const counts = seated.map(f => ({ f, n: strongholdsHeld(forces, f) }))
   const best = Math.max(0, ...counts.map(c => c.n))
-  return crown(counts.filter(c => c.n === best).map(c => c.f), 'most-strongholds')
+  const tied = counts.filter(c => c.n === best).map(c => c.f)
+  if (tied.length > 1 && spice) {
+    // MOST SPICE AMONG THE TIED — the tied only. A faction outside the tie
+    // with the fullest purse on the planet is not in this question.
+    const richest = Math.max(...tied.map(f => spice[f] ?? 0))
+    const byPurse = tied.filter(f => (spice[f] ?? 0) === richest)
+    // Named as the spice's win ONLY when spice narrowed it: a full tie shares,
+    // and calling that 'most-spice' would announce equal purses — a fact about
+    // holdings the shared verdict does not otherwise reveal.
+    if (byPurse.length < tied.length) return crown(byPurse, 'most-spice')
+  }
+  return crown(tied, 'most-strongholds')
 }

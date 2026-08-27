@@ -1404,22 +1404,39 @@ Deno.serve(async req => {
         return json({ phase: target.phase, turn, ...extra, version: data[0].version })
       }
 
-      /** Read the Bene Gesserit's prediction, theirs alone, for the verdict. */
-      const predictionOf = async (): Promise<{ faction?: string; turn?: number } | null> => {
-        const bgSeat = seatOfFaction['bene-gesserit']
-        if (!bgSeat) return null
-        const { data: row } = await admin
-          .from('match_secrets').select('data')
-          .eq('match_id', matchId).eq('player_id', bgSeat).maybeSingle()
-        return ((row?.data ?? {}) as { prediction?: { faction?: string; turn?: number } })
-          .prediction ?? null
+      /**
+       * What the verdict needs from the secrets: the Bene Gesserit's
+       * prediction, and every purse for the strongholds tiebreak.
+       *
+       * READ HERE, JUDGED IN THE BUNDLE, PUBLISHED ONLY WHEN THE GAME ENDS.
+       * The verdict itself carries no amount — the pure function returns only
+       * { factions, reason, turn }, and the suite holds it to that shape. The
+       * purses go public exactly once, in the same write as the winner:
+       * screens come down at the table, and a shared or spice-broken victory
+       * is legible only against the numbers. A finish that failed to write
+       * leaves them secret, because the reveal rides the winner or not at all.
+       */
+      const heldForVerdict = async () => {
+        const { data: rows } = await admin
+          .from('match_secrets').select('player_id, data').eq('match_id', matchId)
+        const spice: Record<string, number> = {}
+        let prediction: { faction?: string; turn?: number } | null = null
+        for (const r of rows ?? []) {
+          const fac = factionOfSeat[r.player_id as string]
+          if (!fac) continue
+          const d = (r.data ?? {}) as DuneSecrets & { prediction?: { faction?: string; turn?: number } }
+          spice[fac] = readSpice(d)
+          if (fac === 'bene-gesserit') prediction = d.prediction ?? null
+        }
+        return { spice, prediction }
       }
 
       /** End the game: the verdict into state, the row to 'complete', one write. */
       const finish = async (onState: Record<string, unknown>) => {
-        const verdict = mentatVerdict(onState as never, await predictionOf())
+        const held = await heldForVerdict()
+        const verdict = mentatVerdict(onState as never, held.prediction, held.spice)
         if (!verdict) return null
-        return await plainly({ winner: verdict }, 'complete')
+        return await plainly({ winner: verdict, spiceRevealed: held.spice }, 'complete')
       }
 
       if (overrun) {

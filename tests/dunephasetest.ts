@@ -318,6 +318,69 @@ const at = (phase: GamePhase, over: Partial<AdvanceState> = {}): AdvanceState =>
   check('...shared when shared',
     mentatVerdict(tenth([], ['atreides', 'harkonnen']), null)?.factions, ['atreides', 'harkonnen'])
 
+  // ── THE SPICE TIEBREAK, as ruled ────────────────────────────────────────
+  // A tie on strongholds is broken by MOST SPICE AMONG THE TIED; still tied
+  // shares. The purses come from match_secrets — the caller reads them with
+  // the service role and hands them in — so the verdict must give back who
+  // and why and NOTHING an amount could ride out on.
+  {
+    const noGuild = tenth([
+      f('atreides', 'territory-13', 'sector-10'),
+      f('harkonnen', 'territory-26', 'sector-11'),
+    ], ['atreides', 'harkonnen', 'fremen'])
+    // THE CHAIN, in the ruled order: the Fremen are seated but a rival in a
+    // sietch breaks their claim, no Guild is at the table, and the count is
+    // clear — two strongholds beat one without ever asking a purse.
+    const broken = { ...noGuild, forces: [...noGuild.forces, f('harkonnen', SIETCH_TABR, 'sector-13')] }
+    check('a broken desert claim falls through to the count',
+      mentatVerdict(broken, null, { atreides: 8, harkonnen: 5, fremen: 20 }),
+      { factions: ['harkonnen'], reason: 'most-strongholds', turn: TURN_LIMIT })
+
+    const tie = tenth([
+      f('atreides', 'territory-13', 'sector-10'),
+      f('harkonnen', SIETCH_TABR, 'sector-13'),
+    ], ['atreides', 'harkonnen'])
+    check('...the fuller purse takes a real tie',
+      mentatVerdict(tie, null, { atreides: 8, harkonnen: 5 }),
+      { factions: ['atreides'], reason: 'most-spice', turn: TURN_LIMIT })
+    // AMONG THE TIED ONLY: the richest purse outside the tie is not in the
+    // question.
+    const third = tenth([
+      f('atreides', 'territory-13', 'sector-10'),
+      f('harkonnen', SIETCH_TABR, 'sector-13'),
+    ], ['atreides', 'harkonnen', 'bene-gesserit'])
+    check('...counting only the tied',
+      mentatVerdict(third, null, { atreides: 3, harkonnen: 2, 'bene-gesserit': 99 })?.factions,
+      ['atreides'])
+    // EQUAL PURSES SHARE — and the reason says strongholds, not spice: naming
+    // the spice would announce the purses came out equal, which is a fact
+    // about holdings the shared result does not otherwise reveal.
+    check('...and equal purses share, said as strongholds',
+      mentatVerdict(tie, null, { atreides: 5, harkonnen: 5 }),
+      { factions: ['atreides', 'harkonnen'], reason: 'most-strongholds', turn: TURN_LIMIT })
+    // NO PURSES, NO TIEBREAK: a caller without the secrets — a replay of
+    // public state — still gets a lawful verdict.
+    check('...and with no purses handed in, the tie shares',
+      mentatVerdict(tie, null)?.factions, ['atreides', 'harkonnen'])
+    // A CLEAR STRONGHOLD WIN NEVER ASKS THE PURSES.
+    check('a clear count ignores the purses',
+      mentatVerdict(tenth([
+        f('atreides', 'territory-13', 'sector-10'), f('atreides', 'territory-26', 'sector-11'),
+      ], ['atreides', 'harkonnen']), null, { atreides: 0, harkonnen: 99 })?.factions,
+      ['atreides'])
+    // THE PREDICTION STILL OUTRANKS a purse-broken win.
+    check('the prediction can steal a spice-broken win',
+      mentatVerdict({ ...tie, players: [...tie.players, player('bene-gesserit', 'player-position-5')] },
+        { faction: 'atreides', turn: TURN_LIMIT }, { atreides: 8, harkonnen: 5 })?.factions,
+      ['bene-gesserit'])
+
+    // AND THE VERDICT CARRIES NO AMOUNT. The shape is the privacy contract:
+    // whatever the purses said, the object that leaves is who, why, when.
+    const out = mentatVerdict(tie, null, { atreides: 8, harkonnen: 5 })!
+    check('the verdict carries who, why, when, and nothing else',
+      Object.keys(out).sort(), ['factions', 'reason', 'turn'])
+  }
+
   // THE NAMED TERRITORIES ARE THE ONES THE RULES NAME. Ids are pinned rather
   // than looked up, so a regenerated board that renumbers is caught here and
   // not by the Fremen quietly losing their default.
@@ -380,9 +443,23 @@ const at = (phase: GamePhase, over: Partial<AdvanceState> = {}): AdvanceState =>
   // THE END. The verdict and the row's status land in one transaction, and
   // the prediction is read from the Bene Gesserit's own row alone.
   check('the verdict ends the match in the same write',
-    /await plainly\(\{ winner: verdict \}, 'complete'\)/.test(advCase), true)
-  check('...reading the prediction from their own row',
-    /seatOfFaction\['bene-gesserit'\]/.test(advCase), true)
+    /await plainly\(\{ winner: verdict, spiceRevealed: held\.spice \}, 'complete'\)/.test(advCase), true)
+  // SCREENS COME DOWN WITH THE WINNER, and only with the winner: the reveal
+  // rides the finishing write or not at all. A second place writing
+  // spiceRevealed would be a purse published mid-game.
+  check('...and the purses are published there alone',
+    (advCase.match(/spiceRevealed/g) ?? []).length, 1)
+  check('...never anywhere else in the endpoint',
+    (fn.match(/spiceRevealed/g) ?? []).length, 1)
+  // THE SECRETS ARE READ FOR THE JUDGING AND NOTHING ELSE: purses through
+  // the ledger's own reader, the prediction off the one row it belongs to,
+  // both handed to the pure verdict — which is held, below, to return no
+  // shape that could carry an amount back out.
+  check('...judged with the purses',
+    /mentatVerdict\(onState as never, held\.prediction, held\.spice\)/.test(advCase), true)
+  check('...read through the ledger\'s reader', /spice\[fac\] = readSpice\(d\)/.test(advCase), true)
+  check('...with the prediction still theirs alone',
+    /if \(fac === 'bene-gesserit'\) prediction = d\.prediction/.test(advCase), true)
   // A MATCH FROM BEFORE THE LOOP can sit at Mentat ten unfinished; leaving it
   // must end the game it missed, not play an eleventh turn.
   check('an overrun match is ended, not extended',

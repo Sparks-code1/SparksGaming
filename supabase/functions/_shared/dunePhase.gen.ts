@@ -1310,7 +1310,7 @@ var SIETCH_TABR = "territory-40";
 var HABBANYA_SIETCH = "territory-38";
 var TUEKS_SIETCH = "territory-33";
 var occupies = (forces, faction, territoryId) => forces.some((f) => f.faction === faction && f.territoryId === territoryId && f.count > 0 && f.posture !== "advisor");
-function mentatVerdict(state, prediction) {
+function mentatVerdict(state, prediction, spice) {
   const forces = state.forces ?? [];
   const seated = (state.players ?? []).map((p) => p.faction);
   const byStrongholds = seated.filter((f) => strongholdsHeld(forces, f) >= WIN_STRONGHOLDS);
@@ -1329,7 +1329,13 @@ function mentatVerdict(state, prediction) {
   if (seated.includes("spacing-guild")) return crown(["spacing-guild"], "guild-default");
   const counts = seated.map((f) => ({ f, n: strongholdsHeld(forces, f) }));
   const best = Math.max(0, ...counts.map((c) => c.n));
-  return crown(counts.filter((c) => c.n === best).map((c) => c.f), "most-strongholds");
+  const tied = counts.filter((c) => c.n === best).map((c) => c.f);
+  if (tied.length > 1 && spice) {
+    const richest = Math.max(...tied.map((f) => spice[f] ?? 0));
+    const byPurse = tied.filter((f) => (spice[f] ?? 0) === richest);
+    if (byPurse.length < tied.length) return crown(byPurse, "most-spice");
+  }
+  return crown(tied, "most-strongholds");
 }
 export {
   HABBANYA_SIETCH,

@@ -353,9 +353,20 @@ export interface DuneGameState {
    */
   winner?: {
     factions: FactionId[]
-    reason: 'strongholds' | 'prediction' | 'fremen-default' | 'guild-default' | 'most-strongholds'
+    reason: 'strongholds' | 'prediction' | 'fremen-default' | 'guild-default'
+      | 'most-strongholds' | 'most-spice'
     turn: number
   }
+  /**
+   * Every purse, by faction, published in the same write as the winner.
+   *
+   * SCREENS COME DOWN. At a table the game ending is the moment the shields
+   * lift and everything hidden is counted in the open — and a shared victory
+   * or a spice-broken one is legible only against the numbers. Written ONCE,
+   * beside `winner`, and never before: while the game runs, a purse reaches
+   * exactly one browser, and the suite that proves it keeps proving it.
+   */
+  spiceRevealed?: Record<string, number>
   /**
    * The seat the game is waiting on, or null.
    *

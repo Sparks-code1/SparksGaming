@@ -583,12 +583,25 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
               <b style={{ display: 'block', marginBottom: 4 }}>
                 {row.winner.factions.map(f => nameOf(f)).join(' and ')} win{row.winner.factions.length === 1 ? 's' : ''}
               </b>
+              {row.spiceRevealed && (
+                <span style={{ display: 'block', margin: '2px 0 4px', opacity: 0.85 }}>
+                  {/* SCREENS DOWN. Published by the finishing write, all at
+                      once — a shared victory is legible against the numbers,
+                      not merely asserted. */}
+                  {(row.players ?? []).map(p => (
+                    <span key={p.faction} style={{ display: 'block' }}>
+                      {nameOf(p.faction)} — {row.spiceRevealed?.[p.faction] ?? 0} spice
+                    </span>
+                  ))}
+                </span>
+              )}
               {{
                 strongholds: 'Three strongholds at the Mentat Pause.',
                 prediction: 'The Bene Gesserit foresaw this, and the win is theirs.',
                 'fremen-default': 'The desert endures: the Fremen default victory.',
                 'guild-default': 'Nobody won, so the Guild did.',
                 'most-strongholds': 'Turn ten: the most strongholds takes it.',
+                'most-spice': 'Turn ten: strongholds tied, and the fuller purse takes it.',
               }[row.winner.reason] ?? row.winner.reason}
             </div>
           )}
