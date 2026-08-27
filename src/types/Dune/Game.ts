@@ -42,12 +42,37 @@ export type GameMode = 'basic' | 'advanced'
  * entry per unit and no owner, which made that rule, worm immunity and worm
  * placement all unsayable rather than merely unimplemented.
  */
+/**
+ * Whether pieces fight, or merely watch.
+ *
+ * THE BENE GESSERIT'S, and in the advanced game only. Their opening force is a
+ * spiritual advisor: it stands in a territory without fighting for it and
+ * without holding it. Alone in a territory it has nothing to advise, so it
+ * flips to a fighter — which is why their placement is made AFTER the Fremen's,
+ * the last thing at setup that can put somebody else on the board beside them.
+ *
+ * ABSENT MEANS FIGHTER. Every force in the game up to now is one, and an
+ * optional field means no state already written has to be rewritten to say so.
+ */
+export type ForcePosture = 'fighter' | 'advisor'
+
 export interface Force {
   faction: FactionId
   territoryId: TerritoryId
   /** The sector of that territory — the actual unit of occupancy. */
   sector: SectorId
   count: number
+  /**
+   * Fighting, or watching. Absent is fighting.
+   *
+   * WHAT IS AND IS NOT WIRED. The posture is set at setup and read by
+   * strongholdsHeld, which does not count an advisor as holding anything. The
+   * rest of the advisor rules — that they take no part in a battle, that they
+   * flip when somebody else arrives or leaves, that the Bene Gesserit may send
+   * more of them — are not implemented, and a force will keep whatever posture
+   * it was given until something is written that changes it.
+   */
+  posture?: ForcePosture
 }
 
 /**

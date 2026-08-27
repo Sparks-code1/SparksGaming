@@ -39,7 +39,9 @@ import type { AuthUser } from '@/lib/auth'
 import { startSecretsSync, readOwnSecrets } from '@/lib/secretsSync'
 import { watchDuneMatch } from '@/lib/dune/matchFeed'
 import type { DuneMatchFeed, FeedStatus } from '@/lib/dune/matchFeed'
-import { openAuction, openCharity, auctionExpired, seatedIn, winLines } from '@/lib/dune/publicRow'
+import {
+  openAuction, openCharity, auctionExpired, seatedIn, winLines, openSetup, setupWants,
+} from '@/lib/dune/publicRow'
 import type { PublicRow } from '@/lib/dune/publicRow'
 import { dispatchDuneAction } from '@/lib/dune/duneDispatch'
 import type { DuneAction } from '@/lib/dune/duneDispatch'
@@ -196,6 +198,7 @@ export function DuneMatchScreen({ matchId }: DuneMatchScreenProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [row?.lastAuction?.at])
 
+  const setup = openSetup(row)
   const auction = useMemo(() => openAuction(row), [row])
   const charityWindow = openCharity(row, answeredTurn)
   const expired = auctionExpired(row, now)
@@ -303,7 +306,7 @@ export function DuneMatchScreen({ matchId }: DuneMatchScreenProps) {
           apply. The right-hand column is the HUD, the left is the chat, so
           this takes the top right — over a list of other seats, which is the
           least costly thing to cover. */}
-      {(row?.spiceBlow || expired || spectating || notSeated || feed !== 'live') && (
+      {(setup || row?.spiceBlow || expired || spectating || notSeated || feed !== 'live') && (
         <div style={{
           position: 'fixed', right: 12, top: 12, width: 250, maxHeight: '60vh',
           overflowY: 'auto', zIndex: 40,
@@ -317,6 +320,30 @@ export function DuneMatchScreen({ matchId }: DuneMatchScreenProps) {
               {feed === 'connecting' ? 'Connecting to the table…'
                 : 'Not receiving updates. Still reading the table every few seconds.'}
             </p>
+          )}
+
+          {/* SETUP IS NOT A PHASE and the board has nothing to show for it, so
+              a match still being dealt looks exactly like one where nobody is
+              moving. It says which seats it is waiting on, which is public —
+              six people round a table can see who is still placing.
+
+              ANSWERING IS NOT HERE YET. The three answers want three different
+              controls, and until they exist this is the honest half: what is
+              being waited on, and that the clock will answer for anyone who
+              says nothing. */}
+          {setup && (
+            <div style={{
+              margin: '0 0 8px', padding: 8, borderRadius: 6, background: '#1d2a44',
+              lineHeight: 1.5,
+            }}>
+              <b style={{ display: 'block', marginBottom: 4 }}>Setting up</b>
+              {setupWants(row, seat?.faction ?? null)
+                ? 'You have a setup decision to make. The controls for it are not built yet — the clock will answer for you.'
+                : 'Waiting on '}
+              {!setupWants(row, seat?.faction ?? null) && (
+                <b>{[...new Set(setup.outstanding.map(d => d.faction))].join(', ')}</b>
+              )}
+            </div>
           )}
 
           {spectating && (

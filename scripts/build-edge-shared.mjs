@@ -106,6 +106,18 @@ const TARGETS = [
     exportName: 'publicSpiceDeck',
   },
   {
+    entry: 'src/lib/dune/setup.ts',
+    out: 'supabase/functions/_shared/duneSetup.gen.ts',
+    what: 'opening position',
+    // The opening position is dealt ONCE and everything after it is built on
+    // top: starting spice, the traitor deal, the three decks in draw order. A
+    // second copy on the server would be a second answer to what a faction
+    // starts with, and the disagreement would not surface until somebody
+    // counted their forces against the rules card in their hand.
+    mustExport: /export\s*\{[^}]*openingPosition/,
+    exportName: 'openingPosition',
+  },
+  {
     entry: 'src/lib/stateView.ts',
     out: 'supabase/functions/_shared/stateView.gen.ts',
     what: 'state projections',

@@ -74,7 +74,15 @@ export function strongholdsHeld(forces: readonly Force[], faction: FactionId): n
   for (const f of forces) {
     // A stack of zero is not an occupation. These turn up: a territory emptied
     // by a battle keeps its entry until something prunes it.
-    if (f.faction === faction && f.count > 0 && STRONGHOLDS.has(f.territoryId)) {
+    //
+    // NEITHER IS AN ADVISOR. A Bene Gesserit advisor stands in a territory
+    // without holding it — that is the whole of what makes it an advisor — and
+    // counting one here would hand them a stronghold they have not taken, in
+    // the column that decides who is winning. Reachable the moment they are
+    // placed: their opening advisor may go in any territory they like,
+    // Arrakeen included.
+    if (f.faction === faction && f.count > 0 && f.posture !== 'advisor'
+      && STRONGHOLDS.has(f.territoryId)) {
       held.add(f.territoryId)
     }
   }

@@ -20,6 +20,7 @@ import type { DuneGameState } from '@/types/Dune/Game'
 import type { FactionId } from '@/types/Dune/Faction'
 import type { CharityWindow } from '@/lib/dune/charity'
 import type { BidAsk, AuctionCarry } from '@/lib/dune/bidding'
+import type { SetupWindow } from '@/lib/dune/setup'
 
 /**
  * The pause the spice blow opens for the Fremen.
@@ -68,6 +69,16 @@ export interface AuctionStep {
 }
 
 export type PublicRow = DuneGameState & {
+  /**
+   * The opening position's outstanding decisions, while any remain.
+   *
+   * PRESENT MEANS SETUP IS STILL RUNNING. It goes when the last answer lands
+   * rather than staying as an empty list, because an empty window still reads
+   * as a window to anything asking whether setup is over. What it carries is
+   * who is being waited on and what kind of answer — never the four traitors a
+   * seat was dealt, and never what anybody chose.
+   */
+  setup?: SetupWindow
   charity?: CharityWindow
   spiceBlow?: SpiceBlowPause
   auction?: AuctionStep
@@ -126,6 +137,24 @@ export function openCharity(
   if (!window_) return null
   if (answeredTurn != null && answeredTurn === window_.turn) return null
   return window_
+}
+
+/**
+ * The setup decisions still outstanding, or none.
+ *
+ * A match in setup has not played its first phase, and a screen that showed the
+ * board without saying so would look like a game where nobody is moving.
+ */
+export function openSetup(row: PublicRow | null): SetupWindow | null {
+  const setup = row?.setup
+  if (!setup || setup.outstanding.length === 0) return null
+  return setup
+}
+
+/** Whether this seat is one of the ones setup is waiting on. */
+export function setupWants(row: PublicRow | null, faction: FactionId | null): boolean {
+  if (!faction) return false
+  return (row?.setup?.outstanding ?? []).some(d => d.faction === faction)
 }
 
 /** Whether a faction holds a seat in this match, by the public roster. */

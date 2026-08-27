@@ -1,0 +1,1524 @@
+// AUTO-GENERATED — DO NOT EDIT.
+//
+// Built from src/lib/dune/setup.ts by scripts/build-edge-shared.mjs.
+// Edit the source and re-run `npm run build:edge`.
+//
+// This is the exact opening position the client runs. The server MUST run the same
+// bytes: a divergence here is two machines disagreeing while both believe they
+// agree.
+
+// src/data/dune/factions.ts
+var FACTION_IDS = [
+  "atreides",
+  "emperor",
+  "spacing-guild",
+  "fremen",
+  "harkonnen",
+  "bene-gesserit"
+];
+var ATREIDES = {
+  id: "atreides",
+  name: "Atreides",
+  startingSpice: 10,
+  forces: {
+    onPlanet: 10,
+    placement: { kind: "fixed", territoryId: "territory-13" },
+    // Arrakeen
+    reserves: 10,
+    starred: 0
+  },
+  reservesHeld: "off-planet",
+  handLimit: 4,
+  freeRevivals: 2,
+  abilities: {
+    bidding: "Atreides may look at each Treachery Card as it comes up for purchase before any faction bids on it.",
+    movement: "At the start of the Movement Phase, before anyone moves, you may look at the top card of the Spice Deck.",
+    battle: "During the Battle Phase, you may force your opponent to reveal your choice of one of the four elements of battle (the leader, the weapon, the defense, or the forces in battle) before they reveal their choice."
+  },
+  alliance: "The Atreides may assist your allies by forcing their opponent to show them one element of their battle plan.",
+  advanced: {
+    karama: "You may use a Karama Card to look at any one player's entire Battle Plan.",
+    kwisatzHaderach: "Use the Kwisatz Haderach card and counter token to secretly keep track of force losses. Once you have lost 7 or more forces in a battle or battles, the Kwisatz Haderach card becomes active for the rest of the game and may be used as follows: it cannot be used alone in battle but may add its +2 strength to leaders or cheap heroes in one territory per turn. If the leader or cheap hero is killed, the Kwisatz Haderach has no effect in the battle. A leader accompanied by Kwisatz Haderach cannot turn traitor. The Kwisatz Haderach can only be killed if blown up by a lasgun/shield explosion. If killed, the Kwisatz Haderach must be revived like any other leader. Alive or dead, the Kwisatz Haderach has no effect on the rule governing revival of Atreides leaders."
+  },
+  // Nothing here is beyond a Karama card.
+  unsuppressable: [],
+  leaders: [
+    { name: "Lady Jessica", strength: 5 },
+    { name: "Thufir Hawat", strength: 5 },
+    { name: "Gurney Halleck", strength: 4 },
+    { name: "Duncan Idaho", strength: 2 },
+    { name: "Dr. Wellington Yueh", strength: 1 }
+  ]
+};
+var EMPEROR = {
+  id: "emperor",
+  name: "Emperor",
+  startingSpice: 10,
+  forces: {
+    onPlanet: 0,
+    placement: { kind: "reserve-only" },
+    reserves: 20,
+    starred: 5
+    // Sardaukar — see StartingForces.starred
+  },
+  reservesHeld: "off-planet",
+  handLimit: 4,
+  freeRevivals: 1,
+  abilities: {
+    bidding: "Whenever any other faction pays spice for a Treachery card, they pay it to you instead of the Spice Bank. You may not discount the price of Treachery Cards; the full price must be paid."
+  },
+  alliance: "You may share your great wealth with your allies as well as paying spice (directly to the bank) for the revival of up to 3 extra of their forces (for a possible total of 6 during each revival phase) from the Tleilaxu tanks.",
+  advanced: {
+    karama: "You may use a Karama Card to revive up to three forces or one leader for free.",
+    // UNDER `forces`, not `general`. The card labels each entry with the key it
+    // came from, and GENERAL says nothing — where FORCES says which of these
+    // rules is the one about your soldiers. The Fremen's Fedaykin entry has
+    // always been shaped this way; this is the same rule for the same reason.
+    //
+    // The rulebook's opening clause, "If you are playing the advanced game,
+    // Sardaukar is in play", is dropped: it sits on the back of the card, which
+    // is the advanced side and says so.
+    forces: "Sardaukar: Your 5 starred forces, elite Sardaukar, have a special fighting capability. They are worth two normal forces in battle and in taking losses against all opponents except Fremen. Your starred forces are worth just one force against Fremen. They are treated as one force in revival. Only one Sardaukar force can be revived per turn."
+  },
+  unsuppressable: [],
+  leaders: [
+    { name: "Hasimir Fenring", strength: 6 },
+    { name: "Captain Aramsham", strength: 5 },
+    { name: "Caid", strength: 3 },
+    { name: "Burseg", strength: 3 },
+    { name: "Bashar", strength: 2 }
+  ]
+};
+var FREMEN = {
+  id: "fremen",
+  name: "Fremen",
+  startingSpice: 3,
+  forces: {
+    onPlanet: 10,
+    // Distributed by the player at setup, in whatever split they choose.
+    placement: {
+      kind: "distribute",
+      among: [
+        "territory-40",
+        // Sietch Tabr
+        "territory-17",
+        // False Wall South
+        "territory-10"
+        // False Wall West
+      ]
+    },
+    reserves: 10,
+    starred: 3
+    // Fedaykin — see StartingForces.starred
+  },
+  // The one faction whose reserves are already on Arrakis. This is what makes
+  // their shipment free and keeps them out of the Guild's income — see
+  // ReserveLocation.
+  reservesHeld: "on-planet",
+  handLimit: 4,
+  freeRevivals: 3,
+  abilities: {
+    shipment: "You may bring any or all of your reserves for free onto the Great Flat or onto any one territory within two territories of the Great Flat (subject to storm and occupancy rules).",
+    movement: "You may move your forces two territories instead of one.",
+    shaiHulud: "If Shai-Hulud appears in a territory where you have forces, they are not devoured. Upon conclusion of the Nexus, you may ride the sandworm and move some or all of the forces in that territory to any territory subject to storm and occupancy rules. Any forces in that territory are not devoured. If Shai-Hulud appears again and you still have forces in the original territory, you may do this again."
+  },
+  alliance: "You may choose to protect (or not protect) your allies from the effects of Shai-Hulud (sandworm), and at your discretion, may also allow them to revive 3 forces for free during the revival phase. In addition, your allies win with you if you win with the special victory condition.",
+  specialVictory: "If no faction has won by the end of turn 10, and you (or no one) occupies Sietch Tabr and Habbanya Sietch, and neither Harkonnen, Atreides nor Emperor occupies Tuek's Sietch, you and your allies win the game.",
+  advanced: {
+    karama: "You may use a Karama Card to place your sandworm token in any sand territory that you wish. This is treated as a normal sandworm.",
+    storm: "The first storm in the game is normal. All subsequent storms can move either 1-6 sectors and you get to know the number of sectors before the storm moves on the previous turn.",
+    spiceBlow: "Sandworms: During a spice blow, all additional sandworms that appear after the first sandworm can be placed by you in any territory, any forces there except yours are devoured. Storm Losses: If your forces are caught in a storm, only half of them are killed (rounded up).",
+    shipment: "You may also bring your reserves into a storm at half losses.",
+    forces: "Fedaykin: Your 3 starred forces, elite Fedaykin, have a special fighting capability. They are worth two normal forces in battle and in taking losses against all opponents. They are treated as one force in revival. Only one Fedaykin force can be revived per turn.",
+    battle: "Your forces do not require spice to count at their full strength."
+  },
+  // Their special victory. Karama cannot stop a win condition.
+  unsuppressable: ["specialVictory"],
+  leaders: [
+    { name: "Stilgar", strength: 7 },
+    { name: "Chani", strength: 6 },
+    { name: "Otheym", strength: 5 },
+    { name: "Shadout Mapes", strength: 3 },
+    { name: "Jamis", strength: 2 }
+  ]
+};
+var SPACING_GUILD = {
+  id: "spacing-guild",
+  name: "Spacing Guild",
+  startingSpice: 5,
+  forces: {
+    onPlanet: 5,
+    placement: { kind: "fixed", territoryId: "territory-33" },
+    // Tuek's Sietch
+    reserves: 15,
+    starred: 0
+  },
+  reservesHeld: "off-planet",
+  handLimit: 4,
+  freeRevivals: 1,
+  abilities: {
+    shipment: "When other factions ship forces on to Dune, from their off-planet reserves, they pay the spice to you instead of to the Spice Bank. You are able to make three types of shipment: (1) you may ship normally from off planet reserves, (2) you may ship any number of forces from any one territory to any other territory on the board, or (3) you may ship any number of forces from any one territory back to your reserves. You pay half the normal fee when shipping your forces, and pay 1 spice for every 2 of your forces shipped back to reserves."
+  },
+  alliance: "Allies may ship from their off-planet reserves onto Dune or cross-ship from one territory to another with forces that are already on Dune at the half-price rate. In addition, allies win with the Spacing Guild Special Victory Condition.",
+  specialVictory: "If no faction has been able to win the game by the end of play, you automatically win the game.",
+  advanced: {
+    karama: "You may use a Karama Card to stop one off-planet shipment of any one player.",
+    shipment: "You may take your shipment and move action out of turn. This would allow you to go first or last or in between other players' turns, however you wish. The rest of the factions must make their shipments and moves in the proper sequence. You do not have to reveal when you intend to make your shipment and movement until the moment you wish to take it."
+  },
+  // Their special victory. Karama cannot stop a win condition.
+  unsuppressable: ["specialVictory"],
+  leaders: [
+    { name: "Staban Tuek", strength: 5 },
+    { name: "Master Bewt", strength: 3 },
+    { name: "Esmar Tuek", strength: 3 },
+    { name: "Soo-Soo Sook", strength: 2 },
+    { name: "Guild Representative", strength: 1 }
+  ]
+};
+var BENE_GESSERIT = {
+  id: "bene-gesserit",
+  name: "Bene Gesserit",
+  startingSpice: 5,
+  forces: {
+    onPlanet: 1,
+    placement: { kind: "fixed", territoryId: "territory-03" },
+    // Polar Sink
+    reserves: 19,
+    starred: 0
+  },
+  reservesHeld: "off-planet",
+  handLimit: 4,
+  freeRevivals: 1,
+  abilities: {
+    beforeGame: "When selecting this faction you secretly predict when one other faction will win, choosing the turn number and faction, this will remain a secret until game end. If your prediction is correct, your prediction is revealed and you and your allies win the game and win alone, you cannot predict the spacing-guild or Fremen will win with their special victory conditions",
+    shipment: "Whenever any other faction ships forces onto Dune from off-planet, you may ship 1 force for free from your reserves into the Polar Sink. You may also ship normally, of course.",
+    battle: "You may Voice your opponent to do as you wish with respect to one of the cards they play in their battle. For instance, to play or not play a specific weapon (poison weapon, projectile weapon, or lasgun) or defense (snooper or shield), a worthless card, or a cheap hero. If your opponent cannot comply with your command, they may do as they wish"
+  },
+  alliance: "You may Voice an ally opponent",
+  advanced: {
+    beforeGame: "After the fremen placement in the first turn (if that faction is in the game) you start with one peaceful advisor in any territory of your choice. If you are alone in the territory flip the advisor turns into a fighter",
+    shipment: "Whenever any other faction ships forces to Dune from off-planet, you may ship for free one advisor from your reserves into that same territory (instead of the Polar Sink).",
+    charity: "You always receive CHOAM charity of 2 spice regardless of how many spice you already have",
+    // NOT from docs/dune-advance-rules.md — that file lists Karama powers for
+    // five factions and omits the Bene Gesserit entirely, which is how their
+    // absence came to be read as "they get nothing". This wording is mine and
+    // wants replacing with yours.
+    treachery: "You may play a Worthless Card as though it were a Karama Card.",
+    advisors: "Advisors coexist peacefully with other faction forces in the same territory. Advisors have no effect on the play of the other factions whatsoever and cannot collect spice, be involved in combat, prevent another faction from challenging a stronghold (second force), use ornithopters, or play Family Atomics. advisors are susceptible to storms, sandworms, lasgun/shield explosions, and atomics",
+    fighters: "when you ship forces into an unoccupied territory, you must ship as fighters, If you move advisors into an unoccupied territory they turn into fighters. If you move advisors into occupied territories they remain as advisors or flip to fighters, fighters follow the same rules for battles. When another faction ships or moves into a territory where you have fighters, you may flip them to advisors",
+    battle: "On each turn after the Spice Blow and Nexus Phase and before any shipment occurs, in all territories in which you have advisors and wish to battle, announce you are doing so and turn all those advisors to fighters"
+  },
+  // The prediction win, which lives in abilities.beforeGame rather than in
+  // specialVictory — see the note on Faction.unsuppressable.
+  unsuppressable: ["abilities.beforeGame"],
+  leaders: [
+    { name: "Mother Ramallo", strength: 5 },
+    { name: "Wanna Yueh", strength: 5 },
+    { name: "Margot Lady Fenring", strength: 5 },
+    { name: "Princess Irulan", strength: 5 },
+    { name: "Alia", strength: 5 }
+  ]
+};
+var HARKONNEN = {
+  id: "harkonnen",
+  name: "Harkonnen",
+  startingSpice: 10,
+  forces: {
+    onPlanet: 10,
+    placement: { kind: "fixed", territoryId: "territory-26" },
+    // Carthag
+    reserves: 10,
+    starred: 0
+  },
+  reservesHeld: "off-planet",
+  handLimit: 8,
+  freeRevivals: 2,
+  abilities: {
+    traitors: "At the start of the game when you draw 4 Traitor Cards, you keep them all including your own and, any leader cards of other factions can be revealed in a battle as a traitor",
+    treachery: "You may hold up to 8 Treachery Cards. When you have 8 cards you must pass during bidding. At the beginning of the game you are dealt 2 cards instead of 1, and every time you buy a card you get an extra card for free from the Treachery Deck (unless you are at 7 cards, because you can never have more than 8 in your hand"
+  },
+  alliance: "Traitor Cards that you hold may be used against your ally's opponent if you so choose",
+  advanced: {
+    karama: "You may use a Karama Card to take without looking any number of cards, up to the entire hand of any one player of your choice. For each card you take, you must give that player one of your cards in return.",
+    capturedLeaders: "Every time you win a battle, you can either randomly select 1 leader from the loser (including the leader used in battle, if not killed, but excluding all leaders already used elsewhere that turn) and place the Leader Disc face down into the Tleilaxu Tanks to gain 2 spice from the Spice Bank; or you can keep the leader and use it once in a battle, after which, if it was not killed during that battle, after which you must return that leader to its faction. When all of your own leaders have been killed, you must return all captured leaders immediately to their factions. Killed leaders are put in the Tleilaxu Tanks from which their factions can revive them (subject to revival rules). A captured leader used in battle may be claimed as a traitor"
+  },
+  unsuppressable: [],
+  leaders: [
+    { name: "Feyd-Rautha", strength: 6 },
+    { name: "Beast Rabban", strength: 4 },
+    { name: "Piter De Vries", strength: 3 },
+    { name: "Captain Iakin Nefud", strength: 2 },
+    { name: "Umman Kudu", strength: 1 }
+  ]
+};
+var FACTIONS = {
+  atreides: ATREIDES,
+  emperor: EMPEROR,
+  fremen: FREMEN,
+  "spacing-guild": SPACING_GUILD,
+  harkonnen: HARKONNEN,
+  "bene-gesserit": BENE_GESSERIT
+};
+var factionById = (id) => FACTIONS[id] ?? null;
+
+// src/data/dune/treachery.ts
+var KEEP_IF_WON = " You may keep this card if you win this battle.";
+var WORTHLESS = "Play as part of your Battle Plan, in place of a weapon, defense, or both.\n\nThis card has no value in play, and you can discard it only by playing it in your Battle Plan.";
+var PLAY_IN_PLAN = "Play as part of your Battle Plan.";
+var TREACHERY_CARDS = [
+  // ── Projectile weapons ────────────────────────────────────────────────────
+  // Four of them, one copy each, all with the same text and all stopped by a
+  // Shield. They differ only by name — and now by picture. Four of the five
+  // weapon images are square; the Maula Pistol is wide, which is why the art box
+  // fits an image to the whole box rather than to a square inside it.
+  {
+    id: "crysknife",
+    name: "Crysknife",
+    kind: "weapon",
+    subtype: "projectile",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/Crysknife.png",
+    text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved. Opponent may protect leader with a Shield." + KEEP_IF_WON
+  },
+  {
+    id: "stunner",
+    name: "Stunner",
+    kind: "weapon",
+    subtype: "projectile",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/Stunner.png",
+    text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved. Opponent may protect leader with a Shield." + KEEP_IF_WON
+  },
+  {
+    id: "sliptip",
+    name: "Slip Tip",
+    kind: "weapon",
+    subtype: "projectile",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/Slip_tip.png",
+    text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved. Opponent may protect leader with a Shield." + KEEP_IF_WON
+  },
+  {
+    id: "maulapistol",
+    name: "Maula Pistol",
+    kind: "weapon",
+    subtype: "projectile",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/Maula_Pistol.png",
+    text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved. Opponent may protect leader with a Shield." + KEEP_IF_WON
+  },
+  // ── Poison weapons ────────────────────────────────────────────────────────
+  {
+    id: "gomjabbar",
+    name: "Gom Jabbar",
+    kind: "weapon",
+    subtype: "poison",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/Gom_Jabbar.png",
+    text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved. Opponent may protect leader with a Snooper." + KEEP_IF_WON
+  },
+  {
+    id: "ellacadrug",
+    name: "Ellaca Drug",
+    kind: "weapon",
+    subtype: "poison",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/Ellaca_Drug.png",
+    text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved. Opponent may protect leader with a Snooper." + KEEP_IF_WON
+  },
+  {
+    id: "chaumas",
+    name: "Chaumas",
+    kind: "weapon",
+    subtype: "poison",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/Chaumas.jpg",
+    text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved. Opponent may protect leader with a Snooper." + KEEP_IF_WON
+  },
+  {
+    id: "chaumurky",
+    name: "Chaumurky",
+    kind: "weapon",
+    subtype: "poison",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/Chaumurky.jpg",
+    text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved. Opponent may protect leader with a Snooper." + KEEP_IF_WON
+  },
+  // ── The one weapon nothing defends against ────────────────────────────────
+  // Its class is its own, and there is no defence card to match it. That is the
+  // card, not a gap in the data: a Shield played in the same battle does not
+  // save anyone, it destroys the territory.
+  //
+  // RULING: "anyone" includes the Lasgun's own owner. A Lasgun and a Shield on
+  // the table together destroy the territory whoever held which — shielding your
+  // own leader behind your own Lasgun sets it off exactly as the defender's
+  // Shield would.
+  //
+  // So the explosion is a property of the PAIR being present, not of who played
+  // what. Battle resolution should ask "were both cards played in this battle",
+  // never "did my opponent play a Shield". The word carrying that is "anyone",
+  // and treacherytest pins it, because nothing else in the repo can enforce a
+  // battle rule while battles do not exist.
+  {
+    id: "lasgun",
+    name: "Lasgun",
+    kind: "weapon",
+    subtype: "lasgun",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/Lasgun.png",
+    text: PLAY_IN_PLAN + "\n\nAutomatically kills opponent's leader regardless of defense card used.\n\nYou may keep this card if you win this battle.\n\nIf anyone plays a Shield in this battle all forces, leaders, and spice in this battle's territory are lost to the Tleilaxu Tanks. Both players lost this battle, no spice is paid for leaders, and all cards played are discarded."
+  },
+  // ── Defences ──────────────────────────────────────────────────────────────
+  {
+    id: "shield",
+    name: "Shield",
+    kind: "defense",
+    subtype: "projectile",
+    timing: "battle-plan",
+    copies: 4,
+    image: "/treachery/Shield.png",
+    text: PLAY_IN_PLAN + "\n\nProtects your leader from a projectile weapon in this battle.\n\nYou may keep this card if you win this battle."
+  },
+  {
+    id: "snooper",
+    name: "Snooper",
+    kind: "defense",
+    subtype: "poison",
+    timing: "battle-plan",
+    copies: 4,
+    image: "/treachery/Snooper.png",
+    text: PLAY_IN_PLAN + "\n\nProtects your leader from a poison weapon in this battle.\n\nYou may keep this card if you win this battle."
+  },
+  // ── Worthless ─────────────────────────────────────────────────────────────
+  // Five cards, one copy each, rather than one card five times. They are
+  // mechanically identical — same text, same timing, same nothing — and differ
+  // only in name and picture, which is the whole joke: five ordinary objects
+  // from a desert planet, none of which will win you a battle.
+  //
+  // The names are the ones Dune prints. Worth checking against your own copy:
+  // they came from memory of the game rather than from anything in this repo,
+  // and this is the second time that has been a way to be wrong.
+  {
+    id: "baliset",
+    name: "Baliset",
+    kind: "worthless",
+    subtype: "none",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/baliset.svg",
+    text: WORTHLESS
+  },
+  {
+    id: "jubbacloak",
+    name: "Jubba Cloak",
+    kind: "worthless",
+    subtype: "none",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/jubba-cloak.svg",
+    text: WORTHLESS
+  },
+  {
+    id: "kulon",
+    name: "Kulon",
+    kind: "worthless",
+    subtype: "none",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/kulon.svg",
+    text: WORTHLESS
+  },
+  {
+    id: "lalala",
+    name: "LA, LA, LA",
+    kind: "worthless",
+    subtype: "none",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/la-la-la.svg",
+    text: WORTHLESS
+  },
+  {
+    id: "triptogamont",
+    name: "Trip to Gamont",
+    kind: "worthless",
+    subtype: "none",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/trip-to-gamont.svg",
+    text: WORTHLESS
+  },
+  // ── Specials ──────────────────────────────────────────────────────────────
+  {
+    id: "cheaphero",
+    name: "Cheap Hero",
+    kind: "special",
+    subtype: "leader",
+    timing: "battle-plan",
+    copies: 3,
+    image: "/treachery/Cheap_Hero.png",
+    text: "Play as a leader with zero strength on your Battle Plan and discard after the battle.\n\nYou may also play a weapon and a defense. The cheap hero may be played in place of a leader or when you have no leaders available."
+  },
+  {
+    id: "truthtrance",
+    name: "Truthtrance",
+    kind: "special",
+    subtype: "information",
+    timing: "any-time",
+    copies: 2,
+    image: "/treachery/Truthtrance.png",
+    // REWRITTEN, and the only card in the deck whose text is not the printed
+    // one. The printed card asks a player to answer truthfully; nothing can hold
+    // them to it, and the questions worth asking are about intent, which is not
+    // state and never becomes checkable. So the server answers instead of the
+    // player, out of a fixed set of questions it can prove — see
+    // lib/dune/truthtrance.ts for the set and for what had to be given up.
+    text: "Play at any time. Name another player and choose one question from the Truthtrance list.\n\nThe question and its answer are announced to every player. The answer is yes or no, and is always true."
+  },
+  {
+    id: "tleilaxughola",
+    name: "Tleilaxu Ghola",
+    kind: "special",
+    subtype: "revival",
+    timing: "any-time",
+    copies: 1,
+    image: "/treachery/Tleilaxu_Ghola.png",
+    text: "Play at any time to gain an extra revival.\n\nYou may immediately revive 1 of your leaders regardless of how many leaders you have in the tanks, or up to 5 of your forces from the Tleilaxu Tanks to your reserves at no cost in spice."
+  },
+  {
+    id: "hajr",
+    name: "Hajr",
+    kind: "special",
+    subtype: "movement",
+    timing: "movement",
+    copies: 1,
+    image: "/treachery/HAJR.png",
+    text: "Play during Movement Phase.\n\nMake an extra on-planet force movement subject to normal movement rules.\n\nThe forces you move may be a group you've already moved this phase or another group."
+  },
+  {
+    id: "weathercontrol",
+    name: "Weather Control",
+    kind: "special",
+    subtype: "storm",
+    timing: "storm-before-roll",
+    copies: 1,
+    image: "/treachery/weather_control.png",
+    text: "After the first game turn, play during the Storm Phase before the Storm Marker is moved.\n\nWhen you play this card, you control the storm this phase and may move it from 0 to 10 sectors in a counterclockwise direction."
+  },
+  {
+    id: "karama",
+    name: "Karama",
+    kind: "special",
+    subtype: "none",
+    timing: "any-time",
+    copies: 2,
+    // Text by design, not by omission — there is more rules text here than a
+    // picture would leave room for.
+    textOnly: true,
+    // The text below is the BASIC card. In the advanced game it gains a second,
+    // alternative use: instead of stopping an opponent's advantage, spend it on
+    // your own faction's Karama power. Those live on the factions rather than
+    // here — see AdvancedRules.karama — because they differ per faction and the
+    // card is the same card. Either use, not both, and it discards afterwards.
+    text: 'After the factions complete their "At Start" actions and after game set-up, use this card to stop a player from using one of their faction advantages when they attempt to use it. Stops the use of that advantage during one game phase.\n\nOr, this card may be used to do either of these things when appropriate:\n\nPurchase a shipment of forces onto the planet at Guild rates (1/2 normal) not paid to the Spacing Guild, or\n\nPurchase a Treachery Card without paying spice for it.\n\nCannot be used to stop a win condition advantage. Discard after use.'
+  },
+  {
+    id: "familyatomics",
+    name: "Family Atomics",
+    kind: "special",
+    subtype: "storm",
+    timing: "storm-after-roll",
+    copies: 1,
+    image: "/treachery/Family_atomics.png",
+    text: "After the first game turn, play after the storm movement is calculated, but before the storm is moved, but only if you have one or more forces on the Shield Wall or a territory adjacent to the Shield Wall with no storm between your sector and the Wall.\n\nAll forces on the Shield Wall are destroyed.\n\nThe Shield Wall now turns blue as a reminder. The Imperial Basin, Arrakeen, and Carthag are no longer protected from the Storm for the rest of the game."
+  }
+];
+
+// src/data/dune/boardData.ts
+var DUNE_TERRITORIES = [
+  {
+    id: "territory-01",
+    displayName: "False Wall East",
+    sectors: ["sector-5", "sector-6", "sector-7", "sector-8", "sector-9"],
+    centroid: { x: 561.1, y: 585.65 },
+    terrain: "rock",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-02", "territory-03", "territory-05", "territory-06", "territory-07"],
+    cells: [
+      { sector: "sector-5", at: { x: 554.93, y: 596.53 }, areaShare: 0.192 },
+      { sector: "sector-6", at: { x: 568.73, y: 572.28 }, areaShare: 0.226 },
+      { sector: "sector-7", at: { x: 575.26, y: 540.39 }, areaShare: 0.221 },
+      { sector: "sector-8", at: { x: 565.11, y: 510.34 }, areaShare: 0.22 },
+      { sector: "sector-9", at: { x: 544.97, y: 493.23 }, areaShare: 0.136 }
+    ]
+  },
+  {
+    id: "territory-02",
+    displayName: "Harg Pass",
+    sectors: ["sector-4", "sector-5"],
+    centroid: { x: 576.76, y: 626.36 },
+    terrain: "sand",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-01", "territory-03", "territory-07", "territory-08", "territory-17"],
+    cells: [
+      { sector: "sector-4", at: { x: 547.62, y: 635.05 }, areaShare: 0.692 },
+      { sector: "sector-5", at: { x: 580.41, y: 622.41 }, areaShare: 0.303 }
+    ]
+  },
+  {
+    id: "territory-03",
+    displayName: "Polar Sink",
+    sectors: ["sector-1", "sector-2", "sector-3", "sector-4", "sector-5", "sector-6", "sector-7", "sector-8", "sector-9", "sector-10", "sector-11", "sector-12", "sector-13", "sector-14", "sector-15", "sector-16", "sector-17", "sector-18"],
+    centroid: { x: 481.28, y: 565.99 },
+    terrain: "polar-sink",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-01", "territory-02", "territory-04", "territory-05", "territory-08", "territory-09", "territory-11", "territory-12"],
+    cells: [
+      { sector: "sector-1", at: { x: 468.11, y: 600.85 }, areaShare: 0.062 },
+      { sector: "sector-2", at: { x: 483.27, y: 609.33 }, areaShare: 0.078 },
+      { sector: "sector-3", at: { x: 500.07, y: 604.39 }, areaShare: 0.072 },
+      { sector: "sector-4", at: { x: 509.27, y: 588.22 }, areaShare: 0.053 },
+      { sector: "sector-5", at: { x: 516.83, y: 575.91 }, areaShare: 0.04 },
+      { sector: "sector-6", at: { x: 523.89, y: 563.35 }, areaShare: 0.05 },
+      { sector: "sector-7", at: { x: 529.17, y: 548.09 }, areaShare: 0.061 },
+      { sector: "sector-8", at: { x: 525.11, y: 533.1 }, areaShare: 0.064 },
+      { sector: "sector-9", at: { x: 508.56, y: 528.35 }, areaShare: 0.044 },
+      { sector: "sector-10", at: { x: 493.99, y: 525.84 }, areaShare: 0.028 },
+      { sector: "sector-11", at: { x: 483.56, y: 523.03 }, areaShare: 0.032 },
+      { sector: "sector-12", at: { x: 472.77, y: 527.39 }, areaShare: 0.028 },
+      { sector: "sector-13", at: { x: 460.4, y: 529.54 }, areaShare: 0.033 },
+      { sector: "sector-14", at: { x: 447.68, y: 536.25 }, areaShare: 0.051 },
+      { sector: "sector-15", at: { x: 435.57, y: 548.62 }, areaShare: 0.066 },
+      { sector: "sector-16", at: { x: 428.43, y: 566.89 }, areaShare: 0.089 },
+      { sector: "sector-17", at: { x: 436.05, y: 583 }, areaShare: 0.087 },
+      { sector: "sector-18", at: { x: 452.01, y: 592.93 }, areaShare: 0.063 }
+    ]
+  },
+  {
+    id: "territory-04",
+    displayName: "Wind Pass",
+    sectors: ["sector-14", "sector-15", "sector-16", "sector-17"],
+    centroid: { x: 373.1, y: 571.41 },
+    terrain: "sand",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-03", "territory-09", "territory-10", "territory-11", "territory-19", "territory-21", "territory-22", "territory-24"],
+    cells: [
+      { sector: "sector-14", at: { x: 407.15, y: 514.27 }, areaShare: 0.171 },
+      { sector: "sector-15", at: { x: 388.25, y: 540.48 }, areaShare: 0.193 },
+      { sector: "sector-16", at: { x: 370.37, y: 577.16 }, areaShare: 0.314 },
+      { sector: "sector-17", at: { x: 354.46, y: 635.05 }, areaShare: 0.317 }
+    ]
+  },
+  {
+    id: "territory-05",
+    displayName: "Imperial Basin",
+    sectors: ["sector-9", "sector-10", "sector-11"],
+    centroid: { x: 554.75, y: 346.54 },
+    terrain: "sand",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-01", "territory-03", "territory-06", "territory-12", "territory-13", "territory-14", "territory-15", "territory-25", "territory-26", "territory-27"],
+    cells: [
+      { sector: "sector-9", at: { x: 570.48, y: 422.65 }, areaShare: 0.11 },
+      { sector: "sector-10", at: { x: 554.29, y: 337.27 }, areaShare: 0.671 },
+      { sector: "sector-11", at: { x: 517.51, y: 305.89 }, areaShare: 0.219 }
+    ]
+  },
+  {
+    id: "territory-06",
+    displayName: "Shield Wall",
+    sectors: ["sector-8", "sector-9"],
+    centroid: { x: 617.88, y: 432.31 },
+    terrain: "rock",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-01", "territory-05", "territory-07", "territory-15", "territory-16", "territory-29", "territory-30"],
+    cells: [
+      { sector: "sector-8", at: { x: 677.46, y: 411.35 }, areaShare: 0.393 },
+      { sector: "sector-9", at: { x: 656.65, y: 389.67 }, areaShare: 0.607 }
+    ]
+  },
+  {
+    id: "territory-07",
+    displayName: "The Minor Erg",
+    sectors: ["sector-5", "sector-6", "sector-7", "sector-8"],
+    centroid: { x: 639.58, y: 515.04 },
+    terrain: "sand",
+    spiceSector: "sector-8",
+    stronghold: false,
+    spiceBlow: 8,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-01", "territory-02", "territory-06", "territory-16", "territory-17"],
+    cells: [
+      { sector: "sector-5", at: { x: 631.51, y: 632.77 }, areaShare: 0.16 },
+      { sector: "sector-6", at: { x: 631.22, y: 583.45 }, areaShare: 0.267 },
+      { sector: "sector-7", at: { x: 643.41, y: 529.22 }, areaShare: 0.343 },
+      { sector: "sector-8", at: { x: 633.76, y: 483.43 }, areaShare: 0.229 }
+    ]
+  },
+  {
+    id: "territory-08",
+    displayName: "Cielago North",
+    sectors: ["sector-1", "sector-2", "sector-3"],
+    centroid: { x: 486.07, y: 708.92 },
+    terrain: "sand",
+    spiceSector: "sector-3",
+    stronghold: false,
+    spiceBlow: 8,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-02", "territory-03", "territory-09", "territory-17", "territory-18", "territory-19", "territory-34"],
+    cells: [
+      { sector: "sector-1", at: { x: 426.99, y: 713.81 }, areaShare: 0.344 },
+      { sector: "sector-2", at: { x: 485.37, y: 726.96 }, areaShare: 0.332 },
+      { sector: "sector-3", at: { x: 537.04, y: 715.78 }, areaShare: 0.323 }
+    ]
+  },
+  {
+    id: "territory-09",
+    displayName: "Wind Pass North",
+    sectors: ["sector-17", "sector-18"],
+    centroid: { x: 404.92, y: 630.59 },
+    terrain: "sand",
+    spiceSector: "sector-17",
+    stronghold: false,
+    spiceBlow: 6,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-03", "territory-04", "territory-08", "territory-19"],
+    cells: [
+      { sector: "sector-17", at: { x: 391.96, y: 616.95 }, areaShare: 0.25 },
+      { sector: "sector-18", at: { x: 398.42, y: 663.48 }, areaShare: 0.75 }
+    ]
+  },
+  {
+    id: "territory-10",
+    displayName: "False Wall West",
+    sectors: ["sector-16", "sector-17", "sector-18"],
+    centroid: { x: 289.11, y: 697.08 },
+    terrain: "rock",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-04", "territory-19", "territory-20", "territory-21", "territory-37"],
+    cells: [
+      { sector: "sector-16", at: { x: 313.93, y: 602.56 }, areaShare: 0.147 },
+      { sector: "sector-17", at: { x: 294.51, y: 675.42 }, areaShare: 0.508 },
+      { sector: "sector-18", at: { x: 288.51, y: 759.59 }, areaShare: 0.345 }
+    ]
+  },
+  {
+    id: "territory-11",
+    displayName: "Hagga Basin",
+    sectors: ["sector-12", "sector-13"],
+    centroid: { x: 373.43, y: 377.62 },
+    terrain: "sand",
+    spiceSector: "sector-13",
+    stronghold: false,
+    spiceBlow: 6,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-03", "territory-04", "territory-12", "territory-24", "territory-25", "territory-26"],
+    cells: [
+      { sector: "sector-12", at: { x: 406.14, y: 352.65 }, areaShare: 0.475 },
+      { sector: "sector-13", at: { x: 368.34, y: 414.37 }, areaShare: 0.515 }
+    ]
+  },
+  {
+    id: "territory-12",
+    displayName: "Arsunt",
+    sectors: ["sector-11", "sector-12"],
+    centroid: { x: 466.57, y: 436.74 },
+    terrain: "sand",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-03", "territory-05", "territory-11", "territory-26"],
+    cells: [
+      { sector: "sector-11", at: { x: 475.2, y: 404.59 }, areaShare: 0.665 },
+      { sector: "sector-12", at: { x: 452.42, y: 443.99 }, areaShare: 0.329 }
+    ]
+  },
+  {
+    id: "territory-13",
+    displayName: "Arrakeen",
+    sectors: ["sector-10"],
+    centroid: { x: 628.39, y: 236.63 },
+    terrain: "stronghold",
+    spiceSector: null,
+    stronghold: true,
+    spiceBlow: null,
+    spiceIncome: 2,
+    ornithopters: true,
+    adjacent: ["territory-05", "territory-14", "territory-27"],
+    cells: [
+      { sector: "sector-10", at: { x: 620.09, y: 246.94 }, areaShare: 0.997 }
+    ]
+  },
+  {
+    id: "territory-14",
+    displayName: "Rim Wall West",
+    sectors: ["sector-9"],
+    centroid: { x: 657.39, y: 286.61 },
+    terrain: "rock",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-05", "territory-13", "territory-15", "territory-27", "territory-28"],
+    cells: [
+      { sector: "sector-9", at: { x: 652.52, y: 292.51 }, areaShare: 1 }
+    ]
+  },
+  {
+    id: "territory-15",
+    displayName: "Hole In The Rock",
+    sectors: ["sector-9"],
+    centroid: { x: 685.42, y: 323.42 },
+    terrain: "sand",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-05", "territory-06", "territory-14", "territory-28", "territory-29"],
+    cells: [
+      { sector: "sector-9", at: { x: 673.37, y: 331.76 }, areaShare: 1 }
+    ]
+  },
+  {
+    id: "territory-16",
+    displayName: "Pasty Mesa",
+    sectors: ["sector-5", "sector-6", "sector-7", "sector-8"],
+    centroid: { x: 772, y: 576.44 },
+    terrain: "rock",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-06", "territory-07", "territory-17", "territory-30", "territory-31", "territory-32", "territory-33"],
+    cells: [
+      { sector: "sector-5", at: { x: 729.82, y: 663.78 }, areaShare: 0.078 },
+      { sector: "sector-6", at: { x: 778.17, y: 611.94 }, areaShare: 0.343 },
+      { sector: "sector-7", at: { x: 787.81, y: 501.76 }, areaShare: 0.342 },
+      { sector: "sector-8", at: { x: 770.25, y: 419.48 }, areaShare: 0.236 }
+    ]
+  },
+  {
+    id: "territory-17",
+    displayName: "False Wall South",
+    sectors: ["sector-4", "sector-5"],
+    centroid: { x: 691.91, y: 747.26 },
+    terrain: "rock",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-02", "territory-07", "territory-08", "territory-16", "territory-32", "territory-33", "territory-34"],
+    cells: [
+      { sector: "sector-4", at: { x: 665.4, y: 761.08 }, areaShare: 0.671 },
+      { sector: "sector-5", at: { x: 696.14, y: 703.84 }, areaShare: 0.327 }
+    ]
+  },
+  {
+    id: "territory-18",
+    displayName: "Cielago Depression",
+    sectors: ["sector-1", "sector-2", "sector-3"],
+    centroid: { x: 469.19, y: 829.8 },
+    terrain: "sand",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-08", "territory-19", "territory-34", "territory-35", "territory-36"],
+    cells: [
+      { sector: "sector-1", at: { x: 401, y: 822.8 }, areaShare: 0.363 },
+      { sector: "sector-2", at: { x: 480.86, y: 831.65 }, areaShare: 0.458 },
+      { sector: "sector-3", at: { x: 557.75, y: 825.57 }, areaShare: 0.179 }
+    ]
+  },
+  {
+    id: "territory-19",
+    displayName: "Cielago West",
+    sectors: ["sector-1", "sector-18"],
+    centroid: { x: 334.88, y: 786.85 },
+    terrain: "sand",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-04", "territory-08", "territory-09", "territory-10", "territory-18", "territory-36", "territory-37"],
+    cells: [
+      { sector: "sector-1", at: { x: 346.23, y: 823.25 }, areaShare: 0.287 },
+      { sector: "sector-18", at: { x: 335.27, y: 757.5 }, areaShare: 0.713 }
+    ]
+  },
+  {
+    id: "territory-20",
+    displayName: "Habbanya Erg",
+    sectors: ["sector-16", "sector-17"],
+    centroid: { x: 229.95, y: 655 },
+    terrain: "sand",
+    spiceSector: "sector-16",
+    stronghold: false,
+    spiceBlow: 8,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-10", "territory-21", "territory-37"],
+    cells: [
+      { sector: "sector-16", at: { x: 144.1, y: 652.52 }, areaShare: 0.736 },
+      { sector: "sector-17", at: { x: 231.84, y: 667.31 }, areaShare: 0.264 }
+    ]
+  },
+  {
+    id: "territory-21",
+    displayName: "The Greater Flat",
+    sectors: ["sector-16"],
+    centroid: { x: 135.57, y: 594.62 },
+    terrain: "sand",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-04", "territory-10", "territory-20", "territory-22"],
+    cells: [
+      { sector: "sector-16", at: { x: 180.4, y: 590.68 }, areaShare: 1 }
+    ]
+  },
+  {
+    id: "territory-22",
+    displayName: "The Great Flat",
+    sectors: ["sector-15", "sector-16"],
+    centroid: { x: 91.16, y: 529.3 },
+    terrain: "sand",
+    spiceSector: "sector-15",
+    stronghold: false,
+    spiceBlow: 8,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-04", "territory-21", "territory-23", "territory-24"],
+    cells: [
+      { sector: "sector-15", at: { x: 206.25, y: 529.65 }, areaShare: 0.979 },
+      { sector: "sector-16", at: { x: 202.03, y: 557.74 }, areaShare: 0.021 }
+    ]
+  },
+  {
+    id: "territory-23",
+    displayName: "Funeral Plain",
+    sectors: ["sector-15"],
+    centroid: { x: 132.37, y: 475.96 },
+    terrain: "sand",
+    spiceSector: "sector-15",
+    stronghold: false,
+    spiceBlow: 6,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-22", "territory-24", "territory-39"],
+    cells: [
+      { sector: "sector-15", at: { x: 166.59, y: 481.28 }, areaShare: 1 }
+    ]
+  },
+  {
+    id: "territory-24",
+    displayName: "Plastic Basin",
+    sectors: ["sector-12", "sector-13", "sector-14"],
+    centroid: { x: 254.02, y: 335.88 },
+    terrain: "rock",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-04", "territory-11", "territory-22", "territory-23", "territory-25", "territory-39", "territory-40", "territory-41", "territory-42"],
+    cells: [
+      { sector: "sector-12", at: { x: 334.31, y: 229.28 }, areaShare: 0.125 },
+      { sector: "sector-13", at: { x: 269.52, y: 301.54 }, areaShare: 0.394 },
+      { sector: "sector-14", at: { x: 281.81, y: 434.87 }, areaShare: 0.475 }
+    ]
+  },
+  {
+    id: "territory-25",
+    displayName: "Tsimpo",
+    sectors: ["sector-11", "sector-12", "sector-13"],
+    centroid: { x: 444.17, y: 207.66 },
+    terrain: "sand",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-05", "territory-11", "territory-24", "territory-26", "territory-27", "territory-42"],
+    cells: [
+      { sector: "sector-11", at: { x: 478.01, y: 199.14 }, areaShare: 0.492 },
+      { sector: "sector-12", at: { x: 387.29, y: 246.69 }, areaShare: 0.444 },
+      { sector: "sector-13", at: { x: 322.97, y: 314.04 }, areaShare: 0.064 }
+    ]
+  },
+  {
+    id: "territory-26",
+    displayName: "Carthag",
+    sectors: ["sector-11"],
+    centroid: { x: 474.57, y: 278.95 },
+    terrain: "stronghold",
+    spiceSector: null,
+    stronghold: true,
+    spiceBlow: null,
+    spiceIncome: 2,
+    ornithopters: true,
+    adjacent: ["territory-05", "territory-11", "territory-12", "territory-25"],
+    cells: [
+      { sector: "sector-11", at: { x: 474.73, y: 279.87 }, areaShare: 0.987 }
+    ]
+  },
+  {
+    id: "territory-27",
+    displayName: "Old Gap",
+    sectors: ["sector-9", "sector-10", "sector-11"],
+    centroid: { x: 685.83, y: 205.96 },
+    terrain: "sand",
+    spiceSector: "sector-10",
+    stronghold: false,
+    spiceBlow: 6,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-05", "territory-13", "territory-14", "territory-25", "territory-28", "territory-42"],
+    cells: [
+      { sector: "sector-9", at: { x: 697.74, y: 213.08 }, areaShare: 0.153 },
+      { sector: "sector-10", at: { x: 627.68, y: 175.53 }, areaShare: 0.722 },
+      { sector: "sector-11", at: { x: 540.28, y: 144.55 }, areaShare: 0.125 }
+    ]
+  },
+  {
+    id: "territory-28",
+    displayName: "Basin",
+    sectors: ["sector-9"],
+    centroid: { x: 726.58, y: 242.41 },
+    terrain: "sand",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-14", "territory-15", "territory-27", "territory-29"],
+    cells: [
+      { sector: "sector-9", at: { x: 719.39, y: 248.7 }, areaShare: 1 }
+    ]
+  },
+  {
+    id: "territory-29",
+    displayName: "Sihaya Ridge",
+    sectors: ["sector-9"],
+    centroid: { x: 772.48, y: 273.39 },
+    terrain: "sand",
+    spiceSector: "sector-9",
+    stronghold: false,
+    spiceBlow: 6,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-06", "territory-15", "territory-28", "territory-30"],
+    cells: [
+      { sector: "sector-9", at: { x: 773.5, y: 275.15 }, areaShare: 1 }
+    ]
+  },
+  {
+    id: "territory-30",
+    displayName: "Gara Kulon",
+    sectors: ["sector-8"],
+    centroid: { x: 813.4, y: 341.3 },
+    terrain: "sand",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-06", "territory-16", "territory-29"],
+    cells: [
+      { sector: "sector-8", at: { x: 812.44, y: 343.5 }, areaShare: 0.994 }
+    ]
+  },
+  {
+    id: "territory-31",
+    displayName: "Red Chasm",
+    sectors: ["sector-7"],
+    centroid: { x: 882.35, y: 510.35 },
+    terrain: "sand",
+    spiceSector: "sector-7",
+    stronghold: false,
+    spiceBlow: 8,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-16", "territory-32"],
+    cells: [
+      { sector: "sector-7", at: { x: 886.36, y: 505.64 }, areaShare: 1 }
+    ]
+  },
+  {
+    id: "territory-32",
+    displayName: "South Mesa",
+    sectors: ["sector-4", "sector-5", "sector-6"],
+    centroid: { x: 891.73, y: 582.81 },
+    terrain: "sand",
+    spiceSector: "sector-5",
+    stronghold: false,
+    spiceBlow: 10,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-16", "territory-17", "territory-31", "territory-33", "territory-34"],
+    cells: [
+      { sector: "sector-4", at: { x: 770.71, y: 853.84 }, areaShare: 0.234 },
+      { sector: "sector-5", at: { x: 840.09, y: 763.81 }, areaShare: 0.349 },
+      { sector: "sector-6", at: { x: 886.55, y: 630.6 }, areaShare: 0.404 }
+    ]
+  },
+  {
+    id: "territory-33",
+    displayName: "Tuek's Sietch",
+    sectors: ["sector-5"],
+    centroid: { x: 800.65, y: 727.55 },
+    terrain: "stronghold",
+    spiceSector: null,
+    stronghold: true,
+    spiceBlow: null,
+    spiceIncome: 1,
+    ornithopters: false,
+    adjacent: ["territory-16", "territory-17", "territory-32"],
+    cells: [
+      { sector: "sector-5", at: { x: 797.13, y: 736.04 }, areaShare: 1 }
+    ]
+  },
+  {
+    id: "territory-34",
+    displayName: "Cielago East",
+    sectors: ["sector-3", "sector-4"],
+    centroid: { x: 653.11, y: 893.16 },
+    terrain: "sand",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-08", "territory-17", "territory-18", "territory-32", "territory-35"],
+    cells: [
+      { sector: "sector-3", at: { x: 622.83, y: 871.97 }, areaShare: 0.704 },
+      { sector: "sector-4", at: { x: 679.97, y: 858.54 }, areaShare: 0.296 }
+    ]
+  },
+  {
+    id: "territory-35",
+    displayName: "Cielago South",
+    sectors: ["sector-2", "sector-3"],
+    centroid: { x: 528.07, y: 925.53 },
+    terrain: "sand",
+    spiceSector: "sector-2",
+    stronghold: false,
+    spiceBlow: 12,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-18", "territory-34", "territory-36"],
+    cells: [
+      { sector: "sector-2", at: { x: 500.05, y: 930.67 }, areaShare: 0.677 },
+      { sector: "sector-3", at: { x: 570.51, y: 913.04 }, areaShare: 0.323 }
+    ]
+  },
+  {
+    id: "territory-36",
+    displayName: "Meridian",
+    sectors: ["sector-1", "sector-2"],
+    centroid: { x: 386.16, y: 919.65 },
+    terrain: "sand",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-18", "territory-19", "territory-35", "territory-37"],
+    cells: [
+      { sector: "sector-1", at: { x: 358.21, y: 916.57 }, areaShare: 0.799 },
+      { sector: "sector-2", at: { x: 433.83, y: 934.76 }, areaShare: 0.2 }
+    ]
+  },
+  {
+    id: "territory-37",
+    displayName: "Habbanya Ridge Flat",
+    sectors: ["sector-17", "sector-18"],
+    centroid: { x: 178.9, y: 752.99 },
+    terrain: "sand",
+    spiceSector: "sector-18",
+    stronghold: false,
+    spiceBlow: 10,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-10", "territory-19", "territory-20", "territory-36", "territory-38"],
+    cells: [
+      { sector: "sector-17", at: { x: 168.39, y: 742.75 }, areaShare: 0.549 },
+      { sector: "sector-18", at: { x: 238.64, y: 846.65 }, areaShare: 0.451 }
+    ]
+  },
+  {
+    id: "territory-38",
+    displayName: "Habbanya Sietch",
+    sectors: ["sector-17"],
+    centroid: { x: 184.55, y: 753.92 },
+    terrain: "stronghold",
+    spiceSector: null,
+    stronghold: true,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-37"],
+    cells: [
+      { sector: "sector-17", at: { x: 185.96, y: 751.89 }, areaShare: 0.983 }
+    ]
+  },
+  {
+    id: "territory-39",
+    displayName: "Bight Of The Cliff",
+    sectors: ["sector-14", "sector-15"],
+    centroid: { x: 106.36, y: 422.17 },
+    terrain: "sand",
+    spiceSector: null,
+    stronghold: false,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-23", "territory-24", "territory-40", "territory-41"],
+    cells: [
+      { sector: "sector-14", at: { x: 130.73, y: 402.16 }, areaShare: 0.626 },
+      { sector: "sector-15", at: { x: 119.3, y: 439.94 }, areaShare: 0.374 }
+    ]
+  },
+  {
+    id: "territory-40",
+    displayName: "Sietch Tabr",
+    sectors: ["sector-14"],
+    centroid: { x: 172.86, y: 374.57 },
+    terrain: "stronghold",
+    spiceSector: null,
+    stronghold: true,
+    spiceBlow: null,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-24", "territory-39", "territory-41"],
+    cells: [
+      { sector: "sector-14", at: { x: 173.63, y: 375.16 }, areaShare: 1 }
+    ]
+  },
+  {
+    id: "territory-41",
+    displayName: "Rock Outcroppings",
+    sectors: ["sector-13", "sector-14"],
+    centroid: { x: 185.01, y: 288.28 },
+    terrain: "sand",
+    spiceSector: "sector-14",
+    stronghold: false,
+    spiceBlow: 6,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-24", "territory-39", "territory-40", "territory-42"],
+    cells: [
+      { sector: "sector-13", at: { x: 212.7, y: 251.91 }, areaShare: 0.681 },
+      { sector: "sector-14", at: { x: 152.5, y: 316.09 }, areaShare: 0.319 }
+    ]
+  },
+  {
+    id: "territory-42",
+    displayName: "Broken Land",
+    sectors: ["sector-11", "sector-12"],
+    centroid: { x: 326.32, y: 182.36 },
+    terrain: "sand",
+    spiceSector: "sector-12",
+    stronghold: false,
+    spiceBlow: 8,
+    spiceIncome: null,
+    ornithopters: false,
+    adjacent: ["territory-24", "territory-25", "territory-27", "territory-41"],
+    cells: [
+      { sector: "sector-11", at: { x: 464.8, y: 147.13 }, areaShare: 0.402 },
+      { sector: "sector-12", at: { x: 348.02, y: 173.02 }, areaShare: 0.598 }
+    ]
+  }
+];
+
+// src/lib/dune/storm.ts
+var STORM_START = "sector-1";
+
+// src/lib/dune/spiceBlow.ts
+var SHAI_HULUD_COUNT = 6;
+function buildSpiceDeck() {
+  const territories = DUNE_TERRITORIES.flatMap((t) => t.spiceBlow != null && t.spiceSector != null ? [{
+    kind: "territory",
+    territoryId: t.id,
+    name: t.displayName,
+    spice: t.spiceBlow,
+    sector: t.spiceSector
+  }] : []);
+  return [...territories, ...Array.from({ length: SHAI_HULUD_COUNT }, () => ({ kind: "shai-hulud" }))];
+}
+function shuffle(cards, rng) {
+  const out = [...cards];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+// src/lib/dune/setup.ts
+var TRAITORS_DEALT = 4;
+var KEEPS_ALL_TRAITORS = "harkonnen";
+var ADVISOR_FACTION = "bene-gesserit";
+var SETUP_SECONDS = 180;
+function defaultSector(territoryId) {
+  const t = DUNE_TERRITORIES.find((x) => x.id === territoryId);
+  return t?.sectors[0] ?? "sector-1";
+}
+function traitorDeck() {
+  return FACTION_IDS.flatMap((id) => (factionById(id)?.leaders ?? []).map((l) => l.name));
+}
+function treacheryDeck() {
+  return TREACHERY_CARDS.flatMap((c) => Array.from({ length: c.copies }, () => c.id));
+}
+function fixedPlacement(faction, mode) {
+  const f = factionById(faction);
+  if (!f) return null;
+  if (faction === ADVISOR_FACTION && mode === "advanced") return null;
+  const { placement, onPlanet } = f.forces;
+  if (placement.kind !== "fixed" || onPlanet <= 0) return null;
+  return {
+    faction,
+    territoryId: placement.territoryId,
+    sector: defaultSector(placement.territoryId),
+    count: onPlanet
+  };
+}
+function distributeAmong(faction) {
+  const placement = factionById(faction)?.forces.placement;
+  return placement?.kind === "distribute" ? [...placement.among] : [];
+}
+function openingPosition(input) {
+  const { seats, mode, rng } = input;
+  const players = seats.map((s) => ({
+    faction: s.faction,
+    seat: s.seat,
+    reserves: factionById(s.faction)?.forces.reserves ?? 0,
+    handCount: 0,
+    ally: null
+  }));
+  const forces = seats.map((s) => fixedPlacement(s.faction, mode)).filter((f) => f !== null);
+  const traitors = shuffle(traitorDeck(), rng);
+  const treachery = shuffle(treacheryDeck(), rng);
+  const spice = shuffle(buildSpiceDeck(), rng);
+  const secrets = {};
+  let cut = 0;
+  for (const s of seats) {
+    const dealt = traitors.slice(cut, cut + TRAITORS_DEALT);
+    cut += TRAITORS_DEALT;
+    const keepsAll = s.faction === KEEPS_ALL_TRAITORS;
+    secrets[s.playerId] = {
+      spice: factionById(s.faction)?.startingSpice ?? 0,
+      cards: [],
+      traitors: keepsAll ? dealt : [],
+      ...keepsAll ? null : { traitorsDealt: dealt }
+    };
+  }
+  const outstanding = [];
+  for (const s of seats) {
+    if (distributeAmong(s.faction).length > 0) {
+      outstanding.push({ kind: "fremen-placement", faction: s.faction });
+    }
+    if (s.faction === "bene-gesserit") {
+      outstanding.push({ kind: "prediction", faction: s.faction });
+    }
+    if (s.faction !== KEEPS_ALL_TRAITORS) {
+      outstanding.push({ kind: "traitor", faction: s.faction });
+    }
+    if (s.faction === ADVISOR_FACTION && mode === "advanced") {
+      const fremenSeated = seats.some((x) => distributeAmong(x.faction).length > 0);
+      outstanding.push({
+        kind: "advisor-placement",
+        faction: s.faction,
+        ...fremenSeated ? { after: "fremen-placement" } : null
+      });
+    }
+  }
+  return {
+    state: {
+      storm: STORM_START,
+      turn: 1,
+      // THE FIRST PHASE OF THE FIRST TURN, which has not run. Setup is not a
+      // phase — the board prints nine and this is not one of them — so the
+      // match sits at the phase it is about to play, with the setup window
+      // saying why nothing has happened yet.
+      phase: "Storm",
+      shieldWall: "intact",
+      mode,
+      spiceDeck: { remaining: spice.length, discardA: [], discardB: [] },
+      players,
+      forces,
+      spiceOnBoard: {},
+      // WHO the table is waiting on. The first outstanding answer, so the HUD
+      // has a seat to name; the full list is in `setup`.
+      awaiting: outstanding[0]?.faction ?? null,
+      setup: { outstanding, ...input.closesAt != null ? { closesAt: input.closesAt } : null }
+    },
+    secrets,
+    decks: { treachery, traitor: traitors.slice(cut), spice }
+  };
+}
+var refuse = (refusal) => ({ ok: false, refusal });
+var PREDICTION_TURNS = { min: 1, max: 10 };
+function answerFremenPlacement(faction, chosen) {
+  const among = distributeAmong(faction);
+  if (among.length === 0) return refuse("not-outstanding");
+  const total = factionById(faction)?.forces.onPlanet ?? 0;
+  if (chosen.some((c) => !among.includes(c.territoryId))) return refuse("not-among");
+  if (chosen.some((c) => !Number.isInteger(c.count) || c.count < 0)) return refuse("negative");
+  if (chosen.some((c) => c.sector && !(DUNE_TERRITORIES.find((t) => t.id === c.territoryId)?.sectors ?? []).includes(c.sector))) {
+    return refuse("not-among");
+  }
+  if (chosen.reduce((n, c) => n + c.count, 0) !== total) return refuse("wrong-total");
+  return {
+    ok: true,
+    value: chosen.filter((c) => c.count > 0).map((c) => ({
+      faction,
+      territoryId: c.territoryId,
+      sector: c.sector ?? defaultSector(c.territoryId),
+      count: c.count
+    }))
+  };
+}
+function defaultFremenPlacement(faction) {
+  const among = distributeAmong(faction);
+  const total = factionById(faction)?.forces.onPlanet ?? 0;
+  if (among.length === 0 || total <= 0) return [];
+  return [{
+    faction,
+    territoryId: among[0],
+    sector: defaultSector(among[0]),
+    count: total
+  }];
+}
+function answerPrediction(seated, faction, turn) {
+  if (!seated.includes(faction)) return refuse("unknown-faction");
+  if (faction === "bene-gesserit") return refuse("predicting-yourself");
+  if (!Number.isInteger(turn) || turn < PREDICTION_TURNS.min || turn > PREDICTION_TURNS.max) {
+    return refuse("turn-out-of-range");
+  }
+  return { ok: true, value: { faction, turn } };
+}
+function answerTraitor(dealt, keep) {
+  if (!dealt.includes(keep)) return refuse("not-dealt");
+  return { ok: true, value: [keep] };
+}
+function postureFor(forces, territoryId, faction) {
+  const others = forces.some((f) => f.faction !== faction && f.territoryId === territoryId && f.count > 0);
+  return others ? "advisor" : "fighter";
+}
+function answerAdvisorPlacement(faction, choice, forces) {
+  const territory = DUNE_TERRITORIES.find((t) => t.id === choice.territoryId);
+  if (!territory) return refuse("not-among");
+  if (choice.sector && !territory.sectors.includes(choice.sector)) return refuse("not-among");
+  const count = factionById(faction)?.forces.onPlanet ?? 0;
+  if (count <= 0) return refuse("not-outstanding");
+  return {
+    ok: true,
+    value: [{
+      faction,
+      territoryId: choice.territoryId,
+      sector: choice.sector ?? defaultSector(choice.territoryId),
+      count,
+      posture: postureFor(forces, choice.territoryId, faction)
+    }]
+  };
+}
+function defaultAdvisorPlacement(faction, forces) {
+  const placement = factionById(faction)?.forces.placement;
+  const territoryId = placement?.kind === "fixed" ? placement.territoryId : "territory-03";
+  const answer = answerAdvisorPlacement(faction, { territoryId }, forces);
+  return answer.ok ? answer.value : [];
+}
+function defaultTraitor(dealt) {
+  return dealt.length ? [dealt[0]] : [];
+}
+function settle(outstanding, kind, faction) {
+  return outstanding.filter((d) => !(d.kind === kind && d.faction === faction));
+}
+function isOutstanding(outstanding, kind, faction) {
+  return outstanding.some((d) => d.kind === kind && d.faction === faction);
+}
+function answerable(outstanding, kind, faction) {
+  const decision = outstanding.find((d) => d.kind === kind && d.faction === faction);
+  if (!decision) return false;
+  if (!decision.after) return true;
+  return !outstanding.some((d) => d.kind === decision.after);
+}
+function defaultOrder(outstanding) {
+  return [...outstanding].sort((a, b) => (a.after ? 1 : 0) - (b.after ? 1 : 0));
+}
+export {
+  ADVISOR_FACTION,
+  KEEPS_ALL_TRAITORS,
+  PREDICTION_TURNS,
+  SETUP_SECONDS,
+  TRAITORS_DEALT,
+  answerAdvisorPlacement,
+  answerFremenPlacement,
+  answerPrediction,
+  answerTraitor,
+  answerable,
+  defaultAdvisorPlacement,
+  defaultFremenPlacement,
+  defaultOrder,
+  defaultSector,
+  defaultTraitor,
+  distributeAmong,
+  fixedPlacement,
+  isOutstanding,
+  openingPosition,
+  postureFor,
+  settle,
+  traitorDeck,
+  treacheryDeck
+};

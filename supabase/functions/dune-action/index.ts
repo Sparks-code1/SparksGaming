@@ -37,6 +37,11 @@ import {
 } from '../_shared/duneSpiceBlow.gen.ts'
 import { prescienceFor, withReveal, PRESCIENT_FACTION } from '../_shared/dunePrescience.gen.ts'
 import {
+  openingPosition, answerFremenPlacement, answerPrediction, answerTraitor,
+  answerAdvisorPlacement, defaultFremenPlacement, defaultTraitor,
+  defaultAdvisorPlacement, defaultOrder, settle, answerable, SETUP_SECONDS,
+} from '../_shared/duneSetup.gen.ts'
+import {
   charityGrant, isEligibleForCharity, readSpice, CHARITY_TOPS_UP_TO, CHARITY_WINDOW_MS,
 } from '../_shared/duneCharity.gen.ts'
 
@@ -133,7 +138,7 @@ Deno.serve(async req => {
   // The whole roster, because settling needs to map every winner back to the
   // row their card and their spice are written to.
   const { data: roster } = await admin
-    .from('match_players').select('player_id, faction_id').eq('match_id', matchId)
+    .from('match_players').select('player_id, faction_id, seat').eq('match_id', matchId)
   const seatOfFaction: Record<string, string> = {}
   const factionOfSeat: Record<string, string> = {}
   for (const r of roster ?? []) {
@@ -319,6 +324,197 @@ Deno.serve(async req => {
       if (error) return json({ error: error.message }, 500)
       if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
       return json({ charity: window, version: data[0].version })
+    }
+
+    // ── Deal the opening position ────────────────────────────────────────────
+    // ONCE, AND SERVICE-SIDE. Three of the four things this writes are things
+    // no client may write: match_secrets has no client write policy at all,
+    // match_decks has no client policy of any kind, and the public row is the
+    // server's to own. A setup dealt in a browser would be a setup its dealer
+    // could read.
+    case 'START_DUNE': {
+      // ALREADY DEALT IS NOT AN ERROR TO RETRY. A second deal would reshuffle
+      // every deck and re-deal every traitor under six people already holding
+      // theirs — so this refuses rather than being idempotent, which would be
+      // a lie about what a repeat call did.
+      if (state.setup || (Array.isArray(state.players) && state.players.length > 0)) {
+        return json({ error: 'this match has already been dealt', code: 'already-started' }, 409)
+      }
+
+      const seats = (roster ?? [])
+        .filter((r: { faction_id?: string }) => !!r.faction_id)
+        // IN SEAT ORDER, because the printed circle a player sits at decides
+        // turn order and the storm reads it. Sorting by the roster's own seat
+        // column rather than by whatever order the rows came back in.
+        .sort((a: { seat: number }, b: { seat: number }) => (a.seat ?? 0) - (b.seat ?? 0))
+        .map((r: { player_id: string; faction_id: string; seat: number }) => ({
+          faction: r.faction_id,
+          playerId: r.player_id,
+          seat: `player-position-${(r.seat ?? 0) + 1}`,
+        }))
+      if (seats.length < 2) {
+        return json({ error: 'a match needs at least two seats', code: 'too-few-seats' }, 409)
+      }
+
+      // SEEDED FROM THE ROW, like the treachery reshuffle: a deal that used
+      // Math.random could not be replayed, and a deal that used a constant
+      // would be the same deal in every match ever played.
+      const rng = seededRng(Number(match.rng_seed) + match.action_seq)
+      const opening = openingPosition({
+        seats,
+        // The advanced game, which is what everything else here assumes — the
+        // Kwisatz Haderach tracker, the storm's die, the Fedaykin. Overridable
+        // because the basic game is a real game and this is the one moment it
+        // can be chosen.
+        mode: action.mode === 'basic' ? 'basic' : 'advanced',
+        rng,
+        closesAt: now + SETUP_SECONDS * 1000,
+      })
+
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: opening.state,
+        p_secrets: opening.secrets,
+        p_decks: opening.decks,
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      // WHAT COMES BACK IS PUBLIC ONLY. The caller dealt the game; that does
+      // not make the deal theirs to read. Their own row reaches them by the
+      // secrets channel, like everybody else's reaches them.
+      return json({ setup: opening.state.setup, version: data[0].version })
+    }
+
+    // ── Answer a setup decision ──────────────────────────────────────────────
+    // Three kinds, answered independently and in any order: the Fremen's ten
+    // forces, the Bene Gesserit's prediction, and every other seat keeping one
+    // of the four traitors they were dealt. See lib/dune/setup for why each
+    // pauses setup rather than happening after it.
+    case 'SETUP_ANSWER': {
+      const setup = state.setup as { closesAt?: number; outstanding: { kind: string; faction: string }[] } | undefined
+      if (!setup) return json({ error: 'setup is not open', code: 'no-setup' }, 409)
+
+      let outstanding = setup.outstanding
+      let nextState: Record<string, unknown> = { ...state }
+      const nextSecrets: Record<string, unknown> = {}
+
+      // The rows this may write back, read with the service role. Two of the
+      // three answers change a seat's own row — the traitor kept, and the Bene
+      // Gesserit's prediction — and both have to be merged onto what is already
+      // there rather than written over it, since the deal put spice in the same
+      // row a moment ago.
+      const { data: setupSecrets } = await admin
+        .from('match_secrets').select('player_id, data').eq('match_id', matchId)
+      const rows: Record<string, Record<string, unknown>> = Object.fromEntries(
+        (setupSecrets ?? []).map((r) => [r.player_id as string, (r.data ?? {}) as Record<string, unknown>]))
+
+      // ── PAST THE DEADLINE, EVERYTHING OUTSTANDING TAKES ITS DEFAULT ────────
+      // Whoever asked, and whatever they asked for. The window has shut, so the
+      // answer that stands is the one silence means — see lib/dune/setup for
+      // what each of those is and why. Any seat may push it along, because a
+      // player who has walked away leaves nobody else able to.
+      const expired = typeof setup.closesAt === 'number' && now >= setup.closesAt
+      if (expired) {
+        let forces = [...((state.forces ?? []) as unknown[])]
+        // IN DEPENDENCY ORDER, which is what defaultOrder is for. The advisor's
+        // own default reads the board the Fremen's writes: placed first, it
+        // would be alone in a territory the Fremen were about to walk into, and
+        // would take the field as a fighter on the strength of a board that was
+        // still being laid out.
+        for (const decision of defaultOrder(outstanding)) {
+          if (decision.kind === 'fremen-placement') {
+            forces = [...forces, ...defaultFremenPlacement(decision.faction)]
+          } else if (decision.kind === 'advisor-placement') {
+            forces = [...forces, ...defaultAdvisorPlacement(decision.faction, forces)]
+          } else if (decision.kind === 'traitor') {
+            const seatId = seatOfFaction[decision.faction]
+            const row = (rows[seatId] ?? {}) as { traitorsDealt?: string[] }
+            const kept = defaultTraitor(row.traitorsDealt ?? [])
+            const { traitorsDealt: _dealt, ...rest } = row
+            nextSecrets[seatId] = { ...rest, traitors: kept }
+          }
+          // A prediction nobody made is no prediction, which costs them one
+          // route to victory and nothing else. There is nothing to write.
+        }
+        nextState = { ...state, forces }
+        outstanding = []
+      } else {
+        // ANSWERABLE, not merely owed. The advisor placement is owed from the
+        // moment the game is dealt and cannot be answered until the Fremen have
+        // placed — the Bene Gesserit are entitled to see where those ten went
+        // before choosing, because it decides whether their own force is an
+        // advisor or a fighter.
+        if (!answerable(outstanding, action.answer, myFaction)) {
+          const owed = outstanding.some((d: { kind: string; faction: string }) =>
+            d.kind === action.answer && d.faction === myFaction)
+          return owed
+            ? json({ error: 'the Fremen have not placed yet', code: 'blocked' }, 409)
+            : json({ error: 'nothing of that kind is outstanding for you', code: 'not-outstanding' }, 409)
+        }
+
+        if (action.answer === 'fremen-placement') {
+          const placed = answerFremenPlacement(myFaction, action.at ?? [])
+          if (!placed.ok) return json({ error: 'that placement is not legal', code: placed.refusal }, 409)
+          nextState = { ...state, forces: [...((state.forces ?? []) as unknown[]), ...placed.value] }
+        } else if (action.answer === 'advisor-placement') {
+          // AGAINST THE BOARD AS IT STANDS, which by now has the Fremen on it.
+          // Whether this force is an advisor or a fighter is not a choice —
+          // it is read off who else is standing in the territory chosen.
+          const placed = answerAdvisorPlacement(
+            myFaction,
+            { territoryId: String(action.territoryId), sector: action.sector },
+            (state.forces ?? []) as unknown[],
+          )
+          if (!placed.ok) return json({ error: 'that placement is not legal', code: placed.refusal }, 409)
+          nextState = { ...state, forces: [...((state.forces ?? []) as unknown[]), ...placed.value] }
+        } else if (action.answer === 'prediction') {
+          const seated = (roster ?? [])
+            .map((r: { faction_id?: string }) => r.faction_id)
+            .filter(Boolean)
+          const made = answerPrediction(seated, action.faction, Number(action.turn))
+          if (!made.ok) return json({ error: 'that prediction is not legal', code: made.refusal }, 409)
+          // INTO THEIR OWN ROW AND NOWHERE ELSE. A prediction in public state
+          // would be a secret published in the one place everybody reads, and
+          // the power is worthless the moment anybody else knows it.
+          nextSecrets[playerId] = { ...(rows[playerId] ?? {}), prediction: made.value }
+        } else if (action.answer === 'traitor') {
+          const row = (rows[playerId] ?? {}) as { traitorsDealt?: string[] }
+          // CHECKED AGAINST WHAT THIS SEAT WAS DEALT, which only the server
+          // knows: the four are in that seat's own row and the public ask never
+          // names them, so a client sending any other leader is naming a card
+          // it was not given.
+          const kept = answerTraitor(row.traitorsDealt ?? [], String(action.keep))
+          if (!kept.ok) return json({ error: 'that is not one of yours', code: kept.refusal }, 409)
+          const { traitorsDealt: _dealt, ...rest } = row
+          nextSecrets[playerId] = { ...rest, traitors: kept.value }
+        } else {
+          return json({ error: 'no such setup answer', code: 'unknown-answer' }, 400)
+        }
+
+        outstanding = settle(outstanding, action.answer, myFaction)
+      }
+
+      // SETUP IS OVER WHEN THE LAST ONE IS IN, and then the key goes rather
+      // than staying as an empty list — an empty window still reads as a window
+      // to anything checking whether setup is running.
+      if (outstanding.length === 0) {
+        delete nextState.setup
+        nextState.awaiting = null
+      } else {
+        nextState.setup = { ...setup, outstanding }
+        nextState.awaiting = outstanding[0].faction
+      }
+
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: nextState,
+        p_secrets: nextSecrets,
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ outstanding, version: data[0].version })
     }
 
     // ── Claim charity ────────────────────────────────────────────────────────
