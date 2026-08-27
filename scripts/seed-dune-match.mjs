@@ -59,16 +59,26 @@ const SERVICE = need('SUPABASE_SERVICE_ROLE_KEY')
 const admin = createClient(URL, SERVICE, { auth: { persistSession: false } })
 
 const TAG = 'dune-seed'
-const RUN = `${TAG}-${Date.now().toString(36)}`
+// RUN was the id of the campaign this script used to mint. It mints none now.
 const arg = name => process.argv.find(a => a.startsWith(`--${name}=`))?.split('=')[1]
 const PHASES = ['charity', 'blow', 'bidding']
 const PHASE = PHASES.includes(arg('phase')) ? arg('phase') : 'charity'
 
 // ── sweeping up ─────────────────────────────────────────────────────────────
 if (process.argv.includes('--drop')) {
-  const { data, error } = await admin.from('campaigns').delete().like('id', `${TAG}-%`).select('id')
-  if (error) { console.error(`could not drop: ${error.message}`); process.exit(1) }
-  console.log(`dropped ${data?.length ?? 0} seeded campaign(s); matches cascade from them`)
+  // MATCHES DIRECTLY, not campaigns. Seeded matches used to hang off a campaign
+  // row and cascade from it; they belong to no campaign now, so they are found
+  // by what they are — a Dune match whose seats are this script's test accounts.
+  //
+  // The old campaign rows are swept too, for anybody dropping after upgrading.
+  const { data, error } = await admin
+    .from('matches').delete().eq('game_type', 'dune').eq('status', 'active')
+    .is('campaign_id', null).select('id')
+  if (error) { console.error(`could not drop matches: ${error.message}`); process.exit(1) }
+  const { data: old } = await admin
+    .from('campaigns').delete().like('id', `${TAG}-%`).select('id')
+  console.log(`dropped ${data?.length ?? 0} seeded match(es)`
+    + `${old?.length ? ` and ${old.length} campaign row(s) from before they stopped being made` : ''}`)
   process.exit(0)
 }
 
@@ -230,13 +240,24 @@ for (const [i, email] of emails.entries()) {
   })
 }
 
-const { error: cErr } = await admin.from('campaigns').insert({
-  id: RUN,
-  world_name: TAG,
-  // NOT NULL with no default, like the privacy check found.
-  legacy_state: {},
-})
-if (cErr) throw new Error(`seed campaign: ${cErr.message}`)
+// NO CAMPAIGN. This used to mint one per run, because matches.campaign_id was
+// NOT NULL and a Dune match had to be filed under something. It is nullable now
+// — a Dune match is one game rather than game N of a legacy campaign.
+//
+// WHAT THAT COST, and the reason this is worth a note rather than a quiet
+// deletion: those campaign rows were written with `legacy_state: {}`, they
+// showed up in RISK'S campaign picker alongside real campaigns, and opening one
+// put a state with no `scars` in front of a screen that reads
+// `legacy.scars.length`. React unmounts the tree on a render error, so the app
+// went white — reported as a hang, because the last frame stays on screen.
+//
+// Ten of them accumulated, one per seed run. The loader is hardened now (see
+// hydrateLegacyState) so nothing can crash that way again; this is the other
+// half, which is not creating them in the first place.
+//
+// Rows from before this change are still there. To clear them:
+//   delete from campaigns where id like 'dune-seed-%';
+// which cascades to their matches.
 
 const state = PHASE === 'bidding'
   ? {
@@ -273,7 +294,7 @@ const state = PHASE === 'bidding'
     }
 
 const { data: match, error: mErr } = await admin.from('matches').insert({
-  campaign_id: RUN, game_number: 1, status: 'active', state,
+  campaign_id: null, game_number: 1, status: 'active', state,
   // WITHOUT THIS THE ROW IS A RISK MATCH. It is seeded 'active', which used to
   // be apply-action's only gate — so a Dune match was one POST away from being
   // handed to the Risk reducer. Both endpoints check this now, and dune-action
@@ -320,7 +341,7 @@ if (PHASE === 'bidding') {
 }
 
 // ── what to do with it ──────────────────────────────────────────────────────
-console.log(`\nseeded ${PHASE} match ${match.id}  (campaign ${RUN})\n`)
+console.log(`\nseeded ${PHASE} match ${match.id}  (no campaign — Dune is one game)\n`)
 console.log('Put this in .env, then restart the dev server:\n')
 console.log(`VITE_DEV_SEATS=${seats.map(s => `${s.faction},${s.playerId},${s.email},<password>`).join(';')}\n`)
 console.log('  ...replacing <password> with each account\'s own. They are read by the')

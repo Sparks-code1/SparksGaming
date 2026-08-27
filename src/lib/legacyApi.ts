@@ -45,6 +45,38 @@ export function clearActiveCampaignId(): Promise<void> {
 
 // ─── Default state ────────────────────────────────────────────────────────────
 
+/**
+ * A stored campaign, with every field it is missing filled in.
+ *
+ * THE ROW IS NOT THE TYPE. legacy_state is one JSON blob written by whatever
+ * version of this app last saved it — and by anything else that has ever
+ * inserted a campaigns row. A blob without `scars` is not a hypothetical: ten
+ * of them are sitting in the database right now, written `{}` by
+ * scripts/seed-dune-match.mjs, and the campaign screen reads
+ * `legacy.scars.length` unguarded.
+ *
+ * That is not a crash in one component. React unmounts the whole tree on a
+ * render error, so the app goes white and the last thing on screen stays there
+ * — which is why it was reported as a hang rather than as an error.
+ *
+ * SO THE FILLING IN HAPPENS ONCE, HERE, at the point the blob stops being JSON
+ * and starts being a LegacyState. Guarding each read instead would be forty
+ * guards, thirty-nine of which are right.
+ *
+ * The row wins wherever it has a value, INCLUDING the campaign id: the default
+ * mints a fresh one, and letting that through would quietly rename somebody's
+ * campaign to a new id on load.
+ */
+export function hydrateLegacyState(raw: unknown, id?: string): LegacyState {
+  const blob = (raw && typeof raw === 'object' ? raw : {}) as Partial<LegacyState>
+  const filled = { ...defaultLegacyState(), ...blob }
+  // `id` is the row's own primary key, which is the id this campaign HAS
+  // whatever its blob says. Falling back to the blob, then to the minted one.
+  if (id) filled.campaignId = id
+  else if (blob.campaignId) filled.campaignId = blob.campaignId
+  return filled
+}
+
 /** A brand-new campaign, with its own id. */
 export function defaultLegacyState(): LegacyState {
   return {
@@ -242,7 +274,9 @@ export async function loadLegacyState(campaignId: string): Promise<LegacyState |
       return null
     }
     const row = data as { legacy_state: LegacyState; join_code?: string | null }
-    const ls = row.legacy_state
+    // HYDRATED, never taken raw. See hydrateLegacyState: a blob missing a field
+    // used to reach the screen and take the whole app down with it.
+    const ls = hydrateLegacyState(row.legacy_state, campaignId)
     // Heal saves corrupted by an older duplicate-append bug: scar-card ids are
     // unique, so a card can never legitimately appear twice in the deck.
     if (Array.isArray(ls.scarDeck)) {
@@ -789,7 +823,11 @@ export async function findCampaignByJoinCode(rawCode: string): Promise<JoinLooku
     } else {
       const row = (data as JoinCodeRow[] | null ?? [])[0]
       if (!row) return null
-      const ls = row.legacy_state as LegacyState
+      // HYDRATED, like the loader. A campaign whose blob is missing a field
+      // crashes the screen it is handed to, and this hands one to the joiner
+      // BEFORE they have committed to anything — the worst moment to lose the
+      // app, because they cannot even get back to where they were.
+      const ls = hydrateLegacyState(row.legacy_state, row.id)
       ls.joinCode = row.join_code ?? code
       return { campaignId: row.id, worldName: ls.worldName || row.world_name, legacy: ls }
     }
@@ -799,7 +837,7 @@ export async function findCampaignByJoinCode(rawCode: string): Promise<JoinLooku
   const { data, error } = await supabase.from('campaigns').select('id, world_name, legacy_state')
   if (error) throw new Error(`Could not look up that code: ${error.message}`)
   for (const row of data ?? []) {
-    const ls = (row.legacy_state ?? {}) as LegacyState
+    const ls = hydrateLegacyState(row.legacy_state, row.id as string)
     if ((ls.joinCode ?? '').toUpperCase() === code) {
       return { campaignId: row.id as string, worldName: ls.worldName || (row.world_name as string), legacy: ls }
     }
