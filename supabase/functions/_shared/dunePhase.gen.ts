@@ -1322,7 +1322,8 @@ function mentatVerdict(state, prediction) {
   };
   if (byStrongholds.length > 0) return crown(byStrongholds, "strongholds");
   if (state.turn < TURN_LIMIT) return null;
-  if (seated.includes("fremen") && occupies(forces, "fremen", SIETCH_TABR) && occupies(forces, "fremen", HABBANYA_SIETCH) && !occupies(forces, "harkonnen", TUEKS_SIETCH) && !occupies(forces, "emperor", TUEKS_SIETCH)) {
+  const fremenOrEmpty = (territoryId) => !forces.some((f) => f.faction !== "fremen" && f.territoryId === territoryId && f.count > 0 && f.posture !== "advisor");
+  if (seated.includes("fremen") && fremenOrEmpty(SIETCH_TABR) && fremenOrEmpty(HABBANYA_SIETCH) && !["harkonnen", "atreides", "emperor"].some((rival) => occupies(forces, rival, TUEKS_SIETCH))) {
     return crown(["fremen"], "fremen-default");
   }
   if (seated.includes("spacing-guild")) return crown(["spacing-guild"], "guild-default");

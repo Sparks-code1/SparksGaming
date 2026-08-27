@@ -578,15 +578,25 @@ export default function DuneMultiSeatView() {
         )}
 
         {/* OPENING AND CLOSING ARE NOT PLAYER MOVES. Claiming and passing now
-            live in the modal over the board, where the decision belongs. What
-            is left here is the phase driving a real game would do for itself —
-            a host, or a clock — and which nothing does yet.
+            live in the modal over the board, where the decision belongs. The
+            charity and bidding buttons below predate the loop and stay for
+            driving a phase out of order; a real game uses the advance.
 
             The running log moved to the chat, where a private line can be
             marked as one. */}
         {mine?.client ? (
           <>
-            <b style={{ display: 'block', marginBottom: 6 }}>CHOAM Charity</b>
+            {/* THE LOOP, as the real screen drives it. Sent as whichever seat
+                is selected, and the SERVER rules: the host presses early,
+                anyone once the phase's look-window shuts, and a hold comes
+                back naming what the turn is waiting for — so this is also how
+                the refusals get exercised without six browsers. */}
+            <b style={{ display: 'block', marginBottom: 6 }}>The turn</b>
+            <button onClick={() => void send(mine, 'ADVANCE_PHASE')} disabled={busy}>
+              Advance the phase
+            </button>
+
+            <b style={{ display: 'block', margin: '10px 0 6px' }}>CHOAM Charity</b>
             <button onClick={() => void send(mine, 'OPEN_CHARITY')} disabled={busy}>
               Open window
             </button>{' '}

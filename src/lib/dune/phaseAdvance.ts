@@ -337,13 +337,19 @@ const occupies = (forces: readonly Force[], faction: FactionId, territoryId: str
  * prediction is read out of their secrets row by the caller and handed in,
  * never published.
  *
- * On turn ten with nobody at three, the game still ends: the Fremen win if
- * they hold Sietch Tabr and Habbanya Sietch with Tuek's Sietch free of the
- * Harkonnen and the Emperor; failing that the Spacing Guild wins by default;
- * and with neither of those factions seated, the most strongholds takes it,
- * shared if shared. The first two are the printed default victories; the last
- * is this implementation's answer to a table the printed rules assume cannot
- * exist, and it is the one piece of invention here.
+ * On turn ten with nobody at three, the game still ends, and the ordering is
+ * the cards': the FREMEN CONDITION IS CHECKED FIRST — Sietch Tabr and
+ * Habbanya Sietch each held by the Fremen OR BY NOBODY, and none of the
+ * Harkonnen, the Atreides or the Emperor in Tuek's Sietch. "You (or no one)"
+ * is the card's own phrase: empty sietches count for the desert. If any part
+ * fails, the Spacing Guild's default takes it — their card's "no faction has
+ * been able to win" INCLUDES the Fremen's condition failing, which is why the
+ * order matters and is fixed. Both texts are in factions.ts under
+ * specialVictory, and the suite pins this code to their wording.
+ *
+ * With neither faction seated, the most strongholds takes it, shared if
+ * shared — this implementation's answer to a table the printed rules assume
+ * cannot exist, and the one piece of invention here.
  */
 export function mentatVerdict(
   state: Pick<AdvanceState, 'turn' | 'forces' | 'players'>,
@@ -371,12 +377,21 @@ export function mentatVerdict(
   if (state.turn < TURN_LIMIT) return null
 
   // ── turn ten, and nobody took three ─────────────────────────────────────
+  // "YOU (OR NO ONE)": a sietch counts for the Fremen when they hold it and
+  // when nobody does — only a rival's fighters break it. Advisors break
+  // nothing; an advisor does not occupy.
+  const fremenOrEmpty = (territoryId: string) =>
+    !forces.some(f =>
+      f.faction !== 'fremen' && f.territoryId === territoryId
+      && f.count > 0 && f.posture !== 'advisor')
   if (
     seated.includes('fremen')
-    && occupies(forces, 'fremen', SIETCH_TABR)
-    && occupies(forces, 'fremen', HABBANYA_SIETCH)
-    && !occupies(forces, 'harkonnen', TUEKS_SIETCH)
-    && !occupies(forces, 'emperor', TUEKS_SIETCH)
+    && fremenOrEmpty(SIETCH_TABR)
+    && fremenOrEmpty(HABBANYA_SIETCH)
+    // THE CARD NAMES THREE, and only three: the Guild in their own home at
+    // Tuek's does not break the desert's claim.
+    && !(['harkonnen', 'atreides', 'emperor'] as FactionId[])
+      .some(rival => occupies(forces, rival, TUEKS_SIETCH))
   ) {
     return crown(['fremen'], 'fremen-default')
   }

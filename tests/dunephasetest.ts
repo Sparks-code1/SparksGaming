@@ -17,6 +17,8 @@ import type { AdvanceState } from '@/lib/dune/phaseAdvance'
 import { DUNE_PHASES } from '@/types/Dune/Game'
 import type { Force, GamePhase, DunePlayerPublic } from '@/types/Dune/Game'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
+import { factionById } from '@/data/dune/factions'
+import type { FactionId } from '@/types/Dune/Faction'
 
 let pass = true
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -266,15 +268,47 @@ const at = (phase: GamePhase, over: Partial<AdvanceState> = {}): AdvanceState =>
   })
   check('turn nine without a win plays on',
     mentatVerdict(at('Mentat Pause', { turn: 9, forces: [], ...seated }), null), null)
-  check('the Fremen default: both sietches and Tuek\'s unclaimed',
-    mentatVerdict(tenth([
-      f('fremen', SIETCH_TABR, 'sector-13'), f('fremen', HABBANYA_SIETCH, 'sector-16'),
-    ], ['fremen', 'harkonnen', 'spacing-guild']), null)?.reason, 'fremen-default')
-  check('...broken by the Emperor sitting in Tuek\'s',
-    mentatVerdict(tenth([
-      f('fremen', SIETCH_TABR, 'sector-13'), f('fremen', HABBANYA_SIETCH, 'sector-16'),
-      f('emperor', TUEKS_SIETCH, 'sector-4'),
-    ], ['fremen', 'emperor', 'spacing-guild']), null)?.reason, 'guild-default')
+  // THE CARD'S SHAPE, part by part. "You (or no one) occupies Sietch Tabr
+  // and Habbanya Sietch, and neither Harkonnen, Atreides nor Emperor occupies
+  // Tuek's Sietch." Each clause below breaks or satisfies exactly one part.
+  const fremenTable = ['fremen', 'harkonnen', 'atreides', 'spacing-guild']
+  const fremenHold = [
+    f('fremen', SIETCH_TABR, 'sector-13'), f('fremen', HABBANYA_SIETCH, 'sector-16')]
+  check("the Fremen default: both sietches and Tuek's unclaimed",
+    mentatVerdict(tenth(fremenHold, fremenTable), null)?.reason, 'fremen-default')
+  // "OR NO ONE": the desert wins with the sietches standing empty too. The
+  // old reading required Fremen boots in both, which turned "or no one" into
+  // a Guild win.
+  check('...and with both sietches empty, still the Fremen',
+    mentatVerdict(tenth([], fremenTable), null)?.reason, 'fremen-default')
+  check('...one sietch each way is fine',
+    mentatVerdict(tenth([f('fremen', SIETCH_TABR, 'sector-13')], fremenTable), null)?.reason,
+    'fremen-default')
+  // A RIVAL'S FIGHTERS IN A SIETCH break it —
+  check('...a rival standing in a sietch breaks it',
+    mentatVerdict(tenth([f('harkonnen', SIETCH_TABR, 'sector-13')], fremenTable), null)?.reason,
+    'guild-default')
+  // — BUT AN ADVISOR DOES NOT. An advisor does not occupy, here as everywhere.
+  check('...but a watching advisor does not',
+    mentatVerdict(tenth(
+      [{ ...f('bene-gesserit', SIETCH_TABR, 'sector-13', 1), posture: 'advisor' as const }],
+      [...fremenTable, 'bene-gesserit']), null)?.reason, 'fremen-default')
+  // TUEK'S: the card names three rivals, and only three.
+  for (const rival of ['harkonnen', 'atreides', 'emperor']) {
+    check(`...broken by ${rival} sitting in Tuek's`,
+      mentatVerdict(tenth([...fremenHold, f(rival, TUEKS_SIETCH, 'sector-4')],
+        [...new Set([...fremenTable, rival])]), null)?.reason, 'guild-default')
+  }
+  check("...while the Guild in their own Tuek's breaks nothing",
+    mentatVerdict(tenth([...fremenHold, f('spacing-guild', TUEKS_SIETCH, 'sector-4')],
+      fremenTable), null)?.reason, 'fremen-default')
+
+  // PINNED TO THE CARD. The wording this code implements is in factions.ts,
+  // and if that text changes the code must follow — so the phrases the two
+  // corrections came from are asserted, not assumed.
+  const card = factionById('fremen' as FactionId)?.specialVictory ?? ''
+  check('the code follows the printed card',
+    ['you (or no one)', 'Harkonnen, Atreides nor Emperor'].filter(p => !card.includes(p)), [])
   check('the Guild wins a game nobody won',
     mentatVerdict(tenth([], ['atreides', 'spacing-guild']), null),
     { factions: ['spacing-guild'], reason: 'guild-default', turn: TURN_LIMIT })
@@ -353,6 +387,12 @@ const at = (phase: GamePhase, over: Partial<AdvanceState> = {}): AdvanceState =>
   // must end the game it missed, not play an eleventh turn.
   check('an overrun match is ended, not extended',
     /target\.newTurn && Number\(state\.turn\) >= TURN_LIMIT/.test(advCase), true)
+
+  // THE HARNESS CAN DRIVE THE LOOP. Six seats in one page was the only way to
+  // test the refusals without six browsers, and its phase buttons stopped at
+  // charity and bidding — which read as the whole game to anybody testing.
+  check('the six-seat harness posts the advance',
+    /send\(mine, 'ADVANCE_PHASE'\)/.test(code('src/components/dune/DuneMultiSeatView.tsx')), true)
 
   // THE MIGRATION. Status rides the same CAS write, and only the one
   // transition a state write may make.
