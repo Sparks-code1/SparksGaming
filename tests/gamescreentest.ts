@@ -229,16 +229,16 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   check('every phase marks a different circle, in order',
     marked, [1, 2, 3, 4, 5, 6, 7, 8, 9])
 
-  // The turn number lived on the strip. It has to live somewhere still.
-  //
-  // SCOPED TO THE HUD. `data-turn` is on the board's dial mark as well, which
-  // was added after this check and quietly satisfied it — hiding the HUD's turn
-  // entirely left the suite green, because the dial was answering for it.
+  // The turn number lived on the strip, then on the HUD's header. It lives on
+  // the DIAL now and nowhere else: the HUD header sat under the Menu button in
+  // the top right, and a number printed twice on one screen is worth losing the
+  // half that collides with something.
   const hudMarkup = full.slice(full.indexOf('data-layer="player-hud"'),
                               full.indexOf('data-layer="own-strip"'))
-  check('the turn is still shown', hudMarkup.includes('data-turn="3"'), true)
-  check('...in the HUD, which is a different element from the board dial',
+  check('the turn is shown on the board dial',
     /data-layer="turn-dial"[^>]*data-turn="3"/.test(full), true)
+  check('...and not repeated in the HUD, where the Menu covers it',
+    hudMarkup.includes('data-turn'), false)
 }
 
 // ── allies read as a pair ─────────────────────────────────────────────────
@@ -478,7 +478,7 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
 {
   const rows = hudRows(state)
   const hud = renderToStaticMarkup(createElement(PlayerHud, {
-    rows, awaiting: 'harkonnen' as FactionId, seat: 'atreides' as FactionId, turn: 3,
+    rows, awaiting: 'harkonnen' as FactionId, seat: 'atreides' as FactionId,
   }))
   check('every player is a bubble',
     (hud.match(/border-radius:999px/g) ?? []).length, rows.length)
@@ -492,7 +492,7 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   check('...and says what the mark means', hud.includes('WAITING ON THEM'), true)
   check('...on that seat alone', (hud.match(/WAITING ON THEM/g) ?? []).length, 1)
   const idle = renderToStaticMarkup(createElement(PlayerHud, {
-    rows, awaiting: null, seat: null, turn: 3,
+    rows, awaiting: null, seat: null,
   }))
   check('with nobody awaited, nothing says it', idle.includes('WAITING ON THEM'), false)
 }

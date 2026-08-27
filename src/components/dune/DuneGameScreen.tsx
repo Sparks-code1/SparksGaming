@@ -254,7 +254,7 @@ export function DuneGameScreen({
           display: 'flex', flexDirection: 'column', minHeight: 0,
           borderLeft: '1px solid #ffffff1f', background: '#131c2e',
         }}>
-          <PlayerHud rows={rows} awaiting={state.awaiting} seat={seat} turn={state.turn} />
+          <PlayerHud rows={rows} awaiting={state.awaiting} seat={seat} />
 
           {/* A spectator has no tray: there is nothing private to show them, and
               an empty one implies a hand they might be holding. */}
