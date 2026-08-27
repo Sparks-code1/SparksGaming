@@ -23,9 +23,14 @@ import { matchState, reconcileSeats, setLobbyShape, readLobby, type Lobby } from
 import { DRAFT_TROOP_SLOTS, DRAFT_COIN_SLOTS, type SetupDoc } from '@/lib/setupFlow'
 import { isComputerSeat } from '@/lib/onlineMatch'
 import LobbyScreen from '@/components/LobbyScreen'
+import DuneLobbyScreen from '@/components/dune/DuneLobbyScreen'
+import DuneMatchScreen from '@/components/dune/DuneMatchScreen'
 import OnlineSetupScreen from '@/components/OnlineSetupScreen'
 
 type Screen = 'loading' | 'between-games' | 'player-slots' | 'lobby' | 'online-setup' | 'scar-dealing' | 'dice-roll' | 'draft-setup' | 'game-setup' | 'playing'
+  // The other game. Two screens rather than one: finding or opening a table,
+  // and then the match itself.
+  | 'dune-lobby' | 'dune-match'
 
 type RestoredGameState = Omit<GameState, 'legacySnapshot'>
 
@@ -52,6 +57,8 @@ export default function App() {
    * a joiner never builds a board, they receive one.
    */
   const [lobbyToStart, setLobbyToStart]         = useState<string | null>(null)
+  /** The Dune match being played, once one has been dealt. */
+  const [duneMatch, setDuneMatch]               = useState<string | null>(null)
   /** An already-running match this client joined. Its board comes from the server. */
   const [joinedMatch, setJoinedMatch]           = useState<{ matchId: string; version: number } | null>(null)
   /** The reconciled lobby whose setup (dice, factions, HQs) is being played out. */
@@ -439,8 +446,25 @@ export default function App() {
           setLobby(joined)
           setScreen('lobby')
         }}
+        onPlayDune={() => setScreen('dune-lobby')}
       />
     )
+  } else if (screen === 'dune-lobby') {
+    content = (
+      <DuneLobbyScreen
+        onExit={() => setScreen('between-games')}
+        onPlay={id => {
+          setDuneMatch(id)
+          // THE URL FOLLOWS, so a refresh lands back in the same match and the
+          // address bar is something a player can send to somebody. It is the
+          // route main.tsx already has — this screen is reached without typing
+          // it, which is the whole point, but it stays typeable.
+          window.history.replaceState(null, '', `?dune-match=${id}`)
+          setScreen('dune-match')
+        }} />
+    )
+  } else if (screen === 'dune-match' && duneMatch) {
+    content = <DuneMatchScreen matchId={duneMatch} />
   } else if (screen === 'player-slots') {
     content = (
       <PlayerSlotsScreen

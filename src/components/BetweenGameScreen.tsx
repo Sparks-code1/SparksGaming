@@ -34,6 +34,14 @@ interface Props {
    */
   autoNextGame?: 'host' | 'join' | null
   onAutoNextConsumed?: () => void
+  /**
+   * Leave Risk for the other game entirely.
+   *
+   * OFFERED FROM THE PICKER, which is where a signed-in player lands with
+   * nothing open — the one moment they are choosing what to play rather than
+   * continuing something. Optional so this screen still stands alone.
+   */
+  onPlayDune?: () => void
 }
 
 type LoadState =
@@ -44,7 +52,7 @@ type LoadState =
   | 'none'      // naming a brand-new campaign
   | 'error'
 
-export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, onNewCampaign, onEnterLobby, autoNextGame = null, onAutoNextConsumed }: Props) {
+export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, onNewCampaign, onEnterLobby, autoNextGame = null, onAutoNextConsumed, onPlayDune }: Props) {
   const [status, setStatus]     = useState<LoadState>('loading')
   /** Which screen the join panel was opened FROM, so Cancel goes back there. */
   const [joinReturnTo, setJoinReturnTo] = useState<LoadState>('picking')
@@ -422,6 +430,29 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
             onNew={() => { setWorldName('New World'); setStatus('none') }}
             onJoin={() => { setJoinReturnTo('picking'); setStatus('joining') }}
           />
+        )}
+
+        {/* A DIFFERENT GAME, and said so rather than slipped in among the
+            campaigns. Dune is not a Risk campaign and has none of the things
+            this screen is about — no world, no scars, no game number — so it
+            gets its own line under a rule rather than a row in the picker,
+            where it would read as a campaign somebody could open. */}
+        {status === 'picking' && onPlayDune && (
+          <div style={{
+            marginTop: 26, paddingTop: 18, borderTop: '1px solid #ffffff14',
+            textAlign: 'center',
+          }}>
+            <div style={{ fontSize: 12, color: '#7a6040', letterSpacing: 1.4, marginBottom: 10 }}>
+              OR PLAY SOMETHING ELSE
+            </div>
+            <button type="button" onClick={onPlayDune} style={{
+              font: '600 14px Georgia, serif', padding: '9px 20px', borderRadius: 6,
+              cursor: 'pointer', background: 'transparent', color: '#d9a441',
+              border: '1px solid #8a6a2a', letterSpacing: 1,
+            }}>
+              DUNE — two to six players
+            </button>
+          </div>
         )}
 
         {/* Join someone else's campaign with their code.

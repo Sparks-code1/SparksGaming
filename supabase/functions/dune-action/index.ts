@@ -155,7 +155,7 @@ Deno.serve(async req => {
     // mulberry32 floors to 1, so every match on the planet reshuffled into the
     // same order. Deterministic, replayable, and identical everywhere: the one
     // failure a seeded shuffle is supposed to prevent.
-    .select('state, version, rng_seed, action_seq, game_type')
+    .select('state, version, rng_seed, action_seq, game_type, status')
     .eq('id', matchId)
     .maybeSingle()
   if (!match) return json({ error: 'no such match', code: 'not-found' }, 404)
@@ -337,7 +337,17 @@ Deno.serve(async req => {
       // every deck and re-deal every traitor under six people already holding
       // theirs — so this refuses rather than being idempotent, which would be
       // a lie about what a repeat call did.
-      if (state.setup || (Array.isArray(state.players) && state.players.length > 0)) {
+      const dealt = state.setup || (Array.isArray(state.players) && state.players.length > 0)
+      if (dealt) {
+        // ALREADY DEALT, BUT STILL LISTED AS OPEN. The deal and the status flip
+        // are two writes and the second can fail on its own — leaving a match
+        // with a board on it sitting in the lobby list, which nobody can play
+        // and nobody can clear. Finishing the flip is not a second deal: it is
+        // the first one, completed. Anything else is refused.
+        if (match.status === 'lobby') {
+          await admin.from('matches').update({ status: 'active' }).eq('id', matchId)
+          return json({ setup: state.setup ?? null, repaired: true })
+        }
         return json({ error: 'this match has already been dealt', code: 'already-started' }, 409)
       }
 
@@ -380,6 +390,14 @@ Deno.serve(async req => {
       })
       if (error) return json({ error: error.message }, 500)
       if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+
+      // AND IT STOPS BEING A LOBBY. Separate from the write above because
+      // apply_match_write owns state, secrets and decks and not the row's
+      // status — and this way round, an interruption leaves a dealt match
+      // listed as open, which the guard at the top of this case repairs. The
+      // other order would leave an active match with no board on it.
+      await admin.from('matches').update({ status: 'active' }).eq('id', matchId)
+
       // WHAT COMES BACK IS PUBLIC ONLY. The caller dealt the game; that does
       // not make the deal theirs to read. Their own row reaches them by the
       // secrets channel, like everybody else's reaches them.

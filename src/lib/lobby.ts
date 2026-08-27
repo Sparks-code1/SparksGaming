@@ -215,10 +215,19 @@ export function reconcileSeats(
 }
 
 /** The lowest seat number nobody is using. */
-export function nextFreeSeat(seats: Pick<LobbySeat, 'seat'>[]): number {
+/**
+ * The lowest seat nobody is sitting in.
+ *
+ * TAKES THE CAP, because the two games have different tables: Risk seats five
+ * and Dune six. With MAX_SEATS hard-coded, a sixth Dune player was handed the
+ * value this returns when the lobby is FULL — which happened to be 5, the right
+ * number, arrived at down the wrong path. The next time either game changed
+ * size that coincidence would have stopped holding.
+ */
+export function nextFreeSeat(seats: Pick<LobbySeat, 'seat'>[], max = MAX_SEATS): number {
   const taken = new Set(seats.map(s => s.seat))
-  for (let i = 0; i < MAX_SEATS; i++) if (!taken.has(i)) return i
-  return MAX_SEATS
+  for (let i = 0; i < max; i++) if (!taken.has(i)) return i
+  return max
 }
 
 /** Why this person cannot take this roster name in this lobby, or null. */
@@ -431,8 +440,15 @@ export function lobbyIsBehind(
   return lobby.gameNumber < (currentGameNumber ?? 1)
 }
 
-/** Take a seat in someone else's lobby. Idempotent for the seat you hold. */
-export async function takeSeat(matchId: string, request: SeatRequest): Promise<Lobby> {
+/**
+ * Take a seat in someone else's lobby. Idempotent for the seat you hold.
+ *
+ * `maxSeats` is the size of the table this game is played at — see
+ * nextFreeSeat. Defaulted, so every Risk caller is unchanged.
+ */
+export async function takeSeat(
+  matchId: string, request: SeatRequest, maxSeats = MAX_SEATS,
+): Promise<Lobby> {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('Sign in to join a game — the server identifies players by account.')
 
@@ -451,7 +467,7 @@ export async function takeSeat(matchId: string, request: SeatRequest): Promise<L
     if (error) throw new Error(`Could not update your seat: ${error.message}`)
   } else {
     const { error } = await supabase.from('match_players').insert({
-      match_id: matchId, seat: nextFreeSeat(lobby.seats), player_id: request.playerId,
+      match_id: matchId, seat: nextFreeSeat(lobby.seats, maxSeats), player_id: request.playerId,
       user_id: user.id, name: request.name,
       faction_id: request.factionId ?? UNASSIGNED_FACTION,
       is_ai: false, ai_difficulty: null, ready: false,
