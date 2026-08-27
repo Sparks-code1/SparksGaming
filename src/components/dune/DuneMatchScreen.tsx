@@ -24,6 +24,13 @@
  * action. A seat id in a request is a claim about identity — see duneDispatch,
  * which refuses payloads that carry one.
  *
+ * TALKING IS REAL, and separate from everything else on this screen. Lines the
+ * table says go through match_chat — see lib/dune/duneChat — while lines this
+ * client composes ABOUT ITSELF ("bid 4", "charity refused") stay here and are
+ * marked for this seat alone. A refusal is a sentence about how much spice
+ * somebody holds, and the chat is the one place such a sentence would sit in
+ * front of everybody.
+ *
  * WHAT IT CANNOT DO YET, said plainly because a screen that half-works is worse
  * than one that explains itself: nothing here opens a phase. Charity's window
  * and the auction are opened by OPEN_CHARITY and OPEN_BIDDING, which the dev
@@ -44,6 +51,8 @@ import {
 } from '@/lib/dune/publicRow'
 import type { PublicRow } from '@/lib/dune/publicRow'
 import { dispatchDuneAction } from '@/lib/dune/duneDispatch'
+import { watchDuneChat, sayToTable, mergeChat, sayable } from '@/lib/dune/duneChat'
+import type { ChatFeed } from '@/lib/dune/duneChat'
 import type { DuneAction } from '@/lib/dune/duneDispatch'
 import type { DuneSecrets } from '@/lib/dune/charity'
 import type { FactionId } from '@/types/Dune/Faction'
@@ -86,6 +95,7 @@ export function DuneMatchScreen({ matchId }: DuneMatchScreenProps) {
   const [own, setOwn] = useState<DuneSecrets | null>(null)
   const [now, setNow] = useState(() => Date.now())
   const [chat, setChat] = useState<ChatMessage[]>([])
+  const [sending, setSending] = useState(false)
   const [busy, setBusy] = useState(false)
   const [refused, setRefused] = useState<string | null>(null)
   const [bidRefusal, setBidRefusal] = useState<BidRefusal | null>(null)
@@ -160,6 +170,45 @@ export function DuneMatchScreen({ matchId }: DuneMatchScreenProps) {
     // `say` is stable enough for this; the seat is what this watches.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchId, seat?.playerId])
+
+  /**
+   * The table's talk.
+   *
+   * MERGED RATHER THAN REPLACED, because this list holds two kinds of line: the
+   * ones everybody said, which arrive here, and the ones this client composed
+   * about its own turn, which never leave the browser. Replacing the list on
+   * every frame would wipe the local half every time somebody spoke.
+   */
+  const talk = useRef<ChatFeed | null>(null)
+  useEffect(() => {
+    if (!matchId) return
+    const feed = watchDuneChat(matchId, {
+      onMessages: lines => setChat(c => mergeChat(c, lines)),
+    })
+    talk.current = feed
+    return () => { feed.stop(); talk.current = null }
+  }, [matchId])
+
+  /**
+   * Say something to the table.
+   *
+   * Absent for a spectator, which is what makes the box disappear for them
+   * rather than refusing what they type: the insert policy would refuse it
+   * anyway, and a chat box that swallows what you write is worse than none.
+   */
+  const speak = async (text: string) => {
+    if (!seat || sending || !sayable(text)) return
+    setSending(true)
+    try {
+      await sayToTable(matchId, { playerId: seat.playerId, faction: seat.faction }, text)
+      // READ-YOUR-OWN-WRITES, like everything else here: a line that does not
+      // appear reads as a line that was not sent, and people say it twice.
+      await talk.current?.reread()
+    } catch (e) {
+      say(e instanceof Error ? e.message : 'that did not send')
+    }
+    setSending(false)
+  }
 
   const rereadOwn = async () => {
     if (!seat) return
@@ -284,6 +333,7 @@ export function DuneMatchScreen({ matchId }: DuneMatchScreenProps) {
         seat={seat?.faction ?? null}
         own={own}
         chat={chat}
+        onSend={seat ? (text: string) => void speak(text) : undefined}
         now={now}
         charity={charityWindow && seat ? {
           onClaim: () => void claimCharity(),
