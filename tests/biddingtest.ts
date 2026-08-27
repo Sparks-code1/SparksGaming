@@ -183,20 +183,52 @@ check('the opening minimum is one, not zero — a pass is the alternative',
 
 // ── the opener rotates one seat per card, and resets each turn ────────────
 {
+  // THE ROTATION, proven by SOLD cards now: an all-pass ends the phase, so
+  // walking it with passes — as this block once did — never reaches card two.
   let s = start()
   const openers: string[] = []
-  for (let card = 0; card < 4; card++) {
+  for (let card = 0; card < 4 && isAwaiting(s); card++) {
     openers.push(carryOf(s).toAct)
-    for (const f of ORDER) {
-      if (!isAwaiting(s)) break
+    s = stepOf(bid(s, carryOf(s).toAct, card + 1))
+    while (isAwaiting(s) && carryOf(s).index === card) {
       s = stepOf(passes(s, carryOf(s).toAct))
-      void f
     }
   }
   check('each card opens one seat further round', openers,
     ['atreides', 'harkonnen', 'fremen', 'emperor'])
-  check('...and nobody bid, so every card is unsold',
-    !isAwaiting(s) ? s.result.unsold : 'still awaiting', [0, 1, 2, 3])
+
+  // ── A CARD NOBODY BUYS ENDS THE PHASE ────────────────────────────────────
+  // Everyone passing is the table done shopping: the rest of the row is never
+  // offered, and goes unsold with the card nobody wanted.
+  let out = start()
+  for (const f of ORDER) {
+    if (!isAwaiting(out)) break
+    out = stepOf(passes(out, carryOf(out).toAct))
+    void f
+  }
+  check('everyone passing ends the whole phase',
+    !isAwaiting(out) ? out.result.unsold : 'still awaiting', [0, 1, 2, 3])
+  check('...with nothing sold', !isAwaiting(out) ? out.result.awards : null, [])
+
+  // AND MID-ROW: what sold before the pass-out stays sold; everything from
+  // the unbought card on goes with it.
+  let mid = start()
+  mid = stepOf(bid(mid, 'atreides', 2))
+  while (isAwaiting(mid) && carryOf(mid).index === 0) {
+    mid = stepOf(passes(mid, carryOf(mid).toAct))
+  }
+  // ONE ROUND OF PASSES ON CARD 1 AND NOT A STEP MORE. The old behaviour —
+  // discard and open card 2 — reaches the same unsold list if you keep
+  // passing, so what distinguishes the rule is the auction being OVER the
+  // moment the round completes, with no card 2 ask ever made.
+  while (isAwaiting(mid) && carryOf(mid).index === 1) {
+    mid = stepOf(passes(mid, carryOf(mid).toAct))
+  }
+  check('the phase is over the moment a card goes unbought', isAwaiting(mid), false)
+  check('a sale stands when a later card goes unbought',
+    !isAwaiting(mid) ? mid.result.awards : null, [{ index: 0, winner: 'atreides', price: 2 }])
+  check('...and the rest of the row goes with the unbought card',
+    !isAwaiting(mid) ? mid.result.unsold : null, [1, 2, 3])
 }
 // The reset is the caller rebuilding `order` from the storm each turn, so a
 // fresh auction always opens at index 0 of whatever order it was handed.

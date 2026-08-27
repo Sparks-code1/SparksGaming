@@ -78,7 +78,10 @@ export interface Award {
 export interface AuctionResult {
   turn: number
   awards: Award[]
-  /** Indices nobody bid on. The caller discards those cards. */
+  /** Indices never sold: the card everyone passed on, everything after it —
+   *  an unbought card ends the phase, so the rest of the row is never offered
+   *  — and any card that could not be offered at all. The caller discards
+   *  them. */
   unsold: number[]
   /** Hand sizes after the auction. */
   hands: Record<string, number>
@@ -281,6 +284,11 @@ function closeCard(
   c: AuctionCarry, won: Award | null, closesAt: number,
   pause?: { until: number; thenClosesAt: number },
 ): BidStep {
+  // A CARD NOBODY BUYS ENDS THE PHASE, not just the card. Every faction
+  // passing is the table saying it is done shopping, and the rest of the row
+  // is never offered — it goes unsold with the card nobody wanted. This used
+  // to discard the one card and open the next, which asked six people to sit
+  // through auctions the rules had already called off.
   const after: AuctionCarry = won
     ? {
       ...c,
@@ -289,7 +297,15 @@ function closeCard(
       index: c.index + 1,
       pauseUntil: pause?.until,
     }
-    : { ...c, unsold: [...c.unsold, c.index], index: c.index + 1, pauseUntil: pause?.until }
+    : {
+      ...c,
+      unsold: [
+        ...c.unsold,
+        ...Array.from({ length: c.cardCount - c.index }, (_, k) => c.index + k),
+      ],
+      index: c.cardCount,
+      pauseUntil: undefined,
+    }
   return openCard(after, pause ? pause.thenClosesAt : closesAt)
 }
 

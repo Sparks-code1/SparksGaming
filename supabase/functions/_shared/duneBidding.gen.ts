@@ -75,7 +75,15 @@ function closeCard(c, won, closesAt, pause) {
     hands: { ...c.hands, [won.winner]: (c.hands[won.winner] ?? 0) + 1 },
     index: c.index + 1,
     pauseUntil: pause?.until
-  } : { ...c, unsold: [...c.unsold, c.index], index: c.index + 1, pauseUntil: pause?.until };
+  } : {
+    ...c,
+    unsold: [
+      ...c.unsold,
+      ...Array.from({ length: c.cardCount - c.index }, (_, k) => c.index + k)
+    ],
+    index: c.cardCount,
+    pauseUntil: void 0
+  };
   return openCard(after, pause ? pause.thenClosesAt : closesAt);
 }
 function beginAuction(input) {
