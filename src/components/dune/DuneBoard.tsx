@@ -67,6 +67,10 @@ export interface DuneBoardStack {
   sector: string
   faction?: FactionId
   count: number
+  /** How many of the count are elite — drawn as a star on the bubble. */
+  starred?: number
+  /** An advisor stack draws checkered; a fighter draws solid. */
+  posture?: 'fighter' | 'advisor'
 }
 
 export interface DuneBoardProps {
@@ -283,16 +287,59 @@ export function DuneBoard({
       }}>
         {wedge && <path d={wedge} fill="#c9542a" fillOpacity="0.55" stroke="#f2d9a0" strokeWidth="2" />}
 
+        {/* THE ADVISOR WEAVE, one pattern per faction that needs it. A checker
+            in the faction's own colour: the piece is unmistakably theirs and
+            unmistakably not fighting, which is the whole message an advisor
+            bubble has to carry. Defined once here rather than per stack, since
+            two advisor stacks reusing one id is the point of a pattern. */}
+        <defs>
+          {[...new Set(stacks.filter(s => s.posture === 'advisor' && s.faction)
+            .map(s => s.faction as FactionId))].map(f => (
+            <pattern key={f} id={`advisor-check-${f}`} width="5" height="5"
+              patternUnits="userSpaceOnUse">
+              <rect width="5" height="5" fill={FACTION_LOOK[f].colour} />
+              <rect width="2.5" height="2.5" fill={PALE} fillOpacity="0.85" />
+              <rect x="2.5" y="2.5" width="2.5" height="2.5" fill={PALE} fillOpacity="0.85" />
+            </pattern>
+          ))}
+        </defs>
+
         {stacks.map(s => {
           const at = cellAt(s.territoryId, s.sector)
           if (!at || s.count <= 0) return null
+          const advisor = s.posture === 'advisor'
+          const starred = s.starred ?? 0
           return (
-            <g key={`${s.territoryId}|${s.sector}|${s.faction ?? ''}`}>
+            <g key={`${s.territoryId}|${s.sector}|${s.faction ?? ''}`}
+              data-posture={advisor ? 'advisor' : undefined}
+              data-starred={starred > 0 ? starred : undefined}>
               <circle cx={at.x} cy={at.y} r="9"
-                fill={s.faction ? FACTION_LOOK[s.faction].colour : '#1d3f70'}
+                fill={advisor && s.faction
+                  ? `url(#advisor-check-${s.faction})`
+                  : s.faction ? FACTION_LOOK[s.faction].colour : '#1d3f70'}
                 stroke={PALE} strokeWidth="1.5" />
-              <text x={at.x} y={at.y} fontSize="10" fill={PALE} textAnchor="middle"
-                dominantBaseline="central" fontFamily="Georgia, serif">{s.count}</text>
+              <text x={at.x} y={at.y} fontSize="10"
+                fill={advisor ? '#1a1208' : PALE}
+                stroke={advisor ? PALE : undefined} strokeWidth={advisor ? 2.4 : undefined}
+                paintOrder="stroke"
+                textAnchor="middle" dominantBaseline="central"
+                fontFamily="Georgia, serif">{s.count}</text>
+              {/* THE ELITES ARE IN THIS STACK. A star badge, with the number
+                  beside it when the stack is mixed — three Fedaykin standing
+                  with seven plain is a different thing from ten plain, and the
+                  storm does not care but every battle plan does. */}
+              {starred > 0 && (
+                <g>
+                  <title>{`${starred} elite of ${s.count}`}</title>
+                  <circle cx={at.x + 8} cy={at.y - 8} r={starred >= s.count ? 5.2 : 6.4}
+                    fill="#3f2c1a" stroke="#f0c93f" strokeWidth="1" />
+                  <text x={at.x + 8} y={at.y - 8} fontSize="7.5" fill="#f0c93f"
+                    textAnchor="middle" dominantBaseline="central"
+                    fontFamily="Georgia, serif">
+                    {starred >= s.count ? '★' : `★${starred}`}
+                  </text>
+                </g>
+              )}
             </g>
           )
         })}

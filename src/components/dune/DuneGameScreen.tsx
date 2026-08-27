@@ -37,7 +37,7 @@
  * who is standing next to your spice. A player who cannot see the territory
  * cannot price the card they are bidding on.
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { FactionId } from '@/types/Dune/Faction'
 import type { DuneGameState } from '@/types/Dune/Game'
 import type { DuneSecrets } from '@/lib/dune/charity'
@@ -51,10 +51,11 @@ import { CHARITY_WINDOW_MS } from '@/lib/dune/charity'
 import { WORM_SECONDS } from '@/lib/dune/spiceBlow'
 import { BiddingPanel } from './BiddingPanel'
 import { CharityModal } from './CharityModal'
-import { SetupPanel } from './SetupPanel'
-import { SETUP_SECONDS } from '@/lib/dune/setup'
-import type { SetupWindow } from '@/lib/dune/setup'
-import type { PlacedForce } from './SetupPanel'
+import { SetupWindow, SetupBoardTargets } from './SetupWindow'
+import { SETUP_SECONDS, postureFor, starredOf } from '@/lib/dune/setup'
+import { factionById } from '@/data/dune/factions'
+import type { SetupWindow as SetupWindowState } from '@/lib/dune/setup'
+import type { PlacedForce, PendingPlacement } from './SetupWindow'
 import type { BiddingPanelProps } from './BiddingPanel'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import type { TreacheryCard } from '@/types/Dune/Treachery'
@@ -141,6 +142,8 @@ export interface DuneGameScreenProps {
     onPrediction(faction: FactionId, turn: number): void
     onTraitor(keep: string): void
     onAdvisorPlacement(territoryId: string, sector?: string): void
+    /** Declare this seat done. Setup closes when every seat has. */
+    onReady(): void
     busy?: boolean
     refused?: string | null
   } | null
@@ -160,15 +163,24 @@ export function DuneGameScreen({
   // Stacks are per faction so the board can colour them. Summed by cell rather
   // than drawn one per Force: two Fremen entries in one sector are one stack of
   // pieces on the table, and drawing them as two markers on the same point puts
-  // one exactly on top of the other.
+  // one exactly on top of the other. Starred counts sum with them, and an
+  // advisor entry marks the whole cell's stack — a faction cannot have an
+  // advisor and a fighter standing as one pile.
   const stacks = Object.values(
     state.forces.reduce<Record<string, {
       territoryId: string; sector: string; faction: FactionId; count: number
+      starred?: number; posture?: 'fighter' | 'advisor'
     }>>((acc, f) => {
       const key = `${f.territoryId}|${f.sector}|${f.faction}`
-      acc[key] = acc[key]
-        ? { ...acc[key], count: acc[key].count + f.count }
-        : { territoryId: f.territoryId, sector: f.sector, faction: f.faction, count: f.count }
+      const starred = (acc[key]?.starred ?? 0) + (f.starred ?? 0)
+      const posture = acc[key]?.posture === 'advisor' || f.posture === 'advisor'
+        ? 'advisor' as const : undefined
+      acc[key] = {
+        territoryId: f.territoryId, sector: f.sector, faction: f.faction,
+        count: (acc[key]?.count ?? 0) + f.count,
+        ...(starred > 0 ? { starred } : null),
+        ...(posture ? { posture } : null),
+      }
       return acc
     }, {}),
   )
@@ -189,7 +201,7 @@ export function DuneGameScreen({
   const timed = state as DuneGameState & {
     charity?: { expiresAt: number }
     spiceBlow?: { closesAt?: number }
-    setup?: SetupWindow
+    setup?: SetupWindowState
   }
   // SETUP IS THE FOURTH ONE, and it cannot overlap the other three: nothing has
   // been played yet. It goes on the same board clock rather than into the setup
@@ -201,6 +213,86 @@ export function DuneGameScreen({
     : timed.spiceBlow ? WORM_SECONDS * 1000
     : timed.setup ? SETUP_SECONDS * 1000
     : undefined
+
+  // ── setup, answered on the board ──────────────────────────────────────────
+  // The half-made answer lives HERE, because two components render it: the
+  // window column narrates it and the board draws it, and a copy in either
+  // would be a second answer to what has been clicked so far. It is thrown
+  // away the moment the server settles the decision — the settled version
+  // arrives in state.forces like everybody else's.
+  const setupWin = timed.setup ?? null
+  const setupActive = !!(setupWin && setup && seat)
+  const owesSetup = (kind: string) =>
+    !!setupWin && !!seat && setupWin.outstanding.some(d => d.kind === kind && d.faction === seat)
+  const owesFremen = owesSetup('fremen-placement')
+  const advisorOpen = owesSetup('advisor-placement')
+    && !setupWin!.outstanding.some(d => d.kind === 'fremen-placement')
+
+  const [fremenPending, setFremenPending] = useState<PendingPlacement[]>([])
+  const [placingStar, setPlacingStar] = useState(false)
+  const [advisorPending, setAdvisorPending] = useState<{ territoryId: string; sector: string } | null>(null)
+
+  // Settled — or setup over — means the preview is done with. Without this a
+  // placement kept locally would draw ten phantom forces on top of the ten
+  // real ones the row just delivered.
+  useEffect(() => {
+    if (!owesFremen) { setFremenPending([]); setPlacingStar(false) }
+  }, [owesFremen])
+  useEffect(() => {
+    if (!advisorOpen) setAdvisorPending(null)
+  }, [advisorOpen])
+
+  const fremenTotal = seat ? factionById(seat)?.forces.onPlanet ?? 0 : 0
+  const fremenStars = seat && state.mode === 'advanced' ? starredOf(seat) : 0
+  const fremenPlaced = fremenPending.reduce((n, e) => n + e.count, 0)
+  const fremenStarsPlaced = fremenPending.reduce((n, e) => n + e.starred, 0)
+
+  /** One more force on this cell — a Fedaykin when the toggle says so. */
+  const placeAt = (territoryId: string, sector: string) => {
+    if (fremenPlaced >= fremenTotal) return
+    const star = placingStar && fremenStarsPlaced < fremenStars
+    setFremenPending(p => {
+      const i = p.findIndex(e => e.territoryId === territoryId && e.sector === sector)
+      if (i < 0) return [...p, { territoryId, sector, count: 1, starred: star ? 1 : 0 }]
+      return p.map((e, j) => j === i
+        ? { ...e, count: e.count + 1, starred: e.starred + (star ? 1 : 0) }
+        : e)
+    })
+  }
+
+  /** One back off this cell — the plain ones first, so a star is kept longest. */
+  const unplaceAt = (territoryId: string, sector: string) => {
+    setFremenPending(p => p.flatMap(e => {
+      if (e.territoryId !== territoryId || e.sector !== sector) return [e]
+      const plain = e.count - e.starred
+      const next = plain > 0
+        ? { ...e, count: e.count - 1 }
+        : { ...e, count: e.count - 1, starred: e.starred - 1 }
+      return next.count > 0 ? [next] : []
+    }))
+  }
+
+  // WHAT THE CLICKS HAVE PUT DOWN SO FAR, drawn as the real stacks will be —
+  // same bubbles, same star badges, same checker — so confirming changes
+  // nothing visually. The advisor's posture is read off the real board, which
+  // by now includes the Fremen: that is the whole reason it waited on them.
+  //
+  // GATED ON THE DECISION STILL BEING OWED, not on the local state alone: the
+  // render that delivers the settled forces is the render the decision leaves
+  // `outstanding`, so the preview stands down in the same frame the real
+  // pieces arrive — never both, which drew one stack twice under one key.
+  // The state itself is cleared a beat later by the effects above.
+  const previewStacks = setupActive ? [
+    ...(owesFremen ? fremenPending.map(e => ({
+      territoryId: e.territoryId, sector: e.sector, faction: seat as FactionId,
+      count: e.count, ...(e.starred > 0 ? { starred: e.starred } : null),
+    })) : []),
+    ...(advisorOpen && advisorPending && seat ? [{
+      territoryId: advisorPending.territoryId, sector: advisorPending.sector,
+      faction: seat, count: 1,
+      posture: postureFor(state.forces, advisorPending.territoryId, seat),
+    }] : []),
+  ] : []
 
   return (
     <div data-layer="dune-game" style={{
@@ -215,6 +307,38 @@ export function DuneGameScreen({
         <ChatPanel messages={chat} seat={seat} collapsed={chatShut} onSend={onSend}
           talkingTo={talkingTo} seatNames={seatNames}
           onToggle={() => setChatShut(c => !c)} />
+
+        {/* SETUP'S OWN COLUMN, between the chat and the board: it says what to
+            do, and the doing happens on the map. Assembled here because
+            `dealt` is the four traitors out of this seat's own row — reading
+            it off `own` at the point of use means no caller ever holds it. A
+            spectator gets no column, and neither does a seat once setup
+            closes. */}
+        {setupActive && seat && setupWin && (
+          <SetupWindow
+            seat={seat} mode={state.mode}
+            outstanding={setupWin.outstanding}
+            ready={setupWin.ready ?? []}
+            seated={state.players.map(p => p.faction)}
+            dealt={dealtTraitors(own)}
+            pending={fremenPending}
+            placingStar={placingStar} onPlacingStar={setPlacingStar}
+            onRemove={unplaceAt}
+            onConfirmPlacement={() => setup!.onFremenPlacement(
+              fremenPending.map(e => ({
+                territoryId: e.territoryId, sector: e.sector, count: e.count,
+                ...(e.starred > 0 ? { starred: e.starred } : null),
+              })))}
+            advisorPending={advisorPending}
+            advisorPosture={advisorPending
+              ? postureFor(state.forces, advisorPending.territoryId, seat)
+              : null}
+            onConfirmAdvisor={() => advisorPending && setup!.onAdvisorPlacement(
+              advisorPending.territoryId, advisorPending.sector)}
+            onPrediction={setup!.onPrediction}
+            onTraitor={setup!.onTraitor}
+            busy={setup!.busy} refused={setup!.refused} />
+        )}
 
         <main style={{
           // ITS BASIS IS THE BOARD'S IDEAL WIDTH — the width a board as tall as
@@ -232,10 +356,24 @@ export function DuneGameScreen({
               rectangle. Sizing a box to the board's aspect ratio instead was
               what left the column's height unused. */}
           <DuneBoard
-            storm={state.storm} stacks={stacks} spice={state.spiceOnBoard}
+            storm={state.storm} stacks={[...stacks, ...previewStacks]}
+            spice={state.spiceOnBoard}
             seating={seating} deck={state.spiceDeck} mode={state.mode}
             awaiting={state.awaiting} phase={state.phase} turn={state.turn}
-            closesAt={closesAt} windowMs={windowMs} now={now} />
+            closesAt={closesAt} windowMs={windowMs} now={now}
+            interactive={setupActive && (owesFremen || advisorOpen)}>
+            {/* DURING SETUP THE MAP TAKES THE ANSWER. Rings on the cells a
+                click means something at — the Fremen's three territories, or
+                the whole board for the advisor — with the pending pieces drawn
+                as the real stacks above. Clicks add; the window column takes
+                them back. */}
+            {setupActive && seat && (owesFremen || advisorOpen) && (
+              <SetupBoardTargets seat={seat}
+                fremen={owesFremen} advisor={advisorOpen}
+                onPlaceCell={placeAt}
+                onAdvisorCell={(territoryId, sector) => setAdvisorPending({ territoryId, sector })} />
+            )}
+          </DuneBoard>
 
           {/* The auction, over the WHOLE middle column rather than over the
               board's own box. The box is only as wide as the board is tall —
@@ -270,27 +408,6 @@ export function DuneGameScreen({
               busy={charity.busy} refused={charity.refused} />
           )}
 
-          {/* THE SETUP ANSWERS, over the board and not covering it — the Bene
-              Gesserit place their advisor by reading where the Fremen just
-              went, so the map is part of the decision.
-
-              Assembled here for the same reason the auction is: `dealt` is the
-              four traitors out of this seat's own row, and reading it off `own`
-              at the point of use means no caller ever holds it. The panel
-              renders nothing at all for a seat that owes nothing. */}
-          {setup && seat && timed.setup && (
-            <SetupPanel
-              seat={seat}
-              outstanding={timed.setup.outstanding}
-              dealt={dealtTraitors(own)}
-              seated={state.players.map(p => p.faction)}
-              forces={state.forces}
-              onFremenPlacement={setup.onFremenPlacement}
-              onPrediction={setup.onPrediction}
-              onTraitor={setup.onTraitor}
-              onAdvisorPlacement={setup.onAdvisorPlacement}
-              busy={setup.busy} refused={setup.refused} />
-          )}
         </main>
 
         {/* THE RIGHT-HAND COLUMN: everyone else above, then you. Both are about
@@ -306,7 +423,12 @@ export function DuneGameScreen({
           display: 'flex', flexDirection: 'column', minHeight: 0,
           borderLeft: '1px solid #ffffff1f', background: '#131c2e',
         }}>
-          <PlayerHud rows={rows} awaiting={state.awaiting} seat={seat} />
+          {/* READY LIVES WITH THE PLAYERS, because it is a statement about the
+              list: when every bubble says READY, the game starts. Wired only
+              while setup runs and this client holds a seat. */}
+          <PlayerHud rows={rows} awaiting={state.awaiting} seat={seat}
+            ready={setupWin?.ready ?? []}
+            onReady={setupActive ? setup!.onReady : null} />
 
           {/* A spectator has no tray: there is nothing private to show them, and
               an empty one implies a hand they might be holding. */}

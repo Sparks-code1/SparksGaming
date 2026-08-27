@@ -59,7 +59,7 @@ import type { DuneSecrets } from '@/lib/dune/charity'
 import type { FactionId } from '@/types/Dune/Faction'
 import type { BidRefusal } from '@/lib/dune/bidding'
 import { DuneGameScreen } from './DuneGameScreen'
-import type { PlacedForce } from './SetupPanel'
+import type { PlacedForce } from './SetupWindow'
 import { WormPlacementPanel } from './WormPlacementPanel'
 import { FACTION_LOOK } from './SeatLayer'
 import SoundSettings from '@/components/SoundSettings'
@@ -427,6 +427,10 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
     onAdvisorPlacement: (territoryId: string, sector?: string) => void answerSetup(
       { answer: 'advisor-placement', territoryId, ...(sector ? { sector } : null) },
       'placed your advisor.'),
+    // A DECLARATION, NOT A DECISION: recorded on the shared row, so the READY
+    // tag under this seat's bubble is the confirmation — no local line needed.
+    onReady: () => void answerSetup({ answer: 'ready' },
+      'ready — the game starts when every seat is.'),
     busy,
     refused,
   }
@@ -604,7 +608,7 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
 
               THE ANSWERING IS NOT HERE. This corner is a notice board; the
               controls are over the board, where the map they are decided from
-              is — see SetupPanel. What this adds is the half the panel cannot
+              is — see SetupWindow. What this adds is the half the window cannot
               show a seat: who ELSE is still to answer, which is why nothing has
               started even after you are done. */}
           {setup && (
@@ -615,7 +619,7 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
               <b style={{ display: 'block', marginBottom: 4 }}>Setting up</b>
               {setupWants(row, seat?.faction ?? null) && (
                 <span style={{ display: 'block', marginBottom: 4 }}>
-                  Your answers are on the panel over the board.
+                  Your answers are in the column beside the board.
                 </span>
               )}
               Waiting on <b>{[...new Set(setup.outstanding.map(d => d.faction))].join(', ')}</b>.

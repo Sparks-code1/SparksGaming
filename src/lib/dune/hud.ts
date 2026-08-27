@@ -40,6 +40,8 @@ export interface HudRow {
    */
   strongholds: number
   reserves: number
+  /** Elite reserves — Sardaukar, Fedaykin — beside the plain ones. Advanced only. */
+  reservesStarred?: number
   handCount: number
   ally: FactionId | null
   battleLosses?: number
@@ -59,6 +61,7 @@ export function hudRows(state: Pick<DuneGameState, 'players' | 'forces'>): HudRo
     forcesOnBoard: forcesOnBoard(state.forces, p.faction),
     strongholds: strongholdsHeld(state.forces, p.faction),
     reserves: p.reserves,
+    ...(p.reservesStarred != null ? { reservesStarred: p.reservesStarred } : null),
     handCount: p.handCount,
     ally: allyOf(state.players, p),
     battleLosses: p.battleLosses,

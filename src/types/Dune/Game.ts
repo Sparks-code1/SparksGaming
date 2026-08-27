@@ -63,6 +63,18 @@ export interface Force {
   sector: SectorId
   count: number
   /**
+   * How many of `count` are elite — Fedaykin or Sardaukar. Absent is none.
+   *
+   * REAL PIECES, not a note on the faction card. The star tokens stand on the
+   * board beside the plain ones and the whole table can see which stack the
+   * Fedaykin are in, so the board model has to say it too — a count kept only
+   * in the faction data cannot answer "where are they", which is a question
+   * with battle consequences the moment a storm or a worm picks a sector.
+   * Advanced game only; the basic game treats every force as plain and never
+   * sets this.
+   */
+  starred?: number
+  /**
    * Fighting, or watching. Absent is fighting.
    *
    * WHAT IS AND IS NOT WIRED. The posture is set at setup and read by
@@ -195,6 +207,16 @@ export interface DunePlayerPublic {
   seat: string
   /** Off-board forces still to ship. On-planet for the Fremen, but still theirs. */
   reserves: number
+  /**
+   * How many elite forces — Sardaukar, Fedaykin — wait in reserve, beside the
+   * plain `reserves` rather than inside it.
+   *
+   * PUBLIC, like reserves: at a table the star tokens sit in the open next to
+   * the plain ones, and how many elites the Emperor has left to ship is a fact
+   * everyone prices shipments against. Advanced game only — the basic game
+   * plays every token plain and this key is absent.
+   */
+  reservesStarred?: number
   /**
    * How many treachery cards they hold. NOT the cards.
    *

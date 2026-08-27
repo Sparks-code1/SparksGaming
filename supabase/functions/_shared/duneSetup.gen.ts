@@ -1307,7 +1307,10 @@ function shuffle(cards, rng) {
 var TRAITORS_DEALT = 4;
 var KEEPS_ALL_TRAITORS = "harkonnen";
 var ADVISOR_FACTION = "bene-gesserit";
-var SETUP_SECONDS = 180;
+var SETUP_SECONDS = 420;
+function allReady(ready, seated) {
+  return seated.length > 0 && seated.every((f) => (ready ?? []).includes(f));
+}
 function defaultSector(territoryId) {
   const t = DUNE_TERRITORIES.find((x) => x.id === territoryId);
   return t?.sectors[0] ?? "sector-1";
@@ -1338,19 +1341,31 @@ function distributeAmong(faction) {
   const placement = factionById(faction)?.forces.placement;
   return placement?.kind === "distribute" ? [...placement.among] : [];
 }
+function starredOf(faction) {
+  return factionById(faction)?.forces.starred ?? 0;
+}
+function starredInReserve(faction, mode) {
+  if (mode !== "advanced") return 0;
+  const placement = factionById(faction)?.forces.placement;
+  return placement?.kind === "distribute" ? 0 : starredOf(faction);
+}
 function openingPosition(input) {
   const { seats, mode, rng } = input;
   const host = seats.find((s) => s.playerId === input.host)?.faction ?? null;
-  const players = seats.map((s) => ({
-    faction: s.faction,
-    seat: s.seat,
-    reserves: factionById(s.faction)?.forces.reserves ?? 0,
-    // HOW MANY, WHICH IS PUBLIC — the cards themselves are dealt below into
-    // that seat's own row. Everyone starts holding one, so everyone can see
-    // that everyone starts holding one.
-    handCount: startingTreachery(s.faction),
-    ally: null
-  }));
+  const players = seats.map((s) => {
+    const inReserve = starredInReserve(s.faction, mode);
+    return {
+      faction: s.faction,
+      seat: s.seat,
+      reserves: (factionById(s.faction)?.forces.reserves ?? 0) - inReserve,
+      ...inReserve > 0 ? { reservesStarred: inReserve } : null,
+      // HOW MANY, WHICH IS PUBLIC — the cards themselves are dealt below into
+      // that seat's own row. Everyone starts holding one, so everyone can see
+      // that everyone starts holding one.
+      handCount: startingTreachery(s.faction),
+      ally: null
+    };
+  });
   const forces = seats.map((s) => fixedPlacement(s.faction, mode)).filter((f) => f !== null);
   const traitors = shuffle(traitorDeck(seats.map((s) => s.faction)), rng);
   const treachery = shuffle(treacheryDeck(), rng);
@@ -1418,35 +1433,44 @@ function openingPosition(input) {
 }
 var refuse = (refusal) => ({ ok: false, refusal });
 var PREDICTION_TURNS = { min: 1, max: 10 };
-function answerFremenPlacement(faction, chosen) {
+function answerFremenPlacement(faction, chosen, mode) {
   const among = distributeAmong(faction);
   if (among.length === 0) return refuse("not-outstanding");
   const total = factionById(faction)?.forces.onPlanet ?? 0;
   if (chosen.some((c) => !among.includes(c.territoryId))) return refuse("not-among");
   if (chosen.some((c) => !Number.isInteger(c.count) || c.count < 0)) return refuse("negative");
+  if (chosen.some((c) => c.starred != null && (!Number.isInteger(c.starred) || c.starred < 0))) {
+    return refuse("negative");
+  }
   if (chosen.some((c) => c.sector && !(DUNE_TERRITORIES.find((t) => t.id === c.territoryId)?.sectors ?? []).includes(c.sector))) {
     return refuse("not-among");
   }
   if (chosen.reduce((n, c) => n + c.count, 0) !== total) return refuse("wrong-total");
+  if (chosen.some((c) => (c.starred ?? 0) > c.count)) return refuse("too-many-starred");
+  const stars = chosen.reduce((n, c) => n + (c.starred ?? 0), 0);
+  if (stars > (mode === "advanced" ? starredOf(faction) : 0)) return refuse("too-many-starred");
   return {
     ok: true,
     value: chosen.filter((c) => c.count > 0).map((c) => ({
       faction,
       territoryId: c.territoryId,
       sector: c.sector ?? defaultSector(c.territoryId),
-      count: c.count
+      count: c.count,
+      ...(c.starred ?? 0) > 0 ? { starred: c.starred } : null
     }))
   };
 }
-function defaultFremenPlacement(faction) {
+function defaultFremenPlacement(faction, mode) {
   const among = distributeAmong(faction);
   const total = factionById(faction)?.forces.onPlanet ?? 0;
   if (among.length === 0 || total <= 0) return [];
+  const stars = mode === "advanced" ? Math.min(starredOf(faction), total) : 0;
   return [{
     faction,
     territoryId: among[0],
     sector: defaultSector(among[0]),
-    count: total
+    count: total,
+    ...stars > 0 ? { starred: stars } : null
   }];
 }
 function answerPrediction(seated, faction, turn) {
@@ -1512,6 +1536,7 @@ export {
   PREDICTION_TURNS,
   SETUP_SECONDS,
   TRAITORS_DEALT,
+  allReady,
   answerAdvisorPlacement,
   answerFremenPlacement,
   answerPrediction,
@@ -1528,6 +1553,8 @@ export {
   openingPosition,
   postureFor,
   settle,
+  starredInReserve,
+  starredOf,
   startingTreachery,
   traitorDeck,
   treacheryDeck

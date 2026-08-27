@@ -457,6 +457,14 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
             <Tally value={loading ? '–' : own?.spice ?? 0} word="spice"
               title="Your spice. Nobody else can see this." />
             <Tally value={player.reserves} word="reserves" title="Forces still to ship" />
+            {/* THE ELITES, BESIDE THE PLAIN. Advanced game only — the row has
+                no starred count in basic — and the word is the faction's own:
+                a Fremen player thinks in Fedaykin, not in "starred". */}
+            {(player.reservesStarred ?? 0) > 0 && (
+              <Tally value={`${player.reservesStarred}★`}
+                word={seat === 'emperor' ? 'Sardaukar' : seat === 'fremen' ? 'Fedaykin' : 'elite'}
+                title="Elite forces in reserve — worth two in battle" />
+            )}
           </div>
         </Panel>
 

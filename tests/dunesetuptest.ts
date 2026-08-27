@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs'
 import {
   openingPosition, answerFremenPlacement, answerPrediction, answerTraitor,
   defaultFremenPlacement, defaultTraitor, settle, isOutstanding,
-  distributeAmong, traitorDeck, treacheryDeck, defaultSector, startingTreachery,
+  distributeAmong, traitorDeck, treacheryDeck, defaultSector, startingTreachery, starredOf, allReady,
   answerAdvisorPlacement, defaultAdvisorPlacement, postureFor, answerable, defaultOrder,
   TRAITORS_DEALT, KEEPS_ALL_TRAITORS, ADVISOR_FACTION, SETUP_SECONDS, PREDICTION_TURNS,
 } from '@/lib/dune/setup'
@@ -57,8 +57,11 @@ const deal = (over: Partial<Parameters<typeof openingPosition>[0]> = {}) =>
   check('...which is not one number for everybody',
     new Set(seats.map(s => opening.secrets[s.playerId].spice)).size > 1, true)
 
+  // RESERVES SPLIT ELITE FROM PLAIN in the advanced game — the two numbers
+  // must still sum to the faction card's total, or a Sardaukar was minted or
+  // melted on the way in.
   const wrongReserves = opening.state.players.filter(p =>
-    p.reserves !== factionById(p.faction)!.forces.reserves)
+    p.reserves + (p.reservesStarred ?? 0) !== factionById(p.faction)!.forces.reserves)
   check('every seat starts with its faction\'s reserves', wrongReserves.map(p => p.faction), [])
 
   // EVERYBODY STARTS HOLDING ONE. It is dealt, not chosen, and it is the
@@ -123,8 +126,20 @@ const deal = (over: Partial<Parameters<typeof openingPosition>[0]> = {}) =>
   // THE EMPEROR SHIPS EVERYTHING IN, which is their whole opening problem.
   check('the Emperor starts with nothing on the planet',
     opening.state.forces.some(f => f.faction === 'emperor'), false)
-  check('...and all twenty in reserve',
-    opening.state.players.find(p => p.faction === 'emperor')?.reserves, 20)
+  const emperor = opening.state.players.find(p => p.faction === 'emperor')
+  check('...and all twenty in reserve, five of them Sardaukar',
+    [emperor?.reserves, emperor?.reservesStarred], [15, 5])
+  // THE FREMEN'S FEDAYKIN ARE IN THE PLACEMENT POOL, not the reserve — where
+  // they stand is the decision. Their reserve deals plain.
+  const fremen = opening.state.players.find(p => p.faction === 'fremen')
+  check('the Fremen reserve deals plain',
+    [fremen?.reserves, fremen?.reservesStarred ?? 0], [10, 0])
+  // THE BASIC GAME HAS NO ELITES ANYWHERE: every reserve is one plain number.
+  const basic = openingPosition({ seats, mode: 'basic', rng: counter(7) })
+  check('a basic deal splits nobody\'s reserve',
+    basic.state.players.filter(p => p.reservesStarred != null).map(p => p.faction), [])
+  check('...and the Emperor\'s twenty stay one number',
+    basic.state.players.find(p => p.faction === 'emperor')?.reserves, 20)
 
   // The Fremen's are a decision, so they are absent until answered.
   check('the Fremen have not been placed yet',
@@ -298,7 +313,7 @@ const deal = (over: Partial<Parameters<typeof openingPosition>[0]> = {}) =>
   const ok = answerFremenPlacement('fremen' as FactionId, [
     { territoryId: among[0], count: 6 },
     { territoryId: among[1], count: 4 },
-  ])
+  ], 'advanced')
   check('a legal split is taken', ok.ok, true)
   check('...as forces on the board',
     ok.ok ? ok.value.map(f => [f.territoryId, f.count]) : [],
@@ -308,49 +323,94 @@ const deal = (over: Partial<Parameters<typeof openingPosition>[0]> = {}) =>
       !(DUNE_TERRITORIES.find(t => t.id === f.territoryId)?.sectors ?? []).includes(f.sector)) : [], [])
 
   // ALL TEN, NOT SOME. Nine placed is a force left in a box.
-  const short = answerFremenPlacement('fremen' as FactionId, [{ territoryId: among[0], count: 9 }])
+  const short = answerFremenPlacement('fremen' as FactionId,
+    [{ territoryId: among[0], count: 9 }], 'advanced')
   check('nine is refused', short.ok ? 'taken' : short.refusal, 'wrong-total')
-  const over = answerFremenPlacement('fremen' as FactionId, [{ territoryId: among[0], count: 11 }])
+  const over = answerFremenPlacement('fremen' as FactionId,
+    [{ territoryId: among[0], count: 11 }], 'advanced')
   check('eleven is refused', over.ok ? 'taken' : over.refusal, 'wrong-total')
   // AND ONLY WHERE THE RULES SAY. Arrakeen is not one of the three.
   const elsewhere = answerFremenPlacement('fremen' as FactionId, [
     { territoryId: 'territory-13', count: 10 },
-  ])
+  ], 'advanced')
   check('a territory they may not use is refused',
     elsewhere.ok ? 'taken' : elsewhere.refusal, 'not-among')
   const negative = answerFremenPlacement('fremen' as FactionId, [
     { territoryId: among[0], count: 12 }, { territoryId: among[1], count: -2 },
-  ])
+  ], 'advanced')
   check('a negative stack is refused', negative.ok ? 'taken' : negative.refusal, 'negative')
   // A SECTOR THE TERRITORY DOES NOT HAVE is forces standing outside the storm's
   // reach, which is a way of standing outside the game.
   const badSector = answerFremenPlacement('fremen' as FactionId, [
     { territoryId: among[0], sector: 'sector-2', count: 10 },
-  ])
+  ], 'advanced')
   check('a sector that territory does not have is refused',
     badSector.ok ? 'taken' : badSector.refusal, 'not-among')
 
   // Empty stacks are dropped rather than written as zeroes on the board.
   const withZero = answerFremenPlacement('fremen' as FactionId, [
     { territoryId: among[0], count: 10 }, { territoryId: among[1], count: 0 },
-  ])
+  ], 'advanced')
   check('a territory given nothing gets no stack', withZero.ok ? withZero.value.length : -1, 1)
 
   // A FACTION THAT DOES NOT DISTRIBUTE HAS NOTHING TO ANSWER.
   const notThem = answerFremenPlacement('atreides' as FactionId, [
     { territoryId: among[0], count: 10 },
-  ])
+  ], 'advanced')
   check('a faction with a fixed start cannot place freely',
     notThem.ok ? 'taken' : notThem.refusal, 'not-outstanding')
 
+  // ── the Fedaykin ────────────────────────────────────────────────────────
+  // THREE OF THE TEN ARE ELITE, in the advanced game, and WHERE they stand is
+  // part of the answer — real pieces in the board model, not a note on the
+  // faction card.
+  check('the Fremen have three Fedaykin', starredOf('fremen' as FactionId), 3)
+  const starredOk = answerFremenPlacement('fremen' as FactionId, [
+    { territoryId: among[0], count: 6, starred: 2 },
+    { territoryId: among[1], count: 4, starred: 1 },
+  ], 'advanced')
+  check('a split with Fedaykin is taken', starredOk.ok, true)
+  check('...and the stars ride on the forces',
+    starredOk.ok ? starredOk.value.map(f => f.starred ?? 0) : [], [2, 1])
+  // FEWER THAN THREE IS LEGAL — an unplaced Fedaykin waits in reserve.
+  check('holding Fedaykin back is legal',
+    answerFremenPlacement('fremen' as FactionId,
+      [{ territoryId: among[0], count: 10, starred: 1 }], 'advanced').ok, true)
+  // MORE THAN THREE IS NOT, and neither is a stack more elite than it is big.
+  const fourStars = answerFremenPlacement('fremen' as FactionId, [
+    { territoryId: among[0], count: 10, starred: 4 },
+  ], 'advanced')
+  check('a fourth Fedaykin is refused',
+    fourStars.ok ? 'taken' : fourStars.refusal, 'too-many-starred')
+  const denseStars = answerFremenPlacement('fremen' as FactionId, [
+    { territoryId: among[0], count: 2, starred: 3 },
+    { territoryId: among[1], count: 8 },
+  ], 'advanced')
+  check('a stack more elite than it is big is refused',
+    denseStars.ok ? 'taken' : denseStars.refusal, 'too-many-starred')
+  // THE BASIC GAME HAS NO ELITES: every token is plain, and a starred
+  // placement is refused rather than quietly stripped.
+  const basicStars = answerFremenPlacement('fremen' as FactionId, [
+    { territoryId: among[0], count: 10, starred: 1 },
+  ], 'basic')
+  check('the basic game refuses a starred placement',
+    basicStars.ok ? 'taken' : basicStars.refusal, 'too-many-starred')
+  check('...but takes the same split plain',
+    answerFremenPlacement('fremen' as FactionId,
+      [{ territoryId: among[0], count: 10 }], 'basic').ok, true)
+
   // ── silence ─────────────────────────────────────────────────────────────
-  const silent = defaultFremenPlacement('fremen' as FactionId)
+  const silent = defaultFremenPlacement('fremen' as FactionId, 'advanced')
   check('silence places all ten', silent.reduce((n, f) => n + f.count, 0), total)
   check('...in the first territory they may use', silent[0]?.territoryId, among[0])
+  check('...Fedaykin included', silent[0]?.starred, 3)
   check('...which is a legal answer',
     answerFremenPlacement('fremen' as FactionId,
-      silent.map(f => ({ territoryId: f.territoryId, count: f.count }))).ok, true)
+      silent.map(f => ({ territoryId: f.territoryId, count: f.count, starred: f.starred })),
+      'advanced').ok, true)
   check('...in a sector that territory has', silent[0]?.sector, defaultSector(among[0]))
+  check('a basic-game silence places ten plain tokens',
+    defaultFremenPlacement('fremen' as FactionId, 'basic')[0]?.starred ?? 0, 0)
 }
 
 // ── the prediction ────────────────────────────────────────────────────────
@@ -526,16 +586,46 @@ const deal = (over: Partial<Parameters<typeof openingPosition>[0]> = {}) =>
   // asked. A player who has walked away leaves nobody able to push it along.
   check('an expired window takes the defaults',
     /const expired = typeof setup\.closesAt === 'number' && now >= setup\.closesAt/.test(answerCase), true)
-  check('...placing the Fremen where silence says',
-    /defaultFremenPlacement\(decision\.faction\)/.test(answerCase), true)
+  check('...placing the Fremen where silence says, in the game\'s own mode',
+    /defaultFremenPlacement\(decision\.faction, mode\)/.test(answerCase), true)
   check('...and keeping the first traitor dealt',
     /defaultTraitor\(row\.traitorsDealt \?\? \[\]\)/.test(answerCase), true)
+
+  // READY IS THE OTHER WAY THE WINDOW SHUTS, and it is the same event: the
+  // last Ready and the clock running out both close on the defaults path.
+  check('the last Ready closes exactly as expiry does',
+    /if \(expired \|\| everyoneReady\)/.test(answerCase), true)
+  check('...judged against every seated faction',
+    /allReady\(ready, seated\)/.test(answerCase), true)
+  check('...and a Ready that is not the last records itself and stops',
+    /action\.answer === 'ready'/.test(answerCase), true)
+  // A FEDAYKIN HELD BACK WALKS INTO RESERVE, elite and plain both adjusted so
+  // the sum stays what the card says.
+  check('an unplaced Fedaykin moves to the starred reserve',
+    /reserves: p\.reserves - held, reservesStarred: held/.test(answerCase), true)
 
   // SETUP ENDS BY THE KEY GOING, not by an empty list staying.
   check('the window is removed when the last answer lands',
     /delete nextState\.setup/.test(answerCase), true)
   check('...and the table stops waiting on anybody',
     /nextState\.awaiting = null/.test(answerCase), true)
+}
+
+// ── ready, as the lib carries it ──────────────────────────────────────────
+{
+  const four = FACTION_IDS.slice(0, 4)
+  check('nobody ready is not all ready', allReady([], four), false)
+  check('some ready is not all ready', allReady(four.slice(0, 3), four), false)
+  check('every seat ready is all ready', allReady([...four], four), true)
+  // A GHOST'S READY DOES NOT COUNT FOR A SEAT. Only the seated factions are
+  // polled — a stray name in the list neither helps nor blocks.
+  check('a faction not at the table cannot make it ready',
+    allReady(['bene-gesserit' as FactionId], four), false)
+  check('...nor stop it being ready',
+    allReady([...four, 'bene-gesserit' as FactionId], four), true)
+  // AN EMPTY TABLE IS NEVER READY — vacuous truth would close setup on a
+  // match with nobody in it.
+  check('an empty table is never ready', allReady([], []), false)
 }
 
 // ── the Bene Gesserit's one force ─────────────────────────────────────────
@@ -636,7 +726,7 @@ const deal = (over: Partial<Parameters<typeof openingPosition>[0]> = {}) =>
   // THE FREMEN'S TEN ARE ON THE BOARD BY NOW, which is the whole point of the
   // ordering: the same territory is an advisor's or a fighter's depending on
   // whether they have already placed there.
-  const fremenThere = defaultFremenPlacement('fremen' as FactionId)
+  const fremenThere = defaultFremenPlacement('fremen' as FactionId, 'advanced')
   const afterThem = answerAdvisorPlacement(ADVISOR_FACTION, { territoryId: SIETCH }, fremenThere)
   check('placing where the Fremen just went makes an advisor',
     afterThem.ok ? afterThem.value[0].posture : null, 'advisor')

@@ -39,7 +39,8 @@ import { prescienceFor, withReveal, PRESCIENT_FACTION } from '../_shared/dunePre
 import {
   openingPosition, answerFremenPlacement, answerPrediction, answerTraitor,
   answerAdvisorPlacement, defaultFremenPlacement, defaultTraitor,
-  defaultAdvisorPlacement, defaultOrder, settle, answerable, SETUP_SECONDS,
+  defaultAdvisorPlacement, defaultOrder, settle, answerable, allReady,
+  starredOf, SETUP_SECONDS,
 } from '../_shared/duneSetup.gen.ts'
 import {
   charityGrant, isEligibleForCharity, readSpice, CHARITY_TOPS_UP_TO, CHARITY_WINDOW_MS,
@@ -425,17 +426,38 @@ Deno.serve(async req => {
     }
 
     // ── Answer a setup decision ──────────────────────────────────────────────
-    // Three kinds, answered independently and in any order: the Fremen's ten
-    // forces, the Bene Gesserit's prediction, and every other seat keeping one
-    // of the four traitors they were dealt. See lib/dune/setup for why each
-    // pauses setup rather than happening after it.
+    // Four kinds, answered independently and in any order — the Fremen's ten,
+    // the Bene Gesserit's prediction and advisor, and every other seat keeping
+    // one of the four traitors dealt — plus 'ready', which is not a decision
+    // but a declaration: when every seat has said it, the window closes and
+    // whatever is left takes its default. See lib/dune/setup for why each
+    // decision pauses setup rather than happening after it.
     case 'SETUP_ANSWER': {
-      const setup = state.setup as { closesAt?: number; outstanding: { kind: string; faction: string }[] } | undefined
+      const setup = state.setup as {
+        closesAt?: number
+        outstanding: { kind: string; faction: string }[]
+        ready?: string[]
+      } | undefined
       if (!setup) return json({ error: 'setup is not open', code: 'no-setup' }, 409)
+      const mode = state.mode === 'basic' ? 'basic' as const : 'advanced' as const
 
       let outstanding = setup.outstanding
+      let ready = setup.ready ?? []
       let nextState: Record<string, unknown> = { ...state }
       const nextSecrets: Record<string, unknown> = {}
+
+      // ── READY: a declaration, not a decision ───────────────────────────────
+      // Any seated player may say they are done, decisions outstanding or not.
+      // It is recorded before the expiry check on purpose: the last Ready and
+      // the clock running out are the same event — everything left takes its
+      // default — and handling them as one path is what keeps them agreeing.
+      // Ready does not lock the seat out; answers still land until the window
+      // actually closes.
+      if (action.answer === 'ready') {
+        if (!ready.includes(myFaction)) ready = [...ready, myFaction]
+      }
+      const seated = ((state.players ?? []) as { faction: string }[]).map(p => p.faction)
+      const everyoneReady = allReady(ready, seated)
 
       // The rows this may write back, read with the service role. Two of the
       // three answers change a seat's own row — the traitor kept, and the Bene
@@ -447,13 +469,13 @@ Deno.serve(async req => {
       const rows: Record<string, Record<string, unknown>> = Object.fromEntries(
         (setupSecrets ?? []).map((r) => [r.player_id as string, (r.data ?? {}) as Record<string, unknown>]))
 
-      // ── PAST THE DEADLINE, EVERYTHING OUTSTANDING TAKES ITS DEFAULT ────────
-      // Whoever asked, and whatever they asked for. The window has shut, so the
-      // answer that stands is the one silence means — see lib/dune/setup for
-      // what each of those is and why. Any seat may push it along, because a
-      // player who has walked away leaves nobody else able to.
+      // ── CLOSING: THE LAST READY AND THE CLOCK ARE ONE EVENT ────────────────
+      // Either way the window shuts and everything outstanding takes its
+      // default — see lib/dune/setup for what each of those is and why. On
+      // expiry, whoever asked and whatever they asked for pushes it along,
+      // because a player who has walked away leaves nobody else able to.
       const expired = typeof setup.closesAt === 'number' && now >= setup.closesAt
-      if (expired) {
+      if (expired || everyoneReady) {
         let forces = [...((state.forces ?? []) as unknown[])]
         // IN DEPENDENCY ORDER, which is what defaultOrder is for. The advisor's
         // own default reads the board the Fremen's writes: placed first, it
@@ -462,7 +484,7 @@ Deno.serve(async req => {
         // still being laid out.
         for (const decision of defaultOrder(outstanding)) {
           if (decision.kind === 'fremen-placement') {
-            forces = [...forces, ...defaultFremenPlacement(decision.faction)]
+            forces = [...forces, ...defaultFremenPlacement(decision.faction, mode)]
           } else if (decision.kind === 'advisor-placement') {
             forces = [...forces, ...defaultAdvisorPlacement(decision.faction, forces)]
           } else if (decision.kind === 'traitor') {
@@ -477,6 +499,8 @@ Deno.serve(async req => {
         }
         nextState = { ...state, forces }
         outstanding = []
+      } else if (action.answer === 'ready') {
+        // Recorded above; nothing else changes until the last seat says it.
       } else {
         // ANSWERABLE, not merely owed. The advisor placement is owed from the
         // moment the game is dealt and cannot be answered until the Fremen have
@@ -492,9 +516,25 @@ Deno.serve(async req => {
         }
 
         if (action.answer === 'fremen-placement') {
-          const placed = answerFremenPlacement(myFaction, action.at ?? [])
+          const placed = answerFremenPlacement(myFaction, action.at ?? [], mode)
           if (!placed.ok) return json({ error: 'that placement is not legal', code: placed.refusal }, 409)
-          nextState = { ...state, forces: [...((state.forces ?? []) as unknown[]), ...placed.value] }
+          // AN UNPLACED FEDAYKIN WALKS BACK INTO RESERVE. The reserve total
+          // does not change — the elite takes the place of a plain token, the
+          // same swap a player makes with the physical pieces — so the split
+          // moves and the sum stays ten.
+          const placedStars = placed.value.reduce(
+            (n: number, f: { starred?: number }) => n + (f.starred ?? 0), 0)
+          const held = mode === 'advanced' ? starredOf(myFaction) - placedStars : 0
+          const players = held > 0
+            ? ((state.players ?? []) as { faction: string; reserves: number }[]).map(p =>
+                p.faction === myFaction
+                  ? { ...p, reserves: p.reserves - held, reservesStarred: held }
+                  : p)
+            : state.players
+          nextState = {
+            ...state, players,
+            forces: [...((state.forces ?? []) as unknown[]), ...placed.value],
+          }
         } else if (action.answer === 'advisor-placement') {
           // AGAINST THE BOARD AS IT STANDS, which by now has the Fremen on it.
           // Whether this force is an advisor or a fighter is not a choice —
@@ -533,14 +573,15 @@ Deno.serve(async req => {
         outstanding = settle(outstanding, action.answer, myFaction)
       }
 
-      // SETUP IS OVER WHEN THE LAST ONE IS IN, and then the key goes rather
-      // than staying as an empty list — an empty window still reads as a window
-      // to anything checking whether setup is running.
-      if (outstanding.length === 0) {
+      // SETUP IS OVER WHEN THE LAST ANSWER IS IN OR THE LAST SEAT IS READY,
+      // and then the key goes rather than staying as an empty list — an empty
+      // window still reads as a window to anything checking whether setup is
+      // running.
+      if (outstanding.length === 0 || everyoneReady) {
         delete nextState.setup
         nextState.awaiting = null
       } else {
-        nextState.setup = { ...setup, outstanding }
+        nextState.setup = { ...setup, outstanding, ready }
         nextState.awaiting = outstanding[0].faction
       }
 
@@ -552,7 +593,7 @@ Deno.serve(async req => {
       })
       if (error) return json({ error: error.message }, 500)
       if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
-      return json({ outstanding, version: data[0].version })
+      return json({ outstanding, ready, version: data[0].version })
     }
 
     // ── Claim charity ────────────────────────────────────────────────────────

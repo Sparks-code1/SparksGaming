@@ -108,8 +108,17 @@ export const TRAITORS_DEALT = 4
 export const KEEPS_ALL_TRAITORS: FactionId = 'harkonnen'
 /** The faction whose forces can stand somewhere without holding it. */
 export const ADVISOR_FACTION: FactionId = 'bene-gesserit'
-/** How long the setup window stays open before the defaults apply, in seconds. */
-export const SETUP_SECONDS = 180
+/**
+ * How long the setup window stays open before the defaults apply, in seconds.
+ *
+ * A BACKSTOP, not the way setup normally ends. Every seat has a Ready button
+ * and the window closes the moment the last one presses it — see the `ready`
+ * list below — so a table that is done in ninety seconds plays in ninety
+ * seconds. The clock exists for the seat that walked away, and seven minutes
+ * is long enough to read four traitor cards and think about ten forces without
+ * ever being the thing the other five are waiting on.
+ */
+export const SETUP_SECONDS = 420
 
 /** A seat, as the roster has it. */
 export interface SetupSeat {
@@ -147,6 +156,26 @@ export interface SetupWindow {
   /** Stamped by the caller, like every deadline here. */
   closesAt?: number
   outstanding: SetupDecision[]
+  /**
+   * Seats that have declared themselves done.
+   *
+   * THE ORDINARY WAY SETUP ENDS: when every seated faction is here, the window
+   * closes and anything still outstanding takes its default — the clock is
+   * only the backstop for a seat that never presses anything. Public, because
+   * "who are we waiting on" is the whole question; and a list of factions
+   * rather than a count, so the table can see WHO.
+   *
+   * Ready does not lock a seat out. A seat may go on answering after pressing
+   * it — ready means "close without waiting for me", not "refuse me".
+   */
+  ready?: FactionId[]
+}
+
+/** Whether every seated faction has pressed Ready. */
+export function allReady(
+  ready: readonly FactionId[] | undefined, seated: readonly FactionId[],
+): boolean {
+  return seated.length > 0 && seated.every(f => (ready ?? []).includes(f))
 }
 
 /** One seat's private opening holdings. */
@@ -248,6 +277,28 @@ export function distributeAmong(faction: FactionId): string[] {
   return placement?.kind === 'distribute' ? [...placement.among] : []
 }
 
+/** How many of a faction's forces are elite — Sardaukar, Fedaykin. */
+export function starredOf(faction: FactionId): number {
+  return factionById(faction)?.forces.starred ?? 0
+}
+
+/**
+ * Where a faction's elites START: with the placement pool, or in reserve.
+ *
+ * The Fremen's three Fedaykin are among the ten they distribute — choosing
+ * where those three stand is the point of marking them — so at the deal their
+ * reserve holds none, and whatever they do NOT place walks back into reserve.
+ * The Emperor's five Sardaukar have nowhere to be but reserve, since he starts
+ * with nothing on the planet. Read off the placement kind rather than the
+ * faction name, so a new faction with elites lands on the right side of this
+ * without editing it.
+ */
+export function starredInReserve(faction: FactionId, mode: GameMode): number {
+  if (mode !== 'advanced') return 0
+  const placement = factionById(faction)?.forces.placement
+  return placement?.kind === 'distribute' ? 0 : starredOf(faction)
+}
+
 /**
  * The whole opening position.
  *
@@ -273,16 +324,26 @@ export function openingPosition(input: {
   const { seats, mode, rng } = input
   const host = seats.find(s => s.playerId === input.host)?.faction ?? null
 
-  const players: DunePlayerPublic[] = seats.map(s => ({
-    faction: s.faction,
-    seat: s.seat,
-    reserves: factionById(s.faction)?.forces.reserves ?? 0,
-    // HOW MANY, WHICH IS PUBLIC — the cards themselves are dealt below into
-    // that seat's own row. Everyone starts holding one, so everyone can see
-    // that everyone starts holding one.
-    handCount: startingTreachery(s.faction),
-    ally: null,
-  }))
+  const players: DunePlayerPublic[] = seats.map(s => {
+    // ELITES OUT OF THE PLAIN COUNT, in the advanced game. The star tokens are
+    // pieces beside the others, so twenty reserves of which five are Sardaukar
+    // is published as 15 + 5 — one total split two ways would let the two
+    // numbers disagree the first time only one of them was updated. The
+    // Fremen's Fedaykin are in their placement pool, not their reserve; see
+    // starredInReserve.
+    const inReserve = starredInReserve(s.faction, mode)
+    return {
+      faction: s.faction,
+      seat: s.seat,
+      reserves: (factionById(s.faction)?.forces.reserves ?? 0) - inReserve,
+      ...(inReserve > 0 ? { reservesStarred: inReserve } : null),
+      // HOW MANY, WHICH IS PUBLIC — the cards themselves are dealt below into
+      // that seat's own row. Everyone starts holding one, so everyone can see
+      // that everyone starts holding one.
+      handCount: startingTreachery(s.faction),
+      ally: null,
+    }
+  })
 
   // The forces the rules place. The Fremen's are absent until answered — see
   // the note at the top of this file.
@@ -383,6 +444,7 @@ export type SetupRefusal =
   | 'wrong-total'
   | 'not-among'
   | 'negative'
+  | 'too-many-starred'
   | 'unknown-faction'
   | 'predicting-yourself'
   | 'turn-out-of-range'
@@ -399,12 +461,18 @@ export const PREDICTION_TURNS = { min: 1, max: 10 } as const
  * The Fremen's ten, across the three territories they may use.
  *
  * VALIDATED AGAINST THE FACTION DATA, not against a list written here: the
- * three territories and the count both come from factions.ts, so a rules change
- * moves them in one place.
+ * three territories, the count and the Fedaykin all come from factions.ts, so
+ * a rules change moves them in one place.
+ *
+ * STARRED IS WHICH OF THE COUNT ARE FEDAYKIN, per entry, and only the advanced
+ * game has them — the basic game plays every token plain and refuses a starred
+ * placement outright. Fewer than all three is legal: an unplaced Fedaykin
+ * walks back into reserve, which the caller settles from what this returns.
  */
 export function answerFremenPlacement(
   faction: FactionId,
-  chosen: readonly { territoryId: string; sector?: string; count: number }[],
+  chosen: readonly { territoryId: string; sector?: string; count: number; starred?: number }[],
+  mode: GameMode,
 ): SetupAnswer<Force[]> {
   const among = distributeAmong(faction)
   if (among.length === 0) return refuse('not-outstanding')
@@ -412,6 +480,9 @@ export function answerFremenPlacement(
 
   if (chosen.some(c => !among.includes(c.territoryId))) return refuse('not-among')
   if (chosen.some(c => !Number.isInteger(c.count) || c.count < 0)) return refuse('negative')
+  if (chosen.some(c => c.starred != null && (!Number.isInteger(c.starred) || c.starred < 0))) {
+    return refuse('negative')
+  }
   // A SECTOR THE TERRITORY DOES NOT HAVE would put forces where the storm
   // cannot find them, which is a way of standing outside the game.
   if (chosen.some(c => c.sector
@@ -419,6 +490,11 @@ export function answerFremenPlacement(
     return refuse('not-among')
   }
   if (chosen.reduce((n, c) => n + c.count, 0) !== total) return refuse('wrong-total')
+  // A STAR IS ONE OF THE COUNT, not on top of it: three forces of which four
+  // are elite is not a stack anybody can put on a table.
+  if (chosen.some(c => (c.starred ?? 0) > c.count)) return refuse('too-many-starred')
+  const stars = chosen.reduce((n, c) => n + (c.starred ?? 0), 0)
+  if (stars > (mode === 'advanced' ? starredOf(faction) : 0)) return refuse('too-many-starred')
 
   return {
     ok: true,
@@ -427,20 +503,28 @@ export function answerFremenPlacement(
       territoryId: c.territoryId as TerritoryId,
       sector: (c.sector ?? defaultSector(c.territoryId)) as SectorId,
       count: c.count,
+      ...((c.starred ?? 0) > 0 ? { starred: c.starred } : null),
     })),
   }
 }
 
-/** Silence: all of them in the first territory they may use — Sietch Tabr. */
-export function defaultFremenPlacement(faction: FactionId): Force[] {
+/**
+ * Silence: all of them in the first territory they may use — Sietch Tabr —
+ * Fedaykin included, in the advanced game. A default that held the elites
+ * back would be making a real decision on the silent player's behalf, where
+ * "everything in the stronghold" is the least opinionated stack there is.
+ */
+export function defaultFremenPlacement(faction: FactionId, mode: GameMode): Force[] {
   const among = distributeAmong(faction)
   const total = factionById(faction)?.forces.onPlanet ?? 0
   if (among.length === 0 || total <= 0) return []
+  const stars = mode === 'advanced' ? Math.min(starredOf(faction), total) : 0
   return [{
     faction,
     territoryId: among[0] as TerritoryId,
     sector: defaultSector(among[0]),
     count: total,
+    ...(stars > 0 ? { starred: stars } : null),
   }]
 }
 

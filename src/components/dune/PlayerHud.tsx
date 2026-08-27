@@ -42,6 +42,24 @@ export interface PlayerHudProps {
   awaiting: FactionId | null
   /** This client's own seat, marked so a player can find themselves. */
   seat?: FactionId | null
+  /**
+   * Seats that have declared themselves done with setup. Public, off the
+   * shared row's setup window; absent outside setup.
+   */
+  ready?: readonly FactionId[]
+  /**
+   * Declare THIS seat done. Present only while setup runs and this client
+   * holds a seat — the button draws only then, in the HUD's bottom corner,
+   * and disables itself once pressed (the server keeps the list; there is no
+   * un-ready).
+   */
+  onReady?: (() => void) | null
+}
+
+/** What a faction's elite forces are called. Display copy, not rules data. */
+const ELITE: Partial<Record<FactionId, string>> = {
+  emperor: 'Sardaukar',
+  fremen: 'Fedaykin',
 }
 
 /**
@@ -51,7 +69,10 @@ export interface PlayerHudProps {
  * table of numbers. The faction's own mark sits in it — the same mark as on its
  * seat on the board, so the colour is not doing the identifying alone.
  */
-function Bubble({ row, awaiting, own }: { row: HudRow; awaiting: boolean; own: boolean }) {
+function Bubble(
+  { row, awaiting, own, ready }:
+  { row: HudRow; awaiting: boolean; own: boolean; ready: boolean },
+) {
   const look = FACTION_LOOK[row.faction]
   return (
     <div data-faction={row.faction} data-awaiting={awaiting || undefined}
@@ -82,11 +103,50 @@ function Bubble({ row, awaiting, own }: { row: HudRow; awaiting: boolean; own: b
             WAITING ON THEM
           </span>
         )}
+        {/* SAID IN WORDS, like the ring: during setup the question the whole
+            table keeps asking is who has not pressed the button yet. */}
+        {ready && (
+          <span data-ready="yes"
+            style={{ display: 'block', fontSize: 9.5, letterSpacing: 1, color: '#27AE60' }}>
+            READY
+          </span>
+        )}
       </span>
       <Stat label="forces" value={row.forcesOnBoard} title="Forces on the board" />
       <Stat label="holds" value={row.strongholds} title="Strongholds held" />
+      <Reserves row={row} />
       <Stat label="cards" value={row.handCount} title="Treachery cards held" />
     </div>
+  )
+}
+
+/**
+ * Reserves, with the elites beside the plain rather than inside them.
+ *
+ * 15+5★ says something 20 cannot: the Emperor's five Sardaukar are pieces the
+ * whole table can see waiting, and a battle is priced differently against a
+ * reserve that is a quarter elite. Advanced game only — in the basic game the
+ * row has no starred count and this is one plain number.
+ */
+function Reserves({ row }: { row: HudRow }) {
+  const starred = row.reservesStarred ?? 0
+  const elite = ELITE[row.faction] ?? 'elite forces'
+  return (
+    <span data-stat="reserve" data-starred={starred > 0 ? starred : undefined}
+      title={starred > 0
+        ? `Forces in reserve, of which ${starred} are ${elite}`
+        : 'Forces in reserve'}
+      style={{ textAlign: 'right', minWidth: 30, whiteSpace: 'nowrap' }}>
+      <b style={{ fontSize: 13, fontFamily: "Georgia, 'Times New Roman', serif" }}>
+        {row.reserves}
+        {starred > 0 && (
+          <span style={{ color: '#f0c93f', fontSize: 11 }}>+{starred}★</span>
+        )}
+      </b>
+      <span style={{ opacity: 0.5, fontSize: 9, display: 'block', letterSpacing: 0.5 }}>
+        reserve
+      </span>
+    </span>
   )
 }
 
@@ -101,8 +161,9 @@ function Stat({ label, value, title }: { label: string; value: number; title: st
   )
 }
 
-export function PlayerHud({ rows, awaiting, seat }: PlayerHudProps) {
+export function PlayerHud({ rows, awaiting, seat, ready = [], onReady = null }: PlayerHudProps) {
   const ordered = pairAllies(rows)
+  const meReady = !!seat && ready.includes(seat)
   return (
     <aside data-layer="player-hud" aria-label="Players"
       style={{
@@ -131,7 +192,8 @@ export function PlayerHud({ rows, awaiting, seat }: PlayerHudProps) {
           return (
             <div key={row.faction} data-pair={opensPair || closesPair ? 'yes' : undefined}
               style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <Bubble row={row} awaiting={row.faction === awaiting} own={row.faction === seat} />
+              <Bubble row={row} awaiting={row.faction === awaiting} own={row.faction === seat}
+                ready={ready.includes(row.faction)} />
               {/* The join: a short link in BOTH colours, between the two bubbles
                   it belongs to. An alliance is a pair, and a mark on one bubble
                   alone would say the wrong thing. */}
@@ -154,6 +216,28 @@ export function PlayerHud({ rows, awaiting, seat }: PlayerHudProps) {
           )
         })}
       </div>
+
+      {/* THE WAY SETUP NORMALLY ENDS. Bottom right of the column the players
+          are listed in, because pressing it is a statement about the list:
+          when every bubble above says READY, the game starts. It disables
+          rather than disappears once pressed — a button that vanished would
+          leave its presser wondering whether it registered. */}
+      {onReady && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '2px 9px 9px' }}>
+          <button type="button" data-layer="setup-ready" onClick={onReady} disabled={meReady}
+            aria-label={meReady ? 'You are ready' : 'Ready — done with setup'}
+            style={{
+              font: "600 12.5px Georgia, 'Times New Roman', serif",
+              padding: '7px 18px', borderRadius: 6, letterSpacing: 0.5,
+              cursor: meReady ? 'default' : 'pointer',
+              border: `1px solid ${meReady ? '#27AE60' : '#c9542a'}`,
+              background: meReady ? 'transparent' : '#c9542a',
+              color: meReady ? '#27AE60' : '#fff',
+            }}>
+            {meReady ? '✓ Ready' : 'Ready'}
+          </button>
+        </div>
+      )}
     </aside>
   )
 }

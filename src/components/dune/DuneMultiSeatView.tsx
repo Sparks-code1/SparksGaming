@@ -21,7 +21,7 @@ import { DuneGameScreen } from './DuneGameScreen'
 import { DevSeatSwitcher } from './DevSeatSwitcher'
 import { WormPlacementPanel } from './WormPlacementPanel'
 import { dispatchDuneAction } from '@/lib/dune/duneDispatch'
-import type { PlacedForce } from './SetupPanel'
+import type { PlacedForce } from './SetupWindow'
 import { factionById } from '@/data/dune/factions'
 import { FACTION_LOOK } from './SeatLayer'
 import type { BidRefusal } from '@/lib/dune/bidding'
@@ -375,6 +375,9 @@ export default function DuneMultiSeatView() {
         void send(session, 'SETUP_ANSWER', {
           answer: 'advisor-placement', territoryId, ...(sector ? { sector } : null),
         }, 'placed your advisor.'),
+      onReady: () =>
+        void send(session, 'SETUP_ANSWER', { answer: 'ready' },
+          'ready — the game starts when every seat is.'),
       busy,
       refused,
     }

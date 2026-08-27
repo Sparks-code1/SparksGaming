@@ -158,6 +158,7 @@ export default function DuneGameScreenPreview() {
   const [outstanding, setOutstanding] = useState<SetupDecision[]>(
     () => dealt?.state.setup.outstanding ?? [])
   const [placedForces, setPlacedForces] = useState<Force[]>([])
+  const [readyLocal, setReadyLocal] = useState<FactionId[]>([])
   const settling = !!dealt && outstanding.length > 0
   const mySeatId = dealt && seat
     ? STATE.players.findIndex(p => p.faction === seat) + 1
@@ -171,7 +172,7 @@ export default function DuneGameScreenPreview() {
   const setupState: DuneGameState & { setup?: SetupWindow } = dealt
     ? { ...dealt.state, mode: 'advanced',
         forces: [...dealt.state.forces, ...placedForces],
-        setup: { ...dealt.state.setup, outstanding } }
+        setup: { ...dealt.state.setup, outstanding, ready: readyLocal } }
     : { ...STATE, mode }
 
   return (
@@ -191,6 +192,7 @@ export default function DuneGameScreenPreview() {
               territoryId: a.territoryId as Force['territoryId'],
               sector: (a.sector ?? defaultSector(a.territoryId)) as Force['sector'],
               count: a.count,
+              ...((a.starred ?? 0) > 0 ? { starred: a.starred } : null),
             }))),
           onPrediction: () => answer('prediction'),
           onTraitor: () => answer('traitor'),
@@ -201,6 +203,10 @@ export default function DuneGameScreenPreview() {
             count: 1,
             posture: postureFor([...dealt.state.forces, ...placedForces], territoryId, seat),
           }]),
+          // Locally, ready marks this seat and nothing more — the other five
+          // are simulated, so the window closing on unanimity is the server's
+          // half and lives in dunesetuptest, not here.
+          onReady: () => setReadyLocal(r => seat && !r.includes(seat) ? [...r, seat] : r),
         } : null}
         bidding={running
           ? {
@@ -226,7 +232,7 @@ export default function DuneGameScreenPreview() {
         && seat !== 'fremen' && (
         <button type="button"
           onClick={() => {
-            setPlacedForces(f => [...f, ...defaultFremenPlacement('fremen')])
+            setPlacedForces(f => [...f, ...defaultFremenPlacement('fremen', 'advanced')])
             setOutstanding(o => settle(o, 'fremen-placement', 'fremen'))
           }}
           style={{
