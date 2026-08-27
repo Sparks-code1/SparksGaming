@@ -103,6 +103,17 @@ export interface DuneGameScreenProps {
    *  power. Passed straight through — see ChatPanel.seatNames. */
   seatNames?: Readonly<Record<string, string>>
   /**
+   * The caller's notice board — setup progress, the storm report, the advance
+   * button — rendered at the TOP OF THE HUD COLUMN, in flow.
+   *
+   * A prop rather than a floating layer of the caller's own, and that is the
+   * point: the caller cannot know what the column holds or where its controls
+   * sit, so anything it pins over the corner will eventually sit on one. In
+   * flow it pushes; it cannot cover. The Ready button spent a day under an
+   * overlay for exactly this.
+   */
+  notices?: React.ReactNode
+  /**
    * The live auction, or null.
    *
    * Everything about it except `revealed` is public. `revealed` is the Atreides
@@ -152,7 +163,7 @@ export interface DuneGameScreenProps {
 }
 
 export function DuneGameScreen({
-  state, seat, own, chat, onSend, talkingTo, seatNames,
+  state, seat, own, chat, onSend, talkingTo, seatNames, notices,
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
   const [chatShut, setChatShut] = useState(false)
@@ -426,6 +437,10 @@ export function DuneGameScreen({
           display: 'flex', flexDirection: 'column', minHeight: 0,
           borderLeft: '1px solid #ffffff1f', background: '#131c2e',
         }}>
+          {/* THE NOTICE BOARD FIRST: transient, and gone entirely most of
+              the game, so the players keep the top the rest of the time. */}
+          {notices}
+
           {/* READY LIVES WITH THE PLAYERS, because it is a statement about the
               list: when every bubble says READY, the game starts. Wired only
               while setup runs and this client holds a seat. */}

@@ -73,7 +73,9 @@ const at = (phase: GamePhase, over: Partial<AdvanceState> = {}): AdvanceState =>
 
   // SETUP PARKS EVERYTHING. It is not a phase, but until it closes the match
   // has not started and there is nothing legal to advance to.
-  check('setup holds the turn', advanceHold(at('Storm', { setup: {} }), now)?.code, 'setup-not-finished')
+  check('setup holds the turn',
+    advanceHold(at('Storm', { setup: { closesAt: now + 60_000 } }), now),
+    { code: 'setup-not-finished', until: now + 60_000 })
   // AND SO DOES THE END. A finished game has no next phase.
   check('...and so does a winner',
     advanceHold(at('Storm', { winner: { factions: [], reason: 'strongholds', turn: 10 } }), now)?.code,
@@ -365,6 +367,47 @@ const at = (phase: GamePhase, over: Partial<AdvanceState> = {}): AdvanceState =>
 // ── the look-window is long enough to look at ─────────────────────────────
 check('the phase window is seconds, not minutes', PHASE_SECONDS >= 10 && PHASE_SECONDS <= 60, true)
 check('a game is ten turns', TURN_LIMIT, 10)
+
+// ── the notice board cannot cover the controls ────────────────────────────
+//
+// WHY THIS EXISTS. The notices were a fixed overlay pinned to the top right —
+// the corner the HUD column occupies — and being opaque they sat ON the Ready
+// button of any table small enough to keep it high in the column. Nobody could
+// press Ready, so no answer reached the server, so the expired window was
+// never pushed closed, so the Storm never advanced: one box over one button
+// wedged a whole match, reported as "storm won't advance".
+{
+  const match = code('src/components/dune/DuneMatchScreen.tsx')
+  const game = code('src/components/dune/DuneGameScreen.tsx')
+
+  // IN FLOW, NOT PINNED. Siblings in flow have no z-order: the board can push
+  // the HUD down but can never sit on it.
+  const board = match.slice(match.indexOf('const notices ='), match.indexOf('data-layer="dune-notices"'))
+  check('the notice board is there to check', board.length > 50, true)
+  check('the notices are not pinned over the column',
+    /position: 'fixed'/.test(match.slice(match.indexOf('const notices ='),
+      match.indexOf('const notices =') + 2200)), false)
+  check('...they are handed to the screen instead', /notices=\{notices\}/.test(match), true)
+  // ABOVE THE PLAYERS, inside their column: pushed-down controls stay
+  // reachable; covered ones do not.
+  const column = game.slice(game.indexOf('{notices}'), game.indexOf('<PlayerHud'))
+  check('the screen seats them above the players', column.length > 0 && column.length < 600, true)
+
+  // ── AND AN EXPIRED WINDOW CAN ALWAYS BE PUSHED ──────────────────────────
+  // Once every reachable seat has answered and one seat has walked away, the
+  // clock expires with nobody holding a button that still works — Ready is
+  // disabled once pressed. The push is a repeated 'ready', which the server
+  // accepts idempotently and which triggers the expired close like any other
+  // answer. Scoped to the notices, where the button lives.
+  const notice = match.slice(match.indexOf('const notices ='), match.indexOf('<DuneGameScreen'))
+  // THE WHOLE GUARD, brace included: `false &&` prefixed to it left the
+  // substring intact and the button dead, and the spectator clause appears
+  // in the auction block too, so each piece alone proves nothing.
+  check('an expired setup offers the push',
+    /\{setup\.closesAt != null && now >= setup\.closesAt && !spectating && \(/.test(notice), true)
+  check('...which is a repeated ready',
+    /send\(\{ type: 'SETUP_ANSWER', answer: 'ready' \}\)/.test(notice), true)
+}
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 

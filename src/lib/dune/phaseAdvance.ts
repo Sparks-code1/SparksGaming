@@ -81,7 +81,7 @@ export interface AdvanceState {
   forces: Force[]
   players: DunePlayerPublic[]
   spiceOnBoard?: Record<string, number>
-  setup?: unknown
+  setup?: { closesAt?: number }
   winner?: unknown
   stormMoved?: number
   spiceBlow?: { closesAt?: number }
@@ -119,7 +119,10 @@ export interface AdvanceHold {
 
 export function advanceHold(state: AdvanceState, now: number): AdvanceHold | null {
   // Setup is not a phase, but it parks the match at Storm until it closes.
-  if (state.setup) return { code: 'setup-not-finished' }
+  // WITH ITS DEADLINE, because past it the hold is answerable: the server
+  // closes an expired window on any setup answer at all, so `until` is when
+  // "push the game along" becomes a button somebody can be offered.
+  if (state.setup) return { code: 'setup-not-finished', until: state.setup.closesAt }
   if (state.winner) return { code: 'game-over' }
 
   if (state.phase === 'Spice Blow and Nexus') {

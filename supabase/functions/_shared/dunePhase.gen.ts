@@ -1214,7 +1214,7 @@ function phaseAfter(phase) {
   return { phase: DUNE_PHASES[last ? 0 : i + 1], newTurn: last };
 }
 function advanceHold(state, now) {
-  if (state.setup) return { code: "setup-not-finished" };
+  if (state.setup) return { code: "setup-not-finished", until: state.setup.closesAt };
   if (state.winner) return { code: "game-over" };
   if (state.phase === "Spice Blow and Nexus") {
     if (state.spiceBlow) return { code: "worms-pending", until: state.spiceBlow.closesAt };

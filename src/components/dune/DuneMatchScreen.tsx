@@ -482,143 +482,29 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
   const spectating = seat === null
   const notSeated = !!row && !seatedIn(row, seat?.faction ?? null)
 
-  return (
-    <>
-      <DuneGameScreen
-        state={row ?? EMPTY}
-        seat={seat?.faction ?? null}
-        own={own}
-        chat={chat}
-        onSend={seat ? (text: string, scope: ChatScope) => void speak(text, scope) : undefined}
-        talkingTo={seat ? others : []}
-        seatNames={seatNames}
-        now={now}
-        setup={seat ? setupAnswers : null}
-        charity={charityWindow && seat ? {
-          onClaim: () => void claimCharity(),
-          onPass: passCharity,
-          busy,
-          refused,
-        } : null}
-        bidding={auction && seat ? {
-          ask: auction.ask,
-          order: auction.carry.order,
-          toAct: auction.carry.toAct,
-          passed: auction.carry.passed,
-          closesAt: auction.closesAt,
-          refusal: bidRefusal,
-          onBid: (spice: number) => void bid({ kind: 'bid', spice }),
-          onPass: () => void bid({ kind: 'pass' }),
-        } : null} />
-
-      {/* THE WAY OUT.
-          Beside everything else in the corner, and it CONFIRMS FIRST: it sits
-          near controls that get pressed in a hurry, and leaving mid-auction
-          because a finger slipped is the sort of thing that ends an evening.
-          The game is never lost either way — the match runs on without you and
-          the seat stays yours, which is what the confirmation says rather than
-          leaving somebody to guess. Risk's "← Menu" works the same way. */}
-      {/* TOP RIGHT, as Risk's is. Leaving and the volume are both things you
-          reach for between turns rather than during one, and a game screen with
-          controls scattered along three edges makes you hunt for the one you
-          want. One corner, one button, everything behind it.
-
-          The sound settings move INTO it rather than sitting beside it: they
-          are the same kind of thing, and SoundSettings already takes an inline
-          for exactly this — a toolbar rather than its own floating corner. */}
-      <div style={{ position: 'fixed', right: 12, top: 12, zIndex: 45 }}>
-        <button type="button" onClick={() => setMenuOpen(o => !o)}
-          aria-label="Menu" aria-expanded={menuOpen}
-          style={{
-            font: `12px ${SERIF}`, padding: '6px 13px', borderRadius: 5,
-            cursor: 'pointer', background: menuOpen ? '#151d30' : '#0d1220ee',
-            color: PALE, border: '1px solid #ffffff26',
-          }}>
-          ☰ Menu
-        </button>
-
-        {menuOpen && (
-          <>
-            {/* A CLICK ANYWHERE ELSE SHUTS IT. Without this the menu stays open
-                behind whatever you go on to press, over a board you are trying
-                to read. */}
-            <div onClick={() => setMenuOpen(false)}
-              style={{ position: 'fixed', inset: 0, zIndex: -1 }} />
-            <div data-layer="dune-menu" role="menu" style={{
-              position: 'absolute', right: 0, top: 'calc(100% + 6px)', minWidth: 210,
-              background: '#151d30', border: '1px solid #ffffff22', borderRadius: 8,
-              padding: 8, boxShadow: '0 10px 30px #00000066',
-            }}>
-              <div style={{
-                padding: '4px 6px 8px', borderBottom: '1px solid #ffffff14', marginBottom: 6,
-              }}>
-                <SoundSettings inline />
-              </div>
-              {onExit && (
-                <button type="button" role="menuitem"
-                  onClick={() => { setMenuOpen(false); setLeaving(true) }}
-                  aria-label="Leave this game"
-                  style={{
-                    display: 'block', width: '100%', textAlign: 'left',
-                    font: `12.5px ${SERIF}`, padding: '7px 8px', borderRadius: 5,
-                    cursor: 'pointer', background: 'transparent', color: PALE,
-                    border: 'none',
-                  }}>
-                  ← Leave this game
-                </button>
-              )}
-            </div>
-          </>
-        )}
-      </div>
-
-      {leaving && onExit && (
-        <div role="dialog" aria-modal="true" aria-label="Leave this game"
-          onClick={e => { if (e.target === e.currentTarget) setLeaving(false) }}
-          style={{
-            position: 'fixed', inset: 0, zIndex: 60, background: '#0d1220e8',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18,
-          }}>
-          <div style={{
-            maxWidth: 420, background: '#151d30', color: PALE, borderRadius: 10,
-            border: '1px solid #ffffff22', padding: '22px 24px', font: `14px ${SERIF}`,
-          }}>
-            <b style={{ font: `600 17px ${SERIF}`, display: 'block', marginBottom: 10 }}>
-              Leave this game?
-            </b>
-            <p style={{ margin: '0 0 18px', opacity: 0.8, lineHeight: 1.55 }}>
-              The game carries on without you and your seat stays yours — your
-              spice, your cards and your forces are all where you left them. Come
-              back to it from the Dune screen whenever you like.
-            </p>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button type="button" onClick={() => setLeaving(false)} style={{
-                flex: 1, font: `600 13px ${SERIF}`, padding: '9px', borderRadius: 6,
-                cursor: 'pointer', border: '1px solid #c9542a', background: '#c9542a', color: '#fff',
-              }}>Keep playing</button>
-              <button type="button" onClick={onExit} style={{
-                flex: 1, font: `13px ${SERIF}`, padding: '9px', borderRadius: 6,
-                cursor: 'pointer', border: '1px solid #ffffff33', background: 'transparent', color: PALE,
-              }}>Leave</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* THE THINGS THE BOARD CANNOT SAY, in one corner and only when they
-          apply. The right-hand column is the HUD, the left is the chat, so
-          this takes the top right — over a list of other seats, which is the
-          least costly thing to cover. */}
-      {(setup || row?.spiceBlow || expired || spectating || notSeated || feed !== 'live'
-        || row?.winner || row?.stormReport?.turn === row?.turn || mayAdvance || hold) && (
-        <div style={{
-          // BELOW THE MENU, which took this corner and is drawn over it. A
-          // setup prompt or a "you are watching" banner with a button sitting
-          // on its first line is a notice you cannot finish reading.
-          position: 'fixed', right: 12, top: 52, width: 250, maxHeight: '60vh',
-          overflowY: 'auto', zIndex: 40,
-          background: '#0d1220ee', color: PALE, border: '1px solid #ffffff22',
-          borderRadius: 8, padding: 10, font: `12px ${SERIF}`,
+  /**
+   * The notice board: what the turn is doing and what it is waiting for.
+   *
+   * IN THE COLUMN, NOT OVER IT. This was a fixed overlay pinned to the top
+   * right — the corner the HUD column already occupies — and being opaque it
+   * sat ON the hud's own controls. For a small table the setup Ready button
+   * sits high in that column, and the "Setting up" notice covered it exactly:
+   * nobody could press Ready, so nobody's answer ever reached the server, so
+   * the expired window was never pushed closed, so the Storm never advanced.
+   * One box hiding one button wedged the whole match.
+   *
+   * As FLOW at the top of the same column it can push the HUD down but can
+   * never cover it — there is no z-order between siblings in flow. That rules
+   * the failure out structurally instead of re-tuning offsets every time the
+   * corner gains a tenant, which is how it crept in: the menu took top 12, the
+   * notices moved to 52, and 52 is where a two-player table keeps its button.
+   */
+  const notices = (setup || row?.spiceBlow || expired || spectating || notSeated || feed !== 'live'
+    || row?.winner || row?.stormReport?.turn === row?.turn || mayAdvance || hold)
+    ? (
+        <div data-layer="dune-notices" style={{
+          padding: 10, font: `12px ${SERIF}`, color: PALE,
+          borderBottom: '1px solid #ffffff22', background: '#0d1220',
         }}>
           {/* A BOARD THAT HAS STOPPED UPDATING LOOKS EXACTLY LIKE A BOARD WHERE
               NOBODY IS MOVING. Which one it is gets said out loud. */}
@@ -652,6 +538,20 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
               )}
               Waiting on <b>{[...new Set(setup.outstanding.map(d => d.faction))].join(', ')}</b>.
               {' '}The clock answers for whoever says nothing.
+              {/* PAST THE DEADLINE, ANYBODY MAY PUSH — the auction's rule.
+                  The server closes an expired window on ANY setup answer, and
+                  a repeated Ready is accepted and changes nothing, so this is
+                  the one press that is always legal. Without it a window whose
+                  every reachable seat had already answered could expire with
+                  nobody holding a button that still worked, and setup would
+                  stay open forever. That is not hypothetical: it is what a
+                  covered Ready button did to a whole match.  */}
+              {setup.closesAt != null && now >= setup.closesAt && !spectating && (
+                <button onClick={() => void send({ type: 'SETUP_ANSWER', answer: 'ready' })}
+                  disabled={busy} style={{ display: 'block', marginTop: 6 }}>
+                  The clock has run out — push the game along
+                </button>
+              )}
             </div>
           )}
 
@@ -778,7 +678,138 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
             </>
           )}
         </div>
+      )
+    : null
+
+
+  return (
+    <>
+      <DuneGameScreen
+        state={row ?? EMPTY}
+        seat={seat?.faction ?? null}
+        own={own}
+        chat={chat}
+        onSend={seat ? (text: string, scope: ChatScope) => void speak(text, scope) : undefined}
+        talkingTo={seat ? others : []}
+        seatNames={seatNames}
+        now={now}
+        setup={seat ? setupAnswers : null}
+        notices={notices}
+        charity={charityWindow && seat ? {
+          onClaim: () => void claimCharity(),
+          onPass: passCharity,
+          busy,
+          refused,
+        } : null}
+        bidding={auction && seat ? {
+          ask: auction.ask,
+          order: auction.carry.order,
+          toAct: auction.carry.toAct,
+          passed: auction.carry.passed,
+          closesAt: auction.closesAt,
+          refusal: bidRefusal,
+          onBid: (spice: number) => void bid({ kind: 'bid', spice }),
+          onPass: () => void bid({ kind: 'pass' }),
+        } : null} />
+
+      {/* THE WAY OUT.
+          Beside everything else in the corner, and it CONFIRMS FIRST: it sits
+          near controls that get pressed in a hurry, and leaving mid-auction
+          because a finger slipped is the sort of thing that ends an evening.
+          The game is never lost either way — the match runs on without you and
+          the seat stays yours, which is what the confirmation says rather than
+          leaving somebody to guess. Risk's "← Menu" works the same way. */}
+      {/* TOP RIGHT, as Risk's is. Leaving and the volume are both things you
+          reach for between turns rather than during one, and a game screen with
+          controls scattered along three edges makes you hunt for the one you
+          want. One corner, one button, everything behind it.
+
+          The sound settings move INTO it rather than sitting beside it: they
+          are the same kind of thing, and SoundSettings already takes an inline
+          for exactly this — a toolbar rather than its own floating corner. */}
+      <div style={{ position: 'fixed', right: 12, top: 12, zIndex: 45 }}>
+        <button type="button" onClick={() => setMenuOpen(o => !o)}
+          aria-label="Menu" aria-expanded={menuOpen}
+          style={{
+            font: `12px ${SERIF}`, padding: '6px 13px', borderRadius: 5,
+            cursor: 'pointer', background: menuOpen ? '#151d30' : '#0d1220ee',
+            color: PALE, border: '1px solid #ffffff26',
+          }}>
+          ☰ Menu
+        </button>
+
+        {menuOpen && (
+          <>
+            {/* A CLICK ANYWHERE ELSE SHUTS IT. Without this the menu stays open
+                behind whatever you go on to press, over a board you are trying
+                to read. */}
+            <div onClick={() => setMenuOpen(false)}
+              style={{ position: 'fixed', inset: 0, zIndex: -1 }} />
+            <div data-layer="dune-menu" role="menu" style={{
+              position: 'absolute', right: 0, top: 'calc(100% + 6px)', minWidth: 210,
+              background: '#151d30', border: '1px solid #ffffff22', borderRadius: 8,
+              padding: 8, boxShadow: '0 10px 30px #00000066',
+            }}>
+              <div style={{
+                padding: '4px 6px 8px', borderBottom: '1px solid #ffffff14', marginBottom: 6,
+              }}>
+                <SoundSettings inline />
+              </div>
+              {onExit && (
+                <button type="button" role="menuitem"
+                  onClick={() => { setMenuOpen(false); setLeaving(true) }}
+                  aria-label="Leave this game"
+                  style={{
+                    display: 'block', width: '100%', textAlign: 'left',
+                    font: `12.5px ${SERIF}`, padding: '7px 8px', borderRadius: 5,
+                    cursor: 'pointer', background: 'transparent', color: PALE,
+                    border: 'none',
+                  }}>
+                  ← Leave this game
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      {leaving && onExit && (
+        <div role="dialog" aria-modal="true" aria-label="Leave this game"
+          onClick={e => { if (e.target === e.currentTarget) setLeaving(false) }}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 60, background: '#0d1220e8',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18,
+          }}>
+          <div style={{
+            maxWidth: 420, background: '#151d30', color: PALE, borderRadius: 10,
+            border: '1px solid #ffffff22', padding: '22px 24px', font: `14px ${SERIF}`,
+          }}>
+            <b style={{ font: `600 17px ${SERIF}`, display: 'block', marginBottom: 10 }}>
+              Leave this game?
+            </b>
+            <p style={{ margin: '0 0 18px', opacity: 0.8, lineHeight: 1.55 }}>
+              The game carries on without you and your seat stays yours — your
+              spice, your cards and your forces are all where you left them. Come
+              back to it from the Dune screen whenever you like.
+            </p>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button type="button" onClick={() => setLeaving(false)} style={{
+                flex: 1, font: `600 13px ${SERIF}`, padding: '9px', borderRadius: 6,
+                cursor: 'pointer', border: '1px solid #c9542a', background: '#c9542a', color: '#fff',
+              }}>Keep playing</button>
+              <button type="button" onClick={onExit} style={{
+                flex: 1, font: `13px ${SERIF}`, padding: '9px', borderRadius: 6,
+                cursor: 'pointer', border: '1px solid #ffffff33', background: 'transparent', color: PALE,
+              }}>Leave</button>
+            </div>
+          </div>
+        </div>
       )}
+
+      {/* THE THINGS THE BOARD CANNOT SAY, in one corner and only when they
+          apply. The right-hand column is the HUD, the left is the chat, so
+          this takes the top right — over a list of other seats, which is the
+          least costly thing to cover. */}
     </>
   )
 }
