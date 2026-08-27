@@ -205,8 +205,13 @@ const draw = (over: Partial<SetupWindowProps> = {}) =>
     /data-posture="advisor"/.test(board) && board.includes('advisor-check-bene-gesserit'), true)
   check('...with the pattern defined in that faction\'s colour',
     /<pattern id="advisor-check-bene-gesserit"/.test(board), true)
-  check('a plain stack is neither',
-    /data-posture/.test(board.split('territory-26')[1] ?? ''), false)
+  // SCOPED TO THE STACK'S OWN GROUP. Splitting the whole render on the
+  // territory id worked only while nothing else mentioned it — the contested
+  // outline and the tether now draw per territory and carry the same id, so
+  // the tail of that split is no longer this stack's markup.
+  const plain = /<g[^>]*data-cell="territory-26\|sector-3"[^>]*>/.exec(board)?.[0] ?? ''
+  check('the plain stack is there to check', plain.length > 20, true)
+  check('a plain stack is neither', /data-posture|data-starred/.test(plain), false)
 }
 
 // ── the HUD splits elite reserves, and carries Ready ──────────────────────

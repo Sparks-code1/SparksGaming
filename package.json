@@ -1,7 +1,7 @@
 {
-  "name": "risk-legacy-digital",
+  "name": "SparksGaming",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -51,7 +51,7 @@
     "wait-on": "^9.1.0"
   },
   "build": {
-    "appId": "com.sparkscode.risklegacy",
+    "appId": "com.sparkscode.sparksgaming",
     "productName": "Risk Legacy",
     "asar": false,
     "directories": {
@@ -62,7 +62,7 @@
       {
         "provider": "github",
         "owner": "sparks-code1",
-        "repo": "risk-legacy-digital",
+        "repo": "SparksGaming",
         "releaseType": "release"
       }
     ],

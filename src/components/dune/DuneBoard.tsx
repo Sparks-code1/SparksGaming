@@ -94,6 +94,60 @@ const GAP = 1.06
 export interface StackSlot { x: number; y: number; r: number }
 
 /**
+ * What a territory holds, gathered across every sector it spans.
+ *
+ * WHY BY TERRITORY, when the bubbles are laid out by cell. Battle is by
+ * TERRITORY and the storm is by SECTOR, so the two rules read the same board
+ * differently and the board has to answer both. Two factions in Old Gap fight
+ * whether they are both in sector 9 or one is in 9 and the other in 11 — the
+ * bubbles cannot say that, because saying it is exactly what they must not do:
+ * pile the cells together and the storm becomes unreadable.
+ *
+ * So occupancy is counted here, once, over the whole territory. A faction
+ * standing in three sectors of one territory is one faction, not three.
+ */
+export interface TerritoryHold {
+  territoryId: string
+  /** Every faction with a force anywhere in it, however many sectors. */
+  factions: FactionId[]
+  /** The cells they are standing in — one point per occupied sector. */
+  cells: { x: number; y: number }[]
+  /**
+   * Whether a battle is pending here.
+   *
+   * ADVISORS DO NOT MAKE A FIGHT. A Bene Gesserit advisor is in the territory
+   * and not in the battle — that is the whole point of the posture — so a
+   * territory holding one faction's fighters and an advisor is not contested,
+   * and marking it would send people looking for a battle that cannot happen.
+   */
+  contested: boolean
+}
+
+export function territoryHolds(stacks: readonly DuneBoardStack[]): TerritoryHold[] {
+  const held = new Map<string, {
+    factions: Set<FactionId>; fighters: Set<FactionId>; cells: Map<string, { x: number; y: number }>
+  }>()
+  for (const s of stacks) {
+    if (s.count <= 0 || !s.faction) continue
+    let t = held.get(s.territoryId)
+    if (!t) {
+      t = { factions: new Set(), fighters: new Set(), cells: new Map() }
+      held.set(s.territoryId, t)
+    }
+    t.factions.add(s.faction)
+    if (s.posture !== 'advisor') t.fighters.add(s.faction)
+    const at = cellAt(s.territoryId, s.sector)
+    if (at) t.cells.set(s.sector, at)
+  }
+  return [...held.entries()].map(([territoryId, t]) => ({
+    territoryId,
+    factions: [...t.factions].sort(),
+    cells: [...t.cells.values()],
+    contested: t.fighters.size >= 2,
+  }))
+}
+
+/**
  * Where each faction's bubble goes when several share one cell.
  *
  * WHY THIS EXISTS. Every stack used to be drawn at the cell's anchor point —
@@ -367,6 +421,9 @@ export function DuneBoard({
       slots: fanOut(group.length, cellRoom(territoryId, sector)),
     }
   })
+  /** What each territory holds, for the outline and the tether below. */
+  const holds = territoryHolds(stacks)
+
   /** How far each cell's bubbles reach, for anything drawn near them. */
   const crowding = new Map(laidOut.map(c =>
     [c.key, Math.max(0, ...c.slots.map(s => Math.hypot(s.x, s.y) + s.r))]))
@@ -410,6 +467,47 @@ export function DuneBoard({
             </pattern>
           ))}
         </defs>
+
+        {/* ── ONE PLACE FOR A BATTLE, SEVERAL FOR THE STORM ──────────────────
+            The bubbles are laid out per cell, because a stack in sector 9 dies
+            to a storm there and one in sector 11 does not. But a battle is by
+            TERRITORY, so two clusters inside one outline are one fight — and
+            nothing on the board said so. These two marks say it.
+
+            UNDER THE BUBBLES, deliberately: they are context for the pieces,
+            not pieces themselves, and a tether drawn over a stack would hide
+            the number it is there to connect. */}
+        {holds.map(h => {
+          const t = DUNE_TERRITORIES.find(x => x.id === h.territoryId)
+          if (!t) return null
+          return (
+            <g key={`hold-${h.territoryId}`} data-hold={h.territoryId}
+              data-contested={h.contested ? 'yes' : undefined}>
+              {/* THE OUTLINE THE BOARD ALREADY PRINTS, traced. Marking the
+                  territory rather than the cells is the whole point: the
+                  question a player is asking is "is there a fight here", and
+                  "here" means the outline, whatever sectors it spans. */}
+              {h.contested && (
+                <path d={t.outline} fill="#c9542a" fillOpacity={0.10}
+                  stroke="#e07a45" strokeWidth={2.2} strokeOpacity={0.9}
+                  strokeLinejoin="round" pointerEvents="none">
+                  <title>{`${t.displayName}: ${h.factions.length} factions — battle pending`}</title>
+                </path>
+              )}
+              {/* AND THE TETHER, when one territory is occupied in more than one
+                  sector. Without it two clusters a long way apart read as two
+                  places; the line says they are one, and being drawn between
+                  the cells rather than round them keeps the sector positions —
+                  which the storm reads — exactly where they were. */}
+              {h.cells.length > 1 && h.cells.slice(1).map((c, i) => (
+                <line key={i} x1={h.cells[i].x} y1={h.cells[i].y} x2={c.x} y2={c.y}
+                  stroke={h.contested ? '#e07a45' : PALE}
+                  strokeOpacity={0.5} strokeWidth={1.4} strokeDasharray="5 4"
+                  pointerEvents="none" />
+              ))}
+            </g>
+          )
+        })}
 
 {/* ONE BUBBLE PER FACTION, laid out per CELL rather than per stack — see
             fanOut. Drawing each stack at the cell's anchor put them on top of

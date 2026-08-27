@@ -14,7 +14,7 @@
 // a territory they are not in, and none shrunk past the point where the number
 // on it can be read.
 import {
-  fanOut, stacksByCell, cellAt, cellRoom, BUBBLE_R, BUBBLE_MIN_R,
+  fanOut, stacksByCell, territoryHolds, cellAt, cellRoom, BUBBLE_R, BUBBLE_MIN_R,
 } from '@/components/dune/DuneBoard'
 import type { DuneBoardStack } from '@/components/dune/DuneBoard'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
@@ -221,6 +221,102 @@ const ROOMY = 60
     { ...s('bene-gesserit', 'territory-01', 'sector-5'), posture: 'advisor' },
   ])
   check('fighters and advisors are separate bubbles', postures[0][1].length, 2)
+}
+
+// ── one place for a battle, several places for the storm ──────────────────
+//
+// WHY THIS EXISTS. Battle is by TERRITORY and the storm is by SECTOR, so the
+// two rules read the same board differently and the board has to answer both.
+// The bubbles are laid out per cell because a stack in sector 9 dies to a storm
+// there and one in sector 11 does not — but two clusters inside one outline are
+// still one fight, and nothing on the board said so. A player would have had to
+// notice two separate clusters and remember they were the same territory.
+{
+  const s = (faction: string, territoryId: string, sector: string,
+    over: Partial<DuneBoardStack> = {}): DuneBoardStack =>
+    ({ faction: faction as FactionId, territoryId, sector, count: 3, ...over })
+
+  // NOT `.find(...)!`. A hold that has gone missing is exactly what several
+  // of these checks are looking for, and asserting on a property of undefined
+  // throws — which ends the suite on the FIRST wrong answer and hides every
+  // assertion after it. An empty hold reports as a failure instead of a crash,
+  // so one broken rule produces one red line and not a blackout.
+  const one = (holds: ReturnType<typeof territoryHolds>, id: string) =>
+    holds.find(h => h.territoryId === id)
+    ?? { territoryId: id, factions: [] as FactionId[], cells: [], contested: false }
+
+  // ── COUNTED ACROSS SECTORS, which is the point ──────────────────────────
+  const split = territoryHolds([
+    s('atreides', 'territory-27', 'sector-9'),
+    s('harkonnen', 'territory-27', 'sector-11'),
+  ])
+  check('a territory is one hold however many sectors', split.length, 1)
+  check('...naming both factions', one(split, 'territory-27').factions,
+    ['atreides', 'harkonnen'])
+  // THE FIGHT IS REAL EVEN THOUGH THE STACKS ARE NOT TOUCHING. This is the
+  // case the bubbles cannot show on their own and the whole reason for the
+  // outline: two clusters a long way apart, one battle.
+  check('...and contested across the sector line', one(split, 'territory-27').contested, true)
+  check('...with a cell to tether for each', one(split, 'territory-27').cells.length, 2)
+
+  // ── ONE FACTION IN THREE SECTORS IS NOT A BATTLE ────────────────────────
+  // It is one army spread out. Marking it contested would send people looking
+  // for a fight that cannot happen.
+  const spread = territoryHolds([
+    s('fremen', 'territory-27', 'sector-9'),
+    s('fremen', 'territory-27', 'sector-10'),
+    s('fremen', 'territory-27', 'sector-11'),
+  ])
+  check('one faction spread over three sectors is not a battle',
+    one(spread, 'territory-27').contested, false)
+  // BUT IT IS STILL TETHERED. Three clusters of the same colour still read as
+  // three places until something says otherwise.
+  check('...and is still tethered together', one(spread, 'territory-27').cells.length, 3)
+
+  // ── AN ADVISOR IS NOT A COMBATANT ───────────────────────────────────────
+  // A Bene Gesserit advisor is in the territory and not in the battle — that
+  // is the entire point of the posture. Counting it would light up every
+  // territory they are watching as a fight.
+  const watched = territoryHolds([
+    s('atreides', 'territory-13', 'sector-10'),
+    s('bene-gesserit', 'territory-13', 'sector-10', { posture: 'advisor', count: 1 }),
+  ])
+  check('an advisor watching does not make a battle',
+    one(watched, 'territory-13').contested, false)
+  check('...though it is still in the territory',
+    one(watched, 'territory-13').factions.length, 2)
+  // AND THE SAME PAIR FIGHTING DOES.
+  const fighting = territoryHolds([
+    s('atreides', 'territory-13', 'sector-10'),
+    s('bene-gesserit', 'territory-13', 'sector-10', { posture: 'fighter', count: 1 }),
+  ])
+  check('...but the same two as fighters do', one(fighting, 'territory-13').contested, true)
+
+  // ── A LONE OCCUPANT HAS NOTHING TO SAY ──────────────────────────────────
+  // Most territories on a live board hold one faction in one sector. Neither
+  // mark should appear, or the board is scribbled over with lines and rings
+  // that mean nothing.
+  const quiet = territoryHolds([s('atreides', 'territory-13', 'sector-10')])
+  check('a lone stack is not contested', one(quiet, 'territory-13').contested, false)
+  check('...and has nothing to tether', one(quiet, 'territory-13').cells.length, 1)
+
+  // AN EMPTIED STACK HOLDS NOTHING. A territory somebody has just been thrown
+  // out of must not stay ringed.
+  check('a territory emptied of forces is not held',
+    territoryHolds([s('atreides', 'territory-13', 'sector-10', { count: 0 })]).length, 0)
+  // AND SPICE IS NOT A FACTION. A stack with no faction is board furniture.
+  check('...nor is one holding nobody',
+    territoryHolds([{ territoryId: 'territory-13', sector: 'sector-10', count: 4 }]).length, 0)
+
+  // ── AND THE OUTLINE IS THE BOARD'S OWN ──────────────────────────────────
+  // Traced from the artwork's path in the same build, not a second set of
+  // coordinates: a highlight that is nearly the shape underneath reads as a
+  // misprint, and one that drifts as the board is redrawn is worse.
+  const withOutline = DUNE_TERRITORIES.filter(t => t.outline && t.outline.startsWith('M'))
+  check('every territory carries the outline the board prints',
+    withOutline.length, DUNE_TERRITORIES.length)
+  check('...and they are not all the same shape',
+    new Set(DUNE_TERRITORIES.map(t => t.outline)).size, DUNE_TERRITORIES.length)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
