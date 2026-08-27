@@ -358,16 +358,23 @@ export default function DuneMultiSeatView() {
   const setupFor = (session: SeatSession | null) => {
     if (!session?.client) return null
     return {
+      // WHAT IS REPORTED NAMES NO CARD AND NO PREDICTION. These lines are
+      // addressed to the acting seat, but the harness puts six seats in one
+      // window and the next one switched to reads the same chat — so the two
+      // answers that are secrets say only that they were made.
       onFremenPlacement: (at: readonly PlacedForce[]) =>
-        void send(session, 'SETUP_ANSWER', { answer: 'fremen-placement', at }),
+        void send(session, 'SETUP_ANSWER', { answer: 'fremen-placement', at },
+          `placed ${at.reduce((n, a) => n + a.count, 0)} forces.`),
       onPrediction: (faction: FactionId, turn: number) =>
-        void send(session, 'SETUP_ANSWER', { answer: 'prediction', faction, turn }),
+        void send(session, 'SETUP_ANSWER', { answer: 'prediction', faction, turn },
+          'sealed your prediction.'),
       onTraitor: (keep: string) =>
-        void send(session, 'SETUP_ANSWER', { answer: 'traitor', keep }),
+        void send(session, 'SETUP_ANSWER', { answer: 'traitor', keep },
+          'kept one of your four traitors.'),
       onAdvisorPlacement: (territoryId: string, sector?: string) =>
         void send(session, 'SETUP_ANSWER', {
           answer: 'advisor-placement', territoryId, ...(sector ? { sector } : null),
-        }),
+        }, 'placed your advisor.'),
       busy,
       refused,
     }
@@ -423,8 +430,17 @@ export default function DuneMultiSeatView() {
     void send(mine, 'OPEN_BIDDING', { order, hands, limits })
   }
 
-  /** One action, as this seat, with the refusal shown rather than thrown. */
-  const send = async (session: SeatSession, type: string, fields: Record<string, unknown> = {}) => {
+  /**
+   * One action, as this seat, with the refusal shown rather than thrown.
+   *
+   * `said` is what to report on success, to the acting seat alone. Optional
+   * because most of what goes through here is visible on the board a moment
+   * later anyway — but a setup answer is not: the panel simply stops offering
+   * it, which looks identical to a click that did nothing.
+   */
+  const send = async (
+    session: SeatSession, type: string, fields: Record<string, unknown> = {}, said?: string,
+  ) => {
     if (busy) return
     setBusy(true)
     setRefused(null)
@@ -442,11 +458,20 @@ export default function DuneMultiSeatView() {
     // reason a bid does — and the claim itself is public, so re-read that too.
     await seats.current?.refresh(session.login.faction)
     await rereadRow.current?.()
-    // Answered, so the modal comes down. The board comes back on the
-    // changefeed; nothing is advanced here.
-    const turn = publicRow?.charity?.turn
-    if (turn != null) setAnswered(a => ({ ...a, [session.login.faction]: turn }))
-    say(`claimed charity (+${(res.data as { granted?: number })?.granted ?? 0}).`)
+    // CHARITY'S BOOKKEEPING IS CHARITY'S. This tail used to run for every
+    // action `send` carried — so opening an auction reported itself as a
+    // charity claim, and marked the acting seat as having answered a window it
+    // had not touched, taking the modal down for it. Harmless while charity was
+    // most of what went through here; not once the four setup answers did.
+    if (type === 'CLAIM_CHARITY') {
+      // Answered, so the modal comes down. The board comes back on the
+      // changefeed; nothing is advanced here.
+      const turn = publicRow?.charity?.turn
+      if (turn != null) setAnswered(a => ({ ...a, [session.login.faction]: turn }))
+      say(`claimed charity (+${(res.data as { granted?: number })?.granted ?? 0}).`)
+      return
+    }
+    say(said ?? `${type} accepted.`)
   }
 
   /**

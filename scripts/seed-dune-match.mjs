@@ -1,11 +1,13 @@
 /**
  * A Dune match to point the multi-seat harness at.
  *
- * There is no Dune lobby yet — nothing in the app creates a match — so driving
- * a turn means seeding one, and seeding one by hand means writing rows across
- * four tables with real auth user ids in them. This does that, and then prints
- * the two lines you actually need: the URL, and the VITE_DEV_SEATS value ready
- * to paste.
+ * A MID-GAME POSITION, which is the only thing left for it to be. There is a
+ * lobby now, and scripts/seat-dune-lobby.mjs opens a table through it with six
+ * signed-in accounts and lets the server deal — so a match that starts at the
+ * beginning is that script's job and not this one's. What this still does is
+ * drop a match into a phase you cannot reach from setup without playing to it,
+ * by writing rows across four tables with the service role. It prints the two
+ * lines you need: the URL, and the VITE_DEV_SEATS value ready to paste.
  *
  * IT SEEDS THE CHARITY PHASE by default, because that is the round trip with
  * both halves wired — a window the server opens, an eligibility check only it
@@ -18,8 +20,12 @@
  *
  * WHAT IT DOES NOT DO. It writes a match, not a game — no forces are placed
  * beyond a token stack or two, no treachery is dealt, no storm is rolled. It is
- * scaffolding for exercising one phase end to end, not a setup routine. When
- * faction setup exists this should be deleted rather than grown into it.
+ * scaffolding for exercising one phase end to end, not a setup routine. It said
+ * it should be deleted when faction setup existed; setup exists, and what took
+ * its place is seat-dune-lobby.mjs. This survives only for the three fixtures —
+ * charity, blow, bidding — which begin at positions no opening deal produces.
+ * Each one that becomes reachable by playing to it should take its fixture out
+ * of here with it.
  *
  * It needs, from the environment:
  *
@@ -71,8 +77,13 @@ if (process.argv.includes('--drop')) {
   // by what they are — a Dune match whose seats are this script's test accounts.
   //
   // The old campaign rows are swept too, for anybody dropping after upgrading.
+  //
+  // LOBBIES AS WELL AS ACTIVE MATCHES. scripts/seat-dune-lobby.mjs opens real
+  // tables, and --no-start leaves one sitting in the lobby — which this used to
+  // walk straight past, so the tables it could not clear were exactly the ones
+  // that go on showing up in everybody's list of open games.
   const { data, error } = await admin
-    .from('matches').delete().eq('game_type', 'dune').eq('status', 'active')
+    .from('matches').delete().eq('game_type', 'dune').in('status', ['active', 'lobby'])
     .is('campaign_id', null).select('id')
   if (error) { console.error(`could not drop matches: ${error.message}`); process.exit(1) }
   const { data: old } = await admin

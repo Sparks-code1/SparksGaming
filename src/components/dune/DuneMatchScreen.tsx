@@ -418,15 +418,15 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
       // NOT WHAT WAS PREDICTED. This line is local, but the prediction is the
       // one secret that is worthless the moment it is read over a shoulder,
       // and a chat log scrolls.
-      'your prediction is sealed.'),
+      'sealed your prediction.'),
     onTraitor: (keep: string) => void answerSetup(
       { answer: 'traitor', keep },
       // AND NOT WHICH LEADER, for the same reason and more of it: a known
       // traitor is a battle that cannot be lost.
-      'you kept one of your four traitors.'),
+      'kept one of your four traitors.'),
     onAdvisorPlacement: (territoryId: string, sector?: string) => void answerSetup(
       { answer: 'advisor-placement', territoryId, ...(sector ? { sector } : null) },
-      'your advisor is placed.'),
+      'placed your advisor.'),
     busy,
     refused,
   }
