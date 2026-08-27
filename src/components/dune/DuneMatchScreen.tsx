@@ -100,6 +100,11 @@ export interface DuneMatchScreenProps {
 export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
   /** Confirmed before it happens — see the note where it is drawn. */
   const [leaving, setLeaving] = useState(false)
+  /**
+   * Everybody's SEAT ID, which is a different thing from their place on the
+   * board — see the note where it is read.
+   */
+  const [roster, setRoster] = useState<{ playerId: string; faction: FactionId }[]>([])
   const [user, setUser] = useState<AuthUser | null | undefined>(undefined)
   const [seat, setSeat] = useState<MySeat | null | undefined>(undefined)
   const [row, setRow] = useState<PublicRow | null>(null)
@@ -155,6 +160,49 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
       })
     return () => { live = false }
   }, [matchId, user])
+
+  /**
+   * The seat ids of everybody at the table.
+   *
+   * WHY THIS IS NOT THE PUBLIC ROW'S SEATING. There are two seat namespaces and
+   * they are easy to confuse, which is exactly what went wrong:
+   *
+   *   DunePlayerPublic.seat is 'player-position-N' — the printed circle a
+   *   player sits at, which the board draws.
+   *
+   *   match_players.player_id is 'p1'..'p6' — the seat itself, which
+   *   match_secrets rows are keyed by and which every policy checks.
+   *
+   * A whisper names the SECOND one. Built from the first, every whisper named a
+   * recipient no policy could match, and the insert came back as "new row
+   * violates row-level security policy" — the database correctly refusing a
+   * line addressed to somebody who does not exist. multiSeat.ts has a note
+   * about these two being different; it did not stop this.
+   *
+   * A SEPARATE READ from the seat lookup above, deliberately: that one is
+   * filtered by user_id in the DATABASE, which is the rule the server applies
+   * too, and folding the two together would have meant picking my own row out
+   * of a list on the client. One extra request is cheaper than that.
+   *
+   * Only for a seated player: a spectator has no composer to address.
+   */
+  useEffect(() => {
+    if (!matchId || !seat) return
+    let live = true
+    void supabase
+      .from('match_players')
+      .select('player_id, faction_id')
+      .eq('match_id', matchId)
+      .then(({ data }) => {
+        if (!live) return
+        const rows = (data ?? []) as { player_id: string; faction_id: string | null }[]
+        setRoster(rows
+          .filter(r => r.player_id && r.faction_id)
+          .map(r => ({ playerId: r.player_id, faction: r.faction_id as FactionId })))
+      })
+    return () => { live = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchId, seat?.playerId])
 
   // ── the public row ────────────────────────────────────────────────────────
   const live = useRef<DuneMatchFeed | null>(null)
@@ -262,13 +310,14 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
   /**
    * Everybody else at the table, for addressing a line to one of them.
    *
-   * OFF THE PUBLIC ROW, which is where the seating already is — no extra query
-   * and nothing private in it. Yourself excluded: whispering to yourself is a
-   * note, and the panel is not a notebook.
+   * BY SEAT ID, off the roster — see the read above for why not off the public
+   * row. Named by faction, because that is what a player recognises in a list.
+   * Yourself excluded: whispering to yourself is a note, and the panel is not a
+   * notebook.
    */
-  const others = (row?.players ?? [])
-    .filter(p => p.faction !== seat?.faction)
-    .map(p => ({ playerId: p.seat, name: nameOf(p.faction) }))
+  const others = roster
+    .filter(r => r.playerId !== seat?.playerId)
+    .map(r => ({ playerId: r.playerId, name: nameOf(r.faction) }))
 
   const setup = openSetup(row)
   const auction = useMemo(() => openAuction(row), [row])

@@ -174,6 +174,39 @@ const row = (over: Partial<Parameters<typeof toMessage>[0]> = {}) => {
   // A SPECTATOR HAS NO BOX rather than a box that swallows what they type: the
   // insert policy would refuse it, and a refusal after the fact is worse.
   check('...which a spectator does not get', /onSend=\{seat \? [^}]*: undefined\}/.test(screen), true)
+  // ── A WHISPER NAMES A SEAT ID, NOT A PLACE ON THE BOARD ─────────────────
+  // THE BUG THIS SUITE MISSED. There are two seat namespaces:
+  //
+  //   DunePlayerPublic.seat is 'player-position-N' — the printed circle a
+  //   player sits at, which the board draws.
+  //   match_players.player_id is 'p1'..'p6' — the seat itself, which every
+  //   policy checks and every secrets row is keyed by.
+  //
+  // The composer was built from the first, so every whisper named a recipient
+  // no policy could match and the insert came back as "new row violates
+  // row-level security policy". Nothing here noticed, because both are strings
+  // and both are called a seat.
+  check('the whisper list is built from seat ids',
+    /const others = roster/.test(screen), true)
+  check('...never from the board\'s seating',
+    /playerId: p\.seat/.test(screen), false)
+  check('...read from the table that has them',
+    /from\('match_players'\)[\s\S]{0,300}setRoster\(/.test(screen), true)
+  // AND YOU ARE NOT ON IT. Whispering to yourself is a note, and the panel is
+  // not a notebook — but more to the point, a list you are on is a list where
+  // the wrong click sends a scheme to nobody and looks like it worked.
+  check('...with yourself left off it',
+    /\.filter\(r => r\.playerId !== seat\?\.playerId\)/.test(screen), true)
+
+  // AND THE TWO ARE GENUINELY DIFFERENT THINGS, which is why they cannot be
+  // swapped: this is the pair of facts that makes the check above matter.
+  const endpoint = code('supabase/functions/dune-action/index.ts')
+  check('the public row seats people by printed circle',
+    /seat: `player-position-/.test(endpoint), true)
+  check('...while the chat policy matches a seat id',
+    /p\.player_id = match_chat\.to_player_id/.test(
+      readFileSync('supabase/migrations/20260827140000_dune_private_talk.sql', 'utf8')), true)
+
   check('what it sends goes to the table',
     /sayTo\(matchId, \{ playerId: seat\.playerId, faction: seat\.faction \}, text, scope\)/.test(screen), true)
   // MERGED, so the lines this client composed about its own turn survive.
