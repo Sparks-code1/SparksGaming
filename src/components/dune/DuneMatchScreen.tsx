@@ -61,6 +61,7 @@ import type { BidRefusal } from '@/lib/dune/bidding'
 import { DuneGameScreen } from './DuneGameScreen'
 import { WormPlacementPanel } from './WormPlacementPanel'
 import { FACTION_LOOK } from './SeatLayer'
+import SoundSettings from '@/components/SoundSettings'
 import type { ChatMessage } from './ChatPanel'
 
 const PALE = '#f0e2bb'
@@ -100,11 +101,14 @@ export interface DuneMatchScreenProps {
 export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
   /** Confirmed before it happens — see the note where it is drawn. */
   const [leaving, setLeaving] = useState(false)
+  /** The corner menu, open or shut. */
+  const [menuOpen, setMenuOpen] = useState(false)
   /**
    * Everybody's SEAT ID, which is a different thing from their place on the
    * board — see the note where it is read.
    */
-  const [roster, setRoster] = useState<{ playerId: string; faction: FactionId }[]>([])
+  const [roster, setRoster] = useState<
+    { playerId: string; faction: FactionId; name: string }[]>([])
   const [user, setUser] = useState<AuthUser | null | undefined>(undefined)
   const [seat, setSeat] = useState<MySeat | null | undefined>(undefined)
   const [row, setRow] = useState<PublicRow | null>(null)
@@ -191,14 +195,19 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
     let live = true
     void supabase
       .from('match_players')
-      .select('player_id, faction_id')
+      .select('player_id, faction_id, name')
       .eq('match_id', matchId)
       .then(({ data }) => {
         if (!live) return
-        const rows = (data ?? []) as { player_id: string; faction_id: string | null }[]
+        const rows = (data ?? []) as
+          { player_id: string; faction_id: string | null; name: string | null }[]
         setRoster(rows
           .filter(r => r.player_id && r.faction_id)
-          .map(r => ({ playerId: r.player_id, faction: r.faction_id as FactionId })))
+          .map(r => ({
+            playerId: r.player_id,
+            faction: r.faction_id as FactionId,
+            name: r.name ?? r.player_id,
+          })))
       })
     return () => { live = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -317,7 +326,12 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
    */
   const others = roster
     .filter(r => r.playerId !== seat?.playerId)
-    .map(r => ({ playerId: r.playerId, name: nameOf(r.faction) }))
+    // NAMED BY PERSON AND POWER BOTH. In a whisper list the person is what you
+    // are choosing between; the faction is how you remember which is which.
+    .map(r => ({ playerId: r.playerId, name: `${r.name} — ${nameOf(r.faction)}` }))
+
+  /** What each seat's player is called, for the chat. */
+  const seatNames = Object.fromEntries(roster.map(r => [r.playerId, r.name]))
 
   const setup = openSetup(row)
   const auction = useMemo(() => openAuction(row), [row])
@@ -407,6 +421,7 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
         chat={chat}
         onSend={seat ? (text: string, scope: ChatScope) => void speak(text, scope) : undefined}
         talkingTo={seat ? others : []}
+        seatNames={seatNames}
         now={now}
         charity={charityWindow && seat ? {
           onClaim: () => void claimCharity(),
@@ -432,18 +447,59 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
           The game is never lost either way — the match runs on without you and
           the seat stays yours, which is what the confirmation says rather than
           leaving somebody to guess. Risk's "← Menu" works the same way. */}
-      {onExit && (
-        <button type="button" onClick={() => setLeaving(true)}
-          aria-label="Leave this game"
+      {/* TOP RIGHT, as Risk's is. Leaving and the volume are both things you
+          reach for between turns rather than during one, and a game screen with
+          controls scattered along three edges makes you hunt for the one you
+          want. One corner, one button, everything behind it.
+
+          The sound settings move INTO it rather than sitting beside it: they
+          are the same kind of thing, and SoundSettings already takes an inline
+          for exactly this — a toolbar rather than its own floating corner. */}
+      <div style={{ position: 'fixed', right: 12, top: 12, zIndex: 45 }}>
+        <button type="button" onClick={() => setMenuOpen(o => !o)}
+          aria-label="Menu" aria-expanded={menuOpen}
           style={{
-            position: 'fixed', left: 12, bottom: 12, zIndex: 40,
-            font: `12px ${SERIF}`, padding: '6px 12px', borderRadius: 5,
-            cursor: 'pointer', background: '#0d1220ee', color: PALE,
-            border: '1px solid #ffffff26',
+            font: `12px ${SERIF}`, padding: '6px 13px', borderRadius: 5,
+            cursor: 'pointer', background: menuOpen ? '#151d30' : '#0d1220ee',
+            color: PALE, border: '1px solid #ffffff26',
           }}>
-          ← Leave
+          ☰ Menu
         </button>
-      )}
+
+        {menuOpen && (
+          <>
+            {/* A CLICK ANYWHERE ELSE SHUTS IT. Without this the menu stays open
+                behind whatever you go on to press, over a board you are trying
+                to read. */}
+            <div onClick={() => setMenuOpen(false)}
+              style={{ position: 'fixed', inset: 0, zIndex: -1 }} />
+            <div data-layer="dune-menu" role="menu" style={{
+              position: 'absolute', right: 0, top: 'calc(100% + 6px)', minWidth: 210,
+              background: '#151d30', border: '1px solid #ffffff22', borderRadius: 8,
+              padding: 8, boxShadow: '0 10px 30px #00000066',
+            }}>
+              <div style={{
+                padding: '4px 6px 8px', borderBottom: '1px solid #ffffff14', marginBottom: 6,
+              }}>
+                <SoundSettings inline />
+              </div>
+              {onExit && (
+                <button type="button" role="menuitem"
+                  onClick={() => { setMenuOpen(false); setLeaving(true) }}
+                  aria-label="Leave this game"
+                  style={{
+                    display: 'block', width: '100%', textAlign: 'left',
+                    font: `12.5px ${SERIF}`, padding: '7px 8px', borderRadius: 5,
+                    cursor: 'pointer', background: 'transparent', color: PALE,
+                    border: 'none',
+                  }}>
+                  ← Leave this game
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </div>
 
       {leaving && onExit && (
         <div role="dialog" aria-modal="true" aria-label="Leave this game"
@@ -484,7 +540,10 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
           least costly thing to cover. */}
       {(setup || row?.spiceBlow || expired || spectating || notSeated || feed !== 'live') && (
         <div style={{
-          position: 'fixed', right: 12, top: 12, width: 250, maxHeight: '60vh',
+          // BELOW THE MENU, which took this corner and is drawn over it. A
+          // setup prompt or a "you are watching" banner with a button sitting
+          // on its first line is a notice you cannot finish reading.
+          position: 'fixed', right: 12, top: 52, width: 250, maxHeight: '60vh',
           overflowY: 'auto', zIndex: 40,
           background: '#0d1220ee', color: PALE, border: '1px solid #ffffff22',
           borderRadius: 8, padding: 10, font: `12px ${SERIF}`,

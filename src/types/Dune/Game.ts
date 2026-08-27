@@ -270,6 +270,27 @@ export interface DuneGameState {
   /** Spice lying in territories, keyed by territory id. Face up on the board. */
   spiceOnBoard: Record<string, number>
   /**
+   * Whose table this is, by faction.
+   *
+   * THE ONE ASYMMETRY IN AN OTHERWISE FLAT GAME. Dune has no first player and
+   * no owner — turn order is the storm's and every seat is equal — so this is
+   * not a rule of the game. It is a rule about running one: somebody has to
+   * decide when the phase moves on, and six people all able to press it is the
+   * same standoff as none of them able to.
+   *
+   * IN THE STATE RATHER THAN ONLY ON THE ROW. matches.created_by already gates
+   * writes to the row itself, which is what makes the lobby's mode toggle safe,
+   * but the phases will need to know too — and a phase control asking the
+   * database who created the match, per press, would be asking a question the
+   * board already has the answer to.
+   *
+   * BY FACTION, because that is how everything else in this state names a seat.
+   * Absent for a match dealt before this existed, which is a table with no host
+   * rather than a broken one: nothing that reads it may assume it is there.
+   */
+  host?: FactionId
+
+  /**
    * The seat the game is waiting on, or null.
    *
    * PUBLIC ON PURPOSE. Six people round a table can all see who is thinking;

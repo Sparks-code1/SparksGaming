@@ -325,6 +325,48 @@ const row = (over: Partial<Parameters<typeof toMessage>[0]> = {}) => {
     visibleTo([whisper], 'atreides' as FactionId).length, 1)
 }
 
+// ── a line names the person, not only the power ───────────────────────────
+//
+// WHY THIS EXISTS. Six people playing six powers is a game where "the Harkonnen
+// offered me an alliance" and "Jess offered me an alliance" are the same
+// sentence to everyone except the person reading it in a hurry. Negotiation is
+// the one part of Dune conducted between people rather than between positions,
+// and a whisper list that offers only faction names asks you to remember a
+// mapping that the screen already knows.
+{
+  const panel = code('src/components/dune/ChatPanel.tsx')
+  const screen = code('src/components/dune/DuneMatchScreen.tsx')
+  const game = code('src/components/dune/DuneGameScreen.tsx')
+
+  // THE NAMES COME FROM match_players, which is where they are. The chat row
+  // keeps only the seat id, so a line survives its author leaving without
+  // carrying a copy of their name into every message.
+  check('the panel is told what people are called', /seatNames\?: /.test(panel), true)
+  check('...read off the roster', /\.select\('player_id, faction_id, name'\)/.test(screen), true)
+  check('...and passed down through the game screen', /seatNames=\{seatNames\}/.test(game), true)
+
+  // SCOPED TO THE AUTHOR LINE. "seatNames" appears in the props, the signature
+  // and the whisper list too, so a check searching the file would pass with the
+  // name dropped from the one place it is read.
+  const author = panel.slice(panel.indexOf('<b style={{ color:'),
+    panel.indexOf('</b>'))
+  check('the author line is there to check', author.length > 60, true)
+  check('a line says who said it', /seatNames\[m\.from\]/.test(author), true)
+  check('...and which power they play', /FACTION_LOOK\[m\.faction\]\.name/.test(author), true)
+  // THE GAME ITSELF HAS NO PERSON BEHIND IT. "Bidding opens" is not said by
+  // anybody, and prefixing it with a name would invent an author.
+  check('...while the game speaks for itself', /m\.from \?\? 'Game'/.test(author), true)
+  // AND A SEAT WITH NO NAME YET still shows its faction rather than a dangling
+  // dash: the roster arrives on its own request, after the first lines can.
+  check('...and an unnamed seat is still a faction',
+    /m\.from && seatNames\[m\.from\]/.test(author), true)
+
+  // THE WHISPER LIST IS A LIST OF PEOPLE. It is the person you are choosing
+  // between; the faction is how you remember which is which.
+  check('the whisper list names both',
+    /name: `\$\{r\.name\} — \$\{nameOf\(r\.faction\)\}`/.test(screen), true)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.

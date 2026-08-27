@@ -27,7 +27,8 @@ import {
   myDuneLobbies, createDuneLobby, joinDuneByCode, chooseFaction, startDuneMatch,
   readDuneLobby, setDuneReady, leaveDuneLobby, subscribeDuneLobby,
   duneReadiness, freeFactions, normaliseCode, duneJoinCode, CODE_LENGTH,
-  randomFreeFaction, duneMode, setDuneMode, DUNE_MIN_SEATS, DUNE_MAX_SEATS,
+  randomFreeFaction, duneMode, setDuneMode, isHost, hostSeat,
+  DUNE_MIN_SEATS, DUNE_MAX_SEATS,
 } from '@/lib/dune/duneLobby'
 import type { GameMode } from '@/types/Dune/Game'
 import type { DuneLobby, DuneTable } from '@/lib/dune/duneLobby'
@@ -167,6 +168,11 @@ export function DuneLobbyScreen({ onPlay, onExit }: DuneLobbyScreenProps) {
     const mine = lobby.seats.find(s => s.userId === user.id) ?? null
     const readiness = duneReadiness(lobby)
     const free = freeFactions(lobby.seats, user.id)
+    // WHOSE TABLE THIS IS. The database has gated writes to the match row on it
+    // all along; what was missing was the screen saying so, which is why a
+    // non-host pressing Basic changed nothing and explained nothing.
+    const yours = isHost(lobby, user.id)
+    const host = hostSeat(lobby)
 
     return (
       <Frame onExit={onExit}>
@@ -211,6 +217,12 @@ export function DuneLobbyScreen({ onPlay, onExit }: DuneLobbyScreenProps) {
                 <span style={{ fontSize: 12.5, opacity: 0.6 }}>
                   {known ? FACTION_LOOK[s.factionId as FactionId].name : 'choosing…'}
                 </span>
+                {/* WHOSE TABLE IT IS, said once and in the list rather than
+                    as a separate line: the question is always "which of these
+                    people", and the answer belongs beside them. */}
+                {host && s.seat === host.seat && (
+                  <span style={{ fontSize: 11, letterSpacing: 1, opacity: 0.5 }}>HOST</span>
+                )}
                 <span style={{ marginLeft: 'auto', fontSize: 12, opacity: s.ready ? 1 : 0.45 }}>
                   {s.ready ? 'ready' : 'not ready'}
                 </span>
@@ -228,7 +240,7 @@ export function DuneLobbyScreen({ onPlay, onExit }: DuneLobbyScreenProps) {
         </h2>
         <div data-layer="dune-mode" style={{ display: 'flex', gap: 7, marginBottom: 18 }}>
           {(['basic', 'advanced'] as const).map(m => (
-            <button key={m} type="button" disabled={busy}
+            <button key={m} type="button" disabled={busy || !yours}
               aria-pressed={mode === m} aria-label={`${m} game`}
               onClick={() => void attempt(async () => { await setDuneMode(matchId, m); setMode(m) })}
               style={{
@@ -240,11 +252,13 @@ export function DuneLobbyScreen({ onPlay, onExit }: DuneLobbyScreenProps) {
             </button>
           ))}
           <span style={{ fontSize: 12, opacity: 0.55, alignSelf: 'center' }}>
-            {mode === 'basic'
-              ? 'No Kwisatz Haderach, Sardaukar, Fedaykin or advisors.'
-              : mode === 'advanced'
-                ? 'The full game, with every faction power.'
-                : ''}
+            {!yours
+              ? `${host?.name ?? 'The host'} chooses the game`
+              : mode === 'basic'
+                ? 'No Kwisatz Haderach, Sardaukar, Fedaykin or advisors.'
+                : mode === 'advanced'
+                  ? 'The full game, with every faction power.'
+                  : ''}
           </span>
         </div>
 
@@ -287,8 +301,13 @@ export function DuneLobbyScreen({ onPlay, onExit }: DuneLobbyScreenProps) {
               {mine.ready ? 'Not ready' : 'Ready'}
             </button>
           )}
-          {/* ANYBODY SEATED, not the host alone — see the note at the top. */}
-          <button type="button" disabled={busy || !readiness.canStart} style={button(true)}
+          {/* THE HOST'S. Shown to everybody so the table can see the game is
+              ready and who is holding it up, but pressable by one — the server
+              refuses anybody else, and a button that looks live and is not is
+              how the last one behaved. */}
+          <button type="button" disabled={busy || !readiness.canStart || !yours}
+            style={button(true)}
+            title={yours ? undefined : `${host?.name ?? 'The host'} starts the game`}
             onClick={() => void attempt(() => startDuneMatch(matchId))}>
             Start the game
           </button>

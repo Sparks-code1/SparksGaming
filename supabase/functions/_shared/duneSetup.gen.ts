@@ -1339,6 +1339,7 @@ function distributeAmong(faction) {
 }
 function openingPosition(input) {
   const { seats, mode, rng } = input;
+  const host = seats.find((s) => s.playerId === input.host)?.faction ?? null;
   const players = seats.map((s) => ({
     faction: s.faction,
     seat: s.seat,
@@ -1401,6 +1402,7 @@ function openingPosition(input) {
       // WHO the table is waiting on. The first outstanding answer, so the HUD
       // has a seat to name; the full list is in `setup`.
       awaiting: outstanding[0]?.faction ?? null,
+      ...host ? { host } : null,
       setup: { outstanding, ...input.closesAt != null ? { closesAt: input.closesAt } : null }
     },
     secrets,

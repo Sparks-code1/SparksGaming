@@ -94,6 +94,9 @@ export interface DuneGameScreenProps {
   onSend?: (text: string, scope: ChatSendScope) => void
   /** Who else is at the table, for addressing a line to one of them. */
   talkingTo?: readonly { playerId: string; name: string }[]
+  /** What each seat's player is called, so a line names a person as well as a
+   *  power. Passed straight through — see ChatPanel.seatNames. */
+  seatNames?: Readonly<Record<string, string>>
   /**
    * The live auction, or null.
    *
@@ -123,7 +126,8 @@ export interface DuneGameScreenProps {
 }
 
 export function DuneGameScreen({
-  state, seat, own, chat, onSend, talkingTo, bidding = null, charity = null, now,
+  state, seat, own, chat, onSend, talkingTo, seatNames,
+  bidding = null, charity = null, now,
 }: DuneGameScreenProps) {
   const [chatShut, setChatShut] = useState(false)
   const rows = hudRows(state)
@@ -179,7 +183,8 @@ export function DuneGameScreen({
             spice, and the chat is the one place a sentence like that would sit
             in front of everybody. */}
         <ChatPanel messages={chat} seat={seat} collapsed={chatShut} onSend={onSend}
-          talkingTo={talkingTo} onToggle={() => setChatShut(c => !c)} />
+          talkingTo={talkingTo} seatNames={seatNames}
+          onToggle={() => setChatShut(c => !c)} />
 
         <main style={{
           // ITS BASIS IS THE BOARD'S IDEAL WIDTH — the width a board as tall as

@@ -384,14 +384,35 @@ export async function duneMode(matchId: string): Promise<GameMode | null> {
 /**
  * Agree a different game.
  *
- * ANYBODY AT THE TABLE MAY, like Start. There is no host in the match state and
- * inventing one here would be a rule the server does not enforce — six people
- * round a table settle this by talking, which is what the chat is for.
+ * THE HOST'S, AND THE DATABASE ALREADY SAID SO. The "host manages own lobby"
+ * policy has gated updates to a match row on `created_by = auth.uid()` since
+ * Risk's lobby was written — so this has always been the host's alone. What was
+ * missing was anybody being TOLD: RLS on an update matches no rows rather than
+ * raising, so a non-host pressing Basic changed nothing, said nothing, and left
+ * a button that plainly did not work.
+ *
+ * So the write is asked what it changed. Nothing changed and no error means the
+ * policy refused it, which is a sentence somebody can act on.
  */
 export async function setDuneMode(matchId: string, mode: GameMode): Promise<void> {
-  const { error } = await supabase
-    .from('matches').update({ game_mode: mode }).eq('id', matchId).eq('status', 'lobby')
+  const { data, error } = await supabase
+    .from('matches').update({ game_mode: mode })
+    .eq('id', matchId).eq('status', 'lobby')
+    .select('id')
   if (error) throw new Error(`Could not change the game: ${error.message}`)
+  if (!data || data.length === 0) {
+    throw new Error('Only the player who opened this table can change the game')
+  }
+}
+
+/** Whether this account opened the table. */
+export function isHost(lobby: Pick<Lobby, 'createdBy'>, userId: string | null | undefined): boolean {
+  return !!userId && lobby.createdBy === userId
+}
+
+/** The seat the host is sitting in, or null if they have not taken one. */
+export function hostSeat(lobby: Pick<Lobby, 'createdBy' | 'seats'>): LobbySeat | null {
+  return lobby.seats.find(s => s.userId && s.userId === lobby.createdBy) ?? null
 }
 
 /** Change which faction you are playing, while the game is still a lobby. */
@@ -420,8 +441,11 @@ export async function chooseFaction(matchId: string, faction: FactionId): Promis
  * match_secrets and match_decks, and no client may write either — so this asks
  * the server to deal, and the server is what flips the match out of the lobby.
  *
- * Anybody seated may press it. There is no host privilege in the match state
- * and inventing one here would be a rule the server does not enforce.
+ * THE HOST'S. It used to be anybody's, on the grounds that there was no host in
+ * the match state to appeal to — there is now, and the endpoint refuses anybody
+ * else with 'not-the-host'. Six people all able to press Start is the same
+ * standoff as none of them able to: the first press wins and the other five
+ * find out the game began without the mode they were still arguing about.
  */
 export async function startDuneMatch(matchId: string, mode?: GameMode): Promise<void> {
   // OFF THE ROW unless the caller insists, so the deal is the game the table

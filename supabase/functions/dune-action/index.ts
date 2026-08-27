@@ -138,7 +138,7 @@ Deno.serve(async req => {
   // The whole roster, because settling needs to map every winner back to the
   // row their card and their spice are written to.
   const { data: roster } = await admin
-    .from('match_players').select('player_id, faction_id, seat').eq('match_id', matchId)
+    .from('match_players').select('player_id, faction_id, seat, user_id').eq('match_id', matchId)
   const seatOfFaction: Record<string, string> = {}
   const factionOfSeat: Record<string, string> = {}
   for (const r of roster ?? []) {
@@ -155,7 +155,7 @@ Deno.serve(async req => {
     // mulberry32 floors to 1, so every match on the planet reshuffled into the
     // same order. Deterministic, replayable, and identical everywhere: the one
     // failure a seeded shuffle is supposed to prevent.
-    .select('state, version, rng_seed, action_seq, game_type, status')
+    .select('state, version, rng_seed, action_seq, game_type, status, created_by, game_mode')
     .eq('id', matchId)
     .maybeSingle()
   if (!match) return json({ error: 'no such match', code: 'not-found' }, 404)
@@ -351,6 +351,15 @@ Deno.serve(async req => {
         return json({ error: 'this match has already been dealt', code: 'already-started' }, 409)
       }
 
+      // THE HOST DEALS, AND ONLY THE HOST. Six people all able to press Start
+      // is the same standoff as none of them able to: the first press wins and
+      // the other five find out the game began without the mode they were
+      // still arguing about. The row already says who opened the table, and
+      // the RLS policy on matches trusts the same field for the same reason.
+      if (match.created_by && match.created_by !== user.id) {
+        return json({ error: 'only the host can start this game', code: 'not-the-host' }, 403)
+      }
+
       const seats = (roster ?? [])
         .filter((r: { faction_id?: string }) => !!r.faction_id)
         // IN SEAT ORDER, because the printed circle a player sits at decides
@@ -370,13 +379,24 @@ Deno.serve(async req => {
       // Math.random could not be replayed, and a deal that used a constant
       // would be the same deal in every match ever played.
       const rng = seededRng(Number(match.rng_seed) + match.action_seq)
+      // WHICH SEAT THE HOST IS SITTING IN. The row names an account; the
+      // state names factions, so it is translated here rather than leaving the
+      // board to look accounts up. A host who took no seat leaves the game
+      // hostless, which is a table nobody can drive rather than one driven by
+      // somebody who is not playing.
+      const hostSeat = (roster ?? []).find(
+        (r: { user_id?: string; player_id: string }) => r.user_id === match.created_by)
       const opening = openingPosition({
         seats,
-        // The advanced game, which is what everything else here assumes — the
-        // Kwisatz Haderach tracker, the storm's die, the Fedaykin. Overridable
-        // because the basic game is a real game and this is the one moment it
-        // can be chosen.
-        mode: action.mode === 'basic' ? 'basic' : 'advanced',
+        host: hostSeat?.player_id,
+        // OFF THE ROW FIRST. The table agreed a game in the lobby and the row
+        // is where that agreement lives; the payload is a fallback for a caller
+        // that has one in mind, and 'advanced' behind both. Trusting the
+        // payload alone would let whoever presses Start deal a different game
+        // from the one everybody was looking at.
+        mode: match.game_mode === 'basic' ? 'basic'
+          : match.game_mode === 'advanced' ? 'advanced'
+          : action.mode === 'basic' ? 'basic' : 'advanced',
         rng,
         closesAt: now + SETUP_SECONDS * 1000,
       })

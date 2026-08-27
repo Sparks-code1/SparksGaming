@@ -226,8 +226,17 @@ export function openingPosition(input: {
   rng: () => number
   /** When the setup window shuts. Stamped by the caller, never from a clock here. */
   closesAt?: number
+  /**
+   * Whose table this is, by seat id.
+   *
+   * Translated to a faction on the way into the state, because that is how
+   * everything else there names a seat. A host who is not at the table leaves
+   * the game hostless rather than naming somebody who is not playing.
+   */
+  host?: string
 }): OpeningPosition {
   const { seats, mode, rng } = input
+  const host = seats.find(s => s.playerId === input.host)?.faction ?? null
 
   const players: DunePlayerPublic[] = seats.map(s => ({
     faction: s.faction,
@@ -308,6 +317,7 @@ export function openingPosition(input: {
       // WHO the table is waiting on. The first outstanding answer, so the HUD
       // has a seat to name; the full list is in `setup`.
       awaiting: outstanding[0]?.faction ?? null,
+      ...(host ? { host } : null),
       setup: { outstanding, ...(input.closesAt != null ? { closesAt: input.closesAt } : null) },
     },
     secrets,

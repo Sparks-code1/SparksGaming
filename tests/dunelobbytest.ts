@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs'
 import {
   factionRefusal, freeFactions, duneReadiness, newJoinCode, normaliseCode,
-  randomFreeFaction, CODE_LENGTH, DUNE_MIN_SEATS, DUNE_MAX_SEATS,
+  randomFreeFaction, isHost, hostSeat, CODE_LENGTH, DUNE_MIN_SEATS, DUNE_MAX_SEATS,
 } from '@/lib/dune/duneLobby'
 import { nextFreeSeat, MAX_SEATS, UNASSIGNED_FACTION } from '@/lib/lobby'
 import type { LobbySeat } from '@/lib/lobby'
@@ -486,8 +486,72 @@ const seat = (over: Partial<LobbySeat> = {}): LobbySeat => {
     /const agreed = mode \?\? \(await duneMode\(matchId\)\) \?\? 'advanced'/.test(src), true)
   check('...and sends that to the server', /type: 'START_DUNE', mode: agreed/.test(src), true)
   check('the screen shows which it is', /data-layer="dune-mode"/.test(screen), true)
-  check('...and lets anybody at the table change it',
-    /setDuneMode\(matchId, m\)/.test(screen), true)
+  check('...and offers the change', /setDuneMode\(matchId, m\)/.test(screen), true)
+}
+
+// ── one of the six is the host ────────────────────────────────────────────
+//
+// WHY THIS EXISTS. Six people who can all press Start is the same standoff as
+// none of them able to — the first press wins, and the other five find out the
+// game began in the mode they were still arguing about. The database has gated
+// writes to the match row on `created_by = auth.uid()` since Risk's lobby was
+// written, so this was ALREADY the host's; what was missing was anybody being
+// told. RLS on an update matches no rows rather than raising, so a non-host
+// pressing Basic changed nothing, said nothing, and left a button that plainly
+// did not work.
+{
+  const src = code('src/lib/dune/duneLobby.ts')
+  const screen = code('src/components/dune/DuneLobbyScreen.tsx')
+
+  const table = {
+    createdBy: 'u-2',
+    seats: [seat({ seat: 0, userId: 'u-1', name: 'Ryan' }),
+      seat({ seat: 1, userId: 'u-2', name: 'Jess' }),
+      seat({ seat: 2, userId: null, name: 'A bot', isAI: true })],
+  }
+  check('the host is the account that opened the table', isHost(table, 'u-2'), true)
+  check('...and nobody else is', isHost(table, 'u-1'), false)
+  // SIGNED OUT IS NOT THE HOST. `createdBy` is nullable, so a bare equality
+  // hands the table to everybody who is not logged in — null === null. Asked
+  // at a table nobody opened, because that is the only shape where the bad
+  // comparison and the good one disagree; a signed-out viewer at a HOSTED
+  // table reads false either way, and an assertion that cannot tell the two
+  // implementations apart is a line of green that means nothing.
+  check('...and being nobody is not being the host',
+    isHost({ createdBy: null }, null), false)
+
+  check('the host is found in the seat list', hostSeat(table)?.name, 'Jess')
+  // A HOST WHO HAS NOT SAT DOWN yet is a real state: they open the table and
+  // the seat write lands after. The screen falls back to saying "the host".
+  check('...and is null when they have not sat down',
+    hostSeat({ createdBy: 'u-9', seats: table.seats }), null)
+  // AND AN EMPTY SEAT IS NOT THE HOST, which `s.userId === lobby.createdBy`
+  // alone would make it at a table nobody opened.
+  check('...and an empty chair never is',
+    hostSeat({ createdBy: null, seats: table.seats }), null)
+
+  // ── THE REFUSAL IS SAID OUT LOUD ────────────────────────────────────────
+  // SCOPED TO THE FUNCTION. The whole file talks about matches and lobbies, so
+  // a check searching all of it would pass with this write left silent.
+  const setMode = src.slice(src.indexOf('export async function setDuneMode'),
+    src.indexOf('export function isHost'))
+  check('the mode change is there to check', setMode.length > 100, true)
+  check('a refused mode change is noticed', /\.select\('id'\)/.test(setMode), true)
+  check('...and explained rather than swallowed',
+    /data\.length === 0[\s\S]{0,140}throw new Error/.test(setMode), true)
+
+  // ── AND THE SCREEN SAYS WHOSE TABLE IT IS ───────────────────────────────
+  const modeButtons = screen.slice(screen.indexOf('data-layer="dune-mode"'),
+    screen.indexOf('data-layer="dune-mode"') + 700)
+  check('the mode buttons are there to check', modeButtons.length > 200, true)
+  check('only the host may change the game',
+    /disabled=\{busy \|\| !yours\}/.test(modeButtons), true)
+  check('...and only the host may deal it',
+    /disabled=\{busy \|\| !readiness\.canStart \|\| !yours\}/.test(screen), true)
+  // SHOWN TO EVERYBODY, so the table can see the game is ready and who is
+  // holding it up — a hidden button is a table waiting on nothing visible.
+  check('...but everybody can see it', /\{readiness\.canStart && /.test(screen), false)
+  check('the seat list names the host', /HOST</.test(screen), true)
 }
 
 // ── there is a way out, and a way back ────────────────────────────────────
@@ -512,21 +576,42 @@ const seat = (over: Partial<LobbySeat> = {}): LobbySeat => {
 
   // THE EXIT ITSELF, which confirms first: it sits near controls pressed in a
   // hurry, and leaving mid-auction because a finger slipped ends an evening.
-  // SCOPED TO THE BUTTON. "Leave this game" is on the button AND on the dialog
-  // it opens, so searching the file found it either way — relabelling the
-  // button walked through, and so did wiring it straight to onExit.
-  const leaveButton = match.slice(match.indexOf('{onExit && ('),
+  // SCOPED TO THE MENU ITEM. "Leave this game" is on the item AND on the
+  // dialog it opens, so searching the file found it either way — relabelling
+  // the item walked through, and so did wiring it straight to onExit.
+  const menu = match.slice(match.indexOf('data-layer="dune-menu"'),
     match.indexOf('{leaving && onExit && ('))
-  check('the leave button is there to check', leaveButton.length > 60, true)
+  check('the menu is there to check', menu.length > 100, true)
   check('the match screen offers a way out',
-    /aria-label="Leave this game"/.test(leaveButton), true)
-  // ASKING FIRST IS THE BUTTON'S JOB. It sits near controls pressed in a hurry,
-  // and leaving mid-auction because a finger slipped ends an evening.
+    /aria-label="Leave this game"/.test(menu), true)
+  // ASKING FIRST IS ITS JOB. Leaving mid-auction because a finger slipped ends
+  // an evening, and a menu item is easier to hit by accident than a corner
+  // button was, not harder.
   check('...which asks rather than leaving',
-    /onClick=\{\(\) => setLeaving\(true\)\}/.test(leaveButton), true)
+    /setLeaving\(true\)/.test(menu), true)
   check('...and does not go straight out',
-    /onClick=\{onExit\}/.test(leaveButton), false)
+    /onClick=\{onExit\}/.test(menu), false)
   check('...with a dialog behind it', /\{leaving && onExit && \(/.test(match), true)
+
+  // ── AND IT IS ONE CORNER RATHER THAN THREE ──────────────────────────────
+  // Leaving and the volume are both between-turn things; scattered along
+  // different edges they are two things to hunt for instead of one.
+  // SCOPED TO THE MENU'S OWN WRAPPER. The notices column sat at the same
+  // coordinates, so a check searching the whole file read ITS position and
+  // stayed green with the menu moved to the opposite edge. It also hid the
+  // fact that the two were drawn on top of each other.
+  const menuBox = match.slice(
+    Math.max(0, match.indexOf('aria-label="Menu"') - 300),
+    match.indexOf('aria-label="Menu"'))
+  check('the menu is in a corner of its own', menuBox.length > 100, true)
+  check('the menu sits in the corner Risk uses',
+    /position: 'fixed', right: 12, top: 12/.test(menuBox), true)
+  check('...and nothing else is under it',
+    (match.match(/right: 12, top: 12/g) ?? []).length, 1)
+  check('...with the sound settings inside it', /<SoundSettings inline \/>/.test(menu), true)
+  // A CLICK ELSEWHERE SHUTS IT, or it hangs over a board somebody is reading.
+  check('...and it closes when you look away',
+    /onClick=\{\(\) => setMenuOpen\(false\)\}/.test(match), true)
   check('...and says the game carries on without them',
     /The game carries on without you and your seat stays yours/.test(match), true)
   // NOT OFFERED WHEN THERE IS NOWHERE TO GO. The standalone ?dune-match route

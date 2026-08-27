@@ -402,12 +402,43 @@ const deal = (over: Partial<Parameters<typeof openingPosition>[0]> = {}) =>
   // storm reads. The rows come back in whatever order they come back in.
   check('seats are ordered by the circle they sit at',
     /\.sort\(\(a: \{ seat: number \}, b: \{ seat: number \}\)/.test(fn), true)
-  check('...read off the roster', /select\('player_id, faction_id, seat'\)/.test(fn), true)
+  // BY THE COLUMNS IT NEEDS, not the exact list — the same lesson the match
+  // row's select taught. `user_id` joined it so the deal can work out which
+  // seat the host holds, and pinning the whole string made that read as a
+  // broken ordering.
+  // MATCHED ON 'seat', which only the roster read asks for. Matching on
+  // 'faction_id' found the seat-resolution query at the top of the endpoint
+  // instead — a different select, for a different job, missing the column this
+  // check is about.
+  const rosterSelect = (/\.select\('([^']*seat[^']*)'\)/.exec(fn) ?? [])[1] ?? ''
+  check('...read off the roster',
+    ['player_id', 'faction_id', 'seat'].filter(c => !rosterSelect.includes(c)), [])
 
   // THE CALLER IS NOT SHOWN THE DEAL. Dealing it does not make it theirs to
   // read; their own row reaches them by the secrets channel like everyone's.
   const startCase = fn.slice(fn.indexOf("case 'START_DUNE'"), fn.indexOf("case 'SETUP_ANSWER'"))
   check('the deal is there to check', startCase.length > 400, true)
+
+  // ── AND ONE PERSON DEALS IT ──────────────────────────────────────────────
+  // Six people all able to press Start is the same standoff as none of them
+  // able to: the first press wins, and the other five find out the game began
+  // in the mode they were still arguing about. SCOPED TO THE CASE, because
+  // 'created_by' appears in the match row's select too, and a check that found
+  // it there would pass with the refusal deleted.
+  check('a deal is refused to anybody but the host',
+    /match\.created_by !== user\.id/.test(startCase), true)
+  check('...with a code saying so', /'not-the-host'/.test(startCase), true)
+  // AS A REFUSAL, not as a silent no-deal: 403 is a sentence the screen can
+  // show, and a table waiting on a button that did nothing is the bug this
+  // whole turn started from.
+  check('...and a status that is a refusal',
+    /code: 'not-the-host' \}, 403\)/.test(startCase), true)
+  // BY THE SEAT, not by the account. The state names factions, so the account
+  // has to be turned into the seat that holds one before it goes in.
+  check('the host reaches the deal as a seat',
+    /host: hostSeat\?\.player_id/.test(startCase), true)
+  check('...resolved off the roster by account',
+    /r\.user_id === match\.created_by/.test(startCase), true)
   check('...and nothing private comes back in the response',
     /return json\(\{ setup: opening\.state\.setup, version/.test(startCase), true)
   check('...not the secrets', /json\([^)]*opening\.secrets/.test(startCase), false)
@@ -602,6 +633,41 @@ const deal = (over: Partial<Parameters<typeof openingPosition>[0]> = {}) =>
     strongholdsHeld(inArrakeen(), ADVISOR_FACTION), 1)
   check('an advisor in the same place holds nothing',
     strongholdsHeld(inArrakeen('advisor'), ADVISOR_FACTION), 0)
+}
+
+// ── whose table it is ─────────────────────────────────────────────────────
+//
+// IN THE STATE, NOT ONLY ON THE ROW. `matches.created_by` is an account id, and
+// every rule that will want the host — who calls a phase on, whose clock the
+// table waits for — is written in factions. Resolving it once at the deal means
+// the rest of the game asks the position rather than joining back to the roster
+// and hoping the account is still there.
+{
+  const dealt = deal({ host: seats[2].playerId })
+  check('the position records whose table it is', dealt.state.host, seats[2].faction)
+
+  // A HOST WHO IS NOT SEATED NAMES NOBODY. An id matching no seat is capable of
+  // putting `undefined` in the field, which reads as a faction right up until
+  // something indexes by it.
+  const stray = deal({ host: 'not-at-this-table' })
+  check('...and an unseated host names nobody', 'host' in stray.state, false)
+  const none = deal()
+  check('...as does no host at all', 'host' in none.state, false)
+
+  // NOTHING ELSE MOVES. The host is a label on the table, not a head start:
+  // the same seats, the same forces, the same purses, the same shuffle.
+  //
+  // The key is DELETED rather than blanked on both sides, because a spread
+  // keeps insertion order and `host: null` lands mid-object on one side and
+  // last on the other — which JSON.stringify reports as a difference in a deal
+  // that is identical.
+  const without = (s: typeof dealt.state) => {
+    const copy = { ...s }
+    delete copy.host
+    return JSON.stringify(copy)
+  }
+  check('naming a host deals the same game otherwise',
+    without(dealt.state), without(none.state))
 }
 
 // ── the server's fourth answer ────────────────────────────────────────────

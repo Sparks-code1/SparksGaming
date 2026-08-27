@@ -110,6 +110,20 @@ export interface ChatPanelProps {
    */
   onSend?: (text: string, scope: ChatSendScope) => void
   /**
+   * What each seat's player is called, by seat id.
+   *
+   * A FACTION IS NOT A PERSON. Six people playing six powers is a game where
+   * "the Harkonnen offered me an alliance" and "Ryan offered me an alliance"
+   * are the same sentence to everyone except the person reading it in a hurry
+   * — and negotiation is the one part of Dune conducted between people rather
+   * than between positions.
+   *
+   * Names come from match_players, which is where they are; the row a line is
+   * stored in keeps only the seat id, so that a line survives its author
+   * leaving without carrying a copy of their name into every message.
+   */
+  seatNames?: Readonly<Record<string, string>>
+  /**
    * Who is at the table, for addressing a line to one of them.
    *
    * Names rather than factions, because that is what a player recognises in a
@@ -171,7 +185,7 @@ export function scopeLabel(
 }
 
 export function ChatPanel({
-  messages, seat, collapsed, onToggle, onSend, unread = 0, talkingTo = [],
+  messages, seat, collapsed, onToggle, onSend, unread = 0, talkingTo = [], seatNames = {},
 }: ChatPanelProps) {
   const [draft, setDraft] = useState('')
   /**
@@ -259,7 +273,13 @@ export function ChatPanel({
               } : null),
             }}>
             <b style={{ color: m.faction ? FACTION_LOOK[m.faction].colour : PALE }}>
-              {m.faction ? FACTION_LOOK[m.faction].name : m.from ?? 'Game'}
+              {/* THE PERSON FIRST, THE POWER AFTER. Whose word it is decides
+                  whether you believe it; which faction they are decides what
+                  the word is worth. A line from the game itself has no person
+                  behind it and shows as it always did. */}
+              {m.faction
+                ? `${m.from && seatNames[m.from] ? `${seatNames[m.from]} — ` : ''}${FACTION_LOOK[m.faction].name}`
+                : m.from ?? 'Game'}
             </b>
             {/* WHO ELSE HEARD IT. Nothing is shown for a line the table heard
                 — the absence is the message — and everything else says what

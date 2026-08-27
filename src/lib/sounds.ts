@@ -267,11 +267,29 @@ function getHowls(key: SoundKey): Howl[] {
 const LS_VOL = 'risk-sound-volume'
 const LS_MUTE = 'risk-sound-muted'
 
+/**
+ * Remembered settings, where there is somewhere to remember them.
+ *
+ * NOT localStorage DIRECTLY. Touching it bare is an expression that throws
+ * rather than one that returns null: in a browser with site data blocked, in a
+ * sandboxed frame, and anywhere this module is loaded outside a browser at all.
+ * The two lines below run at import, so a throw there takes down every module
+ * that imports this one, and every module that imports those — a remembered
+ * volume is not worth a blank screen, and forgetting it is the entire cost of
+ * getting nothing back.
+ */
+const remembered = (k: string): string | null => {
+  try { return globalThis.localStorage?.getItem(k) ?? null } catch { return null }
+}
+const remember = (k: string, v: string): void => {
+  try { globalThis.localStorage?.setItem(k, v) } catch { /* nowhere to put it */ }
+}
+
 let masterVolume = (() => {
-  const v = parseFloat(localStorage.getItem(LS_VOL) ?? '')
+  const v = parseFloat(remembered(LS_VOL) ?? '')
   return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0.6
 })()
-let muted = localStorage.getItem(LS_MUTE) === '1'
+let muted = remembered(LS_MUTE) === '1'
 
 // Apply to Howler master
 Howler.volume(masterVolume)
@@ -282,7 +300,7 @@ export function isMuted(): boolean { return muted }
 
 export function setVolume(v: number) {
   masterVolume = Math.max(0, Math.min(1, v))
-  localStorage.setItem(LS_VOL, String(masterVolume))
+  remember(LS_VOL, String(masterVolume))
   Howler.volume(masterVolume)
   // Raising volume off zero un-mutes for convenience
   if (masterVolume > 0 && muted) setMuted(false)
@@ -290,7 +308,7 @@ export function setVolume(v: number) {
 
 export function setMuted(m: boolean) {
   muted = m
-  localStorage.setItem(LS_MUTE, m ? '1' : '0')
+  remember(LS_MUTE, m ? '1' : '0')
   Howler.mute(m)
 }
 
