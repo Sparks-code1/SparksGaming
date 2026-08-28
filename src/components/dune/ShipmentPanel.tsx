@@ -119,7 +119,7 @@ export function ShipmentPanel({
           <span style={{ display: 'block', marginTop: 4, opacity: 0.85 }}>
             {mayShip
               ? 'Stage forces on the rail and click the board to land them.'
-              : shipping.done.moved ? '' : 'Click one of your stacks, then where it goes.'}
+              : shipping.done.moved ? '' : 'Click one of your stacks, then where it goes — a click a force. − takes one back; ✓ sends them.'}
           </span>
 
           {/* ── THE GUILD'S TWO EXCEPTIONS ────────────────────────────────── */}

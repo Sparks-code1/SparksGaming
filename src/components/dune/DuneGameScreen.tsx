@@ -53,7 +53,7 @@ import { BiddingPanel } from './BiddingPanel'
 import { CharityModal } from './CharityModal'
 import { SetupWindow, SetupBoardTargets } from './SetupWindow'
 import { ShipRail } from './ShipRail'
-import { inStorm } from '@/lib/dune/shipment'
+import { inStorm, moveTargets } from '@/lib/dune/shipment'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import { FACTION_LOOK } from './SeatLayer'
 import { cellAt } from './DuneBoard'
@@ -206,7 +206,14 @@ export function DuneGameScreen({
     && state.shipping.order[state.shipping.at] === seat
     && !state.shipping.done.moved)
   /** The stack picked as a move's source, waiting for its destination. */
-  const [moveFrom, setMoveFrom] = useState<{ territoryId: string; sector: string } | null>(null)
+  // ONE MOVE, BUILT CLICK BY CLICK. from is the picked stack; each click on
+  // a ring adds one force to count; to re-aims freely until ✓ commits the
+  // whole plan in a single MOVE. Nothing reaches the server before the ✓.
+  const [movePlan, setMovePlan] = useState<{
+    from: { territoryId: string; sector: string }
+    to: { territoryId: string; sector: string } | null
+    count: number
+  } | null>(null)
   const myRow = rows.find(r => r.faction === seat) ?? null
 
   // Stacks are per faction so the board can colour them. Summed by cell rather
@@ -397,7 +404,7 @@ export function DuneGameScreen({
                 ? 'Fares: 1 spice per force into a stronghold, 2 anywhere else — you pay half, rounded up, to the bank.'
                 : `Fares: 1 spice per force into a stronghold, 2 anywhere else — paid to ${state.players.some(p => p.faction === 'spacing-guild') ? 'the Spacing Guild' : 'the bank'}.`}
             onStage={kind => {
-              setMoveFrom(null)
+              setMovePlan(null)
               setStaged(s => ({ ...s, [kind]: s[kind] + 1 }))
             }}
             onReset={() => setStaged({ plain: 0, starred: 0 })} />
@@ -485,11 +492,15 @@ export function DuneGameScreen({
                 the whole board for the advisor — with the pending pieces drawn
                 as the real stacks above. Clicks add; the window column takes
                 them back. */}
-            {/* THE MOVE, in two clicks and no forms: your own stack first —
-                ringed in your colour — then the ground it goes to. The whole
-                stack moves; the server judges range, storm and gates. Landing
-                rings for a staged shipment take priority: staging cancels a
-                half-picked move. */}
+            {/* THE MOVE, click by click and no forms: your own stack first —
+                ringed in your colour — then the ground, once per force. The
+                clicks pile into ONE staged move (same source, same ground;
+                a click on other ground re-aims the whole group), − takes a
+                click back, and ✓ posts the single MOVE. Rings appear only
+                where the server's own law reaches — moveTargets IS the
+                judge's reachability, imported, not a client rewrite of it.
+                Landing rings for a staged shipment take priority: staging
+                cancels a half-picked move. */}
             {myMoveWindow && staged.plain + staged.starred === 0 && onMoveStack && (
               <g data-layer="move-controls">
                 {state.forces
@@ -497,15 +508,19 @@ export function DuneGameScreen({
                   .map(f => {
                     const at = cellAt(f.territoryId, f.sector)
                     if (!at) return null
-                    const picked = moveFrom
-                      && moveFrom.territoryId === f.territoryId && moveFrom.sector === f.sector
+                    const picked = movePlan
+                      && movePlan.from.territoryId === f.territoryId
+                      && movePlan.from.sector === f.sector
                     return (
                       <g key={`src|${f.territoryId}|${f.sector}`}
                         data-move-source={`${f.territoryId}|${f.sector}`}
                         style={{ cursor: 'pointer' }}
-                        onClick={() => setMoveFrom(picked
+                        onClick={() => setMovePlan(picked
                           ? null
-                          : { territoryId: f.territoryId, sector: f.sector })}>
+                          : {
+                            from: { territoryId: f.territoryId, sector: f.sector },
+                            to: null, count: 0,
+                          })}>
                         <title>{picked ? 'Click again to cancel' : 'Move this stack'}</title>
                         {/* THE HIT AREA. A fill-none circle takes clicks on
                             its stroke alone — a dashed 1.6px thread — which
@@ -520,32 +535,98 @@ export function DuneGameScreen({
                       </g>
                     )
                   })}
-                {moveFrom && DUNE_TERRITORIES.flatMap(t => t.cells
-                  .filter(c => !inStorm(t.id, c.sector, state.storm))
-                  .filter(c => !(t.id === moveFrom.territoryId && c.sector === moveFrom.sector))
-                  .map(c => (
-                    <g key={`dst|${t.id}|${c.sector}`} data-move-target={`${t.id}|${c.sector}`}
-                      style={{ cursor: 'pointer' }}
-                      onClick={() => {
-                        const stack = state.forces.find(f =>
-                          f.faction === seat && f.territoryId === moveFrom.territoryId
-                          && f.sector === moveFrom.sector)
-                        if (!stack) { setMoveFrom(null); return }
-                        onMoveStack({
-                          from: moveFrom.territoryId,
-                          gather: [{
-                            sector: moveFrom.sector, count: stack.count,
-                            ...(stack.starred ? { starred: stack.starred } : null),
-                          }],
-                          to: { territoryId: t.id, sector: c.sector },
-                        })
-                        setMoveFrom(null)
-                      }}>
-                      <title>{`${t.displayName} — ${c.sector}`}</title>
-                      <circle cx={c.at.x} cy={c.at.y} r="11" fill="#2f6fb52a"
-                        stroke="#2f6fb5" strokeWidth="1.2" strokeDasharray="3 3" />
-                    </g>
-                  )))}
+                {movePlan && (() => {
+                  const stack = state.forces.find(f =>
+                    f.faction === seat && f.territoryId === movePlan.from.territoryId
+                    && f.sector === movePlan.from.sector)
+                  const stackTotal = stack?.count ?? 0
+                  const stackStarred = Math.min(stackTotal, stack?.starred ?? 0)
+                  // PLAIN FORCES BOARD FIRST, elites last — so − hands the
+                  // Fedaykin back before the rank and file.
+                  const starredStaged = movePlan
+                    ? Math.max(0, movePlan.count - (stackTotal - stackStarred))
+                    : 0
+                  const reach = moveTargets({
+                    faction: seat!, from: movePlan.from,
+                    forces: state.forces, storm: state.storm,
+                  })
+                  return (
+                    <>
+                      {DUNE_TERRITORIES.flatMap(t => t.cells
+                        .filter(c => reach.has(`${t.id}|${c.sector}`))
+                        .map(c => {
+                          const chosen = movePlan.to
+                            && movePlan.to.territoryId === t.id
+                            && movePlan.to.sector === c.sector
+                          return (
+                            <g key={`dst|${t.id}|${c.sector}`}
+                              data-move-target={`${t.id}|${c.sector}`}
+                              style={{ cursor: 'pointer' }}
+                              onClick={() => setMovePlan(m => m && ({
+                                ...m,
+                                to: { territoryId: t.id, sector: c.sector },
+                                count: (!m.to
+                                  || (m.to.territoryId === t.id && m.to.sector === c.sector))
+                                  ? Math.min(stackTotal, m.count + 1)
+                                  : m.count,
+                              }))}>
+                              <title>{`${t.displayName} — ${c.sector}`}</title>
+                              <circle cx={c.at.x} cy={c.at.y} r="11"
+                                fill={chosen ? '#2f6fb54d' : '#2f6fb52a'}
+                                stroke="#2f6fb5" strokeWidth={chosen ? 2 : 1.2}
+                                strokeDasharray={chosen ? undefined : '3 3'} />
+                              {chosen && movePlan.count > 0 && (
+                                <text x={c.at.x} y={c.at.y} fontSize="10" fill="#f0e2bb"
+                                  textAnchor="middle" dominantBaseline="central"
+                                  fontFamily='Georgia, "Times New Roman", serif'
+                                  fontWeight="bold" pointerEvents="none">
+                                  {movePlan.count}
+                                </text>
+                              )}
+                            </g>
+                          )
+                        }))}
+                      {movePlan.to && movePlan.count > 0 && (() => {
+                        const at = cellAt(movePlan.to.territoryId, movePlan.to.sector)
+                        if (!at) return null
+                        return (
+                          <g data-move-commit="">
+                            <g data-move-undo="" style={{ cursor: 'pointer' }}
+                              onClick={() => setMovePlan(m => m && (m.count <= 1
+                                ? { ...m, to: null, count: 0 }
+                                : { ...m, count: m.count - 1 }))}>
+                              <title>Take one back</title>
+                              <circle cx={at.x - 11} cy={at.y + 21} r="8"
+                                fill="#111a2c" stroke="#f0e2bb" strokeWidth="1.2" />
+                              <text x={at.x - 11} y={at.y + 21} fontSize="11" fill="#f0e2bb"
+                                textAnchor="middle" dominantBaseline="central"
+                                pointerEvents="none">−</text>
+                            </g>
+                            <g data-move-go="" style={{ cursor: 'pointer' }}
+                              onClick={() => {
+                                onMoveStack({
+                                  from: movePlan.from.territoryId,
+                                  gather: [{
+                                    sector: movePlan.from.sector, count: movePlan.count,
+                                    ...(starredStaged > 0 ? { starred: starredStaged } : null),
+                                  }],
+                                  to: movePlan.to!,
+                                })
+                                setMovePlan(null)
+                              }}>
+                              <title>{`Send ${movePlan.count}${starredStaged > 0 ? ` (${starredStaged}★)` : ''}`}</title>
+                              <circle cx={at.x + 11} cy={at.y + 21} r="8"
+                                fill="#2f6fb5" stroke="#f0e2bb" strokeWidth="1.2" />
+                              <text x={at.x + 11} y={at.y + 21} fontSize="10" fill="#f0e2bb"
+                                textAnchor="middle" dominantBaseline="central"
+                                pointerEvents="none">✓</text>
+                            </g>
+                          </g>
+                        )
+                      })()}
+                    </>
+                  )
+                })()}
               </g>
             )}
 

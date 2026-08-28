@@ -9,7 +9,7 @@
 import { readFileSync } from 'node:fs'
 import {
   settleSector, inStorm, strongholdClosed, fremenShipTargets, shipCost,
-  judgeShipment, judgeMove, movementRange, territoryDistance,
+  judgeShipment, judgeMove, moveTargets, movementRange, territoryDistance,
   landForces, liftForces, nextSeat,
   SHIP_STRONGHOLD_SPICE, SHIP_OPEN_SPICE, GREAT_FLAT, STRONGHOLD_CAP, SHIPMENT_SECONDS,
 } from '@/lib/dune/shipment'
@@ -308,6 +308,66 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
     }) as { refusal: string }).refusal, 'nothing-asked')
 }
 
+// ── the rings and the judge, cell by cell ─────────────────────────────────
+// moveTargets is the reachability the BOARD draws rings from; judgeMove is
+// the law the SERVER runs. Both live in one module, composed of the same
+// four rules, and this sweep holds them to it: over every cell on the
+// board, a ring is offered exactly where a one-force move would be taken.
+{
+  const sweep = (faction: FactionId, from: { territoryId: string; sector: string },
+    forces: Force[], storm: SectorId) => {
+    const reach = moveTargets({ faction, from, forces, storm })
+    let disagree = 0
+    for (const t of DUNE_TERRITORIES) {
+      for (const s of t.sectors) {
+        const verdict = judgeMove({
+          faction, from: from.territoryId,
+          gather: [{ sector: from.sector, count: 1 }],
+          to: { territoryId: t.id, sector: s }, forces, storm,
+        }).ok
+        if (verdict !== reach.has(`${t.id}|${s}`)) disagree++
+      }
+    }
+    return { reach, disagree }
+  }
+
+  const afoot = sweep('emperor',
+    { territoryId: 'territory-02', sector: 'sector-4' },
+    [f('emperor', 'territory-02', 'sector-4', 6)], CALM)
+  check('afoot, every cell agrees with the judge', afoot.disagree, 0)
+  check('...and the walk reaches somewhere', afoot.reach.size > 0, true)
+  check('...never its own territory',
+    [...afoot.reach].some(k => k.startsWith('territory-02|')), false)
+
+  const flying = sweep('emperor',
+    { territoryId: 'territory-02', sector: 'sector-4' },
+    [f('emperor', 'territory-02', 'sector-4', 6), f('emperor', 'territory-13', 'sector-10', 1)],
+    CALM)
+  check('with ornithopters, the same perfect agreement', flying.disagree, 0)
+  check('...and three territories reach farther than one',
+    flying.reach.size > afoot.reach.size, true)
+
+  const stormy = sweep('fremen',
+    { territoryId: 'territory-02', sector: 'sector-4' },
+    [f('fremen', 'territory-02', 'sector-4', 6)], 'sector-9')
+  check('the Fremen under a storm agree too', stormy.disagree, 0)
+  check('...with no ring standing in the storm',
+    [...stormy.reach].some(k => {
+      const [t, s] = k.split('|')
+      return inStorm(t, s, 'sector-9')
+    }), false)
+
+  const gated = sweep('emperor',
+    { territoryId: 'territory-26', sector: 'sector-11' },
+    [
+      f('emperor', 'territory-26', 'sector-11', 4),
+      f('atreides', 'territory-13', 'sector-10'),
+      f('harkonnen', 'territory-13', 'sector-10'),
+    ], CALM)
+  check('a full stronghold agrees with the judge', gated.disagree, 0)
+  check('...and its cell is never offered', gated.reach.has('territory-13|sector-10'), false)
+}
+
 // ── the board arithmetic ──────────────────────────────────────────────────
 {
   const board = [f('emperor', 'territory-22', 'sector-15', 4, { starred: 1 })]
@@ -532,12 +592,24 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
   // overlap on the same cells.
   check('a stack click starts the move',
     /myMoveWindow && staged\.plain \+ staged\.starred === 0 && onMoveStack && \(/.test(game), true)
-  check('...and the destination click posts the whole stack',
-    /sector: moveFrom\.sector, count: stack\.count,/.test(game), true)
-  check('...the source is not its own destination',
-    /!\(t\.id === moveFrom\.territoryId && c\.sector === moveFrom\.sector\)/.test(game), true)
+  check('...and each ground click stages one force, capped at the stack',
+    /\? Math\.min\(stackTotal, m\.count \+ 1\)\s*[\r\n]+\s*: m\.count,/.test(game), true)
+  check('...re-aiming keeps the staged and changes only the ground',
+    /to: \{ territoryId: t\.id, sector: c\.sector \},\s*[\r\n]+\s*count: \(!m\.to/.test(game), true)
+  check('...the rings are the judge\'s reachability, imported',
+    /const reach = moveTargets\(\{\s*[\r\n]+\s*faction: seat!, from: movePlan\.from,/.test(game), true)
+  check('...and only reached cells are offered',
+    /\.filter\(c => reach\.has\(`\$\{t\.id\}\|\$\{c\.sector\}`\)\)/.test(game), true)
+  check('...the elites board last, so − hands them back first',
+    /Math\.max\(0, movePlan\.count - \(stackTotal - stackStarred\)\)/.test(game), true)
+  check('...− takes one click back, and at zero the ground clears',
+    /m\.count <= 1\s*[\r\n]+\s*\? \{ \.\.\.m, to: null, count: 0 \}\s*[\r\n]+\s*: \{ \.\.\.m, count: m\.count - 1 \}/.test(game), true)
+  check('...and ✓ posts the one committed move, whole',
+    /count: movePlan\.count,\s*[\r\n]+\s*\.\.\.\(starredStaged > 0 \? \{ starred: starredStaged \} : null\),/.test(game), true)
+  check('...which clears the plan',
+    /to: movePlan\.to!,\s*[\r\n]+\s*\}\)\s*[\r\n]+\s*setMovePlan\(null\)/.test(game), true)
   check('...and staging a shipment cancels the picked move',
-    /setMoveFrom\(null\)\s*[\r\n]+\s*setStaged\(s => \(\{ \.\.\.s, \[kind\]: s\[kind\] \+ 1 \}\)\)/.test(game), true)
+    /setMovePlan\(null\)\s*[\r\n]+\s*setStaged\(s => \(\{ \.\.\.s, \[kind\]: s\[kind\] \+ 1 \}\)\)/.test(game), true)
 
   // ── THE STACK IS CLICKABLE, NOT JUST RINGED ─────────────────────────────
   // The first cut drew the source as a fill-none circle, and a fill-none
@@ -567,6 +639,8 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
     /Stage forces on the rail and click the board/.test(panel), true)
   check('...and at the two-click move',
     /Click one of your stacks, then where it goes/.test(panel), true)
+  check('...a click a force, said out loud',
+    /a click a force/.test(panel), true)
   check('the generic forms are dev-only',
     /devForms && mayShip && \(/.test(panel) && /devForms && mayMove && \(/.test(panel), true)
   check('...the Guild keep their exceptions',

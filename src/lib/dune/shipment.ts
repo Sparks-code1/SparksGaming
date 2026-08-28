@@ -338,6 +338,38 @@ export function territoryDistance(
 }
 
 /**
+ * Every cell one stack may lawfully reach this move — THE JUDGE'S OWN LAW,
+ * exported so the board offers rings only where a move would be accepted.
+ * Composed of exactly the rules judgeMove applies to a gathered stack —
+ * movementRange, territoryDistance around the storm, the closed-stronghold
+ * gate, never its own territory — and the agreement is swept cell by cell
+ * in the tests, so the rings the client draws and the moves the server
+ * takes cannot drift apart.
+ */
+export function moveTargets(input: {
+  faction: FactionId
+  from: { territoryId: string; sector: string }
+  forces: readonly Force[]
+  storm: SectorId
+}): Set<string> {
+  const { faction, from, forces, storm } = input
+  const range = movementRange(faction, forces)
+  const reach = new Set<string>()
+  for (const t of DUNE_TERRITORIES) {
+    if (t.id === from.territoryId) continue
+    if (strongholdClosed(forces, faction, t.id)) continue
+    for (const s of t.sectors) {
+      // no storm check here ON PURPOSE: territoryDistance is the storm's law
+      // — a stormed destination is Infinity — and writing it twice would
+      // leave a second copy to drift.
+      const d = territoryDistance(from, { territoryId: t.id, sector: s }, storm)
+      if (d <= range) reach.add(`${t.id}|${s}`)
+    }
+  }
+  return reach
+}
+
+/**
  * Judge one move: a group from one territory to one other, within range,
  * around the storm, through no closed gate.
  *

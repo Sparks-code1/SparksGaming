@@ -953,6 +953,20 @@ function territoryDistance(from, to, storm) {
   }
   return dist.get(key(to.territoryId, to.sector)) ?? Infinity;
 }
+function moveTargets(input) {
+  const { faction, from, forces, storm } = input;
+  const range = movementRange(faction, forces);
+  const reach = /* @__PURE__ */ new Set();
+  for (const t of DUNE_TERRITORIES) {
+    if (t.id === from.territoryId) continue;
+    if (strongholdClosed(forces, faction, t.id)) continue;
+    for (const s of t.sectors) {
+      const d = territoryDistance(from, { territoryId: t.id, sector: s }, storm);
+      if (d <= range) reach.add(`${t.id}|${s}`);
+    }
+  }
+  return reach;
+}
 function judgeMove(input) {
   const { faction, from, gather, to, forces, storm } = input;
   if (!territory(from)) return { ok: false, refusal: "no-such-territory" };
@@ -1028,6 +1042,7 @@ export {
   judgeShipment,
   landForces,
   liftForces,
+  moveTargets,
   movementRange,
   nextSeat,
   settleSector,
