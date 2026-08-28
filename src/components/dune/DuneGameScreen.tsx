@@ -55,6 +55,8 @@ import { SetupWindow, SetupBoardTargets } from './SetupWindow'
 import { ShipRail } from './ShipRail'
 import { inStorm } from '@/lib/dune/shipment'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
+import { FACTION_LOOK } from './SeatLayer'
+import { cellAt } from './DuneBoard'
 import { SETUP_SECONDS, postureFor, starredOf } from '@/lib/dune/setup'
 import { factionById } from '@/data/dune/factions'
 import type { SetupWindow as SetupWindowState } from '@/lib/dune/setup'
@@ -127,6 +129,15 @@ export interface DuneGameScreenProps {
     starred: number
   }) => void
   /**
+   * Move a whole stack: the board's two-click movement. The stack was picked
+   * by clicking it; the destination click posts the move.
+   */
+  onMoveStack?: (a: {
+    from: string
+    gather: { sector: string; count: number; starred?: number }[]
+    to: { territoryId: string; sector: string }
+  }) => void
+  /**
    * The live auction, or null.
    *
    * Everything about it except `revealed` is public. `revealed` is the Atreides
@@ -176,7 +187,7 @@ export interface DuneGameScreenProps {
 }
 
 export function DuneGameScreen({
-  state, seat, own, chat, onSend, talkingTo, seatNames, notices, onShipReserves,
+  state, seat, own, chat, onSend, talkingTo, seatNames, notices, onShipReserves, onMoveStack,
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
   const [chatShut, setChatShut] = useState(false)
@@ -184,11 +195,18 @@ export function DuneGameScreen({
   const [staged, setStaged] = useState({ plain: 0, starred: 0 })
   const rows = hudRows(state)
   const mine = state.players.find(p => p.faction === seat) ?? null
-  /** Whether the rail's bubbles are live: this seat's own shipment window. */
+  /** Whether the rail's bubbles are live: this seat's turn, shipment not
+   *  yet made and movement not yet made — shipment comes first. */
   const myShipWindow = !!(state.shipping
-    && state.shipping.stage === 'ship'
     && state.shipping.order[state.shipping.at] === seat
-    && !state.shipping.done.shipped)
+    && !state.shipping.done.shipped
+    && !state.shipping.done.moved)
+  /** Whether a stack click starts a move: this seat's turn, move unspent. */
+  const myMoveWindow = !!(state.shipping
+    && state.shipping.order[state.shipping.at] === seat
+    && !state.shipping.done.moved)
+  /** The stack picked as a move's source, waiting for its destination. */
+  const [moveFrom, setMoveFrom] = useState<{ territoryId: string; sector: string } | null>(null)
   const myRow = rows.find(r => r.faction === seat) ?? null
 
   // Stacks are per faction so the board can colour them. Summed by cell rather
@@ -356,10 +374,10 @@ export function DuneGameScreen({
             spice={own?.spice ?? null}
             pending={staged}
             active={myShipWindow}
-            onStage={kind => setStaged(s => ({
-              ...s,
-              [kind]: s[kind] + 1,
-            }))}
+            onStage={kind => {
+              setMoveFrom(null)
+              setStaged(s => ({ ...s, [kind]: s[kind] + 1 }))
+            }}
             onReset={() => setStaged({ plain: 0, starred: 0 })} />
         )}
 
@@ -417,12 +435,71 @@ export function DuneGameScreen({
             awaiting={state.awaiting} phase={state.phase} turn={state.turn}
             closesAt={closesAt} windowMs={windowMs} now={now}
             interactive={(setupActive && (owesFremen || advisorOpen))
-              || (myShipWindow && staged.plain + staged.starred > 0)}>
+              || (myShipWindow && staged.plain + staged.starred > 0)
+              || myMoveWindow}>
             {/* DURING SETUP THE MAP TAKES THE ANSWER. Rings on the cells a
                 click means something at — the Fremen's three territories, or
                 the whole board for the advisor — with the pending pieces drawn
                 as the real stacks above. Clicks add; the window column takes
                 them back. */}
+            {/* THE MOVE, in two clicks and no forms: your own stack first —
+                ringed in your colour — then the ground it goes to. The whole
+                stack moves; the server judges range, storm and gates. Landing
+                rings for a staged shipment take priority: staging cancels a
+                half-picked move. */}
+            {myMoveWindow && staged.plain + staged.starred === 0 && onMoveStack && (
+              <g data-layer="move-controls">
+                {state.forces
+                  .filter(f => f.faction === seat && f.count > 0)
+                  .map(f => {
+                    const at = cellAt(f.territoryId, f.sector)
+                    if (!at) return null
+                    const picked = moveFrom
+                      && moveFrom.territoryId === f.territoryId && moveFrom.sector === f.sector
+                    return (
+                      <g key={`src|${f.territoryId}|${f.sector}`}
+                        data-move-source={`${f.territoryId}|${f.sector}`}
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => setMoveFrom(picked
+                          ? null
+                          : { territoryId: f.territoryId, sector: f.sector })}>
+                        <title>{picked ? 'Click again to cancel' : 'Move this stack'}</title>
+                        <circle cx={at.x} cy={at.y} r="13" fill="none"
+                          stroke={FACTION_LOOK[seat!].colour}
+                          strokeWidth={picked ? 3 : 1.6}
+                          strokeDasharray={picked ? undefined : '4 3'} />
+                      </g>
+                    )
+                  })}
+                {moveFrom && DUNE_TERRITORIES.flatMap(t => t.cells
+                  .filter(c => !inStorm(t.id, c.sector, state.storm))
+                  .filter(c => !(t.id === moveFrom.territoryId && c.sector === moveFrom.sector))
+                  .map(c => (
+                    <g key={`dst|${t.id}|${c.sector}`} data-move-target={`${t.id}|${c.sector}`}
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => {
+                        const stack = state.forces.find(f =>
+                          f.faction === seat && f.territoryId === moveFrom.territoryId
+                          && f.sector === moveFrom.sector)
+                        if (!stack) { setMoveFrom(null); return }
+                        onMoveStack({
+                          from: moveFrom.territoryId,
+                          gather: [{
+                            sector: moveFrom.sector, count: stack.count,
+                            ...(stack.starred ? { starred: stack.starred } : null),
+                          }],
+                          to: { territoryId: t.id, sector: c.sector },
+                        })
+                        setMoveFrom(null)
+                      }}>
+                      <title>{`${t.displayName} — ${c.sector}`}</title>
+                      <circle cx={c.at.x} cy={c.at.y} r="11" fill="#2f6fb52a"
+                        stroke="#2f6fb5" strokeWidth="1.2" strokeDasharray="3 3" />
+                    </g>
+                  )))}
+              </g>
+            )}
+
             {/* THE LANDING. Staged forces make every clear cell a target;
                 the click is the shipment. Stormed cells are not offered —
                 the server would refuse them anyway, but a ring on a cell the

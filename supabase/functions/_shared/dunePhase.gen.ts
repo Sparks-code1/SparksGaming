@@ -449,7 +449,7 @@ var DUNE_TERRITORIES = [
     id: "territory-22",
     displayName: "The Great Flat",
     outline: "M50.5967 557.456C50.5967 557.956 50.5975 558.456 50.5992 558.956H348.597L371.597 538.956L375.097 518.456L312.097 495.402L311.597 503.956L278.097 508.956L267.097 501.456L233.597 497.956C216.763 501.289 182.797 507.956 181.597 507.956C180.397 507.956 161.763 508.956 152.597 509.456L124.597 500.956L75.5967 498.956L56.4791 485.956C52.6099 509.214 50.5967 533.1 50.5967 557.456Z",
-    sectors: ["sector-15", "sector-16"],
+    sectors: ["sector-15"],
     centroid: { x: 91.16, y: 529.3 },
     terrain: "sand",
     spiceSector: "sector-15",
@@ -459,8 +459,7 @@ var DUNE_TERRITORIES = [
     ornithopters: false,
     adjacent: ["territory-04", "territory-21", "territory-23", "territory-24"],
     cells: [
-      { sector: "sector-15", at: { x: 206.25, y: 529.65 }, areaShare: 0.979, room: 25.8 },
-      { sector: "sector-16", at: { x: 202.03, y: 557.74 }, areaShare: 0.021, room: 1.2 }
+      { sector: "sector-15", at: { x: 206.25, y: 529.65 }, areaShare: 0.979, room: 25.8 }
     ]
   },
   {

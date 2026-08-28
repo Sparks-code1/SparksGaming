@@ -1,20 +1,20 @@
 /**
- * The acting seat's two halves: one shipment, then one move.
+ * The rotation's notice: whose turn, what is left of it, and the handoff.
  *
- * SHOWN TO EVERY SEAT, controls only for the one whose turn it is — six
- * people round a table can all see who is being waited on, and hiding it is
- * how a play-by-network game ends up with everybody waiting on everybody.
- * Past the deadline anybody gets the push button, the auction's rule.
+ * THE DOING MOVED TO THE BOARD. Shipping is the rail's bubbles and a landing
+ * click; movement is a click on your own stack and a click on where it goes —
+ * no selects, no number fields. What remains here is what a notice board is
+ * for: the order with the acting seat lit, the waiting line, the end-of-turn
+ * button, and the push once a clock has run out.
  *
- * THE SERVER RULES ON EVERYTHING. The cost preview here is the same bundle
- * the server runs (shipCost), so the number on the button is the number the
- * ledger will move — but every refusal (storm, closed stronghold, range, the
- * desert's radius) is the server's to say, and arrives as a code.
+ * THE GUILD KEEP TWO FORMS, because their special shipments — territory to
+ * territory, and back to reserves — have no bubble: they start from the
+ * board, not the pile, and a click on a stack already means "move". A small
+ * form for the exception beats a click grammar nobody could guess.
  *
- * ONE SOURCE STACK PER MOVE, for now: the rules allow gathering a group from
- * several sectors of one territory and the server accepts a multi-stack
- * gather; this form offers the common case. Widening it is a UI change, not
- * a rules change.
+ * `devForms` restores the full select-driven ship and move forms for the
+ * six-seat harness, which drives every faction from one page and needs the
+ * generic path more than it needs elegance.
  */
 import { useMemo, useState } from 'react'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
@@ -46,19 +46,21 @@ export interface ShipmentPanelProps {
     to: { territoryId: string; sector?: string }
   }) => void
   onPass: () => void
+  /** The harness's generic forms. Never set on the real screen. */
+  devForms?: boolean
 }
 
 const label: React.CSSProperties = { display: 'block', marginTop: 6, fontSize: 11, opacity: 0.75 }
 const wide: React.CSSProperties = { width: '100%' }
 
 export function ShipmentPanel({
-  shipping, forces, seat, guildSeated, now, busy, onShip, onMove, onPass,
+  shipping, forces, seat, guildSeated, now, busy, onShip, onMove, onPass, devForms = false,
 }: ShipmentPanelProps) {
   const acting = shipping.order[shipping.at]
   const mine = seat === acting
   const expired = now >= shipping.closesAt
 
-  const [kind, setKind] = useState<GuildShipKind>('off-planet')
+  const [kind, setKind] = useState<GuildShipKind>('cross')
   const [shipTo, setShipTo] = useState('')
   const [shipSector, setShipSector] = useState('')
   const [shipFrom, setShipFrom] = useState('')
@@ -76,20 +78,21 @@ export function ShipmentPanel({
   const sectorsOf = (id: string) => DUNE_TERRITORIES.find(t => t.id === id)?.sectors ?? []
   const nameOf = (id: string) => DUNE_TERRITORIES.find(t => t.id === id)?.displayName ?? id
 
-  const preview = seat && shipTo && kind !== 'to-reserves'
+  const preview = seat && kind === 'cross' && shipTo
     ? shipCost({ faction: seat, kind, territoryId: shipTo, count, guildSeated }).cost
     : seat && kind === 'to-reserves' && shipFrom
       ? shipCost({ faction: seat, kind, territoryId: shipFrom.split('|')[0], count, guildSeated }).cost
       : null
+
+  const mayShip = mine && !shipping.done.shipped && !shipping.done.moved
+  const mayMove = mine && !shipping.done.moved
 
   return (
     <div data-layer="shipment-panel" style={{
       margin: '0 0 8px', padding: 8, borderRadius: 6, background: '#1d2a44',
       lineHeight: 1.5, font: `12px ${SERIF}`, color: PALE,
     }}>
-      <b style={{ display: 'block', marginBottom: 2 }}>
-        {shipping.stage === 'ship' ? 'Shipment round' : 'Movement round'}
-      </b>
+      <b style={{ display: 'block', marginBottom: 2 }}>Shipment and Movement</b>
       {shipping.order.map((f, i) => (
         <span key={f} style={{
           marginRight: 6,
@@ -100,7 +103,7 @@ export function ShipmentPanel({
       ))}
 
       {!mine && !expired && <span style={{ display: 'block', marginTop: 4, opacity: 0.7 }}>
-        Waiting on {FACTION_LOOK[acting].name} to {shipping.stage === 'ship' ? 'ship' : 'move'}.
+        Waiting on {FACTION_LOOK[acting].name}.
       </span>}
 
       {/* PAST THE DEADLINE, ANYBODY MAY PUSH — silence has already spent
@@ -113,31 +116,31 @@ export function ShipmentPanel({
 
       {mine && (
         <>
-          {shipping.stage === 'ship' && !shipping.done.shipped && (
+          <span style={{ display: 'block', marginTop: 4, opacity: 0.85 }}>
+            {mayShip
+              ? 'Stage forces on the rail and click the board to land them.'
+              : shipping.done.moved ? '' : 'Click one of your stacks, then where it goes.'}
+          </span>
+
+          {/* ── THE GUILD'S TWO EXCEPTIONS ────────────────────────────────── */}
+          {seat === 'spacing-guild' && mayShip && (
             <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid #ffffff14' }}>
-              <b>Ship</b>
-              {seat === 'spacing-guild' && (
-                <select value={kind} onChange={e => setKind(e.target.value as GuildShipKind)}
-                  style={wide}>
-                  <option value="off-planet">From reserves onto the board</option>
-                  <option value="cross">From one territory to another</option>
-                  <option value="to-reserves">From the board back to reserves</option>
-                </select>
-              )}
-              {(kind === 'cross' || kind === 'to-reserves') && (
-                <>
-                  <span style={label}>From</span>
-                  <select value={shipFrom} onChange={e => setShipFrom(e.target.value)} style={wide}>
-                    <option value="">—</option>
-                    {stacks.map(s => (
-                      <option key={s.key} value={s.key}>
-                        {nameOf(s.territoryId)} ({s.sector}) — {s.count}
-                      </option>
-                    ))}
-                  </select>
-                </>
-              )}
-              {kind !== 'to-reserves' && (
+              <b>Guild shipment</b>
+              <select value={kind} onChange={e => setKind(e.target.value as GuildShipKind)}
+                style={wide}>
+                <option value="cross">From one territory to another</option>
+                <option value="to-reserves">From the board back to reserves</option>
+              </select>
+              <span style={label}>From</span>
+              <select value={shipFrom} onChange={e => setShipFrom(e.target.value)} style={wide}>
+                <option value="">—</option>
+                {stacks.map(s => (
+                  <option key={s.key} value={s.key}>
+                    {nameOf(s.territoryId)} ({s.sector}) — {s.count}
+                  </option>
+                ))}
+              </select>
+              {kind === 'cross' && (
                 <>
                   <span style={label}>To</span>
                   <select value={shipTo}
@@ -162,9 +165,9 @@ export function ShipmentPanel({
               <button disabled={busy} style={{ marginTop: 6 }}
                 onClick={() => onShip({
                   kind,
-                  ...(kind !== 'to-reserves'
+                  ...(kind === 'cross'
                     ? { to: { territoryId: shipTo, sector: shipSector || undefined } } : null),
-                  ...(kind !== 'off-planet' && shipFrom
+                  ...(shipFrom
                     ? {
                       from: {
                         territoryId: shipFrom.split('|')[0],
@@ -178,10 +181,40 @@ export function ShipmentPanel({
             </div>
           )}
 
-          {shipping.stage === 'move' && !shipping.done.moved && (
+          {/* ── THE HARNESS'S GENERIC FORMS ───────────────────────────────── */}
+          {devForms && mayShip && (
             <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid #ffffff14' }}>
-              <b>Move</b>
-              <span style={label}>From</span>
+              <b>Ship (dev)</b>
+              <select value={shipTo}
+                onChange={e => { setShipTo(e.target.value); setShipSector('') }} style={wide}>
+                <option value="">—</option>
+                {DUNE_TERRITORIES.map(t => (
+                  <option key={t.id} value={t.id}>{t.displayName}</option>
+                ))}
+              </select>
+              {sectorsOf(shipTo).length > 1 && (
+                <select value={shipSector} onChange={e => setShipSector(e.target.value)}
+                  style={{ ...wide, marginTop: 3 }}>
+                  <option value="">sector…</option>
+                  {sectorsOf(shipTo).map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              )}
+              <input type="number" min={1} value={count}
+                onChange={e => setCount(Math.max(1, Number(e.target.value)))}
+                style={{ ...wide, marginTop: 3 }} />
+              <button disabled={busy} style={{ marginTop: 4 }}
+                onClick={() => onShip({
+                  kind: 'off-planet',
+                  to: { territoryId: shipTo, sector: shipSector || undefined },
+                  count,
+                })}>
+                Ship
+              </button>
+            </div>
+          )}
+          {devForms && mayMove && (
+            <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid #ffffff14' }}>
+              <b>Move (dev)</b>
               <select value={moveFrom} onChange={e => setMoveFrom(e.target.value)} style={wide}>
                 <option value="">—</option>
                 {stacks.map(s => (
@@ -190,12 +223,12 @@ export function ShipmentPanel({
                   </option>
                 ))}
               </select>
-              <span style={label}>Forces</span>
               <input type="number" min={1} value={moveCount}
-                onChange={e => setMoveCount(Math.max(1, Number(e.target.value)))} style={wide} />
-              <span style={label}>To</span>
+                onChange={e => setMoveCount(Math.max(1, Number(e.target.value)))}
+                style={{ ...wide, marginTop: 3 }} />
               <select value={moveTo}
-                onChange={e => { setMoveTo(e.target.value); setMoveSector('') }} style={wide}>
+                onChange={e => { setMoveTo(e.target.value); setMoveSector('') }}
+                style={{ ...wide, marginTop: 3 }}>
                 <option value="">—</option>
                 {DUNE_TERRITORIES.map(t => (
                   <option key={t.id} value={t.id}>{t.displayName}</option>
@@ -208,7 +241,7 @@ export function ShipmentPanel({
                   {sectorsOf(moveTo).map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               )}
-              <button disabled={busy} style={{ marginTop: 6 }}
+              <button disabled={busy} style={{ marginTop: 4 }}
                 onClick={() => onMove({
                   from: moveFrom.split('|')[0],
                   gather: [{ sector: moveFrom.split('|')[1], count: moveCount }],
@@ -219,12 +252,10 @@ export function ShipmentPanel({
             </div>
           )}
 
-          {/* THE EARLY HANDOFF: three minutes are the ceiling, not a
-              sentence. Named for the round so nobody wonders what is being
-              ended. */}
+          {/* THE EARLY HANDOFF: the clock is a ceiling, not a sentence. */}
           <button disabled={busy} onClick={onPass}
             style={{ display: 'block', width: '100%', marginTop: 8 }}>
-            {shipping.stage === 'ship' ? 'End shipment — next player' : 'End movement — next player'}
+            End turn — next player
           </button>
         </>
       )}

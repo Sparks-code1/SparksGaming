@@ -83,6 +83,13 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
   // ARRAKEEN IS NOT: the desert does not deliver to the city.
   check('Arrakeen is beyond the desert', reach.has('territory-13'), false)
   check('the radius reaches sixteen territories', reach.size, 16)
+
+  // THE GREAT FLAT SITS IN SECTOR 15 ALONE. Measured, not assumed: the
+  // artwork put 97.9% of it in 15 and a 2.1% sliver over the 15/16 line —
+  // tracing bleed, the smallest share on the board by a wide margin — and
+  // the generator's overlap floor was raised to drop exactly that sliver.
+  check('the Great Flat sits in sector 15 alone',
+    DUNE_TERRITORIES.find(t => t.id === GREAT_FLAT)?.sectors, ['sector-15'])
 }
 
 // ── the fares ─────────────────────────────────────────────────────────────
@@ -308,22 +315,17 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
 
 // ── the rotation ──────────────────────────────────────────────────────────
 {
+  // ONE ROTATION: each seat ships then moves in its own turn, then the
+  // next faction — the two-round shape was a misreading, since corrected.
   const w: ShippingWindow = {
-    turn: 3, order: ['atreides', 'harkonnen'] as FactionId[], stage: 'ship', at: 0,
-    done: { shipped: true }, closesAt: 1000,
+    turn: 3, order: ['atreides', 'harkonnen'] as FactionId[], at: 0,
+    done: { shipped: true, moved: true }, closesAt: 1000,
   }
   const next = nextSeat(w, 2000)
   check('the rotation steps with a fresh slate',
-    next && [next.at, next.stage, next.done, next.closesAt], [1, 'ship', {}, 2000])
-  // TWO ROUNDS: off the end of the ship round the move round begins, the
-  // same order from the top; off the end of the move round, the phase ends.
-  const toMove = nextSeat(next!, 3000)
-  check('...the ship round rolls into the move round',
-    toMove && [toMove.stage, toMove.at, toMove.done], ['move', 0, {}])
-  const lastMove = nextSeat(toMove!, 4000)
-  check('...and walking off the move round ends the phase',
-    nextSeat(lastMove!, 5000), null)
-  check('each stage window is three minutes', SHIPMENT_SECONDS, 180)
+    next && [next.at, next.done, next.closesAt], [1, {}, 2000])
+  check('...and walking off the end ends the phase', nextSeat(next!, 3000), null)
+  check('a turn is three minutes for both halves', SHIPMENT_SECONDS, 180)
   // THE ORDER IS THE STORM'S — the same walk bidding uses.
   check('the order is the storm walk', stormOrder('sector-7', [
     { faction: 'atreides', seat: 'player-position-1' },
@@ -354,10 +356,11 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
   const shipCase = fn.slice(fn.indexOf("case 'SHIP'"), fn.indexOf("case 'MOVE'"))
   check('shipping is the acting seat\'s alone', /'not-your-turn'/.test(shipCase), true)
   check('...one per turn', /'already-shipped'/.test(shipCase), true)
-  // TWO ROUNDS NOW: shipping is refused outside its own round rather than
-  // after a move — every seat ships before any seat moves.
-  check('...and only in the ship round', /'wrong-stage'/.test(shipCase), true)
-  check('...which steps the rotation itself', /nextSeat\(/.test(shipCase), true)
+  // SHIPMENT THEN MOVEMENT, inside one turn: a seat that has moved has
+  // closed its shipping half — and shipping does NOT end the turn, so the
+  // rotation must not step here; the move is still to make.
+  check('...and before the move, never after', /'already-moved'/.test(shipCase), true)
+  check('...and the seat keeps its turn', /nextSeat\(/.test(shipCase), false)
   // THE MONOPOLY IS TWO ROWS IN ONE WRITE: payer down, Guild up, and the
   // Guild never paid by themselves.
   check('the Guild are paid on their own row',
@@ -368,9 +371,9 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
   const moveCase = fn.slice(fn.indexOf("case 'MOVE'"), fn.indexOf("case 'PASS_TURN'"))
   check('the move steps the rotation in its own write',
     /nextSeat\(/.test(moveCase), true)
-  check('...and only in the move round', /'wrong-stage'/.test(moveCase), true)
-  check('the entry opens the ship round',
-    /stage: 'ship', at: 0, done: \{\}/.test(entry), true)
+
+  check('the entry opens the rotation at the first seat',
+    /turn, order, at: 0, done: \{\}/.test(entry), true)
   // THE RING FOLLOWS THE CLOCK, like the worm pause's: the entry lights the
   // first seat. Every step hands it on — checked below, where the cases are
   // sliced. Without this a timer ran while no circle was lit.
@@ -382,8 +385,9 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
   check('before the deadline only the acting seat passes',
     /if \(!expired && w\.order\[w\.at\] !== myFaction\)/.test(passCase), true)
   // The ring hands on with every step, and goes out with the window.
-  check('a shipment hands the ring on',
-    /awaiting: steppedOn \? steppedOn\.order\[steppedOn\.at\] : null/.test(shipCase), true)
+  // A SHIPMENT KEEPS THE RING: the seat still has its move. Only the move
+  // and the pass hand it on.
+  check('a shipment keeps the ring where it is', /awaiting:/.test(shipCase), false)
   check('...and so does a move',
     /awaiting: stepped \? stepped\.order\[stepped\.at\] : null/.test(moveCase), true)
   check('...and a pass',
@@ -483,16 +487,35 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
   check('...which clears the stage',
     /starred: staged\.starred,\s*[\r\n]+\s*\}\)\s*[\r\n]+\s*setStaged\(\{ plain: 0, starred: 0 \}\)/.test(game), true)
 
+  // ── THE TWO-CLICK MOVE ──────────────────────────────────────────────────
+  // Your own stack first, then the ground: no selects, no number fields. The
+  // whole stack goes, the server judges range and storm, and staging a
+  // shipment cancels a half-picked move so the two click grammars never
+  // overlap on the same cells.
+  check('a stack click starts the move',
+    /myMoveWindow && staged\.plain \+ staged\.starred === 0 && onMoveStack && \(/.test(game), true)
+  check('...and the destination click posts the whole stack',
+    /sector: moveFrom\.sector, count: stack\.count,/.test(game), true)
+  check('...the source is not its own destination',
+    /!\(t\.id === moveFrom\.territoryId && c\.sector === moveFrom\.sector\)/.test(game), true)
+  check('...and staging a shipment cancels the picked move',
+    /setMoveFrom\(null\)\s*[\r\n]+\s*setStaged\(s => \(\{ \.\.\.s, \[kind\]: s\[kind\] \+ 1 \}\)\)/.test(game), true)
+
   // ── THE PANEL FOLLOWS THE ROUNDS ────────────────────────────────────────
   const panel = code('src/components/dune/ShipmentPanel.tsx')
-  check('the panel names the round',
-    /'Shipment round' : 'Movement round'/.test(panel), true)
-  check('...ships only in the ship round',
-    /stage === 'ship' && !shipping\.done\.shipped && \(/.test(panel), true)
-  check('...moves only in the move round',
-    /stage === 'move' && !shipping\.done\.moved && \(/.test(panel), true)
-  check('...and the handoff is named for the round',
-    /'End shipment — next player' : 'End movement — next player'/.test(panel), true)
+  // THE DOING MOVED TO THE BOARD: the panel is a notice board again. Its
+  // generic select forms survive only behind the harness flag, and the
+  // Guild keep their two exceptions — special shipments have no bubble.
+  check('the panel points at the board, not at forms',
+    /Stage forces on the rail and click the board/.test(panel), true)
+  check('...and at the two-click move',
+    /Click one of your stacks, then where it goes/.test(panel), true)
+  check('the generic forms are dev-only',
+    /devForms && mayShip && \(/.test(panel) && /devForms && mayMove && \(/.test(panel), true)
+  check('...the Guild keep their exceptions',
+    /seat === 'spacing-guild' && mayShip && \(/.test(panel), true)
+  check('...and the handoff ends the turn',
+    /End turn — next player/.test(panel), true)
 
   // ── AND THE HARNESS HAS THE CONTROLS THE REPORT MISSED ──────────────────
   check('the six-seat harness carries the panel',

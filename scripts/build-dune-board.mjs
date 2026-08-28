@@ -545,7 +545,12 @@ territories.forEach((t, i) => { t.id = `territory-${String(i + 1).padStart(2, '0
 // a corner is not an overlap the storm should care about, so a sector has to
 // hold a real share of the territory's area to count — borderline cases are
 // reported rather than silently included or dropped.
-const OVERLAP_MIN = 0.02, OVERLAP_REVIEW = 0.05
+// 0.025, raised from 0.02 on a measurement: the Great Flat sat 97.9% in
+// sector 15 with a 2.1% sliver over the 15/16 line — tracing bleed, not a
+// printed overlap, and the smallest share on the board by a wide margin
+// (the next is 2.8%). The floor now drops exactly that sliver and nothing
+// else; the printed board keeps the Great Flat in 15 alone.
+const OVERLAP_MIN = 0.025, OVERLAP_REVIEW = 0.05
 const borderline = []
 for (const t of territories) {
   const [x0, y0, x1, y1] = bbox(t.poly)

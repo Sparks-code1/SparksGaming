@@ -626,7 +626,8 @@ export default function DuneMultiSeatView() {
                 busy={busy}
                 onShip={a => void send(mine, 'SHIP', a as never)}
                 onMove={a => void send(mine, 'MOVE', a as never)}
-                onPass={() => void send(mine, 'PASS_TURN')} />
+                onPass={() => void send(mine, 'PASS_TURN')}
+                devForms />
             )}
 
             <b style={{ display: 'block', margin: '10px 0 6px' }}>CHOAM Charity</b>

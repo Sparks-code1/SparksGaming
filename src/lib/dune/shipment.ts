@@ -35,8 +35,8 @@ import type { Force, GamePhase, SectorId } from '@/types/Dune/Game'
 import type { FactionId } from '@/types/Dune/Faction'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 
-/** The acting seat's window, in seconds — PER STAGE. Three minutes to ship,
- *  and three again to move: a slow shipment must not eat the move. */
+/** The acting seat's window, in seconds: three minutes to ship AND move —
+ *  one turn, both halves, then the next faction. */
 export const SHIPMENT_SECONDS = 180
 
 export const SHIP_STRONGHOLD_SPICE = 1
@@ -59,21 +59,17 @@ const territory = (id: string) => DUNE_TERRITORIES.find(t => t.id === id)
 /**
  * The seat-by-seat rotation, in public state while the phase runs.
  *
- * TWO ROUNDS, NOT ONE. Every seat ships in turn order — three minutes each,
- * or "end shipment" to hand on early — and only when the last has gone does
- * movement commence, the same order again, three minutes each. The old shape
- * ran both halves inside one seat's window, where a slow shipment ate the
- * move.
+ * ONE ROTATION: each faction ships and then moves within its own turn, and
+ * only then does the next faction go — the two-round shape was a
+ * misreading, since corrected. Shipment comes before movement inside the
+ * turn; the MOVE is what ends it (or a pass, or the clock).
  *
- * `done` records what the acting seat has used this stage; using it — or
- * passing, or the clock — moves `at` along. Walking off the end of the ship
- * round starts the move round; walking off the move round deletes the window,
- * which is how the phase says it is over.
+ * `done` records what the acting seat has used. Walking off the end of the
+ * order deletes the window, which is how the phase says it is over.
  */
 export interface ShippingWindow {
   turn: number
   order: FactionId[]
-  stage: 'ship' | 'move'
   at: number
   done: { shipped?: boolean; moved?: boolean }
   closesAt: number
@@ -424,13 +420,11 @@ export function liftForces(
   })
 }
 
-/** The rotation moved along: the stage's half spent, a pass, or the clock.
- *  Off the end of the ship round, the move round begins at the top of the
- *  order; off the end of the move round, null — the phase is over. */
+/** The rotation moved along: the seat's move made, a pass, or the clock.
+ *  Off the end of the order, null — the phase is over. */
 export function nextSeat(w: ShippingWindow, closesAt: number): ShippingWindow | null {
   const at = w.at + 1
   if (at < w.order.length) return { ...w, at, done: {}, closesAt }
-  if (w.stage === 'ship') return { ...w, stage: 'move', at: 0, done: {}, closesAt }
   return null
 }
 

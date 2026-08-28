@@ -1546,7 +1546,7 @@ Deno.serve(async req => {
         case 'Shipment and Movement': {
           const order = stormOrder(state.storm as never, (state.players ?? []) as never)
           const shipping = {
-            turn, order, stage: 'ship', at: 0, done: {},
+            turn, order, at: 0, done: {},
             closesAt: now + SHIPMENT_SECONDS * 1000,
           }
           // THE ATREIDES SEE THE TOP OF THE SPICE DECK — their movement
@@ -1594,18 +1594,17 @@ Deno.serve(async req => {
     // seat is two secrets rows in one transaction.
     case 'SHIP': {
       const w = state.shipping as
-        { turn: number; order: string[]; stage: string; at: number; done: { shipped?: boolean; moved?: boolean }; closesAt: number } | undefined
+        { turn: number; order: string[]; at: number; done: { shipped?: boolean; moved?: boolean }; closesAt: number } | undefined
       if (state.phase !== 'Shipment and Movement' || !w) {
         return json({ error: 'the turn is not at shipment', code: 'wrong-phase' }, 409)
-      }
-      // THE SHIP ROUND ONLY. Movement has its own round, its own clock.
-      if (w.stage !== 'ship') {
-        return json({ error: 'the shipment round is over', code: 'wrong-stage' }, 409)
       }
       if (w.order[w.at] !== myFaction) {
         return json({ error: 'not your turn to ship', code: 'not-your-turn' }, 403)
       }
       if (w.done.shipped) return json({ error: 'you have shipped', code: 'already-shipped' }, 409)
+      // SHIPMENT THEN MOVEMENT, inside one turn: a seat that has moved has
+      // closed its shipping half.
+      if (w.done.moved) return json({ error: 'you have already moved', code: 'already-moved' }, 409)
 
       const { data: row } = await admin
         .from('match_secrets').select('data')
@@ -1684,18 +1683,14 @@ Deno.serve(async req => {
         if (paySeat) secretsPatch[guildSeat] = { ...guildRow, spice: moved.purses[guildSeat] }
       }
 
-      // ONE SHIPMENT IS THE SEAT'S WHOLE SHIP ROUND: the rotation steps in
-      // the same write. Off the end of the round, the move round begins —
-      // nextSeat never returns null from the ship stage.
-      const steppedOn = nextSeat(
-        { ...w, done: { ...w.done, shipped: true } } as never,
-        now + SHIPMENT_SECONDS * 1000)
+      // THE SEAT KEEPS ITS TURN: the move is still to make, so the ring
+      // stays where it is and the rotation does not step.
       const { data, error } = await admin.rpc('apply_match_write', {
         p_match_id: matchId,
         p_expected_version: match.version,
         p_state: {
-          ...state, forces, players, shipping: steppedOn,
-          awaiting: steppedOn ? steppedOn.order[steppedOn.at] : null,
+          ...state, forces, players,
+          shipping: { ...w, done: { ...w.done, shipped: true } },
         },
         p_secrets: secretsPatch,
       })
@@ -1706,13 +1701,9 @@ Deno.serve(async req => {
 
     case 'MOVE': {
       const w = state.shipping as
-        { turn: number; order: string[]; stage: string; at: number; done: { shipped?: boolean; moved?: boolean }; closesAt: number } | undefined
+        { turn: number; order: string[]; at: number; done: { shipped?: boolean; moved?: boolean }; closesAt: number } | undefined
       if (state.phase !== 'Shipment and Movement' || !w) {
         return json({ error: 'the turn is not at movement', code: 'wrong-phase' }, 409)
-      }
-      // THE MOVE ROUND ONLY: every seat ships before any seat moves.
-      if (w.stage !== 'move') {
-        return json({ error: 'the movement round has not begun', code: 'wrong-stage' }, 409)
       }
       if (w.order[w.at] !== myFaction) {
         return json({ error: 'not your turn to move', code: 'not-your-turn' }, 403)
@@ -1742,8 +1733,9 @@ Deno.serve(async req => {
         (action.to as { territoryId: string }).territoryId, judged.sector,
         judged.moving, starredMoved) as never[]
 
-      // ONE MOVE IS THE SEAT'S WHOLE MOVE ROUND, so the rotation steps on
-      // in the same write; off the end of the round the window is deleted.
+      // MOVEMENT CLOSES THE SEAT'S TURN — shipment came first or not at
+      // all — so the rotation steps on in the same write; off the end of the
+      // order the window is deleted.
       const stepped = nextSeat(
         { ...w, done: { ...w.done, moved: true } } as never,
         now + SHIPMENT_SECONDS * 1000)
@@ -1767,7 +1759,7 @@ Deno.serve(async req => {
     // rotation along — the same rule every pause follows.
     case 'PASS_TURN': {
       const w = state.shipping as
-        { turn: number; order: string[]; stage: string; at: number; done: Record<string, boolean>; closesAt: number } | undefined
+        { turn: number; order: string[]; at: number; done: Record<string, boolean>; closesAt: number } | undefined
       if (state.phase !== 'Shipment and Movement' || !w) {
         return json({ error: 'the turn is not at shipment', code: 'wrong-phase' }, 409)
       }
