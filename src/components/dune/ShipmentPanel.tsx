@@ -87,7 +87,9 @@ export function ShipmentPanel({
       margin: '0 0 8px', padding: 8, borderRadius: 6, background: '#1d2a44',
       lineHeight: 1.5, font: `12px ${SERIF}`, color: PALE,
     }}>
-      <b style={{ display: 'block', marginBottom: 2 }}>Shipment and Movement</b>
+      <b style={{ display: 'block', marginBottom: 2 }}>
+        {shipping.stage === 'ship' ? 'Shipment round' : 'Movement round'}
+      </b>
       {shipping.order.map((f, i) => (
         <span key={f} style={{
           marginRight: 6,
@@ -98,7 +100,7 @@ export function ShipmentPanel({
       ))}
 
       {!mine && !expired && <span style={{ display: 'block', marginTop: 4, opacity: 0.7 }}>
-        Waiting on {FACTION_LOOK[acting].name}.
+        Waiting on {FACTION_LOOK[acting].name} to {shipping.stage === 'ship' ? 'ship' : 'move'}.
       </span>}
 
       {/* PAST THE DEADLINE, ANYBODY MAY PUSH — silence has already spent
@@ -111,7 +113,7 @@ export function ShipmentPanel({
 
       {mine && (
         <>
-          {!shipping.done.shipped && !shipping.done.moved && (
+          {shipping.stage === 'ship' && !shipping.done.shipped && (
             <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid #ffffff14' }}>
               <b>Ship</b>
               {seat === 'spacing-guild' && (
@@ -176,7 +178,7 @@ export function ShipmentPanel({
             </div>
           )}
 
-          {!shipping.done.moved && (
+          {shipping.stage === 'move' && !shipping.done.moved && (
             <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid #ffffff14' }}>
               <b>Move</b>
               <span style={label}>From</span>
@@ -217,9 +219,12 @@ export function ShipmentPanel({
             </div>
           )}
 
+          {/* THE EARLY HANDOFF: three minutes are the ceiling, not a
+              sentence. Named for the round so nobody wonders what is being
+              ended. */}
           <button disabled={busy} onClick={onPass}
             style={{ display: 'block', width: '100%', marginTop: 8 }}>
-            Done — next seat
+            {shipping.stage === 'ship' ? 'End shipment — next player' : 'End movement — next player'}
           </button>
         </>
       )}

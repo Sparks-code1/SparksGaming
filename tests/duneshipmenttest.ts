@@ -15,6 +15,10 @@ import {
 } from '@/lib/dune/shipment'
 import type { ShippingWindow } from '@/lib/dune/shipment'
 import { stormOrder } from '@/lib/dune/phaseAdvance'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server.browser'
+import { DuneGameScreen } from '@/components/dune/DuneGameScreen'
+import type { DuneGameState } from '@/types/Dune/Game'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import type { Force, SectorId } from '@/types/Dune/Game'
 import type { FactionId } from '@/types/Dune/Faction'
@@ -290,14 +294,21 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
 // ── the rotation ──────────────────────────────────────────────────────────
 {
   const w: ShippingWindow = {
-    turn: 3, order: ['atreides', 'harkonnen'] as FactionId[], at: 0,
-    done: { shipped: true, moved: true }, closesAt: 1000,
+    turn: 3, order: ['atreides', 'harkonnen'] as FactionId[], stage: 'ship', at: 0,
+    done: { shipped: true }, closesAt: 1000,
   }
   const next = nextSeat(w, 2000)
   check('the rotation steps with a fresh slate',
-    next && [next.at, next.done, next.closesAt], [1, {}, 2000])
-  check('...and walking off the end ends the phase', nextSeat(next!, 3000), null)
-  check('the acting window is a minute', SHIPMENT_SECONDS, 60)
+    next && [next.at, next.stage, next.done, next.closesAt], [1, 'ship', {}, 2000])
+  // TWO ROUNDS: off the end of the ship round the move round begins, the
+  // same order from the top; off the end of the move round, the phase ends.
+  const toMove = nextSeat(next!, 3000)
+  check('...the ship round rolls into the move round',
+    toMove && [toMove.stage, toMove.at, toMove.done], ['move', 0, {}])
+  const lastMove = nextSeat(toMove!, 4000)
+  check('...and walking off the move round ends the phase',
+    nextSeat(lastMove!, 5000), null)
+  check('each stage window is three minutes', SHIPMENT_SECONDS, 180)
   // THE ORDER IS THE STORM'S — the same walk bidding uses.
   check('the order is the storm walk', stormOrder('sector-7', [
     { faction: 'atreides', seat: 'player-position-1' },
@@ -328,7 +339,10 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
   const shipCase = fn.slice(fn.indexOf("case 'SHIP'"), fn.indexOf("case 'MOVE'"))
   check('shipping is the acting seat\'s alone', /'not-your-turn'/.test(shipCase), true)
   check('...one per turn', /'already-shipped'/.test(shipCase), true)
-  check('...and before the move, never after', /'already-moved'/.test(shipCase), true)
+  // TWO ROUNDS NOW: shipping is refused outside its own round rather than
+  // after a move — every seat ships before any seat moves.
+  check('...and only in the ship round', /'wrong-stage'/.test(shipCase), true)
+  check('...which steps the rotation itself', /nextSeat\(/.test(shipCase), true)
   // THE MONOPOLY IS TWO ROWS IN ONE WRITE: payer down, Guild up, and the
   // Guild never paid by themselves.
   check('the Guild are paid on their own row',
@@ -339,11 +353,121 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
   const moveCase = fn.slice(fn.indexOf("case 'MOVE'"), fn.indexOf("case 'PASS_TURN'"))
   check('the move steps the rotation in its own write',
     /nextSeat\(/.test(moveCase), true)
+  check('...and only in the move round', /'wrong-stage'/.test(moveCase), true)
+  check('the entry opens the ship round',
+    /stage: 'ship', at: 0, done: \{\}/.test(entry), true)
   const passCase = fn.slice(fn.indexOf("case 'PASS_TURN'"), fn.indexOf("case 'REVIVE'"))
   // THE GUARD, NOT THE EXPRESSION: a false-&& prefix left the substring
   // intact once before.
   check('before the deadline only the acting seat passes',
     /if \(!expired && w\.order\[w\.at\] !== myFaction\)/.test(passCase), true)
+}
+
+// ── the rail: the counter beside the board that spends it ────────────────
+//
+// WHY THIS EXISTS. The first cut of this phase had a timer and a panel in the
+// notice board, and the report that came back was "nothing to press". The
+// rail is controls that cannot be missed: reserves and spice between the chat
+// and the board, a faction bubble that stages a force per click, and the
+// board itself as the landing. Redundant with the panel ON PURPOSE.
+{
+  const state = {
+    storm: CALM, turn: 4, phase: 'Shipment and Movement', shieldWall: 'intact',
+    mode: 'basic',
+    spiceDeck: { remaining: 10, discardA: [], discardB: [] },
+    players: [
+      { faction: 'emperor', seat: 'player-position-1', reserves: 12, reservesStarred: 5, handCount: 0, battleLosses: 0 },
+      { faction: 'atreides', seat: 'player-position-3', reserves: 8, handCount: 0, battleLosses: 0 },
+    ],
+    forces: [], spiceOnBoard: {}, awaiting: null,
+    shipping: {
+      turn: 4, order: ['emperor', 'atreides'], stage: 'ship', at: 0,
+      done: {}, closesAt: 9_999_999_999_999,
+    },
+  } as unknown as DuneGameState
+
+  const screen = (seat: string, over: Record<string, unknown> = {}) =>
+    renderToStaticMarkup(createElement(DuneGameScreen, {
+      state, seat: seat as never, own: { spice: 7 } as never, chat: [],
+      now: 1, onShipReserves: () => {}, ...over,
+    } as never))
+
+  const mine = screen('emperor')
+  // BETWEEN THE CHAT AND THE BOARD, in that order — the whole of the ask.
+  const chatAt = mine.indexOf('data-layer="chat"')
+  const railAt = mine.indexOf('data-layer="ship-rail"')
+  const boardAt = mine.indexOf('data-layer="board"')
+  check('the rail is on the screen', railAt > 0, true)
+  check('...between the chat and the board', chatAt < railAt && railAt < boardAt, true)
+  // THE COUNTER: reserves and elite, straight off the row.
+  check('it counts the reserves', /data-rail-reserves="12"/.test(mine), true)
+  check('...and the elite apart', /data-rail-starred="5"/.test(mine), true)
+  check('...and the purse', mine.includes('>7</b>'), true)
+  // TWO BUBBLES for a faction with elite reserves, one for anyone else.
+  check('the Emperor gets both bubbles',
+    [/data-ship-bubble="plain"/.test(mine), /data-ship-bubble="starred"/.test(mine)],
+    [true, true])
+  const plainOnly = screen('atreides', {
+    state: {
+      ...state,
+      shipping: { ...(state.shipping as object), order: ['atreides', 'emperor'] },
+    },
+  })
+  check('...the Atreides only the plain one',
+    [/data-ship-bubble="plain"/.test(plainOnly), /data-ship-bubble="starred"/.test(plainOnly)],
+    [true, false])
+  // NOT THE ACTING SEAT: the rail still counts, the bubbles are dead.
+  const waiting = screen('atreides')
+  check('a waiting seat keeps the counter',
+    /data-layer="ship-rail"/.test(waiting), true)
+  check('...with its bubbles disabled', /disabled=""[^>]*data-ship-bubble="plain"/.test(waiting), true)
+  // NO SPECTATOR RAIL: no seat, no reserves to count.
+  check('a spectator has no rail',
+    /data-layer="ship-rail"/.test(screen('emperor', { seat: null })), false)
+
+  // ── THE SOURCE OF THE CLICKS ────────────────────────────────────────────
+  const rail = code('src/components/dune/ShipRail.tsx')
+  const game = code('src/components/dune/DuneGameScreen.tssx'.replace('tssx', 'tsx'))
+  // The glyph gives way to the count — click once and the bubble says 1.
+  check('a staged bubble shows the count, not the glyph',
+    /count > 0\s*\?\s*<text/.test(rail), true)
+  // The reserve preview falls as forces stage; the fare is a range until the
+  // landing picks the ground, priced by the same rule the server runs.
+  // PINNED TO THE DISPLAY: the same subtraction guards the bubble, so a
+  // bare substring survived a counter that stopped falling.
+  check('the reserve preview falls as you stage',
+    /data-rail-reserves=\{reserves - pending\.plain\}/.test(rail), true)
+  // BOTH ENDS: the range is two calls, and pricing one end by hand while
+  // the other still called the rule kept a lone-match check green.
+  check('the fare preview is the shared rule\'s',
+    (rail.match(/shipCost\(\{ faction, kind: 'off-planet'/g) ?? []).length, 2)
+  // The landing: targets only in your window with something staged, never on
+  // a stormed cell, and the click posts the staged counts and resets.
+  check('the board offers the landing only with something staged',
+    /myShipWindow && staged\.plain \+ staged\.starred > 0 && onShipReserves && \(/.test(game), true)
+  check('...never on a stormed cell',
+    /filter\(c => !inStorm\(t\.id, c\.sector, state\.storm\)\)/.test(game), true)
+  check('...and the click is the shipment',
+    /count: staged\.plain \+ staged\.starred,\s*[\r\n]+\s*starred: staged\.starred,/.test(game), true)
+  // THE LANDING'S OWN RESET, not the rail button's: the same call sits on
+  // "back", so a bare match survived a landing that kept the stage.
+  check('...which clears the stage',
+    /starred: staged\.starred,\s*[\r\n]+\s*\}\)\s*[\r\n]+\s*setStaged\(\{ plain: 0, starred: 0 \}\)/.test(game), true)
+
+  // ── THE PANEL FOLLOWS THE ROUNDS ────────────────────────────────────────
+  const panel = code('src/components/dune/ShipmentPanel.tsx')
+  check('the panel names the round',
+    /'Shipment round' : 'Movement round'/.test(panel), true)
+  check('...ships only in the ship round',
+    /stage === 'ship' && !shipping\.done\.shipped && \(/.test(panel), true)
+  check('...moves only in the move round',
+    /stage === 'move' && !shipping\.done\.moved && \(/.test(panel), true)
+  check('...and the handoff is named for the round',
+    /'End shipment — next player' : 'End movement — next player'/.test(panel), true)
+
+  // ── AND THE HARNESS HAS THE CONTROLS THE REPORT MISSED ──────────────────
+  check('the six-seat harness carries the panel',
+    /<ShipmentPanel/.test(code('src/components/dune/DuneMultiSeatView.tsx')), true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

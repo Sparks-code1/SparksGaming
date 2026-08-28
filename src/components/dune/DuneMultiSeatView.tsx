@@ -24,6 +24,7 @@ import { dispatchDuneAction } from '@/lib/dune/duneDispatch'
 import type { PlacedForce } from './SetupWindow'
 import { factionById } from '@/data/dune/factions'
 import { FACTION_LOOK } from './SeatLayer'
+import { ShipmentPanel } from './ShipmentPanel'
 import type { BidRefusal } from '@/lib/dune/bidding'
 import { watchDuneMatch } from '@/lib/dune/matchFeed'
 import { openAuction, openCharity, auctionExpired, seatedIn, winLines } from '@/lib/dune/publicRow'
@@ -595,6 +596,22 @@ export default function DuneMultiSeatView() {
             <button onClick={() => void send(mine, 'ADVANCE_PHASE')} disabled={busy}>
               Advance the phase
             </button>
+
+            {/* THE ROTATION, driven as whichever seat is selected. The real
+                screen has the same panel; the harness had only the timer,
+                which read as a phase with nothing to press. */}
+            {publicRow?.shipping && (
+              <ShipmentPanel
+                shipping={publicRow.shipping}
+                forces={publicRow.forces ?? []}
+                seat={mine.login.faction}
+                guildSeated={(publicRow.players ?? []).some(p => p.faction === 'spacing-guild')}
+                now={Date.now()}
+                busy={busy}
+                onShip={a => void send(mine, 'SHIP', a as never)}
+                onMove={a => void send(mine, 'MOVE', a as never)}
+                onPass={() => void send(mine, 'PASS_TURN')} />
+            )}
 
             <b style={{ display: 'block', margin: '10px 0 6px' }}>CHOAM Charity</b>
             <button onClick={() => void send(mine, 'OPEN_CHARITY')} disabled={busy}>

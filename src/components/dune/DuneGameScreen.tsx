@@ -52,6 +52,9 @@ import { WORM_SECONDS } from '@/lib/dune/spiceBlow'
 import { BiddingPanel } from './BiddingPanel'
 import { CharityModal } from './CharityModal'
 import { SetupWindow, SetupBoardTargets } from './SetupWindow'
+import { ShipRail } from './ShipRail'
+import { inStorm } from '@/lib/dune/shipment'
+import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import { SETUP_SECONDS, postureFor, starredOf } from '@/lib/dune/setup'
 import { factionById } from '@/data/dune/factions'
 import type { SetupWindow as SetupWindowState } from '@/lib/dune/setup'
@@ -114,6 +117,16 @@ export interface DuneGameScreenProps {
    */
   notices?: React.ReactNode
   /**
+   * Ship the staged forces from reserves: the rail's bubbles stage them, the
+   * board click lands them, and this posts the shipment. Absent for a
+   * spectator or a screen with no transport behind it.
+   */
+  onShipReserves?: (a: {
+    to: { territoryId: string; sector: string }
+    count: number
+    starred: number
+  }) => void
+  /**
    * The live auction, or null.
    *
    * Everything about it except `revealed` is public. `revealed` is the Atreides
@@ -163,12 +176,19 @@ export interface DuneGameScreenProps {
 }
 
 export function DuneGameScreen({
-  state, seat, own, chat, onSend, talkingTo, seatNames, notices,
+  state, seat, own, chat, onSend, talkingTo, seatNames, notices, onShipReserves,
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
   const [chatShut, setChatShut] = useState(false)
+  /** Forces staged on the rail, waiting for a landing click on the board. */
+  const [staged, setStaged] = useState({ plain: 0, starred: 0 })
   const rows = hudRows(state)
   const mine = state.players.find(p => p.faction === seat) ?? null
+  /** Whether the rail's bubbles are live: this seat's own shipment window. */
+  const myShipWindow = !!(state.shipping
+    && state.shipping.stage === 'ship'
+    && state.shipping.order[state.shipping.at] === seat
+    && !state.shipping.done.shipped)
   const myRow = rows.find(r => r.faction === seat) ?? null
 
   // Stacks are per faction so the board can colour them. Summed by cell rather
@@ -324,6 +344,26 @@ export function DuneGameScreen({
           talkingTo={talkingTo} seatNames={seatNames}
           onToggle={() => setChatShut(c => !c)} />
 
+        {/* THE RAIL, between the chat and the board: the reserves being spent
+            sit beside the board that spends them. Always there for a seated
+            player — it is the counter — with the bubbles live only in their
+            own shipment window. See ShipRail. */}
+        {seat && mine && onShipReserves && (
+          <ShipRail
+            faction={seat}
+            reserves={mine.reserves}
+            reservesStarred={mine.reservesStarred ?? 0}
+            spice={own?.spice ?? null}
+            pending={staged}
+            active={myShipWindow}
+            guildSeated={state.players.some(p => p.faction === 'spacing-guild')}
+            onStage={kind => setStaged(s => ({
+              ...s,
+              [kind]: s[kind] + 1,
+            }))}
+            onReset={() => setStaged({ plain: 0, starred: 0 })} />
+        )}
+
         {/* SETUP'S OWN COLUMN, between the chat and the board: it says what to
             do, and the doing happens on the map. Assembled here because
             `dealt` is the four traitors out of this seat's own row — reading
@@ -377,12 +417,40 @@ export function DuneGameScreen({
             seating={seating} deck={state.spiceDeck} mode={state.mode}
             awaiting={state.awaiting} phase={state.phase} turn={state.turn}
             closesAt={closesAt} windowMs={windowMs} now={now}
-            interactive={setupActive && (owesFremen || advisorOpen)}>
+            interactive={(setupActive && (owesFremen || advisorOpen))
+              || (myShipWindow && staged.plain + staged.starred > 0)}>
             {/* DURING SETUP THE MAP TAKES THE ANSWER. Rings on the cells a
                 click means something at — the Fremen's three territories, or
                 the whole board for the advisor — with the pending pieces drawn
                 as the real stacks above. Clicks add; the window column takes
                 them back. */}
+            {/* THE LANDING. Staged forces make every clear cell a target;
+                the click is the shipment. Stormed cells are not offered —
+                the server would refuse them anyway, but a ring on a cell the
+                rules forbid is an invitation to a refusal. */}
+            {myShipWindow && staged.plain + staged.starred > 0 && onShipReserves && (
+              <g data-layer="ship-targets">
+                {DUNE_TERRITORIES.flatMap(t => t.cells
+                  .filter(c => !inStorm(t.id, c.sector, state.storm))
+                  .map(c => (
+                    <g key={`${t.id}|${c.sector}`} data-ship-target={`${t.id}|${c.sector}`}
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => {
+                        onShipReserves({
+                          to: { territoryId: t.id, sector: c.sector },
+                          count: staged.plain + staged.starred,
+                          starred: staged.starred,
+                        })
+                        setStaged({ plain: 0, starred: 0 })
+                      }}>
+                      <title>{`${t.displayName} — ${c.sector}`}</title>
+                      <circle cx={c.at.x} cy={c.at.y} r="11" fill="#dd7a1c22"
+                        stroke="#dd7a1c" strokeWidth="1.2" strokeDasharray="3 3" />
+                    </g>
+                  )))}
+              </g>
+            )}
+
             {setupActive && seat && (owesFremen || advisorOpen) && (
               <SetupBoardTargets seat={seat}
                 fremen={owesFremen} advisor={advisorOpen}

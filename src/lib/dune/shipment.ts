@@ -35,8 +35,9 @@ import type { Force, GamePhase, SectorId } from '@/types/Dune/Game'
 import type { FactionId } from '@/types/Dune/Faction'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 
-/** The acting seat's window, in seconds. Ship and move are real decisions. */
-export const SHIPMENT_SECONDS = 60
+/** The acting seat's window, in seconds — PER STAGE. Three minutes to ship,
+ *  and three again to move: a slow shipment must not eat the move. */
+export const SHIPMENT_SECONDS = 180
 
 export const SHIP_STRONGHOLD_SPICE = 1
 export const SHIP_OPEN_SPICE = 2
@@ -58,13 +59,21 @@ const territory = (id: string) => DUNE_TERRITORIES.find(t => t.id === id)
 /**
  * The seat-by-seat rotation, in public state while the phase runs.
  *
- * `done` records what the acting seat has used; both halves spent — or the
- * seat passing, or its clock expiring — moves `at` along. When `at` walks off
- * the end the window is deleted and the phase is over.
+ * TWO ROUNDS, NOT ONE. Every seat ships in turn order — three minutes each,
+ * or "end shipment" to hand on early — and only when the last has gone does
+ * movement commence, the same order again, three minutes each. The old shape
+ * ran both halves inside one seat's window, where a slow shipment ate the
+ * move.
+ *
+ * `done` records what the acting seat has used this stage; using it — or
+ * passing, or the clock — moves `at` along. Walking off the end of the ship
+ * round starts the move round; walking off the move round deletes the window,
+ * which is how the phase says it is over.
  */
 export interface ShippingWindow {
   turn: number
   order: FactionId[]
+  stage: 'ship' | 'move'
   at: number
   done: { shipped?: boolean; moved?: boolean }
   closesAt: number
@@ -412,12 +421,14 @@ export function liftForces(
   })
 }
 
-/** The rotation moved along: both halves spent, a pass, or the clock. When
- *  it walks off the end, null — the phase is over. */
+/** The rotation moved along: the stage's half spent, a pass, or the clock.
+ *  Off the end of the ship round, the move round begins at the top of the
+ *  order; off the end of the move round, null — the phase is over. */
 export function nextSeat(w: ShippingWindow, closesAt: number): ShippingWindow | null {
   const at = w.at + 1
-  if (at >= w.order.length) return null
-  return { ...w, at, done: {}, closesAt }
+  if (at < w.order.length) return { ...w, at, done: {}, closesAt }
+  if (w.stage === 'ship') return { ...w, stage: 'move', at: 0, done: {}, closesAt }
+  return null
 }
 
 /** The nine-phase name this module serves, for guards. */

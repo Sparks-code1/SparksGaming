@@ -371,6 +371,10 @@ export interface DuneGameState {
   shipping?: {
     turn: number
     order: FactionId[]
+    /** The shipment round runs first, every seat in order; then the move
+     *  round, the same order again. Separate clocks: a slow shipment must
+     *  not eat the move. */
+    stage: 'ship' | 'move'
     at: number
     done: { shipped?: boolean; moved?: boolean }
     closesAt: number

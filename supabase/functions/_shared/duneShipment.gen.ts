@@ -788,7 +788,7 @@ var DUNE_TERRITORIES = [
 ];
 
 // src/lib/dune/shipment.ts
-var SHIPMENT_SECONDS = 60;
+var SHIPMENT_SECONDS = 180;
 var SHIP_STRONGHOLD_SPICE = 1;
 var SHIP_OPEN_SPICE = 2;
 var GUILD_RETURN_PER = 2;
@@ -1011,8 +1011,9 @@ function liftForces(forces, faction, territoryId, sector, count, starred) {
 }
 function nextSeat(w, closesAt) {
   const at = w.at + 1;
-  if (at >= w.order.length) return null;
-  return { ...w, at, done: {}, closesAt };
+  if (at < w.order.length) return { ...w, at, done: {}, closesAt };
+  if (w.stage === "ship") return { ...w, stage: "move", at: 0, done: {}, closesAt };
+  return null;
 }
 var SHIPMENT_PHASE = "Shipment and Movement";
 export {

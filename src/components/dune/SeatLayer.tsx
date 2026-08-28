@@ -110,7 +110,7 @@ export const FACTION_LOOK: Record<FactionId, { colour: string; name: string }> =
  * what tells them apart in one colour, or for anyone who cannot separate the
  * green from the red.
  */
-function glyph(faction: FactionId): JSX.Element | null {
+export function glyph(faction: FactionId): JSX.Element | null {
   switch (faction) {
     // A hawk, wings out. The Atreides banner.
     case 'atreides':

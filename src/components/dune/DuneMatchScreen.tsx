@@ -831,6 +831,9 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
         now={now}
         setup={seat ? setupAnswers : null}
         notices={notices}
+        onShipReserves={seat
+          ? a => void ship({ kind: 'off-planet', to: a.to, count: a.count, starred: a.starred })
+          : undefined}
         charity={charityWindow && seat ? {
           onClaim: () => void claimCharity(),
           onPass: passCharity,
