@@ -527,6 +527,28 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
     screen('emperor', { state: withGuild }).includes('paid to the Spacing Guild'), true)
   check('the Guild read their half fare',
     screen('spacing-guild', { state: withGuild }).includes('you pay half, rounded up'), true)
+  // ── THE GUILD'S THREE WAYS, ON THE RAIL ─────────────────────────────────
+  // Chosen BEFORE the board is touched: a stack click already means "start
+  // a move", so the kind decides what the next click does. Each choice
+  // carries its own rule text; nobody else sees them.
+  const guildRail = screen('spacing-guild', {
+    state: {
+      ...withGuild,
+      shipping: { ...(state.shipping as object), order: ['spacing-guild', 'emperor'] },
+    },
+  })
+  check('the Guild are offered their three ways to ship',
+    ['off-planet', 'cross', 'to-reserves'].every(k =>
+      guildRail.includes(`data-guild-kind="${k}"`)), true)
+  check('...with the rules on the choices',
+    [/half fare, rounded up/.test(guildRail),
+      /from any one territory to any other/.test(guildRail),
+      /1 spice per 2 forces, rounded up/.test(guildRail)],
+    [true, true, true])
+  check('...off-planet pressed by default',
+    /data-guild-kind="off-planet"[^>]*aria-pressed="true"|aria-pressed="true"[^>]*data-guild-kind="off-planet"/.test(guildRail), true)
+  check('...and nobody else sees them', /data-guild-kind/.test(mine), false)
+
   const fremenRail = screen('fremen', { state: withGuild })
   check('the Fremen read their free desert',
     fremenRail.includes('free, onto the Great Flat or any territory within two of it'), true)
@@ -591,7 +613,9 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
   // shipment cancels a half-picked move so the two click grammars never
   // overlap on the same cells.
   check('a stack click starts the move',
-    /myMoveWindow && staged\.plain \+ staged\.starred === 0 && onMoveStack && \(/.test(game), true)
+    /myMoveWindow && staged\.plain \+ staged\.starred === 0 && !guildArmed && onMoveStack && \(/.test(game), true)
+  check('...unless a Guild kind is armed, which is its own grammar',
+    /const guildArmed = seat === 'spacing-guild' && myShipWindow && guildKind !== 'off-planet'/.test(game), true)
   check('...and each ground click stages one force, capped at the stack',
     /\? Math\.min\(stackTotal, m\.count \+ 1\)\s*[\r\n]+\s*: m\.count,/.test(game), true)
   check('...re-aiming keeps the staged and changes only the ground',
@@ -608,8 +632,35 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
     /count: movePlan\.count,\s*[\r\n]+\s*\.\.\.\(starredStaged > 0 \? \{ starred: starredStaged \} : null\),/.test(game), true)
   check('...which clears the plan',
     /to: movePlan\.to!,\s*[\r\n]+\s*\}\)\s*[\r\n]+\s*setMovePlan\(null\)/.test(game), true)
-  check('...and staging a shipment cancels the picked move',
-    /setMovePlan\(null\)\s*[\r\n]+\s*setStaged\(s => \(\{ \.\.\.s, \[kind\]: s\[kind\] \+ 1 \}\)\)/.test(game), true)
+  check('...and staging a shipment cancels the picked move and the pile',
+    /setMovePlan\(null\)\s*[\r\n]+\s*setGather\(null\)\s*[\r\n]+\s*setStaged\(s => \(\{ \.\.\.s, \[kind\]: s\[kind\] \+ 1 \}\)\)/.test(game), true)
+
+  // ── THE GUILD'S GATHER GRAMMAR ──────────────────────────────────────────
+  // One force per stack click, capped at the stack; a different stack
+  // starts the pile over; the second bubble hands one back per click. A
+  // cross-shipment lands the pile whole on any clear cell OUTSIDE its own
+  // territory; back-to-reserves commits from the rail's send button, priced
+  // 1 spice per 2 on its face. Switching kind clears every staging, and the
+  // reserve bubble sleeps while a special kind is armed.
+  check('a gather click picks up one force, capped at the stack',
+    /\? \{ \.\.\.g, count: Math\.min\(f\.count, g\.count \+ 1\) \}/.test(game), true)
+  check('...a different stack starts the pile over',
+    /: \{ territoryId: f\.territoryId, sector: f\.sector, count: 1 \}\)/.test(game), true)
+  check('a cross-shipment never lands on its own territory',
+    /\.filter\(\(\) => t\.id !== gather\.territoryId\)/.test(game), true)
+  check('...and posts the pile whole, then clears it',
+    /kind: 'cross',[\s\S]{0,300}count: gather\.count,\s*[\r\n]+\s*\}\)\s*[\r\n]+\s*setGather\(null\)/.test(game), true)
+  check('back-to-reserves commits from the rail, not a cell',
+    /kind: 'to-reserves',\s*[\r\n]+\s*from: \{ territoryId: gather\.territoryId, sector: gather\.sector \},\s*[\r\n]+\s*count: gather\.count,/.test(game), true)
+  check('...at 1 spice per 2, said on the send button',
+    /Send \{gathered\} back — \{Math\.ceil\(\(gathered \?\? 0\) \/ 2\)\} spice/.test(rail), true)
+  check('the second bubble hands one back per click',
+    /onGatherBack\?\.\(\)/.test(rail)
+    && /g && g\.count > 1 \? \{ \.\.\.g, count: g\.count - 1 \} : null/.test(game), true)
+  check('switching kind clears every staging',
+    /setGuildKind\(k\)\s*[\r\n]+\s*setGather\(null\)\s*[\r\n]+\s*setStaged\(\{ plain: 0, starred: 0 \}\)\s*[\r\n]+\s*setMovePlan\(null\)/.test(game), true)
+  check('the reserve bubble sleeps while a special kind is armed',
+    /\|\| \(guildKind !== undefined && guildKind !== 'off-planet'\)\}/.test(rail), true)
 
   // ── THE STACK IS CLICKABLE, NOT JUST RINGED ─────────────────────────────
   // The first cut drew the source as a fill-none circle, and a fill-none
@@ -643,8 +694,10 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
     /a click a force/.test(panel), true)
   check('the generic forms are dev-only',
     /devForms && mayShip && \(/.test(panel) && /devForms && mayMove && \(/.test(panel), true)
-  check('...the Guild keep their exceptions',
-    /seat === 'spacing-guild' && mayShip && \(/.test(panel), true)
+  check('...the Guild are pointed at the rail\'s three kinds',
+    /Pick the shipment kind on the rail/.test(panel), true)
+  check('...their select forms are gone',
+    /From one territory to another/.test(panel), false)
   check('...and the handoff ends the turn',
     /End turn — next player/.test(panel), true)
 
@@ -662,6 +715,8 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
     /onShipReserves=\{mine\s*[\r\n]+\s*\? a => void send\(mine, 'SHIP',/.test(harness), true)
   check('...and moves the same way',
     /onMoveStack=\{mine\s*[\r\n]+\s*\? a => void send\(mine, 'MOVE', a as never\)/.test(harness), true)
+  check('...and carries the Guild\'s special shipments',
+    /onShipSpecial=\{mine\s*[\r\n]+\s*\? a => void send\(mine, 'SHIP', a as never\)/.test(harness), true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

@@ -54,6 +54,7 @@ import { CharityModal } from './CharityModal'
 import { SetupWindow, SetupBoardTargets } from './SetupWindow'
 import { ShipRail } from './ShipRail'
 import { inStorm, moveTargets } from '@/lib/dune/shipment'
+import type { GuildShipKind } from '@/lib/dune/shipment'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import { FACTION_LOOK } from './SeatLayer'
 import { cellAt } from './DuneBoard'
@@ -138,6 +139,17 @@ export interface DuneGameScreenProps {
     to: { territoryId: string; sector: string }
   }) => void
   /**
+   * The Guild's cross-ship and back-to-reserves, posted whole once the
+   * gathered forces have somewhere to go. Only the Guild's screen sends it;
+   * the server refuses anyone else regardless.
+   */
+  onShipSpecial?: (a: {
+    kind: 'cross' | 'to-reserves'
+    from: { territoryId: string; sector: string }
+    to?: { territoryId: string; sector: string }
+    count: number
+  }) => void
+  /**
    * The live auction, or null.
    *
    * Everything about it except `revealed` is public. `revealed` is the Atreides
@@ -188,6 +200,7 @@ export interface DuneGameScreenProps {
 
 export function DuneGameScreen({
   state, seat, own, chat, onSend, talkingTo, seatNames, notices, onShipReserves, onMoveStack,
+  onShipSpecial,
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
   const [chatShut, setChatShut] = useState(false)
@@ -214,6 +227,16 @@ export function DuneGameScreen({
     to: { territoryId: string; sector: string } | null
     count: number
   } | null>(null)
+  // THE GUILD'S SHIPMENT KIND, picked before the board is touched — with a
+  // kind armed, a stack click gathers rather than starting a move. The
+  // gathered pile is one cell's forces, counted up click by click.
+  const [guildKind, setGuildKind] = useState<GuildShipKind>('off-planet')
+  const [gather, setGather] = useState<{
+    territoryId: string; sector: string; count: number
+  } | null>(null)
+  /** A special Guild shipment underway: stack clicks gather, never move. */
+  const guildArmed = seat === 'spacing-guild' && myShipWindow && guildKind !== 'off-planet'
+  useEffect(() => { if (!myShipWindow) setGather(null) }, [myShipWindow])
   const myRow = rows.find(r => r.faction === seat) ?? null
 
   // Stacks are per faction so the board can colour them. Summed by cell rather
@@ -405,9 +428,30 @@ export function DuneGameScreen({
                 : `Fares: 1 spice per force into a stronghold, 2 anywhere else — paid to ${state.players.some(p => p.faction === 'spacing-guild') ? 'the Spacing Guild' : 'the bank'}.`}
             onStage={kind => {
               setMovePlan(null)
+              setGather(null)
               setStaged(s => ({ ...s, [kind]: s[kind] + 1 }))
             }}
-            onReset={() => setStaged({ plain: 0, starred: 0 })} />
+            onReset={() => setStaged({ plain: 0, starred: 0 })}
+            guildKind={seat === 'spacing-guild' ? guildKind : undefined}
+            onGuildKind={seat === 'spacing-guild' ? k => {
+              // a fresh kind is a fresh start: nothing staged, gathered or
+              // half-picked survives the switch
+              setGuildKind(k)
+              setGather(null)
+              setStaged({ plain: 0, starred: 0 })
+              setMovePlan(null)
+            } : undefined}
+            gathered={gather?.count ?? 0}
+            onGatherBack={() => setGather(g =>
+              g && g.count > 1 ? { ...g, count: g.count - 1 } : null)}
+            onSendToReserves={onShipSpecial && gather ? () => {
+              onShipSpecial({
+                kind: 'to-reserves',
+                from: { territoryId: gather.territoryId, sector: gather.sector },
+                count: gather.count,
+              })
+              setGather(null)
+            } : undefined} />
         )}
 
         {/* THE SAME RAIL AT SETUP: the Fremen stage their ten — Fedaykin on
@@ -492,6 +536,62 @@ export function DuneGameScreen({
                 the whole board for the advisor — with the pending pieces drawn
                 as the real stacks above. Clicks add; the window column takes
                 them back. */}
+            {/* THE GUILD'S SPECIAL SHIPMENTS, kind already chosen on the
+                rail: stack clicks pick forces up — one per click, capped at
+                the stack, another stack starts the pile over — and a
+                cross-shipment lands on any clear cell OUTSIDE the source
+                territory. Back-to-reserves commits from the rail's send
+                button instead; there is no cell to click for a pile. */}
+            {guildArmed && onShipSpecial && (
+              <g data-layer="guild-gather">
+                {state.forces
+                  .filter(f => f.faction === seat && f.count > 0)
+                  .map(f => {
+                    const at = cellAt(f.territoryId, f.sector)
+                    if (!at) return null
+                    const picked = gather
+                      && gather.territoryId === f.territoryId && gather.sector === f.sector
+                    return (
+                      <g key={`gat|${f.territoryId}|${f.sector}`}
+                        data-guild-source={`${f.territoryId}|${f.sector}`}
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => setGather(g =>
+                          g && g.territoryId === f.territoryId && g.sector === f.sector
+                            ? { ...g, count: Math.min(f.count, g.count + 1) }
+                            : { territoryId: f.territoryId, sector: f.sector, count: 1 })}>
+                        <title>{picked ? `Picked up ${gather!.count} — click for one more` : 'Pick up forces here'}</title>
+                        <circle cx={at.x} cy={at.y} r="13" fill="transparent" />
+                        <circle cx={at.x} cy={at.y} r="13" fill="none"
+                          stroke={FACTION_LOOK[seat!].colour}
+                          strokeWidth={picked ? 3 : 1.6}
+                          strokeDasharray={picked ? undefined : '4 3'} />
+                      </g>
+                    )
+                  })}
+                {guildKind === 'cross' && gather && gather.count > 0
+                  && DUNE_TERRITORIES.flatMap(t => t.cells
+                    .filter(c => !inStorm(t.id, c.sector, state.storm))
+                    .filter(() => t.id !== gather.territoryId)
+                    .map(c => (
+                      <g key={`x|${t.id}|${c.sector}`} data-cross-target={`${t.id}|${c.sector}`}
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => {
+                          onShipSpecial({
+                            kind: 'cross',
+                            from: { territoryId: gather.territoryId, sector: gather.sector },
+                            to: { territoryId: t.id, sector: c.sector },
+                            count: gather.count,
+                          })
+                          setGather(null)
+                        }}>
+                        <title>{`${t.displayName} — ${c.sector}`}</title>
+                        <circle cx={c.at.x} cy={c.at.y} r="11" fill="#dd7a1c22"
+                          stroke="#dd7a1c" strokeWidth="1.2" strokeDasharray="3 3" />
+                      </g>
+                    )))}
+              </g>
+            )}
+
             {/* THE MOVE, click by click and no forms: your own stack first —
                 ringed in your colour — then the ground, once per force. The
                 clicks pile into ONE staged move (same source, same ground;
@@ -501,7 +601,7 @@ export function DuneGameScreen({
                 judge's reachability, imported, not a client rewrite of it.
                 Landing rings for a staged shipment take priority: staging
                 cancels a half-picked move. */}
-            {myMoveWindow && staged.plain + staged.starred === 0 && onMoveStack && (
+            {myMoveWindow && staged.plain + staged.starred === 0 && !guildArmed && onMoveStack && (
               <g data-layer="move-controls">
                 {state.forces
                   .filter(f => f.faction === seat && f.count > 0)

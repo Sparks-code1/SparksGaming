@@ -21,6 +21,7 @@
  */
 import { FACTION_LOOK, glyph } from './SeatLayer'
 import type { FactionId } from '@/types/Dune/Faction'
+import type { GuildShipKind } from '@/lib/dune/shipment'
 
 const PALE = '#f0e2bb'
 const SERIF = 'Georgia, "Times New Roman", serif'
@@ -41,7 +42,27 @@ export interface ShipRailProps {
   /** A rule worth remembering, under the bubbles — the Fremen's free radius
    *  rides here during shipment. */
   note?: string
+  /** THE GUILD'S THREE WAYS, chosen BEFORE the board is touched: a stack
+   *  click already means "start a move", so the kind decides what the next
+   *  click does rather than the click deciding the kind. */
+  guildKind?: GuildShipKind
+  onGuildKind?: (k: GuildShipKind) => void
+  /** Forces picked up off the board for cross / to-reserves, counted on a
+   *  second bubble as they are clicked. Clicking the bubble hands one back. */
+  gathered?: number
+  onGatherBack?: () => void
+  onSendToReserves?: () => void
 }
+
+/** The three choices, each carrying its own rule text. */
+const GUILD_KINDS: { id: GuildShipKind; name: string; blurb: string }[] = [
+  { id: 'off-planet', name: 'Off-planet',
+    blurb: 'Normal shipping from reserves — half fare, rounded up.' },
+  { id: 'cross', name: 'Cross-ship',
+    blurb: 'Any number of forces from any one territory to any other. Click your forces on the board, then the destination.' },
+  { id: 'to-reserves', name: 'Back to reserves',
+    blurb: '1 spice per 2 forces, rounded up. Click your forces on the board, then send them.' },
+]
 
 /**
  * One force-staging bubble: the faction's glyph until something is staged,
@@ -49,17 +70,19 @@ export interface ShipRailProps {
  * setup placement stages with the same bubbles it ships with, so the same
  * action looks the same in both places.
  */
-export function ForceBubble({ faction, count, starred, disabled, onClick }: {
+export function ForceBubble({ faction, count, starred, disabled, onClick, bubble, label }: {
   faction: FactionId
   count: number
   starred: boolean
   disabled: boolean
   onClick: () => void
+  bubble?: string
+  label?: string
 }) {
   return (
     <button type="button" onClick={onClick} disabled={disabled}
-      data-ship-bubble={starred ? 'starred' : 'plain'}
-      aria-label={starred ? 'Stage one elite force to ship' : 'Stage one force to ship'}
+      data-ship-bubble={bubble ?? (starred ? 'starred' : 'plain')}
+      aria-label={label ?? (starred ? 'Stage one elite force to ship' : 'Stage one force to ship')}
       style={{
         width: 46, height: 46, borderRadius: '50%', display: 'block', margin: '6px auto 0',
         background: FACTION_LOOK[faction].colour,
@@ -83,6 +106,7 @@ export function ForceBubble({ faction, count, starred, disabled, onClick }: {
 export function ShipRail({
   faction, reserves, reservesStarred, spice, pending, active, onStage, onReset,
   poolLabel = 'Reserves', note,
+  guildKind, onGuildKind, gathered, onGatherBack, onSendToReserves,
 }: ShipRailProps) {
   const staged = pending.plain + pending.starred
   const hasStarredCorps = reservesStarred > 0 || pending.starred > 0
@@ -111,12 +135,57 @@ export function ShipRail({
       <b data-rail-spice={spice ?? ''} style={{ fontSize: 15 }}>{spice ?? '—'}</b>
 
       <ForceBubble faction={faction} count={pending.plain} starred={false}
-        disabled={!active || reserves - pending.plain <= 0}
+        disabled={!active || reserves - pending.plain <= 0
+          || (guildKind !== undefined && guildKind !== 'off-planet')}
         onClick={() => onStage('plain')} />
       {hasStarredCorps && (
         <ForceBubble faction={faction} count={pending.starred} starred
           disabled={!active || reservesStarred - pending.starred <= 0}
           onClick={() => onStage('starred')} />
+      )}
+
+      {guildKind && onGuildKind && (
+        <div data-layer="guild-kinds" style={{ marginTop: 8, textAlign: 'left' }}>
+          {GUILD_KINDS.map(k => (
+            <button key={k.id} type="button" data-guild-kind={k.id}
+              aria-pressed={guildKind === k.id}
+              disabled={!active}
+              onClick={() => onGuildKind(k.id)}
+              style={{
+                display: 'block', width: '100%', margin: '4px 0', padding: '3px 4px',
+                font: `10px ${SERIF}`, color: PALE, textAlign: 'left',
+                background: guildKind === k.id ? '#2f6fb5' : 'transparent',
+                border: `1px solid ${guildKind === k.id ? PALE : '#f0e2bb55'}`,
+                borderRadius: 4, cursor: active ? 'pointer' : 'default',
+                opacity: active ? 1 : 0.55, lineHeight: 1.35,
+              }}>
+              <b style={{ display: 'block' }}>{k.name}</b>
+              {k.blurb}
+            </button>
+          ))}
+        </div>
+      )}
+      {guildKind && guildKind !== 'off-planet' && (
+        <>
+          {/* THE SECOND BUBBLE: forces picked up off the board, counting up
+              as they are clicked. Clicking it hands one back. */}
+          <span style={{ display: 'block', marginTop: 6, opacity: 0.7 }}>Picked up</span>
+          <ForceBubble faction={faction} count={gathered ?? 0} starred={false}
+            bubble="gathered" label="Hand one force back"
+            disabled={!active || (gathered ?? 0) === 0}
+            onClick={() => onGatherBack?.()} />
+          {(gathered ?? 0) > 0 && guildKind === 'cross' && (
+            <span style={{ display: 'block', marginTop: 4, opacity: 0.85 }}>
+              Click the board to land {gathered}
+            </span>
+          )}
+          {(gathered ?? 0) > 0 && guildKind === 'to-reserves' && onSendToReserves && (
+            <button type="button" data-send-reserves="" onClick={onSendToReserves}
+              style={{ marginTop: 4 }}>
+              Send {gathered} back — {Math.ceil((gathered ?? 0) / 2)} spice
+            </button>
+          )}
+        </>
       )}
 
       {staged > 0 && (
