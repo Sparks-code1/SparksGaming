@@ -535,7 +535,19 @@ export default function DuneMultiSeatView() {
         // reach the others: they are behind different clients entirely.
         own={(mine?.secrets ?? null) as DuneSecrets | null}
         chat={chat}
-        now={now} />
+        now={now}
+        // THE WHOLE GRAMMAR, not most of it. This embed predates the rail and
+        // the board's click layers, and without these two props the screen
+        // quietly renders neither — which read, three reports running, as a
+        // broken phase rather than a starved embed. The harness drives them
+        // through the selected seat's own session, like everything else here.
+        onShipReserves={mine
+          ? a => void send(mine, 'SHIP',
+            { kind: 'off-planet', to: a.to, count: a.count, starred: a.starred } as never)
+          : undefined}
+        onMoveStack={mine
+          ? a => void send(mine, 'MOVE', a as never)
+          : undefined} />
       <DevSeatSwitcher sessions={sessions} active={active} onPick={setActive} />
 
       {/* DRIVING, not just watching.
@@ -612,19 +624,6 @@ export default function DuneMultiSeatView() {
             <button onClick={() => void send(mine, 'ADVANCE_PHASE')} disabled={busy}>
               Advance the phase
             </button>
-
-            {/* WHERE THE BUBBLES LIVE, said out loud: the rail, the landing
-                clicks and the two-click move exist on the REAL match screen
-                (?dune-match), which has a board to click. This harness has
-                no board, so it drives the same actions through the dev
-                forms below — absence that explains itself, after two
-                reports that it did not. */}
-            {publicRow?.shipping && (
-              <p style={{ fontSize: 11, opacity: 0.6, margin: '6px 0' }}>
-                Bubbles and board clicks are on the real screen
-                (?dune-match) — the forms below drive the same actions.
-              </p>
-            )}
 
             {/* THE ROTATION, driven as whichever seat is selected. The real
                 screen has the same panel; the harness had only the timer,

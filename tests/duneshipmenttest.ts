@@ -528,8 +528,19 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
     /End turn — next player/.test(panel), true)
 
   // ── AND THE HARNESS HAS THE CONTROLS THE REPORT MISSED ──────────────────
-  check('the six-seat harness carries the panel',
-    /<ShipmentPanel/.test(code('src/components/dune/DuneMultiSeatView.tsx')), true)
+  const harness = code('src/components/dune/DuneMultiSeatView.tsx')
+  check('the six-seat harness carries the panel', /<ShipmentPanel/.test(harness), true)
+
+  // THE EMBED IS FED THE WHOLE GRAMMAR. The harness has rendered the real
+  // DuneGameScreen all along; what it lacked was these two props, and the
+  // starved embed quietly rendered no rail and no click layers — which read,
+  // three reports running, as a broken phase. Pinned so a prop added to the
+  // real screen and forgotten here fails a named check instead of a play
+  // session.
+  check('the harness embed ships through the seat\'s own session',
+    /onShipReserves=\{mine\s*[\r\n]+\s*\? a => void send\(mine, 'SHIP',/.test(harness), true)
+  check('...and moves the same way',
+    /onMoveStack=\{mine\s*[\r\n]+\s*\? a => void send\(mine, 'MOVE', a as never\)/.test(harness), true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
