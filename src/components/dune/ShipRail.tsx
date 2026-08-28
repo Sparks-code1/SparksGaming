@@ -35,6 +35,12 @@ export interface ShipRailProps {
   active: boolean
   onStage: (kind: 'plain' | 'starred') => void
   onReset: () => void
+  /** What the pool is called. 'Reserves' in play; the Fremen's setup calls
+   *  it 'Starting troops', because it is not a reserve at that point. */
+  poolLabel?: string
+  /** A rule worth remembering, under the bubbles — the Fremen's free radius
+   *  rides here during shipment. */
+  note?: string
 }
 
 /**
@@ -76,6 +82,7 @@ export function ForceBubble({ faction, count, starred, disabled, onClick }: {
 
 export function ShipRail({
   faction, reserves, reservesStarred, spice, pending, active, onStage, onReset,
+  poolLabel = 'Reserves', note,
 }: ShipRailProps) {
   const staged = pending.plain + pending.starred
   const hasStarredCorps = reservesStarred > 0 || pending.starred > 0
@@ -86,7 +93,7 @@ export function ShipRail({
       borderRight: '1px solid #ffffff1f', background: '#111a2c',
       font: `11px ${SERIF}`, color: PALE, textAlign: 'center',
     }}>
-      <span style={{ display: 'block', opacity: 0.7 }}>Reserves</span>
+      <span style={{ display: 'block', opacity: 0.7 }}>{poolLabel}</span>
       <b data-rail-reserves={reserves - pending.plain} style={{ fontSize: 15 }}>
         {reserves - pending.plain}
       </b>
@@ -126,6 +133,11 @@ export function ShipRail({
       {!active && staged === 0 && (
         <span style={{ display: 'block', marginTop: 8, opacity: 0.5 }}>
           Ships in your shipment window
+        </span>
+      )}
+      {note && (
+        <span style={{ display: 'block', marginTop: 8, opacity: 0.7, lineHeight: 1.4 }}>
+          {note}
         </span>
       )}
     </div>

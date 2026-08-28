@@ -444,6 +444,34 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
   check('it counts the reserves', /data-rail-reserves="12"/.test(mine), true)
   check('...and the elite apart', /data-rail-starred="5"/.test(mine), true)
   check('...and the purse', mine.includes('>7</b>'), true)
+  // IN PLAY THE POOL IS CALLED RESERVES; the label is a prop now, because
+  // the Fremen's setup borrows this rail for a pool that is not one yet.
+  check('...under the name Reserves', mine.includes('Reserves</span>'), true)
+
+  // ── THE FARE, AS THIS SEAT PAYS IT ──────────────────────────────────────
+  // One rule, four renderings, each true for the seat reading it: no Guild
+  // at this table and the fare goes to the bank; seat a Guild and the line
+  // names them; the Guild themselves read half fare; the Fremen read the
+  // free desert with full fare to the bank beyond it.
+  check('the fare line names the bank when no Guild is seated',
+    mine.includes('paid to the bank'), true)
+  const withGuild = {
+    ...state,
+    players: [
+      ...(state.players as unknown as object[]),
+      { faction: 'spacing-guild', seat: 'player-position-5', reserves: 15, handCount: 0, battleLosses: 0 },
+      { faction: 'fremen', seat: 'player-position-6', reserves: 10, reservesStarred: 3, handCount: 0, battleLosses: 0 },
+    ],
+  } as unknown as DuneGameState
+  check('...and the Guild once they are seated',
+    screen('emperor', { state: withGuild }).includes('paid to the Spacing Guild'), true)
+  check('the Guild read their half fare',
+    screen('spacing-guild', { state: withGuild }).includes('you pay half, rounded up'), true)
+  const fremenRail = screen('fremen', { state: withGuild })
+  check('the Fremen read their free desert',
+    fremenRail.includes('free, onto the Great Flat or any territory within two of it'), true)
+  check('...and the full fare to the bank beyond it',
+    fremenRail.includes('full fare to the bank'), true)
   // TWO BUBBLES for a faction with elite reserves, one for anyone else.
   check('the Emperor gets both bubbles',
     [/data-ship-bubble="plain"/.test(mine), /data-ship-bubble="starred"/.test(mine)],
@@ -510,6 +538,25 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
     /!\(t\.id === moveFrom\.territoryId && c\.sector === moveFrom\.sector\)/.test(game), true)
   check('...and staging a shipment cancels the picked move',
     /setMoveFrom\(null\)\s*[\r\n]+\s*setStaged\(s => \(\{ \.\.\.s, \[kind\]: s\[kind\] \+ 1 \}\)\)/.test(game), true)
+
+  // ── THE STACK IS CLICKABLE, NOT JUST RINGED ─────────────────────────────
+  // The first cut drew the source as a fill-none circle, and a fill-none
+  // circle takes clicks on its stroke alone — a dashed 1.6px thread. "I
+  // still can't click my stack" was the truth: the ring rendered and was
+  // all but unhittable. The transparent disc under it is the hit area, so
+  // it is pinned beside the ring it serves — moved apart, it serves nothing.
+  const moving = screen('emperor', {
+    onMoveStack: () => {},
+    state: {
+      ...state,
+      forces: [{ faction: 'emperor', territoryId: 'territory-22', sector: 'sector-15', count: 3 }],
+      shipping: { ...(state.shipping as object), done: { shipped: true } },
+    },
+  })
+  check('the move window rings my stack', /data-move-source="territory-22\|sector-15"/.test(moving), true)
+  check('...with a disc to hit, not a thread', /fill="transparent"/.test(moving), true)
+  check('...the disc under the ring it serves',
+    /fill="transparent" \/>\s*[\r\n]+\s*<circle cx=\{at\.x\} cy=\{at\.y\} r="13" fill="none"/.test(game), true)
 
   // ── THE PANEL FOLLOWS THE ROUNDS ────────────────────────────────────────
   const panel = code('src/components/dune/ShipmentPanel.tsx')

@@ -106,6 +106,25 @@ const draw = (over: Partial<SetupWindowProps> = {}) =>
   check('the bubble is one component, shared',
     /export function ForceBubble/.test(code('src/components/dune/ShipRail.tsx')), true)
 
+  // ONE RAIL AT A TIME. The shipping rail is the seat's standing counter, so
+  // without this guard the Fremen see two bubble sets during their placement
+  // — the setup rail and the shipping rail side by side, one action wearing
+  // two controls. The guard hands the slot to the setup rail outright.
+  check('the shipping rail yields the slot during Fremen setup',
+    /!\(setupActive && owesFremen && seat === 'fremen'\) && \(/.test(game), true)
+  // HONEST ARITHMETIC. The rail subtracts the staged itself, so it must be
+  // fed the pool BEFORE staging — pre-subtracting here counted every click
+  // twice: the bubble said 1 while the pool dropped 2. The ten are one pool,
+  // so only the staged Fedaykin (spent from the same ten, shown on their own
+  // bubble) comes off the plain figure.
+  check('the setup rail is fed the pool before staging',
+    /reserves=\{fremenTotal - fremenPlaced - setupStaged\.starred\}/.test(game), true)
+  check('...and the Fedaykin figure likewise',
+    /reservesStarred=\{fremenStars - fremenStarsPlaced\}/.test(game), true)
+  // NOT A RESERVE YET: the pool has its own name at setup.
+  check('the setup pool is called Starting troops',
+    /poolLabel="Starting troops"/.test(game), true)
+
   // A HALF-MADE PLACEMENT IS NARRATED with a take-back per stack.
   const partway = draw({
     seat: 'fremen',

@@ -302,9 +302,7 @@ export function DuneGameScreen({
   const fremenStars = seat && state.mode === 'advanced' ? starredOf(seat) : 0
   const fremenPlaced = fremenPending.reduce((n, e) => n + e.count, 0)
   const fremenStarsPlaced = fremenPending.reduce((n, e) => n + e.starred, 0)
-  /** The plain figure the setup rail shows: unplaced, minus the whole staged
-   *  group — the starred bubble spends from the same ten. */
-  const fremenStarsUnplacedStage = () => setupStaged.plain + setupStaged.starred
+
 
   /**
    * The staged group lands on this cell — or one plain force when nothing is
@@ -377,7 +375,11 @@ export function DuneGameScreen({
             sit beside the board that spends them. Always there for a seated
             player — it is the counter — with the bubbles live only in their
             own shipment window. See ShipRail. */}
-        {seat && mine && onShipReserves && (
+        {/* ONE RAIL AT A TIME. During the Fremen's placement the setup
+            rail below takes this slot — two bubble sets for one seat reads
+            as two different controls for one action, which is the opposite
+            of the shared grammar's point. */}
+        {seat && mine && onShipReserves && !(setupActive && owesFremen && seat === 'fremen') && (
           <ShipRail
             faction={seat}
             reserves={mine.reserves}
@@ -385,6 +387,15 @@ export function DuneGameScreen({
             spice={own?.spice ?? null}
             pending={staged}
             active={myShipWindow}
+            // THE FARE AS THIS SEAT PAYS IT, not the general rule: the Guild
+            // rides at half, the Fremen ride the desert free and owe the bank
+            // beyond it, and everyone else's fare goes to the Guild only while
+            // the Guild is at the table.
+            note={seat === 'fremen'
+              ? 'Fremen ride the desert: any or all of your reserves, free, onto the Great Flat or any territory within two of it. Beyond that, full fare to the bank — 1 spice per force into a stronghold, 2 anywhere else.'
+              : seat === 'spacing-guild'
+                ? 'Fares: 1 spice per force into a stronghold, 2 anywhere else — you pay half, rounded up, to the bank.'
+                : `Fares: 1 spice per force into a stronghold, 2 anywhere else — paid to ${state.players.some(p => p.faction === 'spacing-guild') ? 'the Spacing Guild' : 'the bank'}.`}
             onStage={kind => {
               setMoveFrom(null)
               setStaged(s => ({ ...s, [kind]: s[kind] + 1 }))
@@ -399,10 +410,16 @@ export function DuneGameScreen({
         {setupActive && owesFremen && seat === 'fremen' && (
           <ShipRail
             faction={seat}
-            reserves={fremenTotal - fremenPlaced - fremenStarsUnplacedStage()}
-            reservesStarred={fremenStars - fremenStarsPlaced - setupStaged.starred}
+            // THE RAIL SUBTRACTS THE STAGED ITSELF — these figures are the
+            // pool BEFORE staging, or every click would be counted twice: a
+            // bubble showing 1 while the pool dropped 2 is exactly the bug
+            // that shipped. The ten are one pool, so a staged Fedaykin
+            // shrinks the plain figure too.
+            reserves={fremenTotal - fremenPlaced - setupStaged.starred}
+            reservesStarred={fremenStars - fremenStarsPlaced}
             spice={null}
             pending={setupStaged}
+            poolLabel="Starting troops"
             active
             onStage={kind => setSetupStaged(s => ({ ...s, [kind]: s[kind] + 1 }))}
             onReset={() => setSetupStaged({ plain: 0, starred: 0 })} />
@@ -490,6 +507,12 @@ export function DuneGameScreen({
                           ? null
                           : { territoryId: f.territoryId, sector: f.sector })}>
                         <title>{picked ? 'Click again to cancel' : 'Move this stack'}</title>
+                        {/* THE HIT AREA. A fill-none circle takes clicks on
+                            its stroke alone — a dashed 1.6px thread — which
+                            is why "I still can't click my stack" was true:
+                            the ring was there and all but unhittable. The
+                            transparent body makes the whole disc the target. */}
+                        <circle cx={at.x} cy={at.y} r="13" fill="transparent" />
                         <circle cx={at.x} cy={at.y} r="13" fill="none"
                           stroke={FACTION_LOOK[seat!].colour}
                           strokeWidth={picked ? 3 : 1.6}
