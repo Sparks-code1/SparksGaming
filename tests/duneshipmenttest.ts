@@ -90,6 +90,16 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
   // the generator's overlap floor was raised to drop exactly that sliver.
   check('the Great Flat sits in sector 15 alone',
     DUNE_TERRITORIES.find(t => t.id === GREAT_FLAT)?.sectors, ['sector-15'])
+  // MEASURED THE SAME WAY, on the raw samples before any threshold:
+  // Rim Wall West is 100.00% in sector 9 — not a stray point outside it —
+  // and Carthag is 98.67% in 11 with a 1.33% bleed into 12, below even the
+  // old 2% floor, so the filter has always dropped it. Pinned so a redrawn
+  // board that moves either boundary is caught here, not at a stronghold
+  // gate miscounting Carthag.
+  check('Rim Wall West sits in sector 9 alone',
+    DUNE_TERRITORIES.find(t => t.id === 'territory-14')?.sectors, ['sector-9'])
+  check('Carthag sits in sector 11 alone',
+    DUNE_TERRITORIES.find(t => t.id === 'territory-26')?.sectors, ['sector-11'])
 }
 
 // ── the fares ─────────────────────────────────────────────────────────────
