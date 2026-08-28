@@ -213,6 +213,7 @@ export function DuneGameScreen({
     charity?: { expiresAt: number }
     spiceBlow?: { closesAt?: number }
     phaseClock?: { closesAt?: number }
+    shipping?: { closesAt?: number }
     setup?: SetupWindowState
   }
   // SETUP IS THE FOURTH ONE, and it cannot overlap the other three: nothing has
@@ -222,6 +223,7 @@ export function DuneGameScreen({
   // The phase's own look-window comes LAST: any real window outranks it,
   // since while charity is open the phase clock has already served its turn.
   const closesAt = timed.charity?.expiresAt ?? timed.spiceBlow?.closesAt
+    ?? timed.shipping?.closesAt
     ?? timed.setup?.closesAt ?? timed.phaseClock?.closesAt ?? null
   const windowMs = timed.charity ? CHARITY_WINDOW_MS
     : timed.spiceBlow ? WORM_SECONDS * 1000

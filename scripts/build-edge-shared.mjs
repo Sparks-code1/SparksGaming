@@ -129,6 +129,16 @@ const TARGETS = [
     exportName: 'reviveForces',
   },
   {
+    entry: 'src/lib/dune/shipment.ts',
+    out: 'supabase/functions/_shared/duneShipment.gen.ts',
+    what: 'shipment and movement',
+    // The costs, the storm pathing and the stronghold gate are one set of
+    // rules; a second copy on the server would disagree with the client's
+    // board the first time either was fixed.
+    mustExport: /export\s*\{[^}]*judgeShipment/,
+    exportName: 'judgeShipment',
+  },
+  {
     entry: 'src/lib/dune/phaseAdvance.ts',
     out: 'supabase/functions/_shared/dunePhase.gen.ts',
     what: 'phase loop',

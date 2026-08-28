@@ -49,8 +49,11 @@ import {
   bankDead, reviveForces, reviveLeader, emptyTanks,
 } from '../_shared/duneRevival.gen.ts'
 import {
+  judgeShipment, judgeMove, landForces, liftForces, nextSeat, SHIPMENT_SECONDS,
+} from '../_shared/duneShipment.gen.ts'
+import {
   phaseAfter, advanceHold, phaseWindowOpen, rollStorm, stormEntry, cityIncome,
-  mentatVerdict, biddingOpening, PHASE_SECONDS, TURN_LIMIT,
+  mentatVerdict, biddingOpening, stormOrder, PHASE_SECONDS, TURN_LIMIT,
 } from '../_shared/dunePhase.gen.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -1539,7 +1542,35 @@ Deno.serve(async req => {
           return ended ?? await plainly()
         }
 
-        // ── Revival, Shipment and Movement, Battles: not built, and said ───
+        // ── the rotation opens with the phase ──────────────────────────────
+        case 'Shipment and Movement': {
+          const order = stormOrder(state.storm as never, (state.players ?? []) as never)
+          const shipping = {
+            turn, order, at: 0, done: {},
+            closesAt: now + SHIPMENT_SECONDS * 1000,
+          }
+          // THE ATREIDES SEE THE TOP OF THE SPICE DECK — their movement
+          // prescience, the same shape as their bidding one: written into
+          // their own secrets row, reaching no other seat and no shared
+          // state. Stamped with the turn so a stale glimpse reads as stale.
+          let seer: Record<string, unknown> = {}
+          const seerSeat = seatOfFaction['atreides']
+          if (seerSeat) {
+            const { data: deckRow } = await admin
+              .from('match_decks').select('cards')
+              .eq('match_id', matchId).eq('deck', 'spice').maybeSingle()
+            const top = ((deckRow?.cards ?? []) as unknown[])[0]
+            if (top) {
+              const { data: theirs } = await admin
+                .from('match_secrets').select('data')
+                .eq('match_id', matchId).eq('player_id', seerSeat).maybeSingle()
+              seer = { [seerSeat]: { ...(theirs?.data ?? {}), spiceReveal: { turn, card: top } } }
+            }
+          }
+          return await plainly({ shipping }, undefined, seer)
+        }
+
+        // ── Revival, Battles: not built, and said ──────────────────────────
         // They enter, hold the look-window so the table sees where the turn
         // is, and advance. Rules land here later; the loop does not wait for
         // them.
@@ -1553,6 +1584,200 @@ Deno.serve(async req => {
     // Emperor — that redirect is treachery's alone. The rules live in the
     // shared bundle (lib/dune/revival); what is here is the part only a
     // server can do: the purse, and the per-turn ledger.
+    // ── Shipment and Movement: the acting seat's two halves ─────────────────
+    // The rules ride in the shared bundle (lib/dune/shipment); what is here is
+    // the rotation's bookkeeping, the purse, and who is paid — the Guild's
+    // shipping monopoly makes the payee a seat, sometimes, and a payment to a
+    // seat is two secrets rows in one transaction.
+    case 'SHIP': {
+      const w = state.shipping as
+        { turn: number; order: string[]; at: number; done: { shipped?: boolean; moved?: boolean }; closesAt: number } | undefined
+      if (state.phase !== 'Shipment and Movement' || !w) {
+        return json({ error: 'the turn is not at shipment', code: 'wrong-phase' }, 409)
+      }
+      if (w.order[w.at] !== myFaction) {
+        return json({ error: 'not your turn to ship', code: 'not-your-turn' }, 403)
+      }
+      if (w.done.shipped) return json({ error: 'you have shipped', code: 'already-shipped' }, 409)
+      // SHIPMENT THEN MOVEMENT, in that order — a seat that has moved has
+      // closed its shipping half.
+      if (w.done.moved) return json({ error: 'you have already moved', code: 'already-moved' }, 409)
+
+      const { data: row } = await admin
+        .from('match_secrets').select('data')
+        .eq('match_id', matchId).eq('player_id', playerId).maybeSingle()
+      const secrets = (row?.data ?? {}) as DuneSecrets
+      const me = ((state.players ?? []) as {
+        faction: string; reserves: number; reservesStarred?: number
+      }[]).find(p => p.faction === myFaction)
+
+      const kind = (action.kind ?? 'off-planet') as 'off-planet' | 'cross' | 'to-reserves'
+      const count = Number(action.count ?? 0)
+      const starred = Number(action.starred ?? 0)
+      const judged = judgeShipment({
+        faction: myFaction as never, kind, count, starred,
+        to: action.to as never, from: action.from as never,
+        forces: (state.forces ?? []) as never,
+        reserves: me?.reserves ?? 0,
+        reservesStarred: me?.reservesStarred ?? 0,
+        spice: readSpice(secrets),
+        storm: state.storm as never,
+        guildSeated: 'spacing-guild' in seatOfFaction,
+      })
+      if (!judged.ok) return json({ error: 'that shipment is not legal', code: judged.refusal }, 409)
+
+      // ── the board and the reserves ──────────────────────────────────────
+      let forces = (state.forces ?? []) as never[]
+      let players = (state.players ?? []) as typeof me[]
+      const from = action.from as { territoryId: string; sector: string } | undefined
+      if (kind === 'to-reserves' && from) {
+        forces = liftForces(forces as never, myFaction as never,
+          from.territoryId, from.sector, count, starred) as never[]
+        players = players.map(p => p?.faction === myFaction
+          ? {
+            ...p, reserves: p.reserves + (count - starred),
+            ...(starred > 0 ? { reservesStarred: (p.reservesStarred ?? 0) + starred } : null),
+          }
+          : p)
+      } else if (kind === 'cross' && from && judged.sector) {
+        forces = liftForces(forces as never, myFaction as never,
+          from.territoryId, from.sector, count, starred) as never[]
+        forces = landForces(forces as never, myFaction as never,
+          (action.to as { territoryId: string }).territoryId, judged.sector, count, starred) as never[]
+      } else if (judged.sector) {
+        forces = landForces(forces as never, myFaction as never,
+          (action.to as { territoryId: string }).territoryId, judged.sector, count, starred) as never[]
+        players = players.map(p => p?.faction === myFaction
+          ? {
+            ...p, reserves: p.reserves - (count - starred),
+            ...(starred > 0 ? { reservesStarred: (p.reservesStarred ?? 0) - starred } : null),
+          }
+          : p)
+      }
+
+      // ── the fee, to the bank or to the Guild ────────────────────────────
+      // A PAYMENT TO A SEAT IS TWO ROWS: the payer's purse down, the Guild's
+      // up, in the same transaction — the ledger holds the arithmetic.
+      const guildSeat = seatOfFaction['spacing-guild']
+      const paySeat = judged.payee === 'guild' && guildSeat && guildSeat !== playerId
+      const secretsPatch: Record<string, unknown> = {}
+      if (judged.cost > 0) {
+        const purses: Record<string, number> = { [playerId]: readSpice(secrets) }
+        let guildRow: Record<string, unknown> = {}
+        if (paySeat) {
+          const { data: g } = await admin
+            .from('match_secrets').select('data')
+            .eq('match_id', matchId).eq('player_id', guildSeat).maybeSingle()
+          guildRow = (g?.data ?? {}) as Record<string, unknown>
+          purses[guildSeat] = readSpice(guildRow as never)
+        }
+        const moved = applySpiceMoves(purses, [{
+          from: playerId, to: paySeat ? guildSeat : BANK,
+          amount: judged.cost, reason: 'shipment',
+        }])
+        if (!moved.ok) return json({ error: 'the spice could not move', code: moved.refusal }, 500)
+        secretsPatch[playerId] = { ...secrets, spice: moved.purses[playerId] }
+        if (paySeat) secretsPatch[guildSeat] = { ...guildRow, spice: moved.purses[guildSeat] }
+      }
+
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state, forces, players,
+          shipping: { ...w, done: { ...w.done, shipped: true } },
+        },
+        p_secrets: secretsPatch,
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ cost: judged.cost, paidTo: judged.payee, version: data[0].version })
+    }
+
+    case 'MOVE': {
+      const w = state.shipping as
+        { turn: number; order: string[]; at: number; done: { shipped?: boolean; moved?: boolean }; closesAt: number } | undefined
+      if (state.phase !== 'Shipment and Movement' || !w) {
+        return json({ error: 'the turn is not at movement', code: 'wrong-phase' }, 409)
+      }
+      if (w.order[w.at] !== myFaction) {
+        return json({ error: 'not your turn to move', code: 'not-your-turn' }, 403)
+      }
+      if (w.done.moved) return json({ error: 'you have moved', code: 'already-moved' }, 409)
+
+      const gather = (Array.isArray(action.gather) ? action.gather : []) as
+        { sector: string; count: number; starred?: number }[]
+      const judged = judgeMove({
+        faction: myFaction as never,
+        from: String(action.from ?? ''),
+        gather,
+        to: action.to as never,
+        forces: (state.forces ?? []) as never,
+        storm: state.storm as never,
+      })
+      if (!judged.ok) return json({ error: 'that move is not legal', code: judged.refusal }, 409)
+
+      let forces = (state.forces ?? []) as never[]
+      let starredMoved = 0
+      for (const g of gather) {
+        forces = liftForces(forces as never, myFaction as never,
+          String(action.from), g.sector, g.count, g.starred ?? 0) as never[]
+        starredMoved += g.starred ?? 0
+      }
+      forces = landForces(forces as never, myFaction as never,
+        (action.to as { territoryId: string }).territoryId, judged.sector,
+        judged.moving, starredMoved) as never[]
+
+      // MOVEMENT CLOSES THE SEAT'S TURN — shipment came first or not at all —
+      // so the rotation steps on in the same write.
+      const stepped = nextSeat(
+        { ...w, done: { ...w.done, moved: true } } as never,
+        now + SHIPMENT_SECONDS * 1000)
+      const rest = { ...state, forces }
+      if (!stepped) delete (rest as Record<string, unknown>).shipping
+
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: stepped ? { ...rest, shipping: stepped } : rest,
+        p_secrets: {},
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ moved: judged.moving, to: judged.sector, version: data[0].version })
+    }
+
+    // ── done, or the clock was ───────────────────────────────────────────────
+    // BEFORE THE DEADLINE, only the acting seat ends its own turn. After it,
+    // silence has spent whatever was unspent and any seat may push the
+    // rotation along — the same rule every pause follows.
+    case 'PASS_TURN': {
+      const w = state.shipping as
+        { turn: number; order: string[]; at: number; done: Record<string, boolean>; closesAt: number } | undefined
+      if (state.phase !== 'Shipment and Movement' || !w) {
+        return json({ error: 'the turn is not at shipment', code: 'wrong-phase' }, 409)
+      }
+      const expired = now >= w.closesAt
+      if (!expired && w.order[w.at] !== myFaction) {
+        return json({ error: 'not your turn to pass', code: 'not-your-turn' }, 403)
+      }
+      const stepped = nextSeat(w as never, now + SHIPMENT_SECONDS * 1000)
+      const rest = { ...state }
+      if (!stepped) delete (rest as Record<string, unknown>).shipping
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: stepped ? { ...rest, shipping: stepped } : rest,
+        p_secrets: {},
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({
+        next: stepped ? stepped.order[stepped.at] : null,
+        version: data[0].version,
+      })
+    }
+
     case 'REVIVE': {
       if (state.phase !== 'Revival') {
         return json({ error: 'the turn is not at revival', code: 'wrong-phase' }, 409)

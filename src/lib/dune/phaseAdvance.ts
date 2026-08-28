@@ -91,6 +91,7 @@ export interface AdvanceState {
   winner?: unknown
   stormMoved?: number
   spiceBlow?: { closesAt?: number }
+  shipping?: { closesAt: number }
   spiceDeck?: { turn?: number }
   charity?: { expiresAt: number; turn: number }
   auction?: { status?: string; closesAt?: number } | null
@@ -119,7 +120,7 @@ export function phaseAfter(phase: GamePhase): { phase: GamePhase; newTurn: boole
  */
 export interface AdvanceHold {
   code: 'setup-not-finished' | 'game-over' | 'blow-not-turned'
-    | 'worms-pending' | 'charity-open' | 'auction-running'
+    | 'worms-pending' | 'charity-open' | 'auction-running' | 'shipping-underway'
   until?: number
 }
 
@@ -148,6 +149,14 @@ export function advanceHold(state: AdvanceState, now: number): AdvanceHold | nul
     if (w && w.turn === state.turn && now < w.expiresAt) {
       return { code: 'charity-open', until: w.expiresAt }
     }
+    return null
+  }
+
+  if (state.phase === 'Shipment and Movement') {
+    // The rotation holds until the last seat has shipped and moved — or
+    // passed, or run out its clock. Each seat's expiry has its own push
+    // (PASS_TURN by anyone), the same rule as every other pause.
+    if (state.shipping) return { code: 'shipping-underway', until: state.shipping.closesAt }
     return null
   }
 
@@ -255,23 +264,34 @@ export function stormEntry(state: AdvanceState, roll: number): {
  * order is the storm's — the walk from the storm marker, first player first —
  * and the limits come off the faction cards.
  */
-export function biddingOpening(input: {
-  storm: SectorId
-  players: readonly Pick<DunePlayerPublic, 'faction' | 'seat'>[]
-  /** Treachery cards held, by faction, counted by the caller from the rows. */
-  cards: Readonly<Record<string, number>>
-}): { order: FactionId[]; hands: Record<string, number>; limits: Record<string, number> } {
+/**
+ * Every seated faction in acting order: counter-clockwise from the
+ * storm-relative first player. Bidding bids in it; shipment ships in it.
+ */
+export function stormOrder(
+  storm: SectorId,
+  players: readonly Pick<DunePlayerPublic, 'faction' | 'seat'>[],
+): FactionId[] {
   const seats = seatsFromPositions(Object.fromEntries(
-    input.players.map(p => [p.seat, p.faction])))
-  const first = firstPlayerAfterStorm(input.storm, seats)
-  if (!first) throw new Error('an auction with nobody at the table')
+    players.map(p => [p.seat, p.faction])))
+  const first = firstPlayerAfterStorm(storm, seats)
+  if (!first) throw new Error('a turn order with nobody at the table')
   // The walk found the first player; the rest follow in the same direction,
   // which is what rotating the seat-ordered list to start at them yields —
   // seat order is clockwise and the storm runs counter-clockwise, so the list
   // reverses before it rotates.
   const counter = [...seats].reverse()
   const at = counter.findIndex(s => s.faction === first.faction)
-  const order = [...counter.slice(at), ...counter.slice(0, at)].map(s => s.faction)
+  return [...counter.slice(at), ...counter.slice(0, at)].map(s => s.faction)
+}
+
+export function biddingOpening(input: {
+  storm: SectorId
+  players: readonly Pick<DunePlayerPublic, 'faction' | 'seat'>[]
+  /** Treachery cards held, by faction, counted by the caller from the rows. */
+  cards: Readonly<Record<string, number>>
+}): { order: FactionId[]; hands: Record<string, number>; limits: Record<string, number> } {
+  const order = stormOrder(input.storm, input.players)
   const hands: Record<string, number> = {}
   const limits: Record<string, number> = {}
   for (const f of order) {

@@ -54,6 +54,9 @@ export interface DuneSecrets extends Secrets {
    * See lib/dune/prescience.
    */
   prescience?: string
+  /** The Atreides' movement glimpse: the top of the spice deck, written by
+   *  the phase entry into their row alone, stamped with its turn. */
+  spiceReveal?: { turn: number; card: { kind: string; name?: string } }
 }
 
 /** Claiming brings a player UP TO this, it does not add it. */

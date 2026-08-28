@@ -362,6 +362,20 @@ export interface DuneGameState {
     done: Record<string, { forces: number; starred: number; leader?: string }>
   }
   /**
+   * The shipment-and-movement rotation, while the phase runs.
+   *
+   * Seats act one at a time in storm order, each with a window; `done` is
+   * what the acting seat has spent. Deleted when the last seat finishes,
+   * which is how the phase says it is over. See lib/dune/shipment.
+   */
+  shipping?: {
+    turn: number
+    order: FactionId[]
+    at: number
+    done: { shipped?: boolean; moved?: boolean }
+    closesAt: number
+  }
+  /**
    * The current phase's look-at-it window — see PHASE_SECONDS in
    * lib/dune/phaseAdvance. Before it shuts only the host advances; after it,
    * anyone. Carries its own (turn, phase) so a clock outliving its phase

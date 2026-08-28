@@ -1,46 +1,13 @@
 // AUTO-GENERATED — DO NOT EDIT.
 //
-// Built from src/lib/dune/phaseAdvance.ts by scripts/build-edge-shared.mjs.
+// Built from src/lib/dune/shipment.ts by scripts/build-edge-shared.mjs.
 // Edit the source and re-run `npm run build:edge`.
 //
-// This is the exact phase loop the client runs. The server MUST run the same
+// This is the exact shipment and movement the client runs. The server MUST run the same
 // bytes: a divergence here is two machines disagreeing while both believe they
 // agree.
 
-// src/types/Dune/Game.ts
-var DUNE_PHASES = [
-  "Storm",
-  "Spice Blow and Nexus",
-  "CHOAM Charity",
-  "Bidding",
-  "Revival",
-  "Shipment and Movement",
-  "Battles",
-  "Spice Collection",
-  "Mentat Pause"
-];
-
 // src/data/dune/boardData.ts
-var DUNE_SECTORS = [
-  { id: "sector-1", number: 1, fromBearing: 189.7, toBearing: 209.6 },
-  { id: "sector-2", number: 2, fromBearing: 169.8, toBearing: 189.7 },
-  { id: "sector-3", number: 3, fromBearing: 150, toBearing: 169.8 },
-  { id: "sector-4", number: 4, fromBearing: 130.1, toBearing: 150 },
-  { id: "sector-5", number: 5, fromBearing: 110.4, toBearing: 130.1 },
-  { id: "sector-6", number: 6, fromBearing: 90.5, toBearing: 110.4 },
-  { id: "sector-7", number: 7, fromBearing: 70.5, toBearing: 90.5 },
-  { id: "sector-8", number: 8, fromBearing: 50.4, toBearing: 70.5 },
-  { id: "sector-9", number: 9, fromBearing: 30.4, toBearing: 50.4 },
-  { id: "sector-10", number: 10, fromBearing: 10.3, toBearing: 30.4 },
-  { id: "sector-11", number: 11, fromBearing: 350.2, toBearing: 10.3 },
-  { id: "sector-12", number: 12, fromBearing: 330.1, toBearing: 350.2 },
-  { id: "sector-13", number: 13, fromBearing: 310, toBearing: 330.1 },
-  { id: "sector-14", number: 14, fromBearing: 290, toBearing: 310 },
-  { id: "sector-15", number: 15, fromBearing: 269.9, toBearing: 290 },
-  { id: "sector-16", number: 16, fromBearing: 249.8, toBearing: 269.9 },
-  { id: "sector-17", number: 17, fromBearing: 229.7, toBearing: 249.8 },
-  { id: "sector-18", number: 18, fromBearing: 209.6, toBearing: 229.7 }
-];
 var DUNE_TERRITORIES = [
   {
     id: "territory-01",
@@ -819,567 +786,254 @@ var DUNE_TERRITORIES = [
     ]
   }
 ];
-var DUNE_PLAYER_POSITIONS = [
-  { id: "player-position-1", x: 484.1, y: 83.46, sectorId: "sector-11" },
-  { id: "player-position-2", x: 895.1, y: 321.46, sectorId: "sector-8" },
-  { id: "player-position-3", x: 896.1, y: 795.46, sectorId: "sector-5" },
-  { id: "player-position-4", x: 484.1, y: 1032.46, sectorId: "sector-2" },
-  { id: "player-position-5", x: 73.1, y: 795.46, sectorId: "sector-17" },
-  { id: "player-position-6", x: 72.1, y: 320.46, sectorId: "sector-14" }
-];
 
-// src/lib/dune/storm.ts
-var SECTOR_COUNT = 18;
-var FIRST_STORM_ROLL = { min: 0, max: 20 };
-var STORM_ROLL = { min: 2, max: 6 };
-var STORM_ROLL_ADVANCED = { min: 1, max: 6 };
-var stormRollRange = (mode) => mode === "advanced" ? STORM_ROLL_ADVANCED : STORM_ROLL;
-var SHIELD_WALL_PROTECTS = [
-  "territory-05",
-  // Imperial Basin — sand
-  "territory-13",
-  // Arrakeen — stronghold
-  "territory-26"
-  // Carthag — stronghold
-];
-var num = (id) => Number(id.slice("sector-".length));
-var sectorId = (n) => `sector-${(n - 1) % SECTOR_COUNT + 1}`;
-function sweptSectors(from, count) {
-  if (count <= 0) return [];
-  const start = num(from);
-  const seen = /* @__PURE__ */ new Set();
-  const out = [];
-  for (let i = 1; i <= Math.min(count, SECTOR_COUNT); i++) {
-    const id = sectorId(start + i);
-    if (seen.has(id)) continue;
-    seen.add(id);
-    out.push(id);
-  }
-  return out;
+// src/lib/dune/shipment.ts
+var SHIPMENT_SECONDS = 60;
+var SHIP_STRONGHOLD_SPICE = 1;
+var SHIP_OPEN_SPICE = 2;
+var GUILD_RETURN_PER = 2;
+var GREAT_FLAT = "territory-22";
+var FREMEN_SHIP_RADIUS = 2;
+var ARRAKEEN = "territory-13";
+var CARTHAG = "territory-26";
+var STRONGHOLD_CAP = 2;
+var territory = (id) => DUNE_TERRITORIES.find((t) => t.id === id);
+function settleSector(territoryId, sector) {
+  const t = territory(territoryId);
+  if (!t) return { ok: false, refusal: "no-such-territory" };
+  if (t.sectors.length === 1) return { ok: true, sector: t.sectors[0] };
+  if (!sector) return { ok: false, refusal: "sector-needed" };
+  if (!t.sectors.includes(sector)) return { ok: false, refusal: "no-such-sector" };
+  return { ok: true, sector };
 }
-function stormDestination(from, count) {
-  return sectorId(num(from) + Math.max(0, count));
+function inStorm(territoryId, sector, storm) {
+  const t = territory(territoryId);
+  if (t?.terrain === "polar-sink") return false;
+  return sector === storm;
 }
-function isExposedToStorm(cell, swept, shieldWall) {
-  if (!swept.includes(cell.sector)) return false;
-  if (SHIELD_WALL_PROTECTS.includes(cell.territoryId)) return shieldWall === "destroyed";
-  const t = DUNE_TERRITORIES.find((x) => x.id === cell.territoryId);
-  return t?.terrain === "sand";
-}
-function stormLosses(force, mode) {
-  if (mode === "advanced" && force.faction === "fremen") {
-    return Math.ceil(force.count / 2);
-  }
-  return force.count;
-}
-function resolveStorm(from, roll, forces, mode, shieldWall, spiceOnBoard = {}) {
-  const swept = sweptSectors(from, roll);
-  const casualties = [];
-  const forcesAfter = [];
-  for (const force of forces) {
-    if (!isExposedToStorm(force, swept, shieldWall)) {
-      forcesAfter.push(force);
-      continue;
-    }
-    const lost = Math.min(force.count, stormLosses(force, mode));
-    const survived = force.count - lost;
-    casualties.push({ force, lost, survived });
-    if (survived > 0) forcesAfter.push({ ...force, count: survived });
-  }
-  const spiceCleared = [];
-  const spiceAfter = { ...spiceOnBoard };
-  for (const [territoryId, amount] of Object.entries(spiceOnBoard)) {
-    if (!(amount > 0)) continue;
-    const sector = DUNE_TERRITORIES.find((t) => t.id === territoryId)?.spiceSector;
-    if (sector && swept.includes(sector)) {
-      spiceCleared.push({ territoryId, amount });
-      delete spiceAfter[territoryId];
-    }
-  }
-  return {
-    from,
-    to: stormDestination(from, roll),
-    swept,
-    casualties,
-    killed: casualties.filter((c) => c.lost > 0).map((c) => ({ ...c.force, count: c.lost })),
-    forcesAfter,
-    spiceCleared,
-    spiceOnBoard: spiceAfter
-  };
-}
-function firstPlayerAfterStorm(storm, seats) {
-  if (seats.length === 0) return null;
-  const known = new Set(DUNE_SECTORS.map((s) => s.id));
-  if (!known.has(storm)) {
-    throw new Error(`the storm is in no sector this board has: ${String(storm)}`);
-  }
-  const stray = seats.find((s) => !known.has(s.sector));
-  if (stray) {
-    throw new Error(`a seat sits beside no sector this board has: ${String(stray.sector)}`);
-  }
-  const start = num(storm);
-  for (let i = 1; i <= SECTOR_COUNT; i++) {
-    const id = sectorId(start + i);
-    const seat = seats.find((s) => s.sector === id);
-    if (seat) return seat;
-  }
-  throw new Error("the storm walked all eighteen sectors without reaching a seat");
-}
-function seatsFromPositions(seating) {
-  const seats = DUNE_PLAYER_POSITIONS.flatMap((p) => {
-    const faction = seating[p.id];
-    return faction ? [{ faction, positionId: p.id, sector: p.sectorId }] : [];
-  });
-  const twice = seats.find((s, i) => seats.findIndex((o) => o.faction === s.faction) !== i);
-  if (twice) {
-    throw new Error(`${twice.faction} is seated in more than one position`);
-  }
-  return seats;
-}
-
-// src/lib/dune/hud.ts
-var STRONGHOLDS = new Set(
-  DUNE_TERRITORIES.filter((t) => t.stronghold).map((t) => t.id)
-);
-function strongholdsHeld(forces, faction) {
-  const held = /* @__PURE__ */ new Set();
-  for (const f of forces) {
-    if (f.faction === faction && f.count > 0 && f.posture !== "advisor" && STRONGHOLDS.has(f.territoryId)) {
-      held.add(f.territoryId);
-    }
-  }
-  return held.size;
-}
-
-// src/data/dune/factions.ts
-var ATREIDES = {
-  id: "atreides",
-  name: "Atreides",
-  startingSpice: 10,
-  forces: {
-    onPlanet: 10,
-    placement: { kind: "fixed", territoryId: "territory-13" },
-    // Arrakeen
-    reserves: 10,
-    starred: 0
-  },
-  reservesHeld: "off-planet",
-  handLimit: 4,
-  startingTreachery: 1,
-  freeRevivals: 2,
-  abilities: {
-    bidding: "Atreides may look at each Treachery Card as it comes up for purchase before any faction bids on it.",
-    movement: "At the start of the Movement Phase, before anyone moves, you may look at the top card of the Spice Deck.",
-    battle: "During the Battle Phase, you may force your opponent to reveal your choice of one of the four elements of battle (the leader, the weapon, the defense, or the forces in battle) before they reveal their choice."
-  },
-  alliance: "The Atreides may assist your allies by forcing their opponent to show them one element of their battle plan.",
-  advanced: {
-    karama: "You may use a Karama Card to look at any one player's entire Battle Plan.",
-    kwisatzHaderach: "Use the Kwisatz Haderach card and counter token to secretly keep track of force losses. Once you have lost 7 or more forces in a battle or battles, the Kwisatz Haderach card becomes active for the rest of the game and may be used as follows: it cannot be used alone in battle but may add its +2 strength to leaders or cheap heroes in one territory per turn. If the leader or cheap hero is killed, the Kwisatz Haderach has no effect in the battle. A leader accompanied by Kwisatz Haderach cannot turn traitor. The Kwisatz Haderach can only be killed if blown up by a lasgun/shield explosion. If killed, the Kwisatz Haderach must be revived like any other leader. Alive or dead, the Kwisatz Haderach has no effect on the rule governing revival of Atreides leaders."
-  },
-  // Nothing here is beyond a Karama card.
-  unsuppressable: [],
-  leaders: [
-    { name: "Lady Jessica", strength: 5 },
-    { name: "Thufir Hawat", strength: 5 },
-    { name: "Gurney Halleck", strength: 4 },
-    { name: "Duncan Idaho", strength: 2 },
-    { name: "Dr. Wellington Yueh", strength: 1 }
-  ]
-};
-var EMPEROR = {
-  id: "emperor",
-  name: "Emperor",
-  startingSpice: 10,
-  forces: {
-    onPlanet: 0,
-    placement: { kind: "reserve-only" },
-    reserves: 20,
-    starred: 5
-    // Sardaukar — see StartingForces.starred
-  },
-  reservesHeld: "off-planet",
-  handLimit: 4,
-  startingTreachery: 1,
-  freeRevivals: 1,
-  abilities: {
-    bidding: "Whenever any other faction pays spice for a Treachery card, they pay it to you instead of the Spice Bank. You may not discount the price of Treachery Cards; the full price must be paid."
-  },
-  alliance: "You may share your great wealth with your allies as well as paying spice (directly to the bank) for the revival of up to 3 extra of their forces (for a possible total of 6 during each revival phase) from the Tleilaxu tanks.",
-  advanced: {
-    karama: "You may use a Karama Card to revive up to three forces or one leader for free.",
-    // UNDER `forces`, not `general`. The card labels each entry with the key it
-    // came from, and GENERAL says nothing — where FORCES says which of these
-    // rules is the one about your soldiers. The Fremen's Fedaykin entry has
-    // always been shaped this way; this is the same rule for the same reason.
-    //
-    // The rulebook's opening clause, "If you are playing the advanced game,
-    // Sardaukar is in play", is dropped: it sits on the back of the card, which
-    // is the advanced side and says so.
-    forces: "Sardaukar: Your 5 starred forces, elite Sardaukar, have a special fighting capability. They are worth two normal forces in battle and in taking losses against all opponents except Fremen. Your starred forces are worth just one force against Fremen. They are treated as one force in revival. Only one Sardaukar force can be revived per turn."
-  },
-  unsuppressable: [],
-  leaders: [
-    { name: "Hasimir Fenring", strength: 6 },
-    { name: "Captain Aramsham", strength: 5 },
-    { name: "Caid", strength: 3 },
-    { name: "Burseg", strength: 3 },
-    { name: "Bashar", strength: 2 }
-  ]
-};
-var FREMEN = {
-  id: "fremen",
-  name: "Fremen",
-  startingSpice: 3,
-  forces: {
-    onPlanet: 10,
-    // Distributed by the player at setup, in whatever split they choose.
-    placement: {
-      kind: "distribute",
-      among: [
-        "territory-40",
-        // Sietch Tabr
-        "territory-17",
-        // False Wall South
-        "territory-10"
-        // False Wall West
-      ]
-    },
-    reserves: 10,
-    starred: 3
-    // Fedaykin — see StartingForces.starred
-  },
-  // The one faction whose reserves are already on Arrakis. This is what makes
-  // their shipment free and keeps them out of the Guild's income — see
-  // ReserveLocation.
-  reservesHeld: "on-planet",
-  handLimit: 4,
-  startingTreachery: 1,
-  freeRevivals: 3,
-  abilities: {
-    shipment: "You may bring any or all of your reserves for free onto the Great Flat or onto any one territory within two territories of the Great Flat (subject to storm and occupancy rules).",
-    movement: "You may move your forces two territories instead of one.",
-    shaiHulud: "If Shai-Hulud appears in a territory where you have forces, they are not devoured. Upon conclusion of the Nexus, you may ride the sandworm and move some or all of the forces in that territory to any territory subject to storm and occupancy rules. Any forces in that territory are not devoured. If Shai-Hulud appears again and you still have forces in the original territory, you may do this again."
-  },
-  alliance: "You may choose to protect (or not protect) your allies from the effects of Shai-Hulud (sandworm), and at your discretion, may also allow them to revive 3 forces for free during the revival phase. In addition, your allies win with you if you win with the special victory condition.",
-  specialVictory: "If no faction has won by the end of turn 10, and you (or no one) occupies Sietch Tabr and Habbanya Sietch, and neither Harkonnen, Atreides nor Emperor occupies Tuek's Sietch, you and your allies win the game.",
-  advanced: {
-    karama: "You may use a Karama Card to place your sandworm token in any sand territory that you wish. This is treated as a normal sandworm.",
-    storm: "The first storm in the game is normal. All subsequent storms can move either 1-6 sectors and you get to know the number of sectors before the storm moves on the previous turn.",
-    spiceBlow: "Sandworms: During a spice blow, all additional sandworms that appear after the first sandworm can be placed by you in any territory, any forces there except yours are devoured. Storm Losses: If your forces are caught in a storm, only half of them are killed (rounded up).",
-    shipment: "You may also bring your reserves into a storm at half losses.",
-    forces: "Fedaykin: Your 3 starred forces, elite Fedaykin, have a special fighting capability. They are worth two normal forces in battle and in taking losses against all opponents. They are treated as one force in revival. Only one Fedaykin force can be revived per turn.",
-    battle: "Your forces do not require spice to count at their full strength."
-  },
-  // Their special victory. Karama cannot stop a win condition.
-  unsuppressable: ["specialVictory"],
-  leaders: [
-    { name: "Stilgar", strength: 7 },
-    { name: "Chani", strength: 6 },
-    { name: "Otheym", strength: 5 },
-    { name: "Shadout Mapes", strength: 3 },
-    { name: "Jamis", strength: 2 }
-  ]
-};
-var SPACING_GUILD = {
-  id: "spacing-guild",
-  name: "Spacing Guild",
-  startingSpice: 5,
-  forces: {
-    onPlanet: 5,
-    placement: { kind: "fixed", territoryId: "territory-33" },
-    // Tuek's Sietch
-    reserves: 15,
-    starred: 0
-  },
-  reservesHeld: "off-planet",
-  handLimit: 4,
-  startingTreachery: 1,
-  freeRevivals: 1,
-  abilities: {
-    shipment: "When other factions ship forces on to Dune, from their off-planet reserves, they pay the spice to you instead of to the Spice Bank. You are able to make three types of shipment: (1) you may ship normally from off planet reserves, (2) you may ship any number of forces from any one territory to any other territory on the board, or (3) you may ship any number of forces from any one territory back to your reserves. You pay half the normal fee when shipping your forces, and pay 1 spice for every 2 of your forces shipped back to reserves."
-  },
-  alliance: "Allies may ship from their off-planet reserves onto Dune or cross-ship from one territory to another with forces that are already on Dune at the half-price rate. In addition, allies win with the Spacing Guild Special Victory Condition.",
-  specialVictory: "If no faction has been able to win the game by the end of play, you automatically win the game.",
-  advanced: {
-    karama: "You may use a Karama Card to stop one off-planet shipment of any one player.",
-    shipment: "You may take your shipment and move action out of turn. This would allow you to go first or last or in between other players' turns, however you wish. The rest of the factions must make their shipments and moves in the proper sequence. You do not have to reveal when you intend to make your shipment and movement until the moment you wish to take it."
-  },
-  // Their special victory. Karama cannot stop a win condition.
-  unsuppressable: ["specialVictory"],
-  leaders: [
-    { name: "Staban Tuek", strength: 5 },
-    { name: "Master Bewt", strength: 3 },
-    { name: "Esmar Tuek", strength: 3 },
-    { name: "Soo-Soo Sook", strength: 2 },
-    { name: "Guild Representative", strength: 1 }
-  ]
-};
-var BENE_GESSERIT = {
-  id: "bene-gesserit",
-  name: "Bene Gesserit",
-  startingSpice: 5,
-  forces: {
-    onPlanet: 1,
-    placement: { kind: "fixed", territoryId: "territory-03" },
-    // Polar Sink
-    reserves: 19,
-    starred: 0
-  },
-  reservesHeld: "off-planet",
-  handLimit: 4,
-  startingTreachery: 1,
-  freeRevivals: 1,
-  abilities: {
-    beforeGame: "When selecting this faction you secretly predict when one other faction will win, choosing the turn number and faction, this will remain a secret until game end. If your prediction is correct, your prediction is revealed and you and your allies win the game and win alone, you cannot predict the spacing-guild or Fremen will win with their special victory conditions",
-    shipment: "Whenever any other faction ships forces onto Dune from off-planet, you may ship 1 force for free from your reserves into the Polar Sink. You may also ship normally, of course.",
-    battle: "You may Voice your opponent to do as you wish with respect to one of the cards they play in their battle. For instance, to play or not play a specific weapon (poison weapon, projectile weapon, or lasgun) or defense (snooper or shield), a worthless card, or a cheap hero. If your opponent cannot comply with your command, they may do as they wish"
-  },
-  alliance: "You may Voice an ally opponent",
-  advanced: {
-    beforeGame: "After the fremen placement in the first turn (if that faction is in the game) you start with one peaceful advisor in any territory of your choice. If you are alone in the territory flip the advisor turns into a fighter",
-    shipment: "Whenever any other faction ships forces to Dune from off-planet, you may ship for free one advisor from your reserves into that same territory (instead of the Polar Sink).",
-    charity: "You always receive CHOAM charity of 2 spice regardless of how many spice you already have",
-    // NOT from docs/dune-advance-rules.md — that file lists Karama powers for
-    // five factions and omits the Bene Gesserit entirely, which is how their
-    // absence came to be read as "they get nothing". This wording is mine and
-    // wants replacing with yours.
-    treachery: "You may play a Worthless Card as though it were a Karama Card.",
-    advisors: "Advisors coexist peacefully with other faction forces in the same territory. Advisors have no effect on the play of the other factions whatsoever and cannot collect spice, be involved in combat, prevent another faction from challenging a stronghold (second force), use ornithopters, or play Family Atomics. advisors are susceptible to storms, sandworms, lasgun/shield explosions, and atomics",
-    fighters: "when you ship forces into an unoccupied territory, you must ship as fighters, If you move advisors into an unoccupied territory they turn into fighters. If you move advisors into occupied territories they remain as advisors or flip to fighters, fighters follow the same rules for battles. When another faction ships or moves into a territory where you have fighters, you may flip them to advisors",
-    battle: "On each turn after the Spice Blow and Nexus Phase and before any shipment occurs, in all territories in which you have advisors and wish to battle, announce you are doing so and turn all those advisors to fighters"
-  },
-  // The prediction win, which lives in abilities.beforeGame rather than in
-  // specialVictory — see the note on Faction.unsuppressable.
-  unsuppressable: ["abilities.beforeGame"],
-  leaders: [
-    { name: "Mother Ramallo", strength: 5 },
-    { name: "Wanna Yueh", strength: 5 },
-    { name: "Margot Lady Fenring", strength: 5 },
-    { name: "Princess Irulan", strength: 5 },
-    { name: "Alia", strength: 5 }
-  ]
-};
-var HARKONNEN = {
-  id: "harkonnen",
-  name: "Harkonnen",
-  startingSpice: 10,
-  forces: {
-    onPlanet: 10,
-    placement: { kind: "fixed", territoryId: "territory-26" },
-    // Carthag
-    reserves: 10,
-    starred: 0
-  },
-  reservesHeld: "off-planet",
-  handLimit: 8,
-  startingTreachery: 2,
-  freeRevivals: 2,
-  abilities: {
-    traitors: "At the start of the game when you draw 4 Traitor Cards, you keep them all including your own and, any leader cards of other factions can be revealed in a battle as a traitor",
-    treachery: "You may hold up to 8 Treachery Cards. When you have 8 cards you must pass during bidding. At the beginning of the game you are dealt 2 cards instead of 1, and every time you buy a card you get an extra card for free from the Treachery Deck (unless you are at 7 cards, because you can never have more than 8 in your hand"
-  },
-  alliance: "Traitor Cards that you hold may be used against your ally's opponent if you so choose",
-  advanced: {
-    karama: "You may use a Karama Card to take without looking any number of cards, up to the entire hand of any one player of your choice. For each card you take, you must give that player one of your cards in return.",
-    capturedLeaders: "Every time you win a battle, you can either randomly select 1 leader from the loser (including the leader used in battle, if not killed, but excluding all leaders already used elsewhere that turn) and place the Leader Disc face down into the Tleilaxu Tanks to gain 2 spice from the Spice Bank; or you can keep the leader and use it once in a battle, after which, if it was not killed during that battle, after which you must return that leader to its faction. When all of your own leaders have been killed, you must return all captured leaders immediately to their factions. Killed leaders are put in the Tleilaxu Tanks from which their factions can revive them (subject to revival rules). A captured leader used in battle may be claimed as a traitor"
-  },
-  unsuppressable: [],
-  leaders: [
-    { name: "Feyd-Rautha", strength: 6 },
-    { name: "Beast Rabban", strength: 4 },
-    { name: "Piter De Vries", strength: 3 },
-    { name: "Captain Iakin Nefud", strength: 2 },
-    { name: "Umman Kudu", strength: 1 }
-  ]
-};
-var FACTIONS = {
-  atreides: ATREIDES,
-  emperor: EMPEROR,
-  fremen: FREMEN,
-  "spacing-guild": SPACING_GUILD,
-  harkonnen: HARKONNEN,
-  "bene-gesserit": BENE_GESSERIT
-};
-var factionById = (id) => FACTIONS[id] ?? null;
-
-// src/lib/dune/revival.ts
-var emptyTanks = () => ({ forces: {}, leaders: {} });
-function bankDead(tanks, killed) {
-  const next = {
-    ...tanks ?? emptyTanks(),
-    forces: { ...tanks?.forces ?? {} }
-  };
-  for (const k of killed) {
-    if (!k.faction || k.count <= 0) continue;
-    const held = next.forces[k.faction] ?? { plain: 0, starred: 0 };
-    const starred = Math.min(k.count, k.starred ?? 0);
-    next.forces[k.faction] = {
-      plain: held.plain + (k.count - starred),
-      starred: held.starred + starred
-    };
-  }
-  return next;
-}
-
-// src/lib/dune/phaseAdvance.ts
-var TURN_LIMIT = 10;
-var WIN_STRONGHOLDS = 3;
-var PHASE_SECONDS = 30;
-function phaseAfter(phase) {
-  const i = DUNE_PHASES.indexOf(phase);
-  if (i < 0) throw new Error(`no such phase: ${String(phase)}`);
-  const last = i === DUNE_PHASES.length - 1;
-  return { phase: DUNE_PHASES[last ? 0 : i + 1], newTurn: last };
-}
-function advanceHold(state, now) {
-  if (state.setup) return { code: "setup-not-finished", until: state.setup.closesAt };
-  if (state.winner) return { code: "game-over" };
-  if (state.phase === "Spice Blow and Nexus") {
-    if (state.spiceBlow) return { code: "worms-pending", until: state.spiceBlow.closesAt };
-    if (state.spiceDeck?.turn !== state.turn) return { code: "blow-not-turned" };
-    return null;
-  }
-  if (state.phase === "CHOAM Charity") {
-    const w = state.charity;
-    if (w && w.turn === state.turn && now < w.expiresAt) {
-      return { code: "charity-open", until: w.expiresAt };
-    }
-    return null;
-  }
-  if (state.phase === "Shipment and Movement") {
-    if (state.shipping) return { code: "shipping-underway", until: state.shipping.closesAt };
-    return null;
-  }
-  if (state.phase === "Bidding") {
-    if (state.auction && state.auction.status === "awaiting") {
-      return { code: "auction-running", until: state.auction.closesAt };
-    }
-    return null;
-  }
-  return null;
-}
-function phaseWindowOpen(state, now) {
-  const c = state.phaseClock;
-  return !!c && c.phase === state.phase && c.turn === state.turn && now < c.closesAt;
-}
-function rollStorm(turn, mode, rng) {
-  const range = turn <= 1 ? FIRST_STORM_ROLL : stormRollRange(mode);
-  return range.min + Math.floor(rng() * (range.max - range.min + 1));
-}
-function stormEntry(state, roll) {
-  const outcome = resolveStorm(
-    state.storm,
-    roll,
-    state.forces ?? [],
-    state.mode,
-    state.shieldWall,
-    state.spiceOnBoard ?? {}
+function strongholdClosed(forces, faction, territoryId) {
+  const t = territory(territoryId);
+  if (!t?.stronghold) return false;
+  const inside = new Set(
+    forces.filter((f) => f.territoryId === territoryId && f.count > 0).map((f) => f.faction)
   );
-  return {
-    outcome,
-    patch: {
-      storm: outcome.to,
-      forces: outcome.forcesAfter,
-      spiceOnBoard: outcome.spiceOnBoard,
-      // INTO THE TANKS, not into thin air. Revival reads this; a storm that
-      // reports its dead without banking them is a storm that cremates.
-      tanks: bankDead(state.tanks, outcome.killed),
-      stormMoved: state.turn,
-      stormReport: {
-        turn: state.turn,
-        roll,
-        from: outcome.from,
-        to: outcome.to,
-        swept: outcome.swept,
-        killed: outcome.killed,
-        spiceCleared: outcome.spiceCleared
+  return !inside.has(faction) && inside.size >= STRONGHOLD_CAP;
+}
+function fremenShipTargets() {
+  const reach = /* @__PURE__ */ new Set([GREAT_FLAT]);
+  let edge = [GREAT_FLAT];
+  for (let step = 0; step < FREMEN_SHIP_RADIUS; step++) {
+    const next = [];
+    for (const id of edge) {
+      for (const adj of territory(id)?.adjacent ?? []) {
+        if (!reach.has(adj)) {
+          reach.add(adj);
+          next.push(adj);
+        }
       }
     }
-  };
-}
-function stormOrder(storm, players) {
-  const seats = seatsFromPositions(Object.fromEntries(
-    players.map((p) => [p.seat, p.faction])
-  ));
-  const first = firstPlayerAfterStorm(storm, seats);
-  if (!first) throw new Error("a turn order with nobody at the table");
-  const counter = [...seats].reverse();
-  const at = counter.findIndex((s) => s.faction === first.faction);
-  return [...counter.slice(at), ...counter.slice(0, at)].map((s) => s.faction);
-}
-function biddingOpening(input) {
-  const order = stormOrder(input.storm, input.players);
-  const hands = {};
-  const limits = {};
-  for (const f of order) {
-    hands[f] = input.cards[f] ?? 0;
-    limits[f] = factionById(f)?.handLimit ?? 4;
+    edge = next;
   }
-  return { order, hands, limits };
+  return reach;
 }
-function cityIncome(state) {
-  if (state.mode !== "advanced") return [];
-  const paid = [];
-  for (const t of DUNE_TERRITORIES) {
-    if (!t.spiceIncome) continue;
-    const occupants = /* @__PURE__ */ new Set();
-    for (const f of state.forces ?? []) {
-      if (f.territoryId === t.id && f.count > 0 && f.posture !== "advisor") {
-        occupants.add(f.faction);
+function shipCost(input) {
+  const { faction, kind, territoryId, count, guildSeated } = input;
+  if (faction === "fremen") return { cost: 0, payee: "bank" };
+  if (kind === "to-reserves") {
+    return { cost: Math.ceil(count / GUILD_RETURN_PER), payee: "bank" };
+  }
+  const rate = territory(territoryId)?.stronghold ? SHIP_STRONGHOLD_SPICE : SHIP_OPEN_SPICE;
+  const full = rate * count;
+  if (faction === "spacing-guild") return { cost: Math.ceil(full / 2), payee: "bank" };
+  return { cost: full, payee: guildSeated ? "guild" : "bank" };
+}
+function judgeShipment(input) {
+  const { faction, kind, count, forces, storm } = input;
+  const starred = input.starred ?? 0;
+  if (count <= 0 || starred < 0 || starred > count) return { ok: false, refusal: "nothing-asked" };
+  if (kind !== "off-planet" && faction !== "spacing-guild") {
+    return { ok: false, refusal: "guild-only" };
+  }
+  if (kind === "to-reserves") {
+    const from = input.from;
+    if (!from) return { ok: false, refusal: "no-such-territory" };
+    const held = forces.find((f) => f.faction === faction && f.territoryId === from.territoryId && f.sector === from.sector);
+    const heldStarred = Math.min(held?.count ?? 0, held?.starred ?? 0);
+    if (!held || held.count < count || heldStarred < starred) {
+      return { ok: false, refusal: "nothing-there" };
+    }
+    const { cost: cost2, payee: payee2 } = shipCost({
+      faction,
+      kind,
+      territoryId: from.territoryId,
+      count,
+      guildSeated: input.guildSeated
+    });
+    if (cost2 > input.spice) return { ok: false, refusal: "cannot-pay" };
+    return { ok: true, cost: cost2, payee: payee2 };
+  }
+  if (!input.to) return { ok: false, refusal: "no-such-territory" };
+  const settled = settleSector(input.to.territoryId, input.to.sector);
+  if (!settled.ok) return settled;
+  if (inStorm(input.to.territoryId, settled.sector, storm)) {
+    return { ok: false, refusal: "stormed" };
+  }
+  if (strongholdClosed(forces, faction, input.to.territoryId)) {
+    return { ok: false, refusal: "stronghold-full" };
+  }
+  if (faction === "fremen" && !fremenShipTargets().has(input.to.territoryId)) {
+    return { ok: false, refusal: "outside-the-desert" };
+  }
+  if (kind === "cross") {
+    const from = input.from;
+    if (!from) return { ok: false, refusal: "no-such-territory" };
+    const held = forces.find((f) => f.faction === faction && f.territoryId === from.territoryId && f.sector === from.sector);
+    const heldStarred = Math.min(held?.count ?? 0, held?.starred ?? 0);
+    if (!held || held.count < count || heldStarred < starred) {
+      return { ok: false, refusal: "nothing-there" };
+    }
+  } else {
+    if (input.reserves + input.reservesStarred < count || input.reservesStarred < starred || count - starred > input.reserves) {
+      return { ok: false, refusal: "not-enough-reserves" };
+    }
+  }
+  const { cost, payee } = shipCost({
+    faction,
+    kind,
+    territoryId: input.to.territoryId,
+    count,
+    guildSeated: input.guildSeated
+  });
+  if (cost > input.spice) return { ok: false, refusal: "cannot-pay" };
+  return { ok: true, cost, payee, sector: settled.sector };
+}
+var num = (s) => Number(s.slice("sector-".length));
+var ringAdjacent = (a, b) => {
+  const d = Math.abs(num(a) - num(b));
+  return d === 1 || d === 17;
+};
+function movementRange(faction, forces) {
+  const flies = forces.some((f) => f.faction === faction && f.count > 0 && (f.territoryId === ARRAKEEN || f.territoryId === CARTHAG));
+  if (flies) return 3;
+  return faction === "fremen" ? 2 : 1;
+}
+function territoryDistance(from, to, storm) {
+  const key = (t, s) => `${t}|${s}`;
+  const blocked = (t, s) => inStorm(t, s, storm);
+  if (blocked(from.territoryId, from.sector) || blocked(to.territoryId, to.sector)) {
+    return Infinity;
+  }
+  const dist = /* @__PURE__ */ new Map([[key(from.territoryId, from.sector), 0]]);
+  const queue = [{ t: from.territoryId, s: from.sector }];
+  while (queue.length) {
+    let bi = 0;
+    for (let i = 1; i < queue.length; i++) {
+      if ((dist.get(key(queue[i].t, queue[i].s)) ?? 0) < (dist.get(key(queue[bi].t, queue[bi].s)) ?? 0)) bi = i;
+    }
+    const [{ t, s }] = queue.splice(bi, 1);
+    const d = dist.get(key(t, s)) ?? 0;
+    const here = territory(t);
+    if (!here) continue;
+    const step = (nt, ns, cost) => {
+      if (blocked(nt, ns)) return;
+      const k = key(nt, ns);
+      if ((dist.get(k) ?? Infinity) > d + cost) {
+        dist.set(k, d + cost);
+        queue.push({ t: nt, s: ns });
+      }
+    };
+    for (const s2 of here.sectors) {
+      if (s2 !== s && ringAdjacent(s, s2)) step(t, s2, 0);
+    }
+    for (const adj of here.adjacent) {
+      const there = territory(adj);
+      if (!there) continue;
+      for (const s2 of there.sectors) {
+        if (s2 === s || ringAdjacent(s, s2)) step(adj, s2, 1);
       }
     }
-    for (const faction of occupants) {
-      paid.push({ faction, territoryId: t.id, amount: t.spiceIncome });
-    }
   }
-  return paid;
+  return dist.get(key(to.territoryId, to.sector)) ?? Infinity;
 }
-var SIETCH_TABR = "territory-40";
-var HABBANYA_SIETCH = "territory-38";
-var TUEKS_SIETCH = "territory-33";
-var occupies = (forces, faction, territoryId) => forces.some((f) => f.faction === faction && f.territoryId === territoryId && f.count > 0 && f.posture !== "advisor");
-function mentatVerdict(state, prediction, spice) {
-  const forces = state.forces ?? [];
-  const seated = (state.players ?? []).map((p) => p.faction);
-  const byStrongholds = seated.filter((f) => strongholdsHeld(forces, f) >= WIN_STRONGHOLDS);
-  const crown = (factions, reason) => {
-    if (prediction?.faction && prediction.turn === state.turn && factions.includes(prediction.faction) && seated.includes("bene-gesserit")) {
-      return { factions: ["bene-gesserit"], reason: "prediction", turn: state.turn };
+function judgeMove(input) {
+  const { faction, from, gather, to, forces, storm } = input;
+  if (!territory(from)) return { ok: false, refusal: "no-such-territory" };
+  if (gather.length === 0 || gather.some((g) => g.count <= 0)) {
+    return { ok: false, refusal: "nothing-asked" };
+  }
+  if (from === to.territoryId) return { ok: false, refusal: "nothing-asked" };
+  const settled = settleSector(to.territoryId, to.sector);
+  if (!settled.ok) return settled;
+  if (inStorm(to.territoryId, settled.sector, storm)) return { ok: false, refusal: "stormed" };
+  if (strongholdClosed(forces, faction, to.territoryId)) {
+    return { ok: false, refusal: "stronghold-full" };
+  }
+  const range = movementRange(faction, forces);
+  let moving = 0;
+  for (const g of gather) {
+    const held = forces.find((f) => f.faction === faction && f.territoryId === from && f.sector === g.sector);
+    const heldStarred = Math.min(held?.count ?? 0, held?.starred ?? 0);
+    if (!held || held.count < g.count || heldStarred < (g.starred ?? 0)) {
+      return { ok: false, refusal: "nothing-there" };
     }
-    return { factions, reason, turn: state.turn };
-  };
-  if (byStrongholds.length > 0) return crown(byStrongholds, "strongholds");
-  if (state.turn < TURN_LIMIT) return null;
-  const fremenOrEmpty = (territoryId) => !forces.some((f) => f.faction !== "fremen" && f.territoryId === territoryId && f.count > 0 && f.posture !== "advisor");
-  if (seated.includes("fremen") && fremenOrEmpty(SIETCH_TABR) && fremenOrEmpty(HABBANYA_SIETCH) && !["harkonnen", "atreides", "emperor"].some((rival) => occupies(forces, rival, TUEKS_SIETCH))) {
-    return crown(["fremen"], "fremen-default");
+    const d = territoryDistance(
+      { territoryId: from, sector: g.sector },
+      { territoryId: to.territoryId, sector: settled.sector },
+      storm
+    );
+    if (d === Infinity) return { ok: false, refusal: "no-path" };
+    if (d > range) return { ok: false, refusal: "out-of-range" };
+    moving += g.count;
   }
-  if (seated.includes("spacing-guild")) return crown(["spacing-guild"], "guild-default");
-  const counts = seated.map((f) => ({ f, n: strongholdsHeld(forces, f) }));
-  const best = Math.max(0, ...counts.map((c) => c.n));
-  const tied = counts.filter((c) => c.n === best).map((c) => c.f);
-  if (tied.length > 1 && spice) {
-    const richest = Math.max(...tied.map((f) => spice[f] ?? 0));
-    const byPurse = tied.filter((f) => (spice[f] ?? 0) === richest);
-    if (byPurse.length < tied.length) return crown(byPurse, "most-spice");
-  }
-  return crown(tied, "most-strongholds");
+  return { ok: true, sector: settled.sector, moving };
 }
+function landForces(forces, faction, territoryId, sector, count, starred) {
+  const at = forces.findIndex((f) => f.faction === faction && f.territoryId === territoryId && f.sector === sector);
+  if (at >= 0) {
+    const f = forces[at];
+    return forces.map((x, i) => i === at ? { ...f, count: f.count + count, starred: (f.starred ?? 0) + starred } : x);
+  }
+  return [...forces, {
+    faction,
+    territoryId,
+    sector,
+    count,
+    ...starred > 0 ? { starred } : null
+  }];
+}
+function liftForces(forces, faction, territoryId, sector, count, starred) {
+  return forces.flatMap((f) => {
+    if (f.faction !== faction || f.territoryId !== territoryId || f.sector !== sector) return [f];
+    const left = f.count - count;
+    if (left <= 0) return [];
+    return [{ ...f, count: left, starred: Math.max(0, (f.starred ?? 0) - starred) }];
+  });
+}
+function nextSeat(w, closesAt) {
+  const at = w.at + 1;
+  if (at >= w.order.length) return null;
+  return { ...w, at, done: {}, closesAt };
+}
+var SHIPMENT_PHASE = "Shipment and Movement";
 export {
-  HABBANYA_SIETCH,
-  PHASE_SECONDS,
-  SIETCH_TABR,
-  TUEKS_SIETCH,
-  TURN_LIMIT,
-  WIN_STRONGHOLDS,
-  advanceHold,
-  biddingOpening,
-  cityIncome,
-  mentatVerdict,
-  phaseAfter,
-  phaseWindowOpen,
-  rollStorm,
-  stormEntry,
-  stormOrder
+  FREMEN_SHIP_RADIUS,
+  GREAT_FLAT,
+  GUILD_RETURN_PER,
+  SHIPMENT_PHASE,
+  SHIPMENT_SECONDS,
+  SHIP_OPEN_SPICE,
+  SHIP_STRONGHOLD_SPICE,
+  STRONGHOLD_CAP,
+  fremenShipTargets,
+  inStorm,
+  judgeMove,
+  judgeShipment,
+  landForces,
+  liftForces,
+  movementRange,
+  nextSeat,
+  settleSector,
+  shipCost,
+  strongholdClosed,
+  territoryDistance
 };

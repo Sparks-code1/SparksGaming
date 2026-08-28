@@ -60,6 +60,7 @@ import type { FactionId } from '@/types/Dune/Faction'
 import type { BidRefusal } from '@/lib/dune/bidding'
 import { advanceHold, phaseWindowOpen, phaseAfter } from '@/lib/dune/phaseAdvance'
 import { revivableLeaders, REVIVAL_CAP } from '@/lib/dune/revival'
+import { ShipmentPanel } from './ShipmentPanel'
 import { factionById } from '@/data/dune/factions'
 import { DuneGameScreen } from './DuneGameScreen'
 import type { PlacedForce } from './SetupWindow'
@@ -378,6 +379,19 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
       : `revived a force${said.cost ? ` (${said.cost} spice)` : ' (free)'}.`)
   }
 
+  const ship = async (a: Record<string, unknown>) => {
+    const res = await send({ type: 'SHIP', ...a })
+    if (res) {
+      const said = res.data as { cost?: number; paidTo?: string }
+      say(`shipped${said.cost ? ` (${said.cost} spice to the ${said.paidTo})` : ''}.`)
+    }
+  }
+  const move = async (a: Record<string, unknown>) => {
+    const res = await send({ type: 'MOVE', ...a })
+    if (res) say('moved.')
+  }
+  const passTurn = async () => { await send({ type: 'PASS_TURN' }) }
+
   const advance = async () => {
     const res = await send({ type: 'ADVANCE_PHASE' })
     if (res) {
@@ -525,7 +539,8 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
    * notices moved to 52, and 52 is where a two-player table keeps its button.
    */
   const notices = (setup || row?.spiceBlow || expired || spectating || notSeated || feed !== 'live'
-    || row?.winner || row?.stormReport?.turn === row?.turn || mayAdvance || hold || canRevive)
+    || row?.winner || row?.stormReport?.turn === row?.turn || mayAdvance || hold || canRevive
+    || (row?.shipping && seat))
     ? (
         <div data-layer="dune-notices" style={{
           padding: 10, font: `12px ${SERIF}`, color: PALE,
@@ -663,6 +678,7 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
                 'worms-pending': 'Waiting on the Fremen and the worms.',
                 'charity-open': 'The charity window is open.',
                 'auction-running': 'The auction is running.',
+                'shipping-underway': 'Seats are shipping and moving, in storm order.',
                 'game-over': 'The game is over.',
                 'setup-not-finished': 'Setting up.',
               }[hold.code] ?? hold.code}
@@ -720,6 +736,35 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
               </div>
             )
           })()}
+
+          {/* ── THE ROTATION, seat by seat ──────────────────────────────
+              Every seat sees where it stands; the acting one gets the forms.
+              The Atreides' glimpse rides above it, theirs alone — it came off
+              their own secrets row and no other seat has the field. */}
+          {row?.shipping && seat && (
+            <>
+              {seat.faction === 'atreides' && own?.spiceReveal?.turn === row.turn && (
+                <p style={{
+                  margin: '0 0 8px', padding: 7, borderRadius: 5, background: '#2a2440',
+                }}>
+                  <b>You foresee the next spice blow:</b>{' '}
+                  {own.spiceReveal.card.kind === 'shai-hulud'
+                    ? 'Shai-Hulud.'
+                    : `${own.spiceReveal.card.name ?? 'a territory'}.`}
+                </p>
+              )}
+              <ShipmentPanel
+                shipping={row.shipping}
+                forces={row.forces ?? []}
+                seat={seat.faction}
+                guildSeated={(row.players ?? []).some(p => p.faction === 'spacing-guild')}
+                now={now}
+                busy={busy}
+                onShip={a => void ship(a)}
+                onMove={a => void move(a)}
+                onPass={() => void passTurn()} />
+            </>
+          )}
 
           {mayAdvance && (
             <div style={{ margin: '0 0 8px' }}>
