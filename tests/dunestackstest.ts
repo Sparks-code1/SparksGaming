@@ -319,6 +319,78 @@ const ROOMY = 60
     new Set(DUNE_TERRITORIES.map(t => t.outline)).size, DUNE_TERRITORIES.length)
 }
 
+// ── every anchor on its own ground ────────────────────────────────────────
+// Habbanya Ridge Flat's sector-17 bubble sat INSIDE Habbanya Sietch — the
+// island the Flat encloses — because the traced outlines are simple rings
+// and the Flat's ring claims the Sietch's ground. The generator now carves
+// islands out and guards its own output; this sweep holds the EMITTED data
+// to the same law, so a regenerate that loses the fix fails here rather
+// than on a table. Outlines are walked from the printed paths themselves,
+// curves sampled, so the test needs nothing the shipped data does not carry.
+{
+  const flattenPath = (d: string): [number, number][] => {
+    const toks = d.match(/[MLHVCZ]|-?\d*\.?\d+/g) ?? []
+    const pts: [number, number][] = []
+    let i = 0, x = 0, y = 0
+    const num = () => Number(toks[i++])
+    while (i < toks.length) {
+      const cmd = toks[i]
+      if (cmd === 'M' || cmd === 'L') { i++; x = num(); y = num(); pts.push([x, y]) }
+      else if (cmd === 'H') { i++; x = num(); pts.push([x, y]) }
+      else if (cmd === 'V') { i++; y = num(); pts.push([x, y]) }
+      else if (cmd === 'C') {
+        i++
+        const x1 = num(), y1 = num(), x2 = num(), y2 = num(), x3 = num(), y3 = num()
+        for (let k = 1; k <= 8; k++) {
+          const u = k / 8, v = 1 - u
+          pts.push([
+            v*v*v*x + 3*v*v*u*x1 + 3*v*u*u*x2 + u*u*u*x3,
+            v*v*v*y + 3*v*v*u*y1 + 3*v*u*u*y2 + u*u*u*y3,
+          ])
+        }
+        x = x3; y = y3
+      } else if (cmd === 'Z') { i++ }
+      else { x = num(); y = num(); pts.push([x, y]) }  // bare pair: implicit lineto
+    }
+    return pts
+  }
+  const inPoly = (pt: [number, number], poly: [number, number][]) => {
+    let hit = false
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [xi, yi] = poly[i], [xj, yj] = poly[j]
+      if ((yi > pt[1]) !== (yj > pt[1])
+        && pt[0] < (xj - xi) * (pt[1] - yi) / (yj - yi) + xi) hit = !hit
+    }
+    return hit
+  }
+
+  const polys = new Map(DUNE_TERRITORIES.map(t => [t.id, flattenPath(t.outline)]))
+  // which territories enclose which: every vertex inside is the test
+  const hosts = new Map(DUNE_TERRITORIES.map(a => [a.id, new Set(DUNE_TERRITORIES
+    .filter(b => b.id !== a.id && polys.get(a.id)!.every(p => inPoly(p, polys.get(b.id)!)))
+    .map(b => b.id))]))
+
+  const wrong: string[] = []
+  for (const t of DUNE_TERRITORIES) {
+    for (const c of t.cells) {
+      const pt: [number, number] = [c.at.x, c.at.y]
+      if (!inPoly(pt, polys.get(t.id)!)) wrong.push(`${t.id} ${c.sector} outside itself`)
+      for (const o of DUNE_TERRITORIES) {
+        if (o.id === t.id || hosts.get(t.id)!.has(o.id)) continue
+        if (inPoly(pt, polys.get(o.id)!)) wrong.push(`${t.id} ${c.sector} inside ${o.id}`)
+      }
+    }
+  }
+  check('every cell anchor stands on its own ground', wrong, [])
+  // the parser is proved on the very pair that failed: the Sietch IS inside
+  // the Flat, and the Flat's anchors keep off the Sietch
+  check('the Sietch is an island of the Flat',
+    hosts.get('territory-38')!.has('territory-37'), true)
+  const flat = DUNE_TERRITORIES.find(t => t.id === 'territory-37')!
+  check('...and the Flat keeps off it',
+    flat.cells.some(c => inPoly([c.at.x, c.at.y], polys.get('territory-38')!)), false)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.

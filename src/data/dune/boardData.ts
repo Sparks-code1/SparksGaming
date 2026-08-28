@@ -777,8 +777,8 @@ export const DUNE_TERRITORIES: DuneTerritory[] = [
     ornithopters: false,
     adjacent: ['territory-10', 'territory-19', 'territory-20', 'territory-36', 'territory-38'],
     cells: [
-      { sector: 'sector-17', at: { x: 168.39, y: 742.75 }, areaShare: 0.549, room: 64.4 },
-      { sector: 'sector-18', at: { x: 238.64, y: 846.65 }, areaShare: 0.451, room: 44 },
+      { sector: 'sector-17', at: { x: 117.06, y: 724.52 }, areaShare: 0.457, room: 29.9 },
+      { sector: 'sector-18', at: { x: 238.86, y: 847.03 }, areaShare: 0.543, room: 44.1 },
     ],
   },
   {

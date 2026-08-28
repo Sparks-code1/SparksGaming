@@ -541,6 +541,19 @@ const territories = onBoard.map(t => {
 
 territories.forEach((t, i) => { t.id = `territory-${String(i + 1).padStart(2, '0')}` })
 
+// ─── Islands ──────────────────────────────────────────────────────────────────
+// A territory traced wholly INSIDE another — Habbanya Sietch within Habbanya
+// Ridge Flat — is a hole in its host, not part of it. The outlines are simple
+// rings, so the host's ring alone would claim the island's ground: island
+// samples would count toward the host's sector shares, and a sector's sample
+// mean could land square on the island — which is exactly how the Flat's
+// bubble came to sit inside the Sietch. Every vertex inside is the test; a
+// bordering neighbour has vertices on and beyond the ring and fails it.
+// Computed HERE, before any cell is placed, and reused by the adjacency pass.
+for (const t of territories) {
+  t.islands = territories.filter(o => o !== t && o.poly.every(p => inside(p, t.poly)))
+}
+
 // Sector overlap by area sampling. A hairline of a neighbouring sector clipping
 // a corner is not an overlap the storm should care about, so a sector has to
 // hold a real share of the territory's area to count — borderline cases are
@@ -560,6 +573,8 @@ for (const t of territories) {
   for (let i = 0; i <= N; i++) for (let j = 0; j <= N; j++) {
     const p = [x0 + (x1-x0)*i/N, y0 + (y1-y0)*j/N]
     if (!inside(p, t.poly)) continue
+    // island ground is the island's, not this territory's
+    if (t.islands.some(o => inside(p, o.poly))) continue
     total++
     const s = sectorAt(bearing(p[0], p[1]))
     if (!s) continue
@@ -585,16 +600,45 @@ for (const t of territories) {
     if (!pts.length) continue
     const mean = [pts.reduce((a, p) => a + p[0], 0) / pts.length,
                   pts.reduce((a, p) => a + p[1], 0) / pts.length]
-    const good = p => inside(p, t.poly) && sectorAt(bearing(p[0], p[1]))?.number === s.n
+    const good = p => inside(p, t.poly)
+      && !t.islands.some(o => inside(p, o.poly))
+      && sectorAt(bearing(p[0], p[1]))?.number === s.n
+    // Room is measured to the nearest line that MATTERS: the territory's own
+    // outline or an island's shore — a bubble pushed onto Habbanya Sietch is
+    // as wrong as one pushed over the border.
+    const clearance = p => Math.min(edgeDistance(p, t.poly),
+      ...t.islands.map(o => edgeDistance(p, o.poly)))
     let pick = mean
     if (!good(mean)) {
-      let best = null, bestD = Infinity
+      // The mean of a ring of samples is the middle of the ring — for a cell
+      // wrapped around an island, that is the island itself. Nearest-good-
+      // sample would then hug the island's shore with no room for a bubble,
+      // so around an island the pick is the pole of inaccessibility of the
+      // cell's own ground instead — the labels' idea, derived from the
+      // geometry, never a hand-tuned offset a regenerate would lose.
+      const onIsland = t.islands.some(o => inside(mean, o.poly))
+      let best = null, bestD = onIsland ? -Infinity : Infinity
       for (const p of pts) {
         if (!good(p)) continue
-        const d = Math.hypot(p[0] - mean[0], p[1] - mean[1])
-        if (d < bestD) { bestD = d; best = p }
+        const d = onIsland ? clearance(p) : Math.hypot(p[0] - mean[0], p[1] - mean[1])
+        if (onIsland ? d > bestD : d < bestD) { bestD = d; best = p }
       }
       pick = best ?? pts[0]
+      if (onIsland && best) {
+        // the same shrinking local search markerPoint runs, held to ground
+        // that is this cell's to stand on
+        let step = Math.max(x1 - x0, y1 - y0) / N
+        let bd = clearance(pick)
+        for (let pass = 0; pass < 4; pass++) {
+          for (let di = -2; di <= 2; di++) for (let dj = -2; dj <= 2; dj++) {
+            const q = [pick[0] + di*step/2, pick[1] + dj*step/2]
+            if (!good(q)) continue
+            const d = clearance(q)
+            if (d > bd) { bd = d; pick = q }
+          }
+          step /= 2
+        }
+      }
     }
     // HOW MUCH ROOM THIS CELL HAS, so the board can fan several factions
     // around the anchor without pushing any of them over the border into a
@@ -606,7 +650,7 @@ for (const t of territories) {
     // Off the outline rather than a hand-tuned number per territory: the
     // small ones are small in the artwork, and a table of guesses is a table
     // that disagrees with the board the moment either is redrawn.
-    t.cells.push({ n: s.n, share: s.share, at: pick, room: edgeDistance(pick, t.poly) })
+    t.cells.push({ n: s.n, share: s.share, at: pick, room: clearance(pick) })
   }
   for (const s of t.sectors) {
     if (s.share < OVERLAP_REVIEW) borderline.push({ id: t.id, sector: s.n, share: s.share })
@@ -714,8 +758,9 @@ for (let i = 0; i < territories.length; i++) {
     // Habbanya Sietch sits within Habbanya Ridge Flat and touches nothing at all
     // by the border test. Enclosure is adjacency: you cannot reach the sietch
     // except through the flat around it.
-    const aInB = a.poly.every(p => inside(p, b.poly))
-    const bInA = b.poly.every(p => inside(p, a.poly))
+    // containment was settled once, before the cells were placed
+    const aInB = b.islands.includes(a)
+    const bInA = a.islands.includes(b)
     if (aInB || bInA) {
       adjacent.get(a.id).add(b.id)
       adjacent.get(b.id).add(a.id)
@@ -850,6 +895,7 @@ for (const t of territories) {
 
 // Every placement cell must be inside its own territory AND in the sector it
 // claims, or troops render in the wrong sector and the storm reads them wrong.
+const trespasses = []
 for (const t of territories) {
   for (const c of t.cells) {
     const inShape = inside(c.at, t.poly)
@@ -857,10 +903,25 @@ for (const t of territories) {
     if (!inShape || !inSector) {
       throw new Error(`${t.id} cell for sector-${c.n} is ${!inShape ? 'outside the territory' : 'in the wrong sector'}`)
     }
+    // ...and never on a DIFFERENT territory's ground: an anchor standing on
+    // another territory draws this territory's forces where they do not
+    // stand. Enclosure is exempt one way only — an island's anchor is
+    // lawfully inside its host's ring; the host's must never be on the
+    // island. Collected rather than thrown one at a time, so a regenerate
+    // reads out the whole audit before it fails.
+    for (const o of territories) {
+      if (o === t || o.islands.includes(t)) continue
+      if (inside(c.at, o.poly)) {
+        trespasses.push(`${t.id} cell for sector-${c.n} at (${c.at[0].toFixed(1)}, ${c.at[1].toFixed(1)}) sits inside ${o.id} (${TERRITORY_DATA[o.id]?.name ?? '?'})`)
+      }
+    }
   }
   if (t.cells.length !== t.sectors.length) {
     throw new Error(`${t.id} overlaps ${t.sectors.length} sectors but produced ${t.cells.length} placement cells`)
   }
+}
+if (trespasses.length) {
+  throw new Error(`anchors on foreign ground:\n  ${trespasses.join('\n  ')}`)
 }
 
 // ─── Report ───────────────────────────────────────────────────────────────────
