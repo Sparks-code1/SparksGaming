@@ -283,14 +283,16 @@ export function DuneGameScreen({
     && !setupWin!.outstanding.some(d => d.kind === 'fremen-placement')
 
   const [fremenPending, setFremenPending] = useState<PendingPlacement[]>([])
-  const [placingStar, setPlacingStar] = useState(false)
+  /** Forces staged on the setup bubbles, waiting for a territory click —
+   *  the same grammar shipping uses. */
+  const [setupStaged, setSetupStaged] = useState({ plain: 0, starred: 0 })
   const [advisorPending, setAdvisorPending] = useState<{ territoryId: string; sector: string } | null>(null)
 
   // Settled — or setup over — means the preview is done with. Without this a
   // placement kept locally would draw ten phantom forces on top of the ten
   // real ones the row just delivered.
   useEffect(() => {
-    if (!owesFremen) { setFremenPending([]); setPlacingStar(false) }
+    if (!owesFremen) { setFremenPending([]); setSetupStaged({ plain: 0, starred: 0 }) }
   }, [owesFremen])
   useEffect(() => {
     if (!advisorOpen) setAdvisorPending(null)
@@ -300,18 +302,27 @@ export function DuneGameScreen({
   const fremenStars = seat && state.mode === 'advanced' ? starredOf(seat) : 0
   const fremenPlaced = fremenPending.reduce((n, e) => n + e.count, 0)
   const fremenStarsPlaced = fremenPending.reduce((n, e) => n + e.starred, 0)
+  /** The plain figure the setup rail shows: unplaced, minus the whole staged
+   *  group — the starred bubble spends from the same ten. */
+  const fremenStarsUnplacedStage = () => setupStaged.plain + setupStaged.starred
 
-  /** One more force on this cell — a Fedaykin when the toggle says so. */
+  /**
+   * The staged group lands on this cell — or one plain force when nothing is
+   * staged, so a bare click still means something. The bubbles cap what can
+   * be staged, so the drop needs no second guard beyond the total.
+   */
   const placeAt = (territoryId: string, sector: string) => {
-    if (fremenPlaced >= fremenTotal) return
-    const star = placingStar && fremenStarsPlaced < fremenStars
+    const count = Math.max(1, setupStaged.plain + setupStaged.starred)
+    const starred = setupStaged.starred
+    if (fremenPlaced + count > fremenTotal) return
     setFremenPending(p => {
       const i = p.findIndex(e => e.territoryId === territoryId && e.sector === sector)
-      if (i < 0) return [...p, { territoryId, sector, count: 1, starred: star ? 1 : 0 }]
+      if (i < 0) return [...p, { territoryId, sector, count, starred }]
       return p.map((e, j) => j === i
-        ? { ...e, count: e.count + 1, starred: e.starred + (star ? 1 : 0) }
+        ? { ...e, count: e.count + count, starred: e.starred + starred }
         : e)
     })
+    setSetupStaged({ plain: 0, starred: 0 })
   }
 
   /** One back off this cell — the plain ones first, so a star is kept longest. */
@@ -381,6 +392,22 @@ export function DuneGameScreen({
             onReset={() => setStaged({ plain: 0, starred: 0 })} />
         )}
 
+        {/* THE SAME RAIL AT SETUP: the Fremen stage their ten — Fedaykin on
+            the starred bubble — and click their ringed territories to place,
+            exactly the grammar their shipments will use for the rest of the
+            game. One action, one look. */}
+        {setupActive && owesFremen && seat === 'fremen' && (
+          <ShipRail
+            faction={seat}
+            reserves={fremenTotal - fremenPlaced - fremenStarsUnplacedStage()}
+            reservesStarred={fremenStars - fremenStarsPlaced - setupStaged.starred}
+            spice={null}
+            pending={setupStaged}
+            active
+            onStage={kind => setSetupStaged(s => ({ ...s, [kind]: s[kind] + 1 }))}
+            onReset={() => setSetupStaged({ plain: 0, starred: 0 })} />
+        )}
+
         {/* SETUP'S OWN COLUMN, between the chat and the board: it says what to
             do, and the doing happens on the map. Assembled here because
             `dealt` is the four traitors out of this seat's own row — reading
@@ -395,7 +422,6 @@ export function DuneGameScreen({
             seated={state.players.map(p => p.faction)}
             dealt={dealtTraitors(own)}
             pending={fremenPending}
-            placingStar={placingStar} onPlacingStar={setPlacingStar}
             onRemove={unplaceAt}
             onConfirmPlacement={() => setup!.onFremenPlacement(
               fremenPending.map(e => ({

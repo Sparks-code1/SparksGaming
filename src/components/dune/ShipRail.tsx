@@ -37,7 +37,13 @@ export interface ShipRailProps {
   onReset: () => void
 }
 
-function Bubble({ faction, count, starred, disabled, onClick }: {
+/**
+ * One force-staging bubble: the faction's glyph until something is staged,
+ * then the count. EXPORTED because the grammar is shared — the Fremen's
+ * setup placement stages with the same bubbles it ships with, so the same
+ * action looks the same in both places.
+ */
+export function ForceBubble({ faction, count, starred, disabled, onClick }: {
   faction: FactionId
   count: number
   starred: boolean
@@ -97,11 +103,11 @@ export function ShipRail({
       <span style={{ display: 'block', opacity: 0.7, marginTop: 6 }}>Spice</span>
       <b data-rail-spice={spice ?? ''} style={{ fontSize: 15 }}>{spice ?? '—'}</b>
 
-      <Bubble faction={faction} count={pending.plain} starred={false}
+      <ForceBubble faction={faction} count={pending.plain} starred={false}
         disabled={!active || reserves - pending.plain <= 0}
         onClick={() => onStage('plain')} />
       {hasStarredCorps && (
-        <Bubble faction={faction} count={pending.starred} starred
+        <ForceBubble faction={faction} count={pending.starred} starred
           disabled={!active || reservesStarred - pending.starred <= 0}
           onClick={() => onStage('starred')} />
       )}

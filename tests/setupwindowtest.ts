@@ -62,8 +62,6 @@ const base: SetupWindowProps = {
   seated: FACTION_IDS,
   dealt: DEALT,
   pending: [],
-  placingStar: false,
-  onPlacingStar: () => {},
   onRemove: () => {},
   onConfirmPlacement: () => {},
   advisorPending: null,
@@ -79,17 +77,34 @@ const draw = (over: Partial<SetupWindowProps> = {}) =>
 // ── the window says; the board does ───────────────────────────────────────
 {
   const fremen = draw({ seat: 'fremen' })
-  check('the Fremen are told to place on the map',
-    fremen.includes('on the map'), true)
+  // THE BUBBLE GRAMMAR, shared with shipping: stage on the bubbles by the
+  // board, the star is the Fedaykin, a territory click drops the group.
+  check('the Fremen are pointed at the bubbles',
+    fremen.includes('bubbles by the board'), true)
   check('...with the running count in the window',
     /data-left="10"/.test(fremen), true)
   check('...and the Fedaykin counted beside it', /data-stars-left="3"/.test(fremen), true)
-  check('...with a toggle deciding what the next click puts down',
-    fremen.includes('placing') && fremen.includes('Fedaykin'), true)
+  // NO TOGGLE: the starred bubble replaced it — the same action looks the
+  // same at setup as it does at shipment.
+  check('...with no toggle left behind',
+    /type="checkbox"/.test(fremen), false)
   // NO STEPPERS. The old panel's per-territory +/− rows are gone; the map is
   // the input, and the window only takes back.
   check('...and no add buttons in the window',
     /aria-label="One more in/.test(fremen), false)
+
+  // THE SETUP RAIL: the same ForceBubble the shipping rail uses, staging the
+  // ten with the Fedaykin on the starred bubble, and the territory click
+  // dropping the whole staged group — one grammar for one kind of action.
+  const game = code('src/components/dune/DuneGameScreen.tsx')
+  check('setup stages on the shipping rail',
+    /\{setupActive && owesFremen && seat === 'fremen' && \(/.test(game), true)
+  check('...and the click drops the staged group',
+    /const count = Math\.max\(1, setupStaged\.plain \+ setupStaged\.starred\)/.test(game), true)
+  check('...which resets the stage',
+    /setSetupStaged\(\{ plain: 0, starred: 0 \}\)\s*[\r\n]+\s*\}/.test(game), true)
+  check('the bubble is one component, shared',
+    /export function ForceBubble/.test(code('src/components/dune/ShipRail.tsx')), true)
 
   // A HALF-MADE PLACEMENT IS NARRATED with a take-back per stack.
   const partway = draw({
@@ -102,7 +117,7 @@ const draw = (over: Partial<SetupWindowProps> = {}) =>
 
   // BASIC GAME: no Fedaykin anywhere.
   const basic = draw({ seat: 'fremen', mode: 'basic' })
-  check('the basic game offers no Fedaykin toggle', basic.includes('Fedaykin'), false)
+  check('the basic game never mentions the Fedaykin', basic.includes('Fedaykin'), false)
 
   // The window exists for a seat that owes nothing — it says so, and points at
   // Ready rather than drawing empty controls.

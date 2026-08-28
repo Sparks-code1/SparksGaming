@@ -613,6 +613,19 @@ export default function DuneMultiSeatView() {
               Advance the phase
             </button>
 
+            {/* WHERE THE BUBBLES LIVE, said out loud: the rail, the landing
+                clicks and the two-click move exist on the REAL match screen
+                (?dune-match), which has a board to click. This harness has
+                no board, so it drives the same actions through the dev
+                forms below — absence that explains itself, after two
+                reports that it did not. */}
+            {publicRow?.shipping && (
+              <p style={{ fontSize: 11, opacity: 0.6, margin: '6px 0' }}>
+                Bubbles and board clicks are on the real screen
+                (?dune-match) — the forms below drive the same actions.
+              </p>
+            )}
+
             {/* THE ROTATION, driven as whichever seat is selected. The real
                 screen has the same panel; the harness had only the timer,
                 which read as a phase with nothing to press. */}

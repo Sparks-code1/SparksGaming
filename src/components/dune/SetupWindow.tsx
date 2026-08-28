@@ -167,9 +167,6 @@ export interface SetupWindowProps {
   dealt?: readonly string[]
   /** The placement so far, added by clicks on the map. */
   pending: readonly PendingPlacement[]
-  /** True when the next click places a Fedaykin. */
-  placingStar: boolean
-  onPlacingStar(v: boolean): void
   /** Take one back (plain first), or clear the cell. */
   onRemove(territoryId: string, sector: string): void
   onConfirmPlacement(): void
@@ -185,7 +182,7 @@ export interface SetupWindowProps {
 
 export function SetupWindow({
   seat, mode, outstanding, ready, seated, dealt = [],
-  pending, placingStar, onPlacingStar, onRemove, onConfirmPlacement,
+  pending, onRemove, onConfirmPlacement,
   advisorPending, advisorPosture, onConfirmAdvisor,
   onPrediction, onTraitor, busy, refused,
 }: SetupWindowProps) {
@@ -224,7 +221,6 @@ export function SetupWindow({
 
         {owes('fremen-placement') && (
           <FremenGuide seat={seat} mode={mode} pending={pending}
-            placingStar={placingStar} onPlacingStar={onPlacingStar}
             onRemove={onRemove} onConfirm={onConfirmPlacement} busy={busy} />
         )}
 
@@ -264,10 +260,9 @@ export function SetupWindow({
  * click puts down.
  */
 function FremenGuide(
-  { seat, mode, pending, placingStar, onPlacingStar, onRemove, onConfirm, busy }:
+  { seat, mode, pending, onRemove, onConfirm, busy }:
   {
     seat: FactionId; mode: GameMode; pending: readonly PendingPlacement[]
-    placingStar: boolean; onPlacingStar(v: boolean): void
     onRemove(territoryId: string, sector: string): void
     onConfirm(): void; busy?: boolean
   },
@@ -283,7 +278,10 @@ function FremenGuide(
     <div style={block} data-guide="fremen-placement">
       <b style={legend}>Your {total} forces</b>
       <p style={{ margin: '0 0 6px', fontSize: 12, lineHeight: 1.45, opacity: 0.85 }}>
-        Place them <b>on the map</b> — click a ringed territory to put one down.
+        Stage them on the <b>bubbles by the board</b>
+        {stars > 0 ? ' — the star is the Fedaykin — ' : ' '}
+        then click a ringed territory to put the group down. A bare click
+        places one.
       </p>
       <p data-left={left} data-stars-left={starsLeft}
         style={{ margin: '0 0 6px', fontSize: 12.5 }}>
@@ -294,20 +292,6 @@ function FremenGuide(
           </span>
         )}
       </p>
-
-      {/* WHAT THE NEXT CLICK PUTS DOWN. The Fedaykin are the same click with a
-          star on it — a toggle rather than a second set of rings, so the map
-          stays one map. */}
-      {stars > 0 && (
-        <label style={{
-          display: 'flex', alignItems: 'center', gap: 6, fontSize: 12,
-          cursor: 'pointer', marginBottom: 6, color: placingStar ? STAR : PALE,
-        }}>
-          <input type="checkbox" checked={placingStar} disabled={busy || starsLeft <= 0}
-            onChange={e => onPlacingStar(e.target.checked)} />
-          placing <b>Fedaykin ★</b>
-        </label>
-      )}
 
       {pending.map(e => (
         <div key={`${e.territoryId}|${e.sector}`}
