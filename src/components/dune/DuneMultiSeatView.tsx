@@ -111,6 +111,10 @@ export default function DuneMultiSeatView() {
    * state would re-run this effect on the very change it produces.
    */
   const seats = useRef<MultiSeat | null>(null)
+  /** The sessions as the feed callback sees them — a ref, so the row watcher
+   *  need not re-subscribe every time a seat's status changes. */
+  const sessionsRef = useRef<SeatSession[]>([])
+  useEffect(() => { sessionsRef.current = sessions }, [sessions])
   useEffect(() => {
     if (!matchId || logins.length === 0) return
     const live = startMultiSeat(matchId, logins, setSessions)
@@ -188,7 +192,19 @@ export default function DuneMultiSeatView() {
     if (!matchId || !readyClient) return
     // ON ANY SEAT'S CLIENT, deliberately: matches.state is public, so every
     // session sees the identical row and it does not matter which one asks.
-    const feed = watchDuneMatch(matchId, { client: readyClient, onRow: setPublicRow })
+    const feed = watchDuneMatch(matchId, {
+      client: readyClient,
+      onRow: row => {
+        setPublicRow(row)
+        // THE SAME HEAL THE REAL SCREEN HAS: a secrets event missed by any
+        // seat's channel is re-read on the next public delivery, through that
+        // seat's own session and RLS. Every seat, because the harness IS every
+        // seat.
+        for (const s of sessionsRef.current) {
+          void seats.current?.refresh(s.login.faction)
+        }
+      },
+    })
     rereadRow.current = feed.reread
     return () => { rereadRow.current = null; feed.stop() }
   }, [matchId, readyClient])

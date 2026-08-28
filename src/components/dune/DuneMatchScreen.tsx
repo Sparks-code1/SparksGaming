@@ -220,10 +220,11 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
 
   // ── the public row ────────────────────────────────────────────────────────
   const live = useRef<DuneMatchFeed | null>(null)
+  const [rowVersion, setRowVersion] = useState(-1)
   useEffect(() => {
     if (!matchId) return
     const f = watchDuneMatch(matchId, {
-      onRow: setRow,
+      onRow: (r, v) => { setRow(r); setRowVersion(v) },
       onStatus: setFeed,
     })
     live.current = f
@@ -283,6 +284,30 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
     }
     setSending(false)
   }
+
+  /**
+   * THE HEAL FOR A MISSED SECRETS EVENT. The own-row channel reads once and
+   * then trusts realtime — and a seat that opens the match at the moment of
+   * the deal can read BEFORE the deal's rows land, with the channel not yet
+   * subscribed when the insert fires. That event is then gone for good, and
+   * setup shows "your four have not reached this browser" until the clock
+   * answers for the player. It happened, to the Guild.
+   *
+   * The public row has no such gap — watchDuneMatch carries a version guard
+   * and a poll — and every server write that touches a secrets row bumps the
+   * public row in the same transaction. So every public delivery re-reads the
+   * own row: one small select, and a missed event is now at most one public
+   * change behind instead of permanent.
+   */
+  useEffect(() => {
+    if (rowVersion < 0 || !seat) return
+    void (async () => {
+      const fresh = await readOwnSecrets(matchId, seat.playerId)
+      if (fresh) setOwn(fresh.data as DuneSecrets)
+    })()
+    // rereadOwn is declared below and stable per seat; the version is the signal.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowVersion, seat?.playerId])
 
   const rereadOwn = async () => {
     if (!seat) return

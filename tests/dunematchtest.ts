@@ -332,6 +332,23 @@ const EMPTY: PublicRow = {
   check('...and never off the public row',
     /own=\{(row|publicRow)/.test(view), false)
 
+  // THE HEAL. The own-row channel reads once and then trusts realtime; a
+  // seat opening the match at the moment of the deal can read before the
+  // rows land, with the channel not yet up when the insert fires — that
+  // event is then gone for good, and setup shows "your four have not
+  // reached this browser" until the clock answers. It happened, to the
+  // Guild. Every public delivery now re-reads the own row: the public feed
+  // has a version guard and a poll, and every secrets write bumps the
+  // public row in the same transaction, so a missed event is at most one
+  // public change behind instead of permanent.
+  check('every public delivery re-reads the own row',
+    /onRow: \(r, v\) => \{ setRow\(r\); setRowVersion\(v\) \}/.test(view), true)
+  check('...through the read-your-own path',
+    /if \(rowVersion < 0 \|\| !seat\) return/.test(view), true)
+  check('...and the harness heals every seat the same way',
+    /seats\.current\?\.refresh\(s\.login\.faction\)/.test(
+      code('src/components/dune/DuneMultiSeatView.tsx')), true)
+
   // NOTHING IT SENDS NAMES A SEAT. The token says who is acting. duneDispatch
   // throws on a payload carrying identity, and this is what says the screen
   // never tries — including by handing dispatch another session.
