@@ -1567,7 +1567,10 @@ Deno.serve(async req => {
               seer = { [seerSeat]: { ...(theirs?.data ?? {}), spiceReveal: { turn, card: top } } }
             }
           }
-          return await plainly({ shipping }, undefined, seer)
+          // THE RING FOLLOWS THE CLOCK. awaiting is how the board marks the
+          // seat the game waits on — the worm pause uses it — and a rotation
+          // that never set it left the circle unlit while a timer ran.
+          return await plainly({ shipping, awaiting: order[0] }, undefined, seer)
         }
 
         // ── Revival, Battles: not built, and said ──────────────────────────
@@ -1690,7 +1693,10 @@ Deno.serve(async req => {
       const { data, error } = await admin.rpc('apply_match_write', {
         p_match_id: matchId,
         p_expected_version: match.version,
-        p_state: { ...state, forces, players, shipping: steppedOn },
+        p_state: {
+          ...state, forces, players, shipping: steppedOn,
+          awaiting: steppedOn ? steppedOn.order[steppedOn.at] : null,
+        },
         p_secrets: secretsPatch,
       })
       if (error) return json({ error: error.message }, 500)
@@ -1741,7 +1747,7 @@ Deno.serve(async req => {
       const stepped = nextSeat(
         { ...w, done: { ...w.done, moved: true } } as never,
         now + SHIPMENT_SECONDS * 1000)
-      const rest = { ...state, forces }
+      const rest = { ...state, forces, awaiting: stepped ? stepped.order[stepped.at] : null }
       if (!stepped) delete (rest as Record<string, unknown>).shipping
 
       const { data, error } = await admin.rpc('apply_match_write', {
@@ -1770,7 +1776,7 @@ Deno.serve(async req => {
         return json({ error: 'not your turn to pass', code: 'not-your-turn' }, 403)
       }
       const stepped = nextSeat(w as never, now + SHIPMENT_SECONDS * 1000)
-      const rest = { ...state }
+      const rest = { ...state, awaiting: stepped ? stepped.order[stepped.at] : null }
       if (!stepped) delete (rest as Record<string, unknown>).shipping
       const { data, error } = await admin.rpc('apply_match_write', {
         p_match_id: matchId,

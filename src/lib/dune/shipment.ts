@@ -83,7 +83,7 @@ export type ShipRefusal =
   | 'not-your-turn' | 'already-shipped' | 'already-moved' | 'nothing-asked'
   | 'no-such-territory' | 'sector-needed' | 'no-such-sector' | 'stormed'
   | 'stronghold-full' | 'cannot-pay' | 'not-enough-reserves' | 'not-yours-to-ship'
-  | 'outside-the-desert' | 'guild-only' | 'nothing-there' | 'out-of-range'
+  | 'guild-only' | 'nothing-there' | 'out-of-range'
   | 'no-path'
 
 /** Resolve the sector a shipment or move ends in, or refuse. */
@@ -124,8 +124,9 @@ export function strongholdClosed(
   return !inside.has(faction) && inside.size >= STRONGHOLD_CAP
 }
 
-/** The territories the Fremen's free shipment reaches: the Great Flat and
- *  everything within two territories of it, walked on adjacency. */
+/** The territories the Fremen ship into FREE: the Great Flat and everything
+ *  within two territories of it, walked on adjacency. Beyond it they pay the
+ *  full rate, to the bank alone — see shipCost. */
 export function fremenShipTargets(): Set<string> {
   const reach = new Set<string>([GREAT_FLAT])
   let edge = [GREAT_FLAT]
@@ -152,7 +153,10 @@ export type GuildShipKind = 'off-planet' | 'cross' | 'to-reserves'
  * home. Everyone else's off-planet fee goes to the Guild when they are
  * seated — their shipping monopoly is a basic power — and to the bank
  * otherwise. The Guild's own fees go to the bank: nobody pays themselves.
- * The Fremen pay nothing, because their shipment is the desert itself.
+ * The FREMEN pay nothing into their own radius — the Great Flat and
+ * everything within two — and the FULL rate anywhere beyond it, ONLY to the
+ * bank: the monopoly is the Guild's grip on off-planet freight, and the
+ * desert's own coin never feeds it.
  */
 export function shipCost(input: {
   faction: FactionId
@@ -162,12 +166,14 @@ export function shipCost(input: {
   guildSeated: boolean
 }): { cost: number; payee: 'bank' | 'guild' } {
   const { faction, kind, territoryId, count, guildSeated } = input
-  if (faction === 'fremen') return { cost: 0, payee: 'bank' }
   if (kind === 'to-reserves') {
     return { cost: Math.ceil(count / GUILD_RETURN_PER), payee: 'bank' }
   }
   const rate = territory(territoryId)?.stronghold ? SHIP_STRONGHOLD_SPICE : SHIP_OPEN_SPICE
   const full = rate * count
+  if (faction === 'fremen') {
+    return { cost: fremenShipTargets().has(territoryId) ? 0 : full, payee: 'bank' }
+  }
   if (faction === 'spacing-guild') return { cost: Math.ceil(full / 2), payee: 'bank' }
   return { cost: full, payee: guildSeated ? 'guild' : 'bank' }
 }
@@ -229,9 +235,6 @@ export function judgeShipment(input: {
   }
   if (strongholdClosed(forces, faction, input.to.territoryId)) {
     return { ok: false, refusal: 'stronghold-full' }
-  }
-  if (faction === 'fremen' && !fremenShipTargets().has(input.to.territoryId)) {
-    return { ok: false, refusal: 'outside-the-desert' }
   }
 
   if (kind === 'cross') {

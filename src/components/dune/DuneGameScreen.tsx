@@ -356,7 +356,6 @@ export function DuneGameScreen({
             spice={own?.spice ?? null}
             pending={staged}
             active={myShipWindow}
-            guildSeated={state.players.some(p => p.faction === 'spacing-guild')}
             onStage={kind => setStaged(s => ({
               ...s,
               [kind]: s[kind] + 1,

@@ -108,9 +108,17 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
   check('the trip home is one per two, rounded up',
     shipCost({ kind: 'to-reserves', guildSeated: true, faction: 'spacing-guild', territoryId: 'territory-22', count: 5 }),
     { cost: 3, payee: 'bank' })
-  // THE DESERT PAYS NOTHING.
+  // THE DESERT PAYS NOTHING INTO ITS OWN RADIUS — and the full rate beyond
+  // it, to the BANK alone: the monopoly is the Guild's grip on off-planet
+  // freight, and the desert's coin never feeds it, seated or not.
   check('the Fremen ship free',
     shipCost({ ...base, faction: 'fremen', territoryId: 'territory-22', count: 9 }).cost, 0)
+  check('...and pay the full rate beyond the radius',
+    shipCost({ ...base, faction: 'fremen', territoryId: 'territory-26', count: 3 }),
+    { cost: 3, payee: 'bank' })
+  check('...open ground beyond it too',
+    shipCost({ ...base, faction: 'fremen', territoryId: 'territory-12', count: 2 }),
+    { cost: 4, payee: 'bank' })
 }
 
 // ── judging a shipment ────────────────────────────────────────────────────
@@ -140,11 +148,18 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
     'not-enough-reserves')
 
   // THE DESERT'S SHIPMENT: free inside the radius, nothing outside it.
-  check('the Fremen land free on the Flat',
-    judgeShipment({ ...base, faction: 'fremen', to: { territoryId: GREAT_FLAT, sector: 'sector-15' } }).ok && true, true)
-  check('...and nowhere beyond it',
-    (judgeShipment({ ...base, faction: 'fremen', to: { territoryId: 'territory-26' } }) as { refusal: string }).refusal,
-    'outside-the-desert')
+  // FREE, NOT MERELY LEGAL: ok alone stayed green while an affordable bill
+  // was quietly charged on the Flat.
+  const flat = judgeShipment({ ...base, faction: 'fremen', to: { territoryId: GREAT_FLAT, sector: 'sector-15' } })
+  check('the Fremen land free on the Flat', flat.ok && flat.cost, 0)
+  // BEYOND THE RADIUS IS A PRICE NOW, not a wall: Carthag at the stronghold
+  // rate, to the bank, with the Guild seated and unpaid.
+  const far = judgeShipment({ ...base, faction: 'fremen', to: { territoryId: 'territory-26' } })
+  check('...and pay their way beyond it',
+    far.ok && [far.cost, far.payee], [3, 'bank'])
+  check('...refused only by an empty purse',
+    (judgeShipment({ ...base, spice: 2, faction: 'fremen', to: { territoryId: 'territory-26' } }) as { refusal: string }).refusal,
+    'cannot-pay')
 
   // THE GUILD'S OTHER TWO SHIPMENTS are theirs alone.
   check('a cross-ship by anyone else is refused',
@@ -334,7 +349,7 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
   // cannot catch it smuggled under another one, so what is pinned is the
   // write itself: shipping, and nothing beside it.
   check('...and never into the shared row',
-    /await plainly\(\{ shipping \}, undefined, seer\)/.test(entry), true)
+    /await plainly\(\{ shipping, awaiting: order\[0\] \}, undefined, seer\)/.test(entry), true)
 
   const shipCase = fn.slice(fn.indexOf("case 'SHIP'"), fn.indexOf("case 'MOVE'"))
   check('shipping is the acting seat\'s alone', /'not-your-turn'/.test(shipCase), true)
@@ -356,11 +371,23 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
   check('...and only in the move round', /'wrong-stage'/.test(moveCase), true)
   check('the entry opens the ship round',
     /stage: 'ship', at: 0, done: \{\}/.test(entry), true)
+  // THE RING FOLLOWS THE CLOCK, like the worm pause's: the entry lights the
+  // first seat. Every step hands it on — checked below, where the cases are
+  // sliced. Without this a timer ran while no circle was lit.
+  check('the entry rings the first seat',
+    /\{ shipping, awaiting: order\[0\] \}/.test(entry), true)
   const passCase = fn.slice(fn.indexOf("case 'PASS_TURN'"), fn.indexOf("case 'REVIVE'"))
   // THE GUARD, NOT THE EXPRESSION: a false-&& prefix left the substring
   // intact once before.
   check('before the deadline only the acting seat passes',
     /if \(!expired && w\.order\[w\.at\] !== myFaction\)/.test(passCase), true)
+  // The ring hands on with every step, and goes out with the window.
+  check('a shipment hands the ring on',
+    /awaiting: steppedOn \? steppedOn\.order\[steppedOn\.at\] : null/.test(shipCase), true)
+  check('...and so does a move',
+    /awaiting: stepped \? stepped\.order\[stepped\.at\] : null/.test(moveCase), true)
+  check('...and a pass',
+    /awaiting: stepped \? stepped\.order\[stepped\.at\] : null/.test(passCase), true)
 }
 
 // ── the rail: the counter beside the board that spends it ────────────────
@@ -437,10 +464,12 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
   // bare substring survived a counter that stopped falling.
   check('the reserve preview falls as you stage',
     /data-rail-reserves=\{reserves - pending\.plain\}/.test(rail), true)
-  // BOTH ENDS: the range is two calls, and pricing one end by hand while
-  // the other still called the rule kept a lone-match check green.
-  check('the fare preview is the shared rule\'s',
-    (rail.match(/shipCost\(\{ faction, kind: 'off-planet'/g) ?? []).length, 2)
+  // THE PURSE STANDS STILL while forces are merely staged: the fare is the
+  // ground's to name, so the rail prices nothing at all — no shipCost, no
+  // subtraction from spice, the raw figure and nothing else.
+  check('the rail never prices the fare', /shipCost/.test(rail), false)
+  check('...and shows the purse as it stands',
+    /data-rail-spice=\{spice \?\? ''\}/.test(rail), true)
   // The landing: targets only in your window with something staged, never on
   // a stormed cell, and the click posts the staged counts and resets.
   check('the board offers the landing only with something staged',

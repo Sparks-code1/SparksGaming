@@ -838,12 +838,14 @@ function fremenShipTargets() {
 }
 function shipCost(input) {
   const { faction, kind, territoryId, count, guildSeated } = input;
-  if (faction === "fremen") return { cost: 0, payee: "bank" };
   if (kind === "to-reserves") {
     return { cost: Math.ceil(count / GUILD_RETURN_PER), payee: "bank" };
   }
   const rate = territory(territoryId)?.stronghold ? SHIP_STRONGHOLD_SPICE : SHIP_OPEN_SPICE;
   const full = rate * count;
+  if (faction === "fremen") {
+    return { cost: fremenShipTargets().has(territoryId) ? 0 : full, payee: "bank" };
+  }
   if (faction === "spacing-guild") return { cost: Math.ceil(full / 2), payee: "bank" };
   return { cost: full, payee: guildSeated ? "guild" : "bank" };
 }
@@ -880,9 +882,6 @@ function judgeShipment(input) {
   }
   if (strongholdClosed(forces, faction, input.to.territoryId)) {
     return { ok: false, refusal: "stronghold-full" };
-  }
-  if (faction === "fremen" && !fremenShipTargets().has(input.to.territoryId)) {
-    return { ok: false, refusal: "outside-the-desert" };
   }
   if (kind === "cross") {
     const from = input.from;

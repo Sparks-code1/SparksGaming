@@ -13,22 +13,17 @@
  * (Sardaukar, Fedaykin) as the faction's glyph inside a star. Elites stage
  * from their own reserve.
  *
- * THE SPICE PREVIEW IS A RANGE until the destination is known — one spice per
- * force into a stronghold, two elsewhere, and only the landing decides which.
- * The Fremen's shipment is free and says so; the Guild's is half. The reserve
- * preview is exact: what is staged is gone from the pile whichever ground it
- * lands on.
+ * THE RESERVE FALLS AS YOU STAGE; THE SPICE DOES NOT. What a shipment costs
+ * depends on the ground it lands on — one spice per force into a stronghold,
+ * two elsewhere, the desert's radius free — so the purse moves only when the
+ * board click ships, and the figure here is the purse as it stands. Staging
+ * is free to undo; the landing is the spend.
  */
 import { FACTION_LOOK, glyph } from './SeatLayer'
-import { shipCost } from '@/lib/dune/shipment'
 import type { FactionId } from '@/types/Dune/Faction'
 
 const PALE = '#f0e2bb'
 const SERIF = 'Georgia, "Times New Roman", serif'
-
-/** A stronghold and an open territory, for pricing the two ends of the range. */
-const A_STRONGHOLD = 'territory-13'
-const OPEN_GROUND = 'territory-22'
 
 export interface ShipRailProps {
   faction: FactionId
@@ -38,7 +33,6 @@ export interface ShipRailProps {
   pending: { plain: number; starred: number }
   /** Whether clicks stage anything: this seat's ship window, unshipped. */
   active: boolean
-  guildSeated: boolean
   onStage: (kind: 'plain' | 'starred') => void
   onReset: () => void
 }
@@ -75,18 +69,10 @@ function Bubble({ faction, count, starred, disabled, onClick }: {
 }
 
 export function ShipRail({
-  faction, reserves, reservesStarred, spice, pending, active, guildSeated, onStage, onReset,
+  faction, reserves, reservesStarred, spice, pending, active, onStage, onReset,
 }: ShipRailProps) {
   const staged = pending.plain + pending.starred
   const hasStarredCorps = reservesStarred > 0 || pending.starred > 0
-
-  // The two ends of the fare, priced by the same rule the server runs.
-  const low = staged > 0
-    ? shipCost({ faction, kind: 'off-planet', territoryId: A_STRONGHOLD, count: staged, guildSeated }).cost
-    : 0
-  const high = staged > 0
-    ? shipCost({ faction, kind: 'off-planet', territoryId: OPEN_GROUND, count: staged, guildSeated }).cost
-    : 0
 
   return (
     <div data-layer="ship-rail" style={{
@@ -106,13 +92,10 @@ export function ShipRail({
           </b>
         </>
       )}
+      {/* THE PURSE AS IT STANDS. It falls when the landing ships, not
+          while forces are merely staged — the fare is the ground's to name. */}
       <span style={{ display: 'block', opacity: 0.7, marginTop: 6 }}>Spice</span>
-      <b style={{ fontSize: 15 }}>{spice ?? '—'}</b>
-      {staged > 0 && (
-        <span style={{ display: 'block', opacity: 0.85, marginTop: 2 }}>
-          {low === high ? (low === 0 ? 'free' : `−${low}`) : `−${low}…${high}`}
-        </span>
-      )}
+      <b data-rail-spice={spice ?? ''} style={{ fontSize: 15 }}>{spice ?? '—'}</b>
 
       <Bubble faction={faction} count={pending.plain} starred={false}
         disabled={!active || reserves - pending.plain <= 0}
