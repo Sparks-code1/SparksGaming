@@ -8,6 +8,7 @@
 // in the shared library so a reset window is indistinguishable from a fresh
 // one — each window gets its OWN full length, never a shared guess.
 import { readFileSync } from 'node:fs'
+import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import { resetDeadlines, PHASE_SECONDS } from '@/lib/dune/phaseAdvance'
 import { SHIPMENT_SECONDS } from '@/lib/dune/shipment'
 import { BID_SECONDS } from '@/lib/dune/bidding'
@@ -177,6 +178,29 @@ const base = {
     /handCount: \(BATTLE_HANDS\[p\.faction\] \?\? \[\]\)\.length,/.test(seed), true)
   check('...and traitors crossed so the beat is testable',
     /traitors: BATTLE_TRAITORS\[s\.faction\] \?\? \[\],/.test(seed), true)
+
+  // THE FIXTURE OBEYS THE STRONGHOLD CAP. A stronghold holds at most two
+  // factions — the shipping and movement gates enforce it in play — so a
+  // seeded position with three in one is a position play cannot reach, and
+  // whatever it proves proves nothing. The forces array is read out of the
+  // script and swept for real, so an edited fixture is re-judged.
+  const forcesMatch = seed.match(/const BATTLE_FORCES = (\[[\s\S]*?\n\])/)
+  check('the battle fixture is extractable for judging', !!forcesMatch, true)
+  const fixtureForces = new Function(`return ${forcesMatch![1]}`)() as {
+    faction: string; territoryId: string
+  }[]
+  const overfull = DUNE_TERRITORIES
+    .filter(t => t.stronghold)
+    .map(t => ({
+      id: t.id,
+      factions: [...new Set(fixtureForces
+        .filter(x => x.territoryId === t.id).map(x => x.faction))],
+    }))
+    .filter(x => x.factions.length > 2)
+  check('...and no seeded stronghold holds more than two factions', overfull, [])
+  check('...the three-sider standing on open sand instead',
+    [...new Set(fixtureForces
+      .filter(x => x.territoryId === 'territory-22').map(x => x.faction))].length, 3)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

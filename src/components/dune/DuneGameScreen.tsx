@@ -169,6 +169,9 @@ export interface DuneGameScreenProps {
    *  panel names both and a stray refusal from another surface never
    *  freezes on it. */
   battleRefusal?: { type: string; code: string } | null
+  /** Territories where Shai-Hulud stands — the Fremen's pending worm
+   *  placements, drawn with the sandworm icon on the board. */
+  worms?: readonly string[]
   /**
    * The live auction, or null.
    *
@@ -221,6 +224,7 @@ export interface DuneGameScreenProps {
 export function DuneGameScreen({
   state, seat, own, chat, onSend, talkingTo, seatNames, notices, onShipReserves, onMoveStack,
   onShipSpecial, onRevive, onBattlePick, onBattlePlan, onBattleAnswer, battleRefusal,
+  worms = [],
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
   const [chatShut, setChatShut] = useState(false)
@@ -595,6 +599,7 @@ export function DuneGameScreen({
             awaiting={state.awaiting} phase={state.phase} turn={state.turn}
             closesAt={closesAt} windowMs={windowMs} now={now}
             tanks={state.tanks ?? null}
+            worms={worms as never}
             interactive={(setupActive && (owesFremen || advisorOpen))
               || (myShipWindow && staged.plain + staged.starred > 0)
               || myMoveWindow}>

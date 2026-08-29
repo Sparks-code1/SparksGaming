@@ -397,6 +397,25 @@ export function resolveBattle(input: {
 }
 
 /**
+ * The lasgun-and-shield's harvest: EVERY force in the territory, whoever it
+ * belongs to. The card reads "all forces, leaders, and spice in this
+ * battle's territory" — the TERRITORY, not the two sides — so a bystander
+ * faction standing in another sector of it burns with the combatants.
+ * Returned per stack for the caller to lift and bank.
+ */
+export function explosionLosses(
+  forces: readonly Force[], territoryId: string,
+): { faction: FactionId; sector: SectorId; count: number; starred: number }[] {
+  return forces
+    .filter(f => f.territoryId === territoryId && f.count > 0)
+    .sort((x, y) => x.faction.localeCompare(y.faction) || num(x.sector) - num(y.sector))
+    .map(f => ({
+      faction: f.faction as FactionId, sector: f.sector as SectorId,
+      count: f.count, starred: Math.min(f.count, f.starred ?? 0),
+    }))
+}
+
+/**
  * Which of a side's forces leave for the tanks: everything in the slice for a
  * loser, the dial for a winner — plain before starred, cells in sector order.
  * Returns per-cell lifts the caller applies with liftForces/bankDead.

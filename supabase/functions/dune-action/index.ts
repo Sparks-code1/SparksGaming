@@ -53,7 +53,7 @@ import {
 } from '../_shared/duneShipment.gen.ts'
 import {
   pendingBattles, nextAggressor, judgePlan, resolveBattle, battleLosses,
-  forcesInBattle, CHEAP_HERO_ID,
+  explosionLosses, forcesInBattle, CHEAP_HERO_ID,
   BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
 } from '../_shared/duneBattle.gen.ts'
 import {
@@ -2129,12 +2129,27 @@ Deno.serve(async req => {
       const moves: { from: string; to: string; amount: number; reason: 'battle' }[] = []
       const purses: Record<string, number> = {}
 
+      // THE EXPLOSION TAKES THE TERRITORY, not the slice: the card reads
+      // "all forces, leaders, and spice in this battle's territory", and a
+      // bystander standing in another sector burns with the combatants.
+      if (outcome.explosion) {
+        for (const lift of explosionLosses(forces as never, c.territoryId)) {
+          forces = liftForces(
+            forces as never, lift.faction as never,
+            c.territoryId, lift.sector, lift.count, lift.starred) as never
+          killed.push({
+            faction: lift.faction, territoryId: c.territoryId, sector: lift.sector,
+            count: lift.count, ...(lift.starred > 0 ? { starred: lift.starred } : null),
+          })
+        }
+      }
       for (const side of outcome.sides) {
         const f = side.faction
         const seatId = seatOfFaction[f]
         const plan = planOf(f)
-        // forces to the tanks, cell by cell
-        const lifts = battleLosses(
+        // forces to the tanks, cell by cell — already lifted whole by the
+        // explosion when there was one
+        const lifts = outcome.explosion ? [] : battleLosses(
           forces as never, f as never, c.territoryId, c.sectors, side)
         for (const lift of lifts) {
           forces = liftForces(

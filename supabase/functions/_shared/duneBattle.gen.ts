@@ -1506,6 +1506,14 @@ function resolveBattle(input) {
   }
   return finish(winSide.faction, false, []);
 }
+function explosionLosses(forces, territoryId) {
+  return forces.filter((f) => f.territoryId === territoryId && f.count > 0).sort((x, y) => x.faction.localeCompare(y.faction) || num(x.sector) - num(y.sector)).map((f) => ({
+    faction: f.faction,
+    sector: f.sector,
+    count: f.count,
+    starred: Math.min(f.count, f.starred ?? 0)
+  }));
+}
 function battleLosses(forces, faction, territoryId, sectors, outcome) {
   const mine = forces.filter((f) => f.faction === faction && f.territoryId === territoryId && sectors.includes(f.sector) && f.count > 0).sort((x, y) => num(x.sector) - num(y.sector));
   if (outcome.losesAll) {
@@ -1543,6 +1551,7 @@ export {
   CHEAP_HERO_ID,
   battleLosses,
   battlesFor,
+  explosionLosses,
   forcesInBattle,
   judgePlan,
   nextAggressor,

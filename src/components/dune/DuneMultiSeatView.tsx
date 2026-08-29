@@ -84,6 +84,8 @@ export default function DuneMultiSeatView() {
    *  battle panel while other buttons' failures — or swallowed clicks —
    *  left it standing, and every press read as the same refusal. */
   const [refusedBy, setRefusedBy] = useState<string | null>(null)
+  /** The Fremen's pending worm picks, mirrored onto the board's icon layer. */
+  const [wormPicks, setWormPicks] = useState<string[]>([])
   /** The grant panel's fields — dev scaffolding, acting on the SELECTED seat. */
   const [grantSpice, setGrantSpice] = useState(5)
   const [grantCard, setGrantCard] = useState('')
@@ -661,6 +663,7 @@ export default function DuneMultiSeatView() {
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused
           ? { type: refusedBy, code: refused }
           : null}
+        worms={publicRow?.spiceBlow ? wormPicks : []}
         onMoveStack={mine
           ? a => void send(mine, 'MOVE', a as never)
           : undefined} />
@@ -699,6 +702,7 @@ export default function DuneMultiSeatView() {
             everybody. `mine` decides the buttons, not the visibility. */}
         {publicRow?.spiceBlow && mine?.client && (
           <WormPlacementPanel
+            onChosen={setWormPicks}
             pause={publicRow.spiceBlow}
             matchId={matchId}
             client={mine.client}

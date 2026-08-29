@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs'
 import {
   pendingBattles, battlesFor, nextAggressor, forcesInBattle, judgePlan,
-  resolveBattle, battleLosses, CHEAP_HERO_ID,
+  resolveBattle, battleLosses, explosionLosses, CHEAP_HERO_ID,
   BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
 } from '@/lib/dune/battle'
 import type { BattlePlan } from '@/lib/dune/battle'
@@ -296,6 +296,23 @@ const side = (faction: FactionId, plan: BattlePlan, calledTraitor = false) => {
     battleLosses(board, 'atreides', 'territory-01', ['sector-8', 'sector-9'],
       { losesAll: false, losses: 4 }),
     [{ sector: 'sector-8', count: 2, starred: 0 }, { sector: 'sector-9', count: 2, starred: 0 }])
+  // THE EXPLOSION TAKES THE TERRITORY: the card reads "all forces,
+  // leaders, and spice in this battle's territory" — so a bystander faction
+  // standing in another sector of it burns with the combatants, and a force
+  // one territory over does not.
+  check('the explosion harvests every force in the territory',
+    explosionLosses([
+      f('atreides', 'territory-01', 'sector-8', 3),
+      f('harkonnen', 'territory-01', 'sector-9', 2),
+      f('emperor', 'territory-01', 'sector-6', 4, { starred: 1 }),
+      f('fremen', 'territory-22', 'sector-15', 5),
+    ], 'territory-01'),
+    [
+      { faction: 'atreides', sector: 'sector-8', count: 3, starred: 0 },
+      { faction: 'emperor', sector: 'sector-6', count: 4, starred: 1 },
+      { faction: 'harkonnen', sector: 'sector-9', count: 2, starred: 0 },
+    ])
+
   check('...reaching the elites only when the plain are spent',
     battleLosses(board, 'atreides', 'territory-01', ['sector-8', 'sector-9'],
       { losesAll: false, losses: 5 }),
@@ -359,6 +376,10 @@ check('the three windows have their seconds',
     /\(row\.traitors \?\? \[\]\)\.filter\(\(n\) => n !== theirLeader\)/.test(beat), true)
   check('...and the explosion burns the territory\'s spice',
     /if \(outcome\.clearSpice\) delete spiceOnBoard\[c\.territoryId\]/.test(beat), true)
+  check('...harvesting the whole territory, bystanders included',
+    /if \(outcome\.explosion\) \{\s*[\r\n]+\s*for \(const lift of explosionLosses\(forces as never, c\.territoryId\)\)/.test(beat), true)
+  check('...and never lifting the sides twice',
+    /const lifts = outcome\.explosion \? \[\] : battleLosses\(/.test(beat), true)
   check('the fought-out phase clears itself',
     /: undefined[\s\S]{0,700}battles: battlesAfter \} : \{ battles: undefined \}/.test(beat), true)
 

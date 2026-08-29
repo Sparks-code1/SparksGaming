@@ -135,6 +135,8 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
    * opens by itself.
    */
   const [answeredTurn, setAnsweredTurn] = useState<number | null>(null)
+  /** The Fremen's pending worm picks, mirrored onto the board's icon layer. */
+  const [wormPicks, setWormPicks] = useState<string[]>([])
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
@@ -772,7 +774,8 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
               pause={row.spiceBlow}
               matchId={matchId}
               mine={seat?.faction === 'fremen'}
-              say={say} />
+              say={say}
+              onChosen={setWormPicks} />
           )}
 
           {/* PAST THE DEADLINE, ANYBODY MAY PUSH IT ALONG. The panel offers Bid
@@ -828,6 +831,7 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused
           ? { type: refusedBy, code: refused }
           : null}
+        worms={row?.spiceBlow ? wormPicks : []}
         onMoveStack={seat ? a => void move(a) : undefined}
         charity={charityWindow && seat ? {
           onClaim: () => void claimCharity(),

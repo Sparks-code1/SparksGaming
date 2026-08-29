@@ -195,6 +195,26 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     /DUNE_TANKS_AREA\.x \+ 16 \+ \(i % cols\) \* per/.test(boardSrc), true)
 }
 
+// ── Shai-Hulud reaches the board ──────────────────────────────────────────
+// The icon layer existed from the start and nothing ever fed it: during the
+// Fremen's advanced worm placement no worm appeared anywhere. The screen now
+// carries a worms prop to the board, and both drivers mirror the placement
+// panel's picks into it.
+{
+  const struck = draw({ worms: ['territory-30'] } as never)
+  check('a placed worm draws the sandworm icon',
+    struck.includes('/icons/sandworm.svg'), true)
+  check('...and none draws none', draw().includes('/icons/sandworm.svg'), false)
+  const match = readFileSync('src/components/dune/DuneMatchScreen.tsx', 'utf8')
+  check('the match screen mirrors the panel\'s picks',
+    /onChosen=\{setWormPicks\}/.test(match)
+      && /worms=\{row\?\.spiceBlow \? wormPicks : \[\]\}/.test(match), true)
+  const harness = readFileSync('src/components/dune/DuneMultiSeatView.tsx', 'utf8')
+  check('...and so does the harness',
+    /onChosen=\{setWormPicks\}/.test(harness)
+      && /worms=\{publicRow\?\.spiceBlow \? wormPicks : \[\]\}/.test(harness), true)
+}
+
 // ── the rail is the phase's ───────────────────────────────────────────────
 // Setup places, Revival raises, Shipment ships — and the phases with no rail
 // business get no rail at all. The base fixture sits at Bidding with every

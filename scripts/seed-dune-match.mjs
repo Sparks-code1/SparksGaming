@@ -169,13 +169,16 @@ const BATTLE_TRAITORS = {
 }
 
 /** The battle fixture's board, named so the rotation can be computed from
- *  it rather than duplicated beside it. */
+ *  it rather than duplicated beside it. A STRONGHOLD HOLDS AT MOST TWO
+ *  factions — the shipping and movement gates enforce it — so the fixture
+ *  must not conjure a position play cannot reach: the two-sider sits in
+ *  Arrakeen, and the three-sider on the open sand of the Great Flat. */
 const BATTLE_FORCES = [
   { faction: 'atreides', territoryId: 'territory-13', sector: 'sector-10', count: 5 },
   { faction: 'harkonnen', territoryId: 'territory-13', sector: 'sector-10', count: 4 },
-  { faction: 'emperor', territoryId: 'territory-26', sector: 'sector-11', count: 3, starred: 1 },
-  { faction: 'fremen', territoryId: 'territory-26', sector: 'sector-11', count: 6, starred: 2 },
-  { faction: 'harkonnen', territoryId: 'territory-26', sector: 'sector-11', count: 2 },
+  { faction: 'emperor', territoryId: 'territory-22', sector: 'sector-15', count: 3, starred: 1 },
+  { faction: 'fremen', territoryId: 'territory-22', sector: 'sector-15', count: 6, starred: 2 },
+  { faction: 'harkonnen', territoryId: 'territory-22', sector: 'sector-15', count: 2 },
 ]
 
 /**

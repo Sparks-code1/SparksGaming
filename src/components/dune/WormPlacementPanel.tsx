@@ -45,13 +45,23 @@ export interface WormPlacementPanelProps {
    */
   mine: boolean
   say?: (line: string) => void
+  /** The picks as they stand, so the BOARD can draw Shai-Hulud where each
+   *  will strike — the icon layer existed and nothing ever fed it. */
+  onChosen?: (territoryIds: string[]) => void
 }
 
 const INK = '#f0e2bb'
 const SERIF = "Georgia, 'Times New Roman', serif"
 
-export function WormPlacementPanel({ pause, matchId, client, mine, say }: WormPlacementPanelProps) {
-  const [chosen, setChosen] = useState<string[]>([])
+export function WormPlacementPanel({
+  pause, matchId, client, mine, say, onChosen,
+}: WormPlacementPanelProps) {
+  const [chosen, setChosenState] = useState<string[]>([])
+  const setChosen = (next: string[] | ((prev: string[]) => string[])) => {
+    const ids = typeof next === 'function' ? next(chosen) : next
+    setChosenState(ids)
+    onChosen?.(ids)
+  }
   const [busy, setBusy] = useState(false)
   const [refused, setRefused] = useState<string | null>(null)
 
