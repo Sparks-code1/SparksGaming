@@ -195,6 +195,51 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     /DUNE_TANKS_AREA\.x \+ 16 \+ \(i % cols\) \* per/.test(boardSrc), true)
 }
 
+// ── the timer counts the battle's own window ──────────────────────────────
+// During Battles the board's timer fell through to the 30-second phase
+// look-window and counted down a clock no battle was on. It now shows
+// whichever battle window is LIVE — the pick, the plans, or the beat — each
+// at its own length.
+{
+  const battling = draw({
+    state: {
+      ...state,
+      phase: 'Battles',
+      battles: {
+        turn: 3, order: ['atreides', 'harkonnen'], at: 0,
+        current: null, fought: [], usedLeaders: {},
+        closesAt: 121_000,
+      },
+      phaseClock: { turn: 3, phase: 'Battles', closesAt: 31_000 },
+    } as never,
+  })
+  const remaining = battling.match(/data-remaining-ms="(\d+)"/)
+  check('the timer counts the aggressor\'s pick, not the look-window',
+    remaining?.[1], '120000')
+  const beat = draw({
+    state: {
+      ...state,
+      phase: 'Battles',
+      battles: {
+        turn: 3, order: ['atreides', 'harkonnen'], at: 0,
+        current: {
+          territoryId: 'territory-13', sectors: ['sector-10'],
+          aggressor: 'atreides', defender: 'harkonnen',
+          committed: ['atreides', 'harkonnen'], closesAt: 301_000,
+          revealed: {
+            plans: { atreides: { dial: 1 }, harkonnen: { dial: 2 } },
+            traitor: { answered: [], calls: [], closesAt: 61_000 },
+          },
+        },
+        fought: [], usedLeaders: {}, closesAt: 121_000,
+      },
+      phaseClock: { turn: 3, phase: 'Battles', closesAt: 31_000 },
+    } as never,
+  })
+  check('...and the traitor beat its own minute',
+    beat.match(/data-remaining-ms="(\d+)"/)?.[1], '60000')
+}
+
 // ── Shai-Hulud reaches the board ──────────────────────────────────────────
 // The icon layer existed from the start and nothing ever fed it: during the
 // Fremen's advanced worm placement no worm appeared anywhere. The screen now

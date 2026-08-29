@@ -654,6 +654,7 @@ export default function DuneMultiSeatView() {
         onWormRide={mine
           ? a => void send(mine, 'WORM_RIDE', a as never)
           : undefined}
+        onPassTurn={mine ? () => void send(mine, 'PASS_TURN') : undefined}
         onBattlePick={mine
           ? (territoryId, opponent) => void send(mine, 'BATTLE_PICK', { territoryId, opponent } as never)
           : undefined}

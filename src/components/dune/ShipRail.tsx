@@ -42,6 +42,12 @@ export interface ShipRailProps {
   /** A rule worth remembering, under the bubbles — the Fremen's free radius
    *  rides here during shipment. */
   note?: string
+  /** End the turn — the rotation's handoff, HERE because this rail is
+   *  where the acting seat already is. It lived only on the notice board
+   *  (and the harness's dev box), which is the wrong side of the screen
+   *  from every other shipment control. Present only while it is this
+   *  seat's turn. */
+  onEndTurn?: () => void
   /** THE GUILD'S THREE WAYS, chosen BEFORE the board is touched: a stack
    *  click already means "start a move", so the kind decides what the next
    *  click does rather than the click deciding the kind. */
@@ -105,7 +111,7 @@ export function ForceBubble({ faction, count, starred, disabled, onClick, bubble
 
 export function ShipRail({
   faction, reserves, reservesStarred, spice, pending, active, onStage, onReset,
-  poolLabel = 'Reserves', note,
+  poolLabel = 'Reserves', note, onEndTurn,
   guildKind, onGuildKind, gathered, onGatherBack, onSendToReserves,
 }: ShipRailProps) {
   const staged = pending.plain + pending.starred
@@ -212,6 +218,12 @@ export function ShipRail({
         <span style={{ display: 'block', marginTop: 8, opacity: 0.7, lineHeight: 1.4 }}>
           {note}
         </span>
+      )}
+      {onEndTurn && (
+        <button type="button" data-end-turn="" onClick={onEndTurn}
+          style={{ marginTop: 10, width: '100%' }}>
+          End turn — next player
+        </button>
       )}
     </div>
   )

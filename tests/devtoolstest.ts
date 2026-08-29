@@ -224,6 +224,19 @@ const base = {
   check('...the three-sider standing on open sand instead',
     [...new Set(fixtureForces
       .filter(x => x.territoryId === 'territory-22').map(x => x.faction))].length, 3)
+
+  // THE DEAL'S OWN INVARIANT: one kept traitor per faction, FOUR for the
+  // Harkonnen — the fixture must leave nobody traitor-less, because a
+  // playtest that meets an empty traitor row reads it as a broken deal.
+  const traitorsMatch = seed.match(/const BATTLE_TRAITORS = (\{[\s\S]*?\n\})/)
+  check('the battle traitors are extractable for judging', !!traitorsMatch, true)
+  const fixtureTraitors = new Function(`return ${traitorsMatch![1]}`)() as
+    Record<string, string[]>
+  check('...every faction keeps at least one',
+    ['atreides', 'harkonnen', 'emperor', 'fremen', 'bene-gesserit', 'spacing-guild']
+      .filter(f => (fixtureTraitors[f] ?? []).length < 1), [])
+  check('...and the Harkonnen their four',
+    (fixtureTraitors.harkonnen ?? []).length, 4)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

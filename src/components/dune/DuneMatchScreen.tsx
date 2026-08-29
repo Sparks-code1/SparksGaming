@@ -821,6 +821,7 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
         onShipSpecial={seat ? a => void ship(a) : undefined}
         onRevive={seat ? a => void revive(a) : undefined}
         onWormRide={seat ? a => void send({ type: 'WORM_RIDE', ...a }) : undefined}
+        onPassTurn={seat ? () => void passTurn() : undefined}
         onBattlePick={seat
           ? (territoryId, opponent) => void send({ type: 'BATTLE_PICK', territoryId, opponent })
           : undefined}

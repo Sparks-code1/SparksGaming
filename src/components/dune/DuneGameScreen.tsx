@@ -48,7 +48,10 @@ import { PlayerHud } from './PlayerHud'
 import { OwnStrip } from './OwnStrip'
 import { DuneBoard } from './DuneBoard'
 import { CHARITY_WINDOW_MS } from '@/lib/dune/charity'
-import { WORM_SECONDS } from '@/lib/dune/spiceBlow'
+import { WORM_SECONDS, WORM_RIDE_SECONDS } from '@/lib/dune/spiceBlow'
+import {
+  BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
+} from '@/lib/dune/battle'
 import { BiddingPanel } from './BiddingPanel'
 import { CharityModal } from './CharityModal'
 import { SetupWindow, SetupBoardTargets } from './SetupWindow'
@@ -173,6 +176,9 @@ export interface DuneGameScreenProps {
   /** Territories where Shai-Hulud stands — the Fremen's pending worm
    *  placements, drawn with the sandworm icon on the board. */
   worms?: readonly string[]
+  /** End the shipment-and-movement turn: the rotation's handoff, offered
+   *  on the rail while it is this seat's turn. */
+  onPassTurn?: () => void
   /** Ride the worm: some or all of a struck territory's forces, anywhere.
    *  The server judges the window, the storm and the gate. */
   onWormRide?: (a: {
@@ -232,7 +238,7 @@ export interface DuneGameScreenProps {
 export function DuneGameScreen({
   state, seat, own, chat, onSend, talkingTo, seatNames, notices, onShipReserves, onMoveStack,
   onShipSpecial, onRevive, onBattlePick, onBattlePlan, onBattleAnswer, battleRefusal,
-  worms = [], onWormRide,
+  worms = [], onWormRide, onPassTurn,
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
   const [chatShut, setChatShut] = useState(false)
@@ -333,11 +339,30 @@ export function DuneGameScreen({
   // it, including the seats that owe nothing and have no panel to read.
   // The phase's own look-window comes LAST: any real window outranks it,
   // since while charity is open the phase clock has already served its turn.
+  // THE BATTLE'S OWN WINDOW, whichever is live: the traitor beat, the
+  // plans' five minutes, or the aggressor's pick. Without this the timer
+  // fell back to the 30-second phase look-window and counted down a clock
+  // no battle was actually on.
+  const battleWindow = state.battles
+    ? (state.battles.current?.revealed
+      ? { closesAt: state.battles.current.revealed.traitor.closesAt, ms: BATTLE_TRAITOR_SECONDS * 1000 }
+      : state.battles.current
+        ? { closesAt: state.battles.current.closesAt, ms: BATTLE_PLAN_SECONDS * 1000 }
+        : { closesAt: state.battles.closesAt, ms: BATTLE_PICK_SECONDS * 1000 })
+    : null
+  const rideWindow = state.wormRide && now < state.wormRide.closesAt
+    ? { closesAt: state.wormRide.closesAt, ms: WORM_RIDE_SECONDS * 1000 }
+    : null
   const closesAt = timed.charity?.expiresAt ?? timed.spiceBlow?.closesAt
+    ?? rideWindow?.closesAt
     ?? timed.shipping?.closesAt
+    ?? battleWindow?.closesAt
     ?? timed.setup?.closesAt ?? timed.phaseClock?.closesAt ?? null
   const windowMs = timed.charity ? CHARITY_WINDOW_MS
     : timed.spiceBlow ? WORM_SECONDS * 1000
+    : rideWindow ? rideWindow.ms
+    : timed.shipping ? undefined
+    : battleWindow ? battleWindow.ms
     : timed.setup ? SETUP_SECONDS * 1000
     : undefined
 
@@ -500,7 +525,8 @@ export function DuneGameScreen({
                 count: gather.count,
               })
               setGather(null)
-            } : undefined} />
+            } : undefined}
+            onEndTurn={myMoveWindow && onPassTurn ? onPassTurn : undefined} />
         )}
 
         {/* THE RIDE'S RAIL: Shai-Hulud struck where the Fremen stand, and

@@ -549,6 +549,16 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
     /data-guild-kind="off-planet"[^>]*aria-pressed="true"|aria-pressed="true"[^>]*data-guild-kind="off-planet"/.test(guildRail), true)
   check('...and nobody else sees them', /data-guild-kind/.test(mine), false)
 
+  // ── THE HANDOFF LIVES ON THE RAIL ───────────────────────────────────────
+  // End turn sat on the notice board (and the harness's dev box) — the wrong
+  // side of the screen from every other shipment control. It rides the rail
+  // now, for the acting seat alone: a waiting seat's rail has no turn to end.
+  const acting = screen('emperor', { onPassTurn: () => {} } as never)
+  check('the acting seat may end the turn from the rail',
+    /data-end-turn/.test(acting), true)
+  check('...a waiting seat may not',
+    /data-end-turn/.test(screen('atreides', { onPassTurn: () => {} } as never)), false)
+
   const fremenRail = screen('fremen', { state: withGuild })
   check('the Fremen read their free desert',
     fremenRail.includes('free, onto the Great Flat or any territory within two of it'), true)

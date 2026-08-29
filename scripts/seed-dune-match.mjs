@@ -163,9 +163,19 @@ const BATTLE_HANDS = {
   'bene-gesserit': [],
   'spacing-guild': ['stunner'],
 }
+/**
+ * Kept traitors, as the DEAL leaves them: one per faction, FOUR for the
+ * Harkonnen — their card keeps all four dealt. Crossed so the fixture's own
+ * battles can exercise the beat: several name leaders the seeded fights can
+ * actually field.
+ */
 const BATTLE_TRAITORS = {
   atreides: ['Umman Kudu'],
-  harkonnen: ['Duncan Idaho'],
+  harkonnen: ['Duncan Idaho', 'Stilgar', 'Bashar', 'Staban Tuek'],
+  emperor: ['Gurney Halleck'],
+  fremen: ['Beast Rabban'],
+  'bene-gesserit': ['Hasimir Fenring'],
+  'spacing-guild': ['Chani'],
 }
 
 /** The battle fixture's board, named so the rotation can be computed from
