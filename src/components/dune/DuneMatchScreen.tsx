@@ -123,6 +123,8 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
   const [sending, setSending] = useState(false)
   const [busy, setBusy] = useState(false)
   const [refused, setRefused] = useState<string | null>(null)
+  /** Which action the refusal came from — see the harness's twin. */
+  const [refusedBy, setRefusedBy] = useState<string | null>(null)
   const [bidRefusal, setBidRefusal] = useState<BidRefusal | null>(null)
   /**
    * The charity turn this seat has answered.
@@ -423,16 +425,25 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
 
   /** One action as this seat, with a refusal shown rather than thrown. */
   const send = async (action: DuneAction) => {
-    if (busy) return null
+    if (busy) { say('still waiting on the last action…'); return null }
     setBusy(true)
     setRefused(null)
+    setRefusedBy(null)
     // NO CLIENT PASSED. dispatchDuneAction uses the app's own session, which is
     // the only session this page has — the acting seat is stated by the token
     // in the header and by nothing in the payload.
-    const res = await dispatchDuneAction(matchId, action)
+    const res = await Promise.race([
+      dispatchDuneAction(matchId, action),
+      new Promise<{ ok: false; error: { code: string; message: string } }>(resolve =>
+        setTimeout(() => resolve({
+          ok: false,
+          error: { code: 'timeout', message: 'no answer after 15s' },
+        }), 15_000)),
+    ])
     setBusy(false)
     if (!res.ok) {
       setRefused(res.error?.code ?? 'refused')
+      setRefusedBy(action.type)
       return null
     }
     // The row moved and so may this seat's own. Both are re-read rather than
@@ -814,7 +825,9 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
         onBattleAnswer={seat
           ? call => void send({ type: call ? 'BATTLE_TRAITOR' : 'BATTLE_CONTINUE' })
           : undefined}
-        battleRefusal={refused}
+        battleRefusal={refusedBy?.startsWith('BATTLE') && refused
+          ? { type: refusedBy, code: refused }
+          : null}
         onMoveStack={seat ? a => void move(a) : undefined}
         charity={charityWindow && seat ? {
           onClaim: () => void claimCharity(),

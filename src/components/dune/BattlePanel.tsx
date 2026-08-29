@@ -81,6 +81,12 @@ export interface BattlePanelProps {
   busy: boolean
   /** The last battle action's refusal code, this seat's own. Named below. */
   refusal?: string | null
+  /** Which action it came from, printed beside the reason. */
+  refusedAction?: string | null
+  /** The public row's count of this seat's hand. When it disagrees with the
+   *  hand handed in, the cards are STALE — offering them invites the server
+   *  to refuse a card the row no longer holds. */
+  handCount?: number | null
   onPick: (territoryId: string, opponent: FactionId) => void
   onPlan: (plan: {
     territoryId: string
@@ -184,7 +190,8 @@ function PlanLine({ faction, plan }: {
 
 export function BattlePanel({
   battles, forces, storm, tanks, seat, hand, traitors, now, busy,
-  refusal = null, onPick, onPlan, onAnswer,
+  refusal = null, refusedAction = null, handCount = null,
+  onPick, onPlan, onAnswer,
 }: BattlePanelProps) {
   const [dial, setDial] = useState(0)
   const [leader, setLeader] = useState<string | null>(null)
@@ -239,7 +246,9 @@ export function BattlePanel({
         {refusal && (
           <div role="alert" data-battle-refusal={refusal}
             style={{ marginTop: 10, fontSize: 12, color: '#e8a0a0' }}>
+            {refusedAction ? `${refusedAction}: ` : ''}
             {PLAN_REFUSAL_TEXT[refusal] ?? `Refused: ${refusal}`}
+            {' '}<span style={{ opacity: 0.7 }}>({refusal})</span>
           </div>
         )}
       </div>
@@ -367,9 +376,15 @@ export function BattlePanel({
   const usable = (sheet?.leaders ?? []).filter(l =>
     !dead.has(l.name)
     && (!battles.usedLeaders[l.name] || battles.usedLeaders[l.name] === c.territoryId))
-  const heroHeld = hand.includes(CHEAP_HERO_ID)
-  const weapons = hand.filter(id => TREACHERY_CARDS.find(x => x.id === id)?.kind === 'weapon')
-  const defences = hand.filter(id => TREACHERY_CARDS.find(x => x.id === id)?.kind === 'defense')
+  // A HAND THE TABLE DISOWNS IS NOT OFFERED. The public count is the row's
+  // truth by another route; a mismatch means this client's secrets have not
+  // caught up, and every card it would offer is a refusal waiting.
+  const handSynced = handCount == null || handCount === hand.length
+  const heroHeld = handSynced && hand.includes(CHEAP_HERO_ID)
+  const weapons = handSynced
+    ? hand.filter(id => TREACHERY_CARDS.find(x => x.id === id)?.kind === 'weapon') : []
+  const defences = handSynced
+    ? hand.filter(id => TREACHERY_CARDS.find(x => x.id === id)?.kind === 'defense') : []
   const mayPlayCards = !!leader || hero
   const leaderObj = usable.find(l => l.name === leader) ?? null
   const heroCard = TREACHERY_CARDS.find(x => x.id === CHEAP_HERO_ID)!
@@ -457,6 +472,13 @@ export function BattlePanel({
         <p style={{ fontSize: 12, opacity: 0.75 }}>
           No leader and no Cheap Hero: you fight with forces alone and may
           play no treachery cards.
+        </p>
+      )}
+      {!handSynced && (
+        <p data-hand-stale="" style={{ fontSize: 12, color: '#e8a0a0' }}>
+          Your hand has not caught up with the table ({hand.length} here,
+          {' '}{handCount} counted) — cards are held back until it does.
+          The dial and the leader still commit.
         </p>
       )}
 

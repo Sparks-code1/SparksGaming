@@ -453,6 +453,33 @@ check('the three windows have their seconds',
   check('...an unknown code shows itself rather than nothing',
     draw({ battles: { ...battles, current }, refusal: 'mystery-code' })
       .includes('Refused: mystery-code'), true)
+  // THE REFUSAL NAMES ITS ACTION AND CARRIES ITS CODE. "Every button gives
+  // the same refusal" was one frozen alert with no owner: other buttons'
+  // failures — and clicks swallowed by busy — left a single code standing
+  // over everything.
+  check('...and names the action it came from, code attached',
+    draw({
+      battles: { ...battles, current },
+      refusal: 'card-not-held', refusedAction: 'BATTLE_PLAN',
+    }).includes('BATTLE_PLAN: ') && draw({
+      battles: { ...battles, current },
+      refusal: 'card-not-held', refusedAction: 'BATTLE_PLAN',
+    }).includes('(card-not-held)'), true)
+
+  // ── A HAND THE TABLE DISOWNS IS NOT OFFERED ─────────────────────────────
+  // The public handCount is the row's truth by another route. When this
+  // client's hand disagrees, its secrets are stale — every card it offered
+  // was a card-not-held waiting, which is exactly how the Fremen came to be
+  // "refused on everything". Cards are held back and said so; the dial and
+  // leader still commit.
+  const stale = draw({ battles: { ...battles, current }, handCount: 1 })
+  check('a disagreeing hand is held back, and says so',
+    [/data-hand-stale/.test(stale), /data-plan-weapon/.test(stale),
+      /data-plan-commit/.test(stale)],
+    [true, false, true])
+  check('...while an agreeing one offers as before',
+    /data-plan-weapon="crysknife"/.test(
+      draw({ battles: { ...battles, current }, handCount: 3 })), true)
   check('...and no refusal means no alert',
     /data-battle-refusal/.test(planning), false)
 
@@ -469,12 +496,28 @@ check('the three windows have their seconds',
     /traitors=\{own\?\.traitors \?\? \[\]\}/.test(gameSrc), true)
   const harnessSrc = readFileSync('src/components/dune/DuneMultiSeatView.tsx', 'utf8')
   check('the harness hands the code to the panel',
-    /battleRefusal=\{refused\}/.test(harnessSrc), true)
+    /battleRefusal=\{refusedBy\?\.startsWith\('BATTLE'\) && refused/.test(harnessSrc), true)
   check('...and says it in the narration too',
     /refused: \$\{res\.error\?\.message \?\? 'unknown'\} \(\$\{res\.error\?\.code \?\? '\?'\}\)/.test(harnessSrc), true)
+  // The refusal's OWNER rides beside its code, the panel gets only battle
+  // refusals, a hung wire times out instead of sticking busy forever, and a
+  // busy-swallowed click says so instead of doing silent nothing. Both
+  // drivers, same discipline.
+  check('the harness names the refusing action',
+    /setRefused\(res\.error\?\.code \?\? 'refused'\)\s*[\r\n]+\s*setRefusedBy\(type\)/.test(harnessSrc), true)
+  check('...races the wire against a watchdog',
+    /no answer after 15s/.test(harnessSrc), true)
+  check('...and says when a click is swallowed',
+    /if \(busy\) \{ say\('still waiting on the last action…'\); return \}/.test(harnessSrc), true)
+  const matchScreenSrc = readFileSync('src/components/dune/DuneMatchScreen.tsx', 'utf8')
+  check('the match screen holds the same discipline',
+    [/setRefusedBy\(action\.type\)/.test(matchScreenSrc),
+      /battleRefusal=\{refusedBy\?\.startsWith\('BATTLE'\) && refused/.test(matchScreenSrc),
+      /no answer after 15s/.test(matchScreenSrc)],
+    [true, true, true])
   const matchSrc = readFileSync('src/components/dune/DuneMatchScreen.tsx', 'utf8')
   check('the match screen hands the code over as well',
-    /battleRefusal=\{refused\}/.test(matchSrc), true)
+    /battleRefusal=\{refusedBy\?\.startsWith\('BATTLE'\) && refused/.test(matchSrc), true)
   check('a committed seat waits without a form',
     /data-plan-commit/.test(draw({
       battles: { ...battles, current: { ...current, committed: ['atreides'] } },

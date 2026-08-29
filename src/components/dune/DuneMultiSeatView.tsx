@@ -80,6 +80,10 @@ export default function DuneMultiSeatView() {
   const [busy, setBusy] = useState(false)
   /** What the last expired-bid push actually did — said, never swallowed. */
   const [resolveNote, setResolveNote] = useState<string | null>(null)
+  /** WHICH action the refusal came from. A code with no owner froze on the
+   *  battle panel while other buttons' failures — or swallowed clicks —
+   *  left it standing, and every press read as the same refusal. */
+  const [refusedBy, setRefusedBy] = useState<string | null>(null)
   /** The grant panel's fields — dev scaffolding, acting on the SELECTED seat. */
   const [grantSpice, setGrantSpice] = useState(5)
   const [grantCard, setGrantCard] = useState('')
@@ -498,13 +502,26 @@ export default function DuneMultiSeatView() {
   const send = async (
     session: SeatSession, type: string, fields: Record<string, unknown> = {}, said?: string,
   ) => {
-    if (busy) return
+    // SAID, not swallowed: a click that does nothing while an alert stands
+    // reads as the alert refusing it.
+    if (busy) { say('still waiting on the last action…'); return }
     setBusy(true)
     setRefused(null)
-    const res = await dispatchDuneAction(matchId, { type, ...fields }, { client: session.client })
+    setRefusedBy(null)
+    // THE WATCHDOG. A hung fetch left busy true forever, and every later
+    // click died silently under it — fifteen seconds is the wire's chance.
+    const res = await Promise.race([
+      dispatchDuneAction(matchId, { type, ...fields }, { client: session.client }),
+      new Promise<{ ok: false; error: { code: string; message: string } }>(resolve =>
+        setTimeout(() => resolve({
+          ok: false,
+          error: { code: 'timeout', message: 'no answer after 15s' },
+        }), 15_000)),
+    ])
     setBusy(false)
     if (!res.ok) {
       setRefused(res.error?.code ?? 'refused')
+      setRefusedBy(type)
       // THE CODE RIDES ALONG. The message alone is what made a refused
       // battle plan unactionable: the code always named the illegal part.
       say(`${type} refused: ${res.error?.message ?? 'unknown'} (${res.error?.code ?? '?'})`)
@@ -641,7 +658,9 @@ export default function DuneMultiSeatView() {
         onBattleAnswer={mine
           ? call => void send(mine, call ? 'BATTLE_TRAITOR' : 'BATTLE_CONTINUE')
           : undefined}
-        battleRefusal={refused}
+        battleRefusal={refusedBy?.startsWith('BATTLE') && refused
+          ? { type: refusedBy, code: refused }
+          : null}
         onMoveStack={mine
           ? a => void send(mine, 'MOVE', a as never)
           : undefined} />

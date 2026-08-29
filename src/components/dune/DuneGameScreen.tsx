@@ -165,8 +165,10 @@ export interface DuneGameScreenProps {
     dial: number; leader?: string; cheapHero?: boolean; weapon?: string; defence?: string
   }) => void
   onBattleAnswer?: (call: boolean) => void
-  /** The last battle action's refusal code, for the panel to name. */
-  battleRefusal?: string | null
+  /** The last BATTLE action's refusal — its code AND which action, so the
+   *  panel names both and a stray refusal from another surface never
+   *  freezes on it. */
+  battleRefusal?: { type: string; code: string } | null
   /**
    * The live auction, or null.
    *
@@ -862,7 +864,12 @@ export function DuneGameScreen({
               key={state.battles.current
                 ? `${state.battles.current.territoryId}|${state.battles.current.aggressor}|${state.battles.current.defender}`
                 : `pick|${state.battles.at}`}
-              refusal={battleRefusal}
+              refusal={battleRefusal?.code ?? null}
+              refusedAction={battleRefusal?.type ?? null}
+              // THE TABLE'S COUNT of this seat's hand. The panel refuses to
+              // offer cards when its own hand disagrees — a stale row was
+              // how a seat came to play a card the server rightly refused.
+              handCount={state.players.find(p => p.faction === seat)?.handCount ?? null}
               battles={state.battles}
               forces={state.forces}
               storm={state.storm}
