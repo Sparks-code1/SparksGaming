@@ -139,6 +139,16 @@ const TARGETS = [
     exportName: 'judgeShipment',
   },
   {
+    entry: 'src/lib/dune/battle.ts',
+    out: 'supabase/functions/_shared/duneBattle.gen.ts',
+    what: 'battles',
+    // Where battles are pending, what a plan may contain, and how a reveal
+    // resolves are one law: the client draws the pick list and the plan form
+    // from the same functions the server judges them with.
+    mustExport: /export\s*\{[^}]*resolveBattle/,
+    exportName: 'resolveBattle',
+  },
+  {
     entry: 'src/lib/dune/phaseAdvance.ts',
     out: 'supabase/functions/_shared/dunePhase.gen.ts',
     what: 'phase loop',

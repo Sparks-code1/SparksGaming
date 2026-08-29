@@ -95,6 +95,10 @@ export interface AdvanceState {
   spiceDeck?: { turn?: number }
   charity?: { expiresAt: number; turn: number }
   auction?: { status?: string; closesAt?: number } | null
+  battles?: {
+    closesAt: number
+    current?: { closesAt: number; revealed?: { traitor: { closesAt: number } } } | null
+  }
   phaseClock?: PhaseClock
 }
 
@@ -121,6 +125,7 @@ export function phaseAfter(phase: GamePhase): { phase: GamePhase; newTurn: boole
 export interface AdvanceHold {
   code: 'setup-not-finished' | 'game-over' | 'blow-not-turned'
     | 'worms-pending' | 'charity-open' | 'auction-running' | 'shipping-underway'
+    | 'battles-underway'
   until?: number
 }
 
@@ -157,6 +162,21 @@ export function advanceHold(state: AdvanceState, now: number): AdvanceHold | nul
     // passed, or run out its clock. Each seat's expiry has its own push
     // (PASS_TURN by anyone), the same rule as every other pause.
     if (state.shipping) return { code: 'shipping-underway', until: state.shipping.closesAt }
+    return null
+  }
+
+  if (state.phase === 'Battles') {
+    // The battles object clears itself when the last battle resolves, so its
+    // presence IS the hold. `until` is whichever window is live: the traitor
+    // beat, the plan deadline, or the aggressor's pick — each has its own
+    // after-the-deadline push through the battle actions.
+    if (state.battles) {
+      const c = state.battles.current
+      return {
+        code: 'battles-underway',
+        until: c?.revealed?.traitor.closesAt ?? c?.closesAt ?? state.battles.closesAt,
+      }
+    }
     return null
   }
 

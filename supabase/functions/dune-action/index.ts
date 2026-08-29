@@ -46,11 +46,16 @@ import {
   charityGrant, isEligibleForCharity, readSpice, CHARITY_TOPS_UP_TO, CHARITY_WINDOW_MS,
 } from '../_shared/duneCharity.gen.ts'
 import {
-  bankDead, reviveForces, reviveLeader, emptyTanks,
+  bankDead, reviveForces, reviveLeader, emptyTanks, returnLeaderToTanks,
 } from '../_shared/duneRevival.gen.ts'
 import {
   judgeShipment, judgeMove, landForces, liftForces, nextSeat, SHIPMENT_SECONDS,
 } from '../_shared/duneShipment.gen.ts'
+import {
+  pendingBattles, nextAggressor, judgePlan, resolveBattle, battleLosses,
+  forcesInBattle, CHEAP_HERO_ID,
+  BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
+} from '../_shared/duneBattle.gen.ts'
 import {
   phaseAfter, advanceHold, phaseWindowOpen, rollStorm, stormEntry, cityIncome,
   mentatVerdict, biddingOpening, stormOrder, PHASE_SECONDS, TURN_LIMIT,
@@ -1573,7 +1578,21 @@ Deno.serve(async req => {
           return await plainly({ shipping, awaiting: order[0] }, undefined, seer)
         }
 
-        // ── Revival, Battles: not built, and said ──────────────────────────
+        // ── Battles: the board demands them, the rotation fights them ─────
+        case 'Battles': {
+          const order = stormOrder(state.storm as never, (state.players ?? []) as never)
+          const pending = pendingBattles((base.forces ?? []) as never, base.storm as never)
+          const first = nextAggressor(order as never, pending, 0)
+          // A board with nothing to fight over passes straight through.
+          if (!first) return await plainly()
+          const battles = {
+            turn, order, at: first.at, current: null, fought: [],
+            usedLeaders: {}, closesAt: now + BATTLE_PICK_SECONDS * 1000,
+          }
+          return await plainly({ battles, awaiting: first.faction })
+        }
+
+        // ── The rest: not built, and said ──────────────────────────────────
         // They enter, hold the look-window so the table sees where the turn
         // is, and advance. Rules land here later; the loop does not wait for
         // them.
@@ -1850,6 +1869,16 @@ Deno.serve(async req => {
         p_state: {
           ...state, tanks: asked.tanks, players,
           revival: { turn, done },
+          // REMEMBERED FOR GOOD: a once-revived leader killed again returns
+          // to the tanks FACE DOWN and waits out the rotation — see
+          // returnLeaderToTanks. Public, like the revival that earned it.
+          ...('leader' in asked
+            ? {
+              revivedLeaders: [...new Set([
+                ...((state.revivedLeaders ?? []) as string[]), asked.leader,
+              ])],
+            }
+            : null),
         },
         p_secrets: { [playerId]: { ...secrets, spice: moved.purses[playerId] } },
       })
@@ -1860,6 +1889,335 @@ Deno.serve(async req => {
       return json({
         cost: asked.cost,
         ...('leader' in asked ? { leader: asked.leader } : { toReserves: asked.toReserves }),
+        version: data[0].version,
+      })
+    }
+
+    // ── Battles: pick, plan, the traitor beat, resolution ──────────────────
+    // The rules ride in the shared bundle (lib/dune/battle); what is here is
+    // what only the server can do — the hidden plans in match_secrets, the
+    // simultaneous publish, and the one write that moves forces, tanks,
+    // spice, hands and discards together.
+    case 'BATTLE_PICK': {
+      const b = state.battles
+      if (state.phase !== 'Battles' || !b) {
+        return json({ error: 'the turn is not at battles', code: 'wrong-phase' }, 409)
+      }
+      if (b.current) return json({ error: 'a battle is already open', code: 'battle-open' }, 409)
+      const aggressor = b.order[b.at]
+      const expired = now >= b.closesAt
+      if (!expired && myFaction !== aggressor) {
+        return json({ error: 'the aggressor picks', code: 'not-your-turn' }, 409)
+      }
+      const pending = pendingBattles((state.forces ?? []) as never, state.storm as never)
+      const theirs = pending.filter((x) => x.factions.includes(aggressor))
+      if (theirs.length === 0) return json({ error: 'nothing to fight', code: 'no-battle' }, 409)
+      // Past the deadline anyone may push, and the pick is the deterministic
+      // first: the aggressor's first battle, its first rival.
+      const territoryId = expired ? theirs[0].territoryId : String(action.territoryId ?? '')
+      const opponent = expired
+        ? theirs[0].factions.find((f) => f !== aggressor)!
+        : String(action.opponent ?? '')
+      const battle = theirs.find((x) => x.territoryId === territoryId
+        && x.factions.includes(opponent as never) && opponent !== aggressor)
+      if (!battle) return json({ error: 'no such battle', code: 'no-battle' }, 409)
+      const current = {
+        territoryId: battle.territoryId, sectors: battle.sectors,
+        aggressor, defender: opponent, committed: [],
+        closesAt: now + BATTLE_PLAN_SECONDS * 1000,
+      }
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: { ...state, battles: { ...b, current }, awaiting: null },
+        p_secrets: {},
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ current, version: data[0].version })
+    }
+
+    case 'BATTLE_PLAN': {
+      const b = state.battles
+      const c = b?.current
+      if (state.phase !== 'Battles' || !b || !c) {
+        return json({ error: 'no battle is open', code: 'no-battle' }, 409)
+      }
+      if (c.revealed) return json({ error: 'plans are on the table', code: 'already-revealed' }, 409)
+      const combatants = [c.aggressor, c.defender]
+      const expired = now >= c.closesAt
+
+      const { data: secretRows } = await admin
+        .from('match_secrets').select('player_id, data').eq('match_id', matchId)
+      const rowOf = Object.fromEntries((secretRows ?? []).map((r) => [r.player_id, r.data ?? {}]))
+      const tanks = (state.tanks ?? { forces: {}, leaders: {} }) as {
+        forces: Record<string, { plain: number; starred: number }>
+        leaders: Record<string, { name: string }[]>
+      }
+
+      const plans: Record<string, unknown> = {}
+      const secretsPatch: Record<string, unknown> = {}
+
+      if (!expired) {
+        if (!combatants.includes(myFaction as never)) {
+          return json({ error: 'you are not in this battle', code: 'not-your-battle' }, 409)
+        }
+        if (c.committed.includes(myFaction as never)) {
+          return json({ error: 'your plan is in', code: 'already-committed' }, 409)
+        }
+        const mine = rowOf[playerId] ?? {}
+        const plan = {
+          dial: Number(action.dial ?? 0),
+          ...(action.leader ? { leader: String(action.leader) } : null),
+          ...(action.cheapHero ? { cheapHero: true } : null),
+          ...(action.weapon ? { weapon: String(action.weapon) } : null),
+          ...(action.defence ? { defence: String(action.defence) } : null),
+        }
+        const verdict = judgePlan({
+          faction: myFaction as never,
+          battle: c, forces: (state.forces ?? []) as never,
+          hand: ((mine as { cards?: string[] }).cards ?? []),
+          deadLeaders: (tanks.leaders[myFaction] ?? []).map((l) => l.name),
+          usedLeaders: b.usedLeaders ?? {},
+          plan,
+        })
+        if (!verdict.ok) return json({ error: 'that plan is not legal', code: verdict.refusal }, 409)
+        secretsPatch[playerId] = { ...mine, battlePlan: { territoryId: c.territoryId, ...plan } }
+        plans[myFaction] = plan
+      }
+
+      // Everyone already committed brings the plan from their own row; past
+      // the deadline the silent are committed at zero, which is the fight a
+      // walked-away seat still owes.
+      const committedNow = expired
+        ? combatants
+        : [...new Set([...c.committed, myFaction])]
+      for (const f of combatants) {
+        if (plans[f]) continue
+        const seatId = seatOfFaction[f]
+        const held = (rowOf[seatId] ?? {}) as { battlePlan?: { territoryId?: string } }
+        if (c.committed.includes(f) && held.battlePlan?.territoryId === c.territoryId) {
+          plans[f] = { ...held.battlePlan }
+          delete (plans[f] as { territoryId?: string }).territoryId
+        } else if (expired) {
+          plans[f] = { dial: 0 }
+        }
+      }
+
+      const allIn = combatants.every((f) => !!plans[f])
+      const current = allIn
+        ? {
+          ...c, committed: combatants,
+          revealed: {
+            plans,
+            traitor: { answered: [], calls: [], closesAt: now + BATTLE_TRAITOR_SECONDS * 1000 },
+          },
+        }
+        : { ...c, committed: committedNow }
+
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: { ...state, battles: { ...b, current } },
+        p_secrets: secretsPatch,
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ committed: current.committed, revealed: !!allIn, version: data[0].version })
+    }
+
+    case 'BATTLE_TRAITOR':
+    case 'BATTLE_CONTINUE': {
+      const b = state.battles
+      const c = b?.current
+      if (state.phase !== 'Battles' || !b || !c?.revealed) {
+        return json({ error: 'no reveal to answer', code: 'no-battle' }, 409)
+      }
+      const beat = c.revealed.traitor
+      const combatants = [c.aggressor, c.defender]
+      const expired = now >= beat.closesAt
+
+      let answered = [...beat.answered]
+      let calls = [...beat.calls]
+
+      if (!expired) {
+        if (!combatants.includes(myFaction as never)) {
+          return json({ error: 'you are not in this battle', code: 'not-your-battle' }, 409)
+        }
+        if (answered.includes(myFaction as never)) {
+          return json({ error: 'you have answered', code: 'already-answered' }, 409)
+        }
+        if (action.type === 'BATTLE_TRAITOR') {
+          // The call must be TRUE: the opposing plan led with a leader this
+          // seat holds the traitor card for. Refused privately — a false
+          // call announced would say what the caller does not hold.
+          const other = combatants.find((f) => f !== myFaction)!
+          const theirPlan = c.revealed.plans[other] as { leader?: string }
+          const { data: mineRow } = await admin
+            .from('match_secrets').select('data')
+            .eq('match_id', matchId).eq('player_id', playerId).maybeSingle()
+          const held = ((mineRow?.data ?? {}) as { traitors?: string[] }).traitors ?? []
+          if (!theirPlan.leader || !held.includes(theirPlan.leader)) {
+            return json({ error: 'that call is not yours to make', code: 'no-traitor' }, 409)
+          }
+          calls = [...new Set([...calls, myFaction as never])]
+        }
+        answered = [...new Set([...answered, myFaction as never])]
+      } else {
+        // Past the beat, anyone may push: the silent decline.
+        answered = combatants
+      }
+
+      if (answered.length < 2) {
+        const { data, error } = await admin.rpc('apply_match_write', {
+          p_match_id: matchId,
+          p_expected_version: match.version,
+          p_state: {
+            ...state,
+            battles: {
+              ...b,
+              current: { ...c, revealed: { ...c.revealed, traitor: { ...beat, answered, calls } } },
+            },
+          },
+          p_secrets: {},
+        })
+        if (error) return json({ error: error.message }, 500)
+        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+        return json({ answered, version: data[0].version })
+      }
+
+      // ── both have spoken: the battle resolves, all of it in one write ────
+      const { data: secretRows } = await admin
+        .from('match_secrets').select('player_id, data').eq('match_id', matchId)
+      const rowOf = Object.fromEntries((secretRows ?? []).map((r) => [r.player_id, r.data ?? {}]))
+      const planOf = (f: string) => c.revealed!.plans[f] as {
+        dial: number; leader?: string; cheapHero?: boolean; weapon?: string; defence?: string
+      }
+
+      const outcome = resolveBattle({
+        aggressor: {
+          faction: c.aggressor as never, plan: planOf(c.aggressor),
+          calledTraitor: calls.includes(c.aggressor as never),
+        },
+        defender: {
+          faction: c.defender as never, plan: planOf(c.defender),
+          calledTraitor: calls.includes(c.defender as never),
+        },
+      })
+
+      let forces = [...((state.forces ?? []) as {
+        faction: string; territoryId: string; sector: string; count: number; starred?: number
+      }[])]
+      let tanks = (state.tanks ?? { forces: {}, leaders: {} }) as never
+      const killed: unknown[] = []
+      const discard = [...((state.treacheryDiscard ?? []) as string[])]
+      const revived = (state.revivedLeaders ?? []) as string[]
+      const usedLeaders = { ...(b.usedLeaders ?? {}) }
+      const secretsPatch: Record<string, unknown> = {}
+      const moves: { from: string; to: string; amount: number; reason: 'battle' }[] = []
+      const purses: Record<string, number> = {}
+
+      for (const side of outcome.sides) {
+        const f = side.faction
+        const seatId = seatOfFaction[f]
+        const plan = planOf(f)
+        // forces to the tanks, cell by cell
+        const lifts = battleLosses(
+          forces as never, f as never, c.territoryId, c.sectors, side)
+        for (const lift of lifts) {
+          forces = liftForces(
+            forces as never, f as never, c.territoryId, lift.sector, lift.count, lift.starred) as never
+          killed.push({
+            faction: f, territoryId: c.territoryId, sector: lift.sector,
+            count: lift.count, ...(lift.starred > 0 ? { starred: lift.starred } : null),
+          })
+        }
+        // the leader: dead to the tanks, or standing where it fought
+        if (plan.leader) {
+          if (side.leaderDies) {
+            tanks = returnLeaderToTanks(
+              tanks, f as never, plan.leader,
+              { wasRevived: revived.includes(plan.leader) }) as never
+            delete usedLeaders[plan.leader]
+          } else {
+            usedLeaders[plan.leader] = c.territoryId
+          }
+        }
+        // cards out of the hand, into the discard; a called traitor card is
+        // spent with them
+        const row = (rowOf[seatId] ?? {}) as {
+          cards?: string[]; traitors?: string[]; battlePlan?: unknown
+        }
+        const outCards = new Set(side.discards)
+        const hand = (row.cards ?? []).filter((id) => !outCards.has(id))
+        for (const id of side.discards) discard.push(id)
+        const other = outcome.sides.find((s) => s.faction !== f)!
+        const theirLeader = planOf(other.faction).leader
+        const traitors = calls.includes(f as never) && theirLeader
+          ? (row.traitors ?? []).filter((n) => n !== theirLeader)
+          : row.traitors
+        secretsPatch[seatId] = {
+          ...row, cards: hand, ...(traitors ? { traitors } : null), battlePlan: null,
+        }
+        purses[seatId] = readSpice(row as never)
+        for (const s of side.spice) {
+          moves.push({ from: BANK, to: seatId, amount: s.amount, reason: 'battle' })
+        }
+      }
+      const paid = moves.filter((m) => m.amount > 0)
+      const moved = applySpiceMoves(purses, paid as never)
+      if (!moved.ok) return json({ error: 'the spice could not move', code: moved.refusal }, 500)
+      for (const seatId of Object.keys(secretsPatch)) {
+        if (moved.purses[seatId] !== undefined) {
+          (secretsPatch[seatId] as { spice?: number }).spice = moved.purses[seatId]
+        }
+      }
+
+      tanks = bankDead(tanks, killed as never) as never
+
+      // the explosion burns the spice lying there too
+      const spiceOnBoard = { ...((state.spiceOnBoard ?? {}) as Record<string, number>) }
+      if (outcome.clearSpice) delete spiceOnBoard[c.territoryId]
+
+      const fought = [...b.fought, {
+        territoryId: c.territoryId, aggressor: c.aggressor, defender: c.defender,
+        winner: outcome.winner,
+        ...(outcome.explosion ? { explosion: true } : null),
+        ...(outcome.traitors.length ? { traitors: outcome.traitors } : null),
+      }]
+
+      // the rotation walks on over the board as it now stands
+      const pendingAfter = pendingBattles(forces as never, state.storm as never)
+      const next = nextAggressor(b.order as never, pendingAfter, b.at)
+      const battlesAfter = next
+        ? {
+          ...b, at: next.at, current: null, fought, usedLeaders,
+          closesAt: now + BATTLE_PICK_SECONDS * 1000,
+        }
+        : undefined
+
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state, forces, tanks, spiceOnBoard,
+          treacheryDiscard: discard,
+          ...(battlesAfter ? { battles: battlesAfter } : { battles: undefined }),
+          awaiting: next ? next.faction : null,
+          lastBattle: {
+            turn: state.turn ?? 0, at: now,
+            territoryId: c.territoryId, aggressor: c.aggressor, defender: c.defender,
+            winner: outcome.winner,
+            ...(outcome.explosion ? { explosion: true } : null),
+            ...(outcome.traitors.length ? { traitors: outcome.traitors } : null),
+          },
+        },
+        p_secrets: secretsPatch,
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({
+        winner: outcome.winner, explosion: outcome.explosion, traitors: outcome.traitors,
         version: data[0].version,
       })
     }

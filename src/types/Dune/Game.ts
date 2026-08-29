@@ -376,6 +376,60 @@ export interface DuneGameState {
     closesAt: number
   }
   /**
+   * The Battles phase, while it runs. Where battles are PENDING is derived
+   * from `forces` by everyone (pendingBattles in lib/dune/battle) — only the
+   * rotation and the current battle need carrying. A committed plan lives in
+   * the committing seat's match_secrets row and reaches this object ONLY at
+   * the reveal, both plans in one write. See lib/dune/battle.
+   */
+  battles?: {
+    turn: number
+    /** Storm order; the aggressor walks it. */
+    order: FactionId[]
+    at: number
+    /** The battle being fought, or null while the aggressor picks. */
+    current: {
+      territoryId: string
+      sectors: string[]
+      aggressor: FactionId
+      defender: FactionId
+      /** Who has a plan in. The plan itself is secret until the reveal. */
+      committed: FactionId[]
+      closesAt: number
+      /** Both plans, published together, and the traitor beat's state. */
+      revealed?: {
+        plans: Record<string, {
+          dial: number
+          leader?: string
+          cheapHero?: boolean
+          weapon?: string
+          defence?: string
+        }>
+        traitor: { answered: FactionId[]; calls: FactionId[]; closesAt: number }
+      }
+    } | null
+    /** The public record of what this phase settled. */
+    fought: {
+      territoryId: string
+      aggressor: FactionId
+      defender: FactionId
+      winner: FactionId | null
+      explosion?: boolean
+      traitors?: FactionId[]
+    }[]
+    /** Leaders revealed this phase, standing where they fought. */
+    usedLeaders: Record<string, string>
+    /** The aggressor's pick deadline, while `current` is null. */
+    closesAt: number
+  }
+  /**
+   * Every leader ever revived, across the whole game. Public — a revival is
+   * made at the table — and read when a leader dies AGAIN: a once-revived
+   * leader returns to the tanks face down and waits out the rotation. See
+   * returnLeaderToTanks.
+   */
+  revivedLeaders?: string[]
+  /**
    * The current phase's look-at-it window — see PHASE_SECONDS in
    * lib/dune/phaseAdvance. Before it shuts only the host advances; after it,
    * anyone. Carries its own (turn, phase) so a clock outliving its phase

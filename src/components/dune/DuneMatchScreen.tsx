@@ -695,6 +695,7 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
                 'charity-open': 'The charity window is open.',
                 'auction-running': 'The auction is running.',
                 'shipping-underway': 'Seats are shipping and moving, in storm order.',
+                'battles-underway': 'Battles are being fought, in storm order.',
                 'game-over': 'The game is over.',
                 'setup-not-finished': 'Setting up.',
               }[hold.code] ?? hold.code}
@@ -804,6 +805,15 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
           : undefined}
         onShipSpecial={seat ? a => void ship(a) : undefined}
         onRevive={seat ? a => void revive(a) : undefined}
+        onBattlePick={seat
+          ? (territoryId, opponent) => void send({ type: 'BATTLE_PICK', territoryId, opponent })
+          : undefined}
+        onBattlePlan={seat
+          ? plan => void send({ type: 'BATTLE_PLAN', ...plan })
+          : undefined}
+        onBattleAnswer={seat
+          ? call => void send({ type: call ? 'BATTLE_TRAITOR' : 'BATTLE_CONTINUE' })
+          : undefined}
         onMoveStack={seat ? a => void move(a) : undefined}
         charity={charityWindow && seat ? {
           onClaim: () => void claimCharity(),

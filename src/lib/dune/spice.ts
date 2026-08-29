@@ -48,6 +48,8 @@ export type SpiceReason =
   | 'revival'
   | 'spice-collection'
   | 'setup'
+  /** A killed leader's strength, paid to the battle's winner by the bank. */
+  | 'battle'
 
 export interface SpiceMove {
   from: SpiceHolder

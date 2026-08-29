@@ -55,6 +55,7 @@ import { SetupWindow, SetupBoardTargets } from './SetupWindow'
 import { ShipRail } from './ShipRail'
 import { inStorm, moveTargets } from '@/lib/dune/shipment'
 import { RevivalRail } from './RevivalRail'
+import { BattlePanel } from './BattlePanel'
 import { REVIVAL_CAP, STARRED_REVIVALS_PER_TURN, revivableLeaders } from '@/lib/dune/revival'
 import type { GuildShipKind } from '@/lib/dune/shipment'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
@@ -156,6 +157,13 @@ export interface DuneGameScreenProps {
    * leader by name. The server judges caps, allowance and price.
    */
   onRevive?: (a: { plain?: number; starred?: number } | { leader: string }) => void
+  /** The battle phase's three moves: the aggressor's pick, a hidden plan,
+   *  and the traitor beat's answer. */
+  onBattlePick?: (territoryId: string, opponent: FactionId) => void
+  onBattlePlan?: (plan: {
+    dial: number; leader?: string; cheapHero?: boolean; weapon?: string; defence?: string
+  }) => void
+  onBattleAnswer?: (call: boolean) => void
   /**
    * The live auction, or null.
    *
@@ -207,7 +215,7 @@ export interface DuneGameScreenProps {
 
 export function DuneGameScreen({
   state, seat, own, chat, onSend, talkingTo, seatNames, notices, onShipReserves, onMoveStack,
-  onShipSpecial, onRevive,
+  onShipSpecial, onRevive, onBattlePick, onBattlePlan, onBattleAnswer,
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
   const [chatShut, setChatShut] = useState(false)
@@ -835,6 +843,27 @@ export function DuneGameScreen({
               spice={own?.spice ?? 0}
               hand={handOf(own)}
               revealed={revealedFor(own)} />
+          )}
+
+          {/* THE BATTLE, over the board like the auction: a decision with a
+              deadline. Everything it draws is the public battles object plus
+              THIS seat's own hand and traitors — the plan leaves through the
+              handlers and comes back only at the reveal. */}
+          {state.phase === 'Battles' && state.battles && seat
+            && onBattlePick && onBattlePlan && onBattleAnswer && (
+            <BattlePanel
+              battles={state.battles}
+              forces={state.forces}
+              storm={state.storm}
+              tanks={state.tanks ?? null}
+              seat={seat}
+              hand={own?.cards ?? []}
+              traitors={dealtTraitors(own)}
+              now={now}
+              busy={false}
+              onPick={onBattlePick}
+              onPlan={onBattlePlan}
+              onAnswer={onBattleAnswer} />
           )}
 
           {/* CHARITY COVERS THE BOARD rather than dimming it, unlike the
