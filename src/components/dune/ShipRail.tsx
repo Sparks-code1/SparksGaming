@@ -113,7 +113,11 @@ export function ShipRail({
 
   return (
     <div data-layer="ship-rail" style={{
-      flex: '0 0 auto', width: 76, padding: '10px 6px', overflowY: 'auto',
+      // WIDE ENOUGH TO READ: 76 fit the counters and bubbles, but the fare
+      // notes and the Guild's rule texts wrapped into ribbons. The board's
+      // width is protected by the main column's flex basis, so the extra
+      // comes out of the layout's surplus, not the map.
+      flex: '0 0 auto', width: 118, padding: '10px 8px', overflowY: 'auto',
       borderRight: '1px solid #ffffff1f', background: '#111a2c',
       font: `11px ${SERIF}`, color: PALE, textAlign: 'center',
     }}>
