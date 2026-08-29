@@ -39,6 +39,32 @@ const SAND = '#f0e2bb'
 const SERIF = 'Georgia, "Times New Roman", serif'
 
 const cardName = (id: string) => TREACHERY_CARDS.find(c => c.id === id)?.name ?? id
+
+/**
+ * Every refusal, in words a player can act on. A bare "that plan is not
+ * legal" on a legal-looking plan is unactionable — the code always named
+ * the part, and now the panel says it. Unknown codes fall back to showing
+ * themselves rather than to silence.
+ */
+export const PLAN_REFUSAL_TEXT: Record<string, string> = {
+  'not-in-this-battle': 'You have no forces standing in this battle.',
+  'dial-out-of-range': 'The dial is more than the forces you have standing here.',
+  'no-such-leader': 'That leader is not on your sheet.',
+  'leader-in-the-tanks': 'That leader is dead in the tanks.',
+  'leader-fights-elsewhere': 'That leader already fought in another territory this phase.',
+  'two-leaders': 'A leader or the Cheap Hero — not both.',
+  'card-not-held': 'You do not hold that card.',
+  'not-a-weapon': 'That card is not a weapon.',
+  'not-a-defence': 'That card is not a defence.',
+  'no-leader-no-cards': 'With no leader and no Cheap Hero, no treachery may be played.',
+  'one-card-twice': 'The same card cannot be played twice.',
+  'battle-moved-on': 'The table has moved to another battle — this form has refreshed; plan again.',
+  'already-committed': 'Your plan is already in.',
+  'already-revealed': 'Plans are on the table.',
+  'no-battle': 'No battle is open.',
+  'not-your-battle': 'You are not in this battle.',
+  'stale': 'The match moved while you decided — try again.',
+}
 const territoryName = (id: string) =>
   DUNE_TERRITORIES.find(t => t.id === id)?.displayName ?? id
 
@@ -53,8 +79,11 @@ export interface BattlePanelProps {
   traitors: readonly string[]
   now: number
   busy: boolean
+  /** The last battle action's refusal code, this seat's own. Named below. */
+  refusal?: string | null
   onPick: (territoryId: string, opponent: FactionId) => void
   onPlan: (plan: {
+    territoryId: string
     dial: number; leader?: string; cheapHero?: boolean; weapon?: string; defence?: string
   }) => void
   onAnswer: (call: boolean) => void
@@ -155,7 +184,7 @@ function PlanLine({ faction, plan }: {
 
 export function BattlePanel({
   battles, forces, storm, tanks, seat, hand, traitors, now, busy,
-  onPick, onPlan, onAnswer,
+  refusal = null, onPick, onPlan, onAnswer,
 }: BattlePanelProps) {
   const [dial, setDial] = useState(0)
   const [leader, setLeader] = useState<string | null>(null)
@@ -207,6 +236,12 @@ export function BattlePanel({
           </button>
         </div>
         {children}
+        {refusal && (
+          <div role="alert" data-battle-refusal={refusal}
+            style={{ marginTop: 10, fontSize: 12, color: '#e8a0a0' }}>
+            {PLAN_REFUSAL_TEXT[refusal] ?? `Refused: ${refusal}`}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -315,7 +350,8 @@ export function BattlePanel({
         </p>
         {expired && (
           <button type="button" disabled={busy} data-plan-push=""
-            onClick={() => onPlan({ dial: 0 })} style={{ ...btn, width: 'auto', display: 'inline-block' }}>
+            onClick={() => onPlan({ territoryId: c.territoryId, dial: 0 })}
+            style={{ ...btn, width: 'auto', display: 'inline-block' }}>
             The clock has run out — reveal what is in
           </button>
         )}
@@ -436,6 +472,7 @@ export function BattlePanel({
       )}
       <button type="button" disabled={busy} data-plan-commit=""
         onClick={() => onPlan({
+          territoryId: c.territoryId,
           dial,
           ...(leader ? { leader } : null),
           ...(hero ? { cheapHero: true } : null),

@@ -814,6 +814,7 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
         onBattleAnswer={seat
           ? call => void send({ type: call ? 'BATTLE_TRAITOR' : 'BATTLE_CONTINUE' })
           : undefined}
+        battleRefusal={refused}
         onMoveStack={seat ? a => void move(a) : undefined}
         charity={charityWindow && seat ? {
           onClaim: () => void claimCharity(),

@@ -1965,6 +1965,18 @@ Deno.serve(async req => {
         if (c.committed.includes(myFaction as never)) {
           return json({ error: 'your plan is in', code: 'already-committed' }, 409)
         }
+        // THE PLAN NAMES ITS BATTLE. A panel drawn against the last battle
+        // can post into the next one — the wheel capped by the OLD stack
+        // lands out of range in the new territory, and the seat reads a
+        // legal-looking plan being refused for no reason it can see. The
+        // form says which battle it answered; a mismatch is its own code,
+        // not a lie about the plan.
+        if (action.territoryId && String(action.territoryId) !== c.territoryId) {
+          return json({
+            error: 'the table has moved to another battle',
+            code: 'battle-moved-on',
+          }, 409)
+        }
         const mine = rowOf[playerId] ?? {}
         const plan = {
           dial: Number(action.dial ?? 0),

@@ -336,6 +336,9 @@ check('the three windows have their seconds',
 
   const plan = fn.slice(fn.indexOf("case 'BATTLE_PLAN'"), fn.indexOf("case 'BATTLE_TRAITOR'"))
   check('a plan is judged by the shared law', /judgePlan\(\{/.test(plan), true)
+  check('...and answers ONE battle, by name',
+    /if \(action\.territoryId && String\(action\.territoryId\) !== c\.territoryId\)/.test(plan)
+      && /code: 'battle-moved-on',/.test(plan), true)
   check('...and lives in the committing seat\'s own row',
     /secretsPatch\[playerId\] = \{ \.\.\.mine, battlePlan: \{ territoryId: c\.territoryId, \.\.\.plan \} \}/.test(plan), true)
   check('...revealed together only when both are in',
@@ -427,6 +430,46 @@ check('the three windows have their seconds',
       planning.includes('data-plan-weapon="shield"')], [true, true, false])
   check('...and the Cheap Hero offered as its card when held',
     /data-plan-hero/.test(planning), true)
+
+  // ── A REFUSAL NAMES ITS REASON ──────────────────────────────────────────
+  // "that plan is not legal" on a legal-looking plan was unactionable: the
+  // code always named the illegal part, and the panel dropped it. Now every
+  // code has its sentence, an unknown code shows itself, and silence means
+  // nothing was refused. The plan also posts WHICH battle it answers, so a
+  // form drawn against the last battle is refused as battle-moved-on rather
+  // than judged against ground it never saw — the exact shape of the live
+  // failure: the wheel capped by the OLD territory's bigger stack posted a
+  // dial out of range in the new one.
+  const refusedDial = draw({
+    battles: { ...battles, current }, refusal: 'dial-out-of-range',
+  })
+  check('a refusal is named in the panel',
+    refusedDial.includes('The dial is more than the forces you have standing here.'), true)
+  check('...as an alert carrying its code',
+    /data-battle-refusal="dial-out-of-range"/.test(refusedDial), true)
+  check('...the stale-battle case in its own words',
+    draw({ battles: { ...battles, current }, refusal: 'battle-moved-on' })
+      .includes('The table has moved to another battle'), true)
+  check('...an unknown code shows itself rather than nothing',
+    draw({ battles: { ...battles, current }, refusal: 'mystery-code' })
+      .includes('Refused: mystery-code'), true)
+  check('...and no refusal means no alert',
+    /data-battle-refusal/.test(planning), false)
+
+  const panelSrc = readFileSync('src/components/dune/BattlePanel.tsx', 'utf8')
+  check('the commit posts the battle it answered',
+    /territoryId: c\.territoryId,\s*[\r\n]+\s*dial,/.test(panelSrc), true)
+  const gameSrc = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
+  check('the panel starts fresh for every battle',
+    /key=\{state\.battles\.current/.test(gameSrc), true)
+  const harnessSrc = readFileSync('src/components/dune/DuneMultiSeatView.tsx', 'utf8')
+  check('the harness hands the code to the panel',
+    /battleRefusal=\{refused\}/.test(harnessSrc), true)
+  check('...and says it in the narration too',
+    /refused: \$\{res\.error\?\.message \?\? 'unknown'\} \(\$\{res\.error\?\.code \?\? '\?'\}\)/.test(harnessSrc), true)
+  const matchSrc = readFileSync('src/components/dune/DuneMatchScreen.tsx', 'utf8')
+  check('the match screen hands the code over as well',
+    /battleRefusal=\{refused\}/.test(matchSrc), true)
   check('a committed seat waits without a form',
     /data-plan-commit/.test(draw({
       battles: { ...battles, current: { ...current, committed: ['atreides'] } },

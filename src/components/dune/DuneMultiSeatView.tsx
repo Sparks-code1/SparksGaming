@@ -495,7 +495,9 @@ export default function DuneMultiSeatView() {
     setBusy(false)
     if (!res.ok) {
       setRefused(res.error?.code ?? 'refused')
-      say(`${type} refused: ${res.error?.message ?? 'unknown'}`)
+      // THE CODE RIDES ALONG. The message alone is what made a refused
+      // battle plan unactionable: the code always named the illegal part.
+      say(`${type} refused: ${res.error?.message ?? 'unknown'} (${res.error?.code ?? '?'})`)
       return
     }
     // Opening a window, closing one, opening an auction: all of them change the
@@ -629,6 +631,7 @@ export default function DuneMultiSeatView() {
         onBattleAnswer={mine
           ? call => void send(mine, call ? 'BATTLE_TRAITOR' : 'BATTLE_CONTINUE')
           : undefined}
+        battleRefusal={refused}
         onMoveStack={mine
           ? a => void send(mine, 'MOVE', a as never)
           : undefined} />

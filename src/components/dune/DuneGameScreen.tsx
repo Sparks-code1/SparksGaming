@@ -161,9 +161,12 @@ export interface DuneGameScreenProps {
    *  and the traitor beat's answer. */
   onBattlePick?: (territoryId: string, opponent: FactionId) => void
   onBattlePlan?: (plan: {
+    territoryId: string
     dial: number; leader?: string; cheapHero?: boolean; weapon?: string; defence?: string
   }) => void
   onBattleAnswer?: (call: boolean) => void
+  /** The last battle action's refusal code, for the panel to name. */
+  battleRefusal?: string | null
   /**
    * The live auction, or null.
    *
@@ -215,7 +218,7 @@ export interface DuneGameScreenProps {
 
 export function DuneGameScreen({
   state, seat, own, chat, onSend, talkingTo, seatNames, notices, onShipReserves, onMoveStack,
-  onShipSpecial, onRevive, onBattlePick, onBattlePlan, onBattleAnswer,
+  onShipSpecial, onRevive, onBattlePick, onBattlePlan, onBattleAnswer, battleRefusal,
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
   const [chatShut, setChatShut] = useState(false)
@@ -852,6 +855,14 @@ export function DuneGameScreen({
           {state.phase === 'Battles' && state.battles && seat
             && onBattlePick && onBattlePlan && onBattleAnswer && (
             <BattlePanel
+              // A FRESH PANEL PER BATTLE. The dial, the chosen disc and the
+              // picked cards belong to ONE battle; carried into the next
+              // they post a plan shaped by ground that is gone — which is
+              // how a legal-looking plan came to be refused.
+              key={state.battles.current
+                ? `${state.battles.current.territoryId}|${state.battles.current.aggressor}|${state.battles.current.defender}`
+                : `pick|${state.battles.at}`}
+              refusal={battleRefusal}
               battles={state.battles}
               forces={state.forces}
               storm={state.storm}
