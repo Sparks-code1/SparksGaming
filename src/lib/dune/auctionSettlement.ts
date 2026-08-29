@@ -100,6 +100,14 @@ export function settleCard(input: {
   seated: readonly FactionId[]
   bonus?: readonly string[]
   limits?: Readonly<Record<string, number>>
+  /**
+   * How many cards the deck could actually give for the bonus. The free card
+   * is "if there are cards left": an exhausted deck DEGRADES the advantage —
+   * fewer cards, or none — and never refuses the sale that closed. Refusing
+   * wedged a live auction: the pass that closed a Harkonnen win could not be
+   * honoured while every bid still could. Omitted, the deck is presumed deep.
+   */
+  deckHolds?: number
 }): SettlementResult {
   const { award, card, hands, purses, seated } = input
   const bonus = input.bonus ?? []
@@ -136,7 +144,9 @@ export function settleCard(input: {
   // The bonus faction's second card, counted off the hand they now hold.
   const limit = input.limits?.[BONUS_FACTION] ?? Infinity
   const handAfter = (secrets[BONUS_FACTION]?.hand ?? hands[BONUS_FACTION] ?? []).length
-  const due = bonusCardsDue([award], handAfter, limit)
+  const due = Math.min(
+    bonusCardsDue([award], handAfter, limit),
+    input.deckHolds ?? Infinity)
   if (due > bonus.length) {
     return {
       ok: false,

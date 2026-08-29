@@ -298,6 +298,32 @@ check('a winner spending their last spice is fine',
     two.ok ? two.writes.secrets[A].hand : ['differs'])
 }
 
+// ── the deck's truth caps the bonus ───────────────────────────────────────
+// The free card is "if there are cards left": an exhausted deck DEGRADES the
+// advantage — fewer cards, or none — and never refuses the sale that closed.
+// Refusing wedged a live auction: the pass that closed a Harkonnen win could
+// never be honoured, while every bid still could.
+{
+  const seated = ['atreides', BONUS_FACTION] as FactionId[]
+  const limits = { atreides: 4, harkonnen: 8 }
+  const sale = (bonus: string[], deckHolds?: number) => settleCard({
+    award: { index: 0, winner: BONUS_FACTION, price: 2 }, card: 'card-one',
+    hands: { atreides: [], harkonnen: [] },
+    purses: { atreides: 10, harkonnen: 10 },
+    seated, limits, bonus,
+    ...(deckHolds != null ? { deckHolds } : null),
+  })
+  const dry = sale([], 0)
+  check('an empty deck degrades the bonus to none, and the sale stands',
+    dry.ok ? dry.writes.secrets[BONUS_FACTION].hand : ['refused'], ['card-one'])
+  const wet = sale(['card-two'], 1)
+  check('...a deck that holds one gives one',
+    wet.ok ? wet.writes.secrets[BONUS_FACTION].hand : [], ['card-one', 'card-two'])
+  const short = sale([])
+  check('...while a caller who simply miscounts is still refused',
+    short.ok ? 'dealt anyway' : short.refusal, 'not-enough-bonus-cards')
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.

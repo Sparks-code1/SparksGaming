@@ -66,7 +66,10 @@ function settleCard(input) {
   }
   const limit = input.limits?.[BONUS_FACTION] ?? Infinity;
   const handAfter = (secrets[BONUS_FACTION]?.hand ?? hands[BONUS_FACTION] ?? []).length;
-  const due = bonusCardsDue([award], handAfter, limit);
+  const due = Math.min(
+    bonusCardsDue([award], handAfter, limit),
+    input.deckHolds ?? Infinity
+  );
   if (due > bonus.length) {
     return {
       ok: false,

@@ -386,6 +386,10 @@ check('the three windows have their seconds',
   check('the fought-out phase clears itself',
     /: undefined[\s\S]{0,700}battles: battlesAfter \} : \{ battles: undefined \}/.test(beat), true)
 
+  check('...and the resolution moves the public count with the hand',
+    /handCounts\[f\] = hand\.length/.test(beat)
+      && /handCount: handCounts\[p\.faction\]/.test(beat), true)
+
   check('a revived leader is remembered for good',
     /revivedLeaders: \[\.\.\.new Set\(\[/.test(fn), true)
 

@@ -186,6 +186,17 @@ check('the same props render the same clock twice',
     draw().includes('role="alert"'), false)
   const refused = draw({ refusal: 'more-than-you-hold' })
   check('a refusal is shown to the bidder', refused.includes('You do not have that much spice'), true)
+  // AN UNKNOWN CODE SHOWS ITSELF. The settle path can refuse with codes this
+  // map never knew — 'deck-exhausted' reached a live table as a BLANK line
+  // and the clock suffix, which read as "pass refused: clock still running".
+  check('...and an unknown code shows itself rather than nothing',
+    draw({ refusal: 'deck-exhausted' as never }).includes('Refused: deck-exhausted'), true)
+  const unknownBar = renderToStaticMarkup(createElement(BiddingBar, {
+    ask: base.ask, closesAt: base.closesAt, now: base.now,
+    refusal: 'deck-exhausted', onOpen: () => {}, children: null,
+  } as never))
+  check('...in the shut bar as well',
+    unknownBar.includes('Refused: deck-exhausted'), true)
   // THE CLOCK IS NOT RESET, and the panel says so — a refused bid must not be a
   // way to buy time to think, and a bidder who assumes it was will run out.
   check('...beside a clock that is still running',

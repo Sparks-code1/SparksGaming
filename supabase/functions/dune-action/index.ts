@@ -1185,14 +1185,22 @@ Deno.serve(async req => {
       }
       let paidSecrets: Record<string, unknown> = {}
       let bonusDue = 0
+      let playersAfter = ((state.players ?? []) as { faction: string; handCount?: number }[])
 
       if (justClosed) {
         // The bonus faction's second card, for THIS card only. Drawn to order
         // so nothing is pulled off the pile and put back somewhere else.
         const handAfter = (hands[BONUS_FACTION]?.length ?? 0)
           + (justClosed.winner === BONUS_FACTION ? 1 : 0)
+        // The SAME default the settlement uses, so two computations of
+        // the due cannot disagree about a missing limit.
         bonusDue = bonusCardsDue(
-          [justClosed], handAfter, step.carry.limits?.[BONUS_FACTION] ?? 0)
+          [justClosed], handAfter, step.carry.limits?.[BONUS_FACTION] ?? Infinity)
+        // THE ADVANTAGE DEGRADES LIKE THE ROW. The free card is "if there
+        // are cards left": an exhausted deck gives fewer, or none, and never
+        // refuses the pass that closed the sale.
+        bonusDue = Math.min(bonusDue, treacheryPile.length
+          + ((state.treacheryDiscard ?? []) as string[]).length)
         if (bonusDue > 0) {
           try {
             bonusDraw = drawTreachery(
@@ -1210,6 +1218,8 @@ Deno.serve(async req => {
           purses,
           bonus: bonusDraw.drawn,
           limits: step.carry.limits,
+          // the deck's truth caps the bonus — the degrade above measured it
+          deckHolds: bonusDue,
           // Who is in the game, for the Emperor's redirect. From the auction's
           // own order rather than whoever happens to have a secrets row.
           seated: step.carry.order,
@@ -1228,6 +1238,13 @@ Deno.serve(async req => {
           }
           paidSecrets[seatId] = { ...(byId[seatId] ?? {}), cards: next.hand, spice: next.spice }
         }
+        // THE PUBLIC COUNT MOVES WITH THE HAND. handCount is the row's truth
+        // by another route; a hand that grew while the count stood still is
+        // how every card a seat held came to be held back as stale.
+        playersAfter = playersAfter.map((p) =>
+          paid.writes.secrets[p.faction]
+            ? { ...p, handCount: paid.writes.secrets[p.faction].hand.length }
+            : p)
       }
 
       const paidDecks = bonusDue > 0 ? { treachery: bonusDraw.draw } : {}
@@ -1252,6 +1269,7 @@ Deno.serve(async req => {
           p_expected_version: match.version,
           p_state: {
             ...state,
+            players: playersAfter,
             auction: outcome.step,
             // A card sold mid-auction is as public as one sold at the end.
             ...(justClosed
@@ -1293,6 +1311,7 @@ Deno.serve(async req => {
         p_expected_version: match.version,
         p_state: {
           ...state,
+          players: playersAfter,
           auction: null,
           // WHO WON AND WHAT THEY PAID ARE PUBLIC, and every client derives the
           // same line from this rather than from its own response. Winner and
@@ -2401,6 +2420,7 @@ Deno.serve(async req => {
           })
         }
       }
+      const handCounts: Record<string, number> = {}
       for (const side of outcome.sides) {
         const f = side.faction
         const seatId = seatOfFaction[f]
@@ -2444,6 +2464,7 @@ Deno.serve(async req => {
         secretsPatch[seatId] = {
           ...row, cards: hand, ...(traitors ? { traitors } : null), battlePlan: null,
         }
+        handCounts[f] = hand.length
         purses[seatId] = readSpice(row as never)
         for (const s of side.spice) {
           moves.push({ from: BANK, to: seatId, amount: s.amount, reason: 'battle' })
@@ -2486,6 +2507,12 @@ Deno.serve(async req => {
         p_expected_version: match.version,
         p_state: {
           ...state, forces, tanks, spiceOnBoard,
+          // THE PUBLIC COUNT MOVES WITH THE HAND — a discard that shrank a
+          // hand while the count stood still held a whole hand back as stale.
+          players: ((state.players ?? []) as { faction: string; handCount?: number }[])
+            .map((p) => handCounts[p.faction] != null
+              ? { ...p, handCount: handCounts[p.faction] }
+              : p),
           treacheryDiscard: discard,
           ...(battlesAfter ? { battles: battlesAfter } : { battles: undefined }),
           awaiting: next ? next.faction : null,
@@ -2687,7 +2714,10 @@ Deno.serve(async req => {
           ...(giveStarred > 0
             ? { reservesStarred: (p.reservesStarred ?? 0) + giveStarred }
             : null),
-          handCount: p.handCount + giveCards.length,
+          // DERIVED from the row being written, not incremented — so any
+          // grant (spice alone included) HEALS a count that has drifted
+          // from the hand it stands for.
+          handCount: (secrets.cards ?? []).length + giveCards.length,
         }
         : p)
 

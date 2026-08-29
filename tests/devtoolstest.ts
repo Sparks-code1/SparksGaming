@@ -160,11 +160,26 @@ const base = {
     /forces = landForces\(/.test(grant), true)
   check('...banks granted leaders through the revival cycle',
     /returnLeaderToTanks\(\s*[\r\n]+\s*tanks, myFaction as never, name,\s*[\r\n]+\s*\{ wasRevived: revived\.includes\(name\) \}/.test(grant), true)
-  check('...keeps the public hand count honest',
-    /handCount: p\.handCount \+ giveCards\.length,/.test(grant), true)
+  check('...keeps the public hand count honest by DERIVING it',
+    /handCount: \(secrets\.cards \?\? \[\]\)\.length \+ giveCards\.length,/.test(grant), true)
   check('...and withdraws a granted card from the deck it exists in',
     /const i = pile\.indexOf\(id\)/.test(grant)
       && /p_decks: grantDecks,/.test(grant), true)
+
+  // THE COUNT MOVES WITH EVERY HAND THE SERVER TOUCHES, and the Harkonnen
+  // bonus degrades to what the deck holds instead of refusing the pass that
+  // closed the sale — the refusal that wedged a live auction.
+  const bidStart = fn.indexOf("case 'BID'")
+  const bid = fn.slice(bidStart, fn.indexOf("case '", bidStart + 10))
+  check('the auction bonus is capped by what the deck holds',
+    /bonusDue = Math\.min\(bonusDue, treacheryPile\.length/.test(bid), true)
+  check('...the settlement is told the deck\'s truth',
+    /deckHolds: bonusDue,/.test(bid), true)
+  check('...the two dues share one default',
+    /step\.carry\.limits\?\.\[BONUS_FACTION\] \?\? Infinity/.test(bid), true)
+  check('...and the public count moves with the settled hand',
+    /playersAfter = playersAfter\.map/.test(bid)
+      && /players: playersAfter,/.test(bid), true)
 
   // AN EXHAUSTED DECK DEGRADES, NEVER DEADLOCKS: the row is as long as the
   // cards that exist, and a deck with none skips the phase outright.

@@ -191,7 +191,8 @@ export function BiddingBar(
       <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>{children}</span>
       {refusal && (
         <span role="alert" style={{ fontSize: 12, color: '#e8a0a0' }}>
-          {REFUSAL_TEXT[refusal]} <span style={{ opacity: 0.7 }}>The clock is still running.</span>
+          {(REFUSAL_TEXT as Record<string, string>)[refusal] ?? 'Refused: ' + refusal}{' '}
+          <span style={{ opacity: 0.7 }}>The clock is still running.</span>
         </span>
       )}
     </div>
@@ -383,7 +384,8 @@ export function BiddingPanel(props: BiddingPanelProps) {
                 time to think. */}
             {refusal && (
               <div role="alert" style={{ fontSize: 12, color: '#e8a0a0' }}>
-                {REFUSAL_TEXT[refusal]} <span style={{ opacity: 0.7 }}>The clock is still running.</span>
+                {(REFUSAL_TEXT as Record<string, string>)[refusal] ?? 'Refused: ' + refusal}{' '}
+          <span style={{ opacity: 0.7 }}>The clock is still running.</span>
               </div>
             )}
           </div>
