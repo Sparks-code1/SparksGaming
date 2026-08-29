@@ -367,6 +367,26 @@ const row = (over: Partial<Parameters<typeof toMessage>[0]> = {}) => {
     /name: `\$\{r\.name\} — \$\{nameOf\(r\.faction\)\}`/.test(screen), true)
 }
 
+// ── THE HARNESS SPEAKS AS THE SEAT IT SHOWS ───────────────────────────────
+// Until this, the harness chat held narration only: the embed's chat column
+// never carried a spoken line — another surface the embed did not carry,
+// found the same way the rail was. The feed runs under the SELECTED seat's
+// own session, so private lines are read as that seat and re-read on every
+// switch; sending goes through the same insert the real screen makes.
+{
+  const harness = code('src/components/dune/DuneMultiSeatView.tsx')
+  check('the harness watches the real talk',
+    /watchDuneChat\(matchId, \{\s*[\r\n]+\s*client,/.test(harness), true)
+  check('...under the selected seat, re-subscribed on switch',
+    /\}, \[matchId, mine\?\.client\]\)/.test(harness), true)
+  check('...merging spoken lines beside the narration',
+    /onMessages: lines => setChat\(c => mergeChat\(c, lines\)\)/.test(harness), true)
+  check('the embed is handed the send box',
+    /onSend=\{mine \? \(text, scope\) => void speakAs\(mine, text, scope\) : undefined\}/.test(harness), true)
+  check('...which posts through the seat\'s own client',
+    /sayTo\(matchId, \{ playerId: session\.login\.seat, faction: session\.login\.faction \},\s*[\r\n]+\s*text, scope as never, session\.client/.test(harness), true)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.

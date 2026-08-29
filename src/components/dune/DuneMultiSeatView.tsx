@@ -29,7 +29,9 @@ import type { BidRefusal } from '@/lib/dune/bidding'
 import { watchDuneMatch } from '@/lib/dune/matchFeed'
 import { openAuction, openCharity, auctionExpired, seatedIn, winLines } from '@/lib/dune/publicRow'
 import type { PublicRow } from '@/lib/dune/publicRow'
-import type { ChatMessage } from './ChatPanel'
+import type { ChatMessage, ChatSendScope } from './ChatPanel'
+import { watchDuneChat, sayTo, mergeChat } from '@/lib/dune/duneChat'
+import type { ChatFeed } from '@/lib/dune/duneChat'
 
 const PALE = '#f0e2bb'
 const SERIF = "Georgia, 'Times New Roman', serif"
@@ -74,6 +76,8 @@ export default function DuneMultiSeatView() {
   const [publicRow, setPublicRow] = useState<PublicRow | null>(null)
   const [chat, setChat] = useState<ChatMessage[]>([])
   const [busy, setBusy] = useState(false)
+  /** What the last expired-bid push actually did — said, never swallowed. */
+  const [resolveNote, setResolveNote] = useState<string | null>(null)
   const [refused, setRefused] = useState<string | null>(null)
   /**
    * Seats that have answered charity this turn, so the modal comes down.
@@ -274,10 +278,33 @@ export default function DuneMultiSeatView() {
    * Falling back to the viewed seat leaves the server's timeout path to handle
    * a seat this harness was not given a login for.
    */
-  const resolveExpiredBid = () => {
+  const resolveExpiredBid = async () => {
     const waitingOn = publicRow?.auction?.carry?.toAct
-    const actor = sessions.find(x => x.login.faction === waitingOn) ?? mine
-    if (actor?.client) void bid(actor, { kind: 'pass' })
+    // ANY signed-in session can carry the push: once the deadline has passed
+    // the server answers for whoever is to act, whoever asks — proven live
+    // on the stuck turn-two match. Preferring the awaited seat keeps the
+    // pass a plain legal one even when clocks disagree; falling back keeps
+    // one dead session from wedging the table.
+    //
+    // AND THE OUTCOME IS SAID. The old path could fail three ways in
+    // silence — a session without a client no-opped, a busy flag returned
+    // early, and an error was filed under the acting seat's refusal slot,
+    // which renders only inside that seat's own panel. A button that fails
+    // without a word is how the second deadlock read as a rules bug when
+    // the rules were fine.
+    const actor = [sessions.find(x => x.login.faction === waitingOn), mine, ...sessions]
+      .find(x => x?.client)
+    if (!actor?.client) { setResolveNote('no signed-in session to push with'); return }
+    setResolveNote('pushing…')
+    const res = await dispatchDuneAction(matchId, { type: 'BID', bid: { kind: 'pass' } },
+      { client: actor.client })
+    if (!res.ok) {
+      setResolveNote(`refused: ${res.error?.code ?? 'unknown'} — ${res.error?.message ?? ''}`)
+      return
+    }
+    setResolveNote(`window closed — passed for ${waitingOn ?? 'the acting seat'}`)
+    await seats.current?.refresh(actor.login.faction)
+    await rereadRow.current?.()
   }
 
   /**
@@ -523,6 +550,45 @@ export default function DuneMultiSeatView() {
     }])
   }
 
+  /**
+   * THE TABLE'S REAL TALK, under the SELECTED seat's own session. Until now
+   * the harness chat held narration only — the embed's chat column never
+   * carried a single spoken line, another surface the embed did not carry,
+   * found the same way the rail was. Private lines are delivered per seat,
+   * so the feed re-subscribes when the active seat changes and reads the
+   * log as that seat; ChatPanel already filters what a seat may not see.
+   * The narration lines stay local and merge in beside the spoken ones.
+   */
+  const talk = useRef<ChatFeed | null>(null)
+  useEffect(() => {
+    const client = mine?.client
+    if (!matchId || !client) return
+    const feed = watchDuneChat(matchId, {
+      client,
+      onMessages: lines => setChat(c => mergeChat(c, lines)),
+    })
+    talk.current = feed
+    return () => { feed.stop(); talk.current = null }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchId, mine?.client])
+
+  /** Say something AS the selected seat — the same insert the real screen
+   *  makes, through this seat's own client, so RLS sees the right author. */
+  const speakAs = async (session: SeatSession, text: string, scope: ChatSendScope) => {
+    try {
+      await sayTo(matchId, { playerId: session.login.seat, faction: session.login.faction },
+        text, scope as never, session.client ?? undefined)
+      await talk.current?.reread()
+    } catch (e) {
+      say(e instanceof Error ? e.message : 'that did not send')
+    }
+  }
+  const tableOthers = sessions
+    .filter(s => s.login.faction !== active)
+    .map(s => ({ playerId: s.login.seat, name: nameOf(s.login.faction) }))
+  const harnessSeatNames = Object.fromEntries(
+    sessions.map(s => [s.login.seat, nameOf(s.login.faction)]))
+
   return (
     <>
       <DuneGameScreen
@@ -535,6 +601,9 @@ export default function DuneMultiSeatView() {
         // reach the others: they are behind different clients entirely.
         own={(mine?.secrets ?? null) as DuneSecrets | null}
         chat={chat}
+        onSend={mine ? (text, scope) => void speakAs(mine, text, scope) : undefined}
+        talkingTo={mine ? tableOthers : []}
+        seatNames={harnessSeatNames}
         now={now}
         // THE WHOLE GRAMMAR, not most of it. This embed predates the rail and
         // the board's click layers, and without these two props the screen
@@ -667,9 +736,14 @@ export default function DuneMultiSeatView() {
                 away leaves nobody able to press anything and the auction cannot
                 end. This is that button. */}
             {biddingExpired && (
-              <button onClick={resolveExpiredBid} disabled={busy}>
+              <button onClick={() => void resolveExpiredBid()}>
                 Resolve expired bid
               </button>
+            )}
+            {resolveNote && (
+              <span data-resolve-note="" style={{ display: 'block', fontSize: 11, marginTop: 3, opacity: 0.85 }}>
+                {resolveNote}
+              </span>
             )}
           </>
         ) : (

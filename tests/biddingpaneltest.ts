@@ -5,6 +5,7 @@
 // CANNOT appear unless it was handed in: the panel is what a player looks at,
 // and if prescience leaked here it would leak to the one place somebody is
 // actually watching.
+import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { BiddingPanel, BiddingBar } from '@/components/dune/BiddingPanel'
@@ -65,6 +66,33 @@ const draw = (over: Partial<BiddingPanelProps> = {}) =>
   check('a card handed in is drawn face up', seen.includes('LASGUN'), true)
   check('...and the slot says so, so the seat knows the table cannot see it',
     seen.includes('You alone can see this card'), true)
+
+  // ── A CARD CAN BE READ BEFORE IT IS BID ON ──────────────────────────────
+  // The small faces are buttons now, opening the same floating view the
+  // tray uses. The one that most needs it is the Atreides' glimpse — the
+  // card on the block, priced before a bid — and the seat's own hand beside
+  // it.
+  check('the glimpsed card opens at reading size',
+    seen.includes('aria-label="Open Lasgun"'), true)
+  check('...and so does a card in the hand',
+    seen.includes('aria-label="Open Baliset"'), true)
+  const panelSrc = readFileSync('src/components/dune/BiddingPanel.tsx', 'utf8')
+  check('...into the tray\'s own floating view',
+    /<TreacheryCardFace card=\{zoomCard\} width=\{CARD_ZOOM\} \/>/.test(panelSrc), true)
+
+  // ── THE EXPIRED PUSH SPEAKS ─────────────────────────────────────────────
+  // The second deadlock was not the rules: the push could fail three ways in
+  // silence — no client, a busy flag, an error filed under a seat nobody was
+  // viewing. Now it rides any signed-in session and reads its outcome out.
+  const harness = readFileSync('src/components/dune/DuneMultiSeatView.tsx', 'utf8')
+  check('the push rides any signed-in session',
+    /\[sessions\.find\(x => x\.login\.faction === waitingOn\), mine, \.\.\.sessions\]\s*[\r\n]+\s*\.find\(x => x\?\.client\)/.test(harness), true)
+  check('...says so when there is none',
+    /if \(!actor\?\.client\) \{ setResolveNote\('no signed-in session to push with'\); return \}/.test(harness), true)
+  check('...reads a refusal out instead of filing it away',
+    /setResolveNote\(`refused: \$\{res\.error\?\.code \?\? 'unknown'\}/.test(harness), true)
+  check('...and the note has a place on the box',
+    /data-resolve-note/.test(harness), true)
   check('...and it is no longer a back', seen.includes('face down'), false)
 }
 // null and undefined both mean "not entitled", and both have to behave the

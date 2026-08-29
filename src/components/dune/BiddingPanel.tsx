@@ -24,6 +24,8 @@
 import { useEffect, useState } from 'react'
 import { SeatMark, FACTION_LOOK } from './SeatLayer'
 import { TreacheryCardFace, TreacheryCardBack, CARD_W, CARD_H } from './TreacheryCardFace'
+import DraggableResizable from '@/components/DraggableResizable'
+import { CARD_ZOOM } from './OwnStrip'
 import { MINIMUM_OPENING_BID } from '@/lib/dune/bidding'
 import type { BidAsk, BidRefusal } from '@/lib/dune/bidding'
 import type { TreacheryCard } from '@/types/Dune/Treachery'
@@ -224,6 +226,10 @@ export function BiddingPanel(props: BiddingPanelProps) {
   // Arrakeen this turn, who is standing next to your spice. Being unable to look
   // at the map while pricing a card for it is the whole complaint.
   const [shut, setShut] = useState(false)
+  /** One card opened at reading size — the same floating view the tray uses,
+   *  because a card most needs reading BEFORE a bid: your own hand, and the
+   *  Atreides' glimpse of the card on the block. */
+  const [zoomCard, setZoomCard] = useState<TreacheryCard | null>(null)
   /**
    * The moment between cards, when the last one has closed and the next is not
    * open yet.
@@ -325,7 +331,14 @@ export function BiddingPanel(props: BiddingPanelProps) {
           {/* ── the card ─────────────────────────────────────────────────── */}
           <div style={{ width: CARD_W * 0.8 }}>
             {revealed
-              ? <TreacheryCardFace card={revealed} width={CARD_W * 0.8} />
+              ? <button type="button" onClick={() => setZoomCard(revealed)}
+                  aria-label={`Open ${revealed.name}`}
+                  style={{
+                    background: 'none', border: 'none', padding: 0,
+                    cursor: 'zoom-in', lineHeight: 0,
+                  }}>
+                  <TreacheryCardFace card={revealed} width={CARD_W * 0.8} />
+                </button>
               : <TreacheryCardBack width={CARD_W * 0.8} />}
             <div style={{ marginTop: 6, fontSize: 12, opacity: 0.8, textAlign: 'center' }}>
               {revealed
@@ -386,10 +399,28 @@ export function BiddingPanel(props: BiddingPanelProps) {
             {hand.length === 0
               ? <span style={{ fontSize: 12, opacity: 0.6 }}>no cards</span>
               : hand.map((c, i) => (
-                <TreacheryCardFace key={`${c.id}-${i}`} card={c} width={CARD_W * 0.3} />
+                <button key={`${c.id}-${i}`} type="button" onClick={() => setZoomCard(c)}
+                  aria-label={`Open ${c.name}`}
+                  style={{
+                    background: 'none', border: 'none', padding: 0,
+                    cursor: 'zoom-in', lineHeight: 0,
+                  }}>
+                  <TreacheryCardFace card={c} width={CARD_W * 0.3} />
+                </button>
               ))}
           </div>
         </div>
+
+        {zoomCard && (
+          <DraggableResizable title={zoomCard.name}
+            accentColor={FACTION_LOOK[seat].colour}
+            width={CARD_ZOOM + 34} storageKey={`dune-card-${seat}`}
+            onClose={() => setZoomCard(null)}>
+            <div data-layer="card-zoom" style={{ display: 'flex', justifyContent: 'center' }}>
+              <TreacheryCardFace card={zoomCard} width={CARD_ZOOM} />
+            </div>
+          </DraggableResizable>
+        )}
       </div>
     </div>
   )
