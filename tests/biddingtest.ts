@@ -516,5 +516,21 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
   check('no pause supplied, no pause imposed', at(plain)?.pauseUntil, undefined)
 }
 
+// ── the deck's own limit on the row ────────────────────────────────────────
+// cardsOnOffer says how many the TABLE may take; the pile says how many
+// EXIST. A dry deck offers what it has — the cap is the caller's, because
+// only the server can see the pile — and a cap of nothing settles the
+// auction before it asks anyone anything, which is what lets the phase be
+// skipped rather than deadlocked on cards that are all in hands already.
+{
+  const capped = start({ cardCap: 2 })
+  check('the deck caps the row below the table\'s appetite',
+    carryOf(capped).cardCount, 2)
+  check('...an absent cap changes nothing',
+    carryOf(start()).cardCount, cardsOnOffer(ORDER, EMPTY, LIMITS))
+  check('...and a dry deck settles the auction unasked',
+    start({ cardCap: 0 }).status, 'settled')
+}
+
 // Not optional: without an exit code the runner counts a failing suite green.
 process.exit(pass ? 0 : 1)

@@ -327,13 +327,22 @@ export function beginAuction(input: {
   hands: Readonly<Record<string, number>>
   limits: Readonly<Record<string, number>>
   closesAt: number
+  /**
+   * The DECK'S limit on the row — the one number the seats cannot derive.
+   * cardsOnOffer says how many the table may take; the pile says how many
+   * exist to be taken, and a dry deck offers what it has rather than
+   * promising cards that are in nobody's hands to sell.
+   */
+  cardCap?: number
 }): BidStep {
   const carry: AuctionCarry = {
     turn: input.turn,
     order: [...input.order],
     hands: { ...input.hands },
     limits: { ...input.limits },
-    cardCount: cardsOnOffer(input.order, input.hands, input.limits),
+    cardCount: Math.min(
+      cardsOnOffer(input.order, input.hands, input.limits),
+      input.cardCap ?? Number.POSITIVE_INFINITY),
     index: 0,
     high: null,
     passed: [],

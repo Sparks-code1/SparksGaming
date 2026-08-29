@@ -466,10 +466,31 @@ Deno.serve(async req => {
       const { data: deckRows } = await admin
         .from('match_decks').select('deck, cards').eq('match_id', matchId)
       const piles = Object.fromEntries((deckRows ?? []).map((r) => [r.deck, r.cards as string[]]))
+
+      // AN EXHAUSTED DECK DEGRADES, NEVER DEADLOCKS. The row is as long as
+      // the cards that exist: fewer than the seats could take means fewer
+      // cards auctioned, and none at all means the phase is skipped — the
+      // pointer lands with nothing to bid on, and the turn walks on to
+      // Revival at the next press instead of refusing forever.
+      const available = (piles.treachery ?? []).length
+        + ((state.treacheryDiscard ?? []) as string[]).length
+      const offered = Math.min(count, available)
+      if (offered === 0) {
+        const { data, error } = await admin.rpc('apply_match_write', {
+          p_match_id: matchId,
+          p_expected_version: match.version,
+          p_state: { ...baseState, biddingSkipped: true },
+          p_secrets: {},
+        })
+        if (error) return json({ error: error.message }, 500)
+        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+        return json({ biddingSkipped: true, reason: 'deck-exhausted', version: data[0].version })
+      }
+
       let deal
       try {
         deal = drawTreachery(
-          piles.treachery ?? [], (state.treacheryDiscard ?? []) as string[], count,
+          piles.treachery ?? [], (state.treacheryDiscard ?? []) as string[], offered,
           (cards) => shuffleWithSeed(Number(match.rng_seed) + match.action_seq, cards),
         )
       } catch (e) {
@@ -479,6 +500,8 @@ Deno.serve(async req => {
       const step = beginAuction({
         turn: baseState.turn ?? 0, order, hands, limits,
         closesAt: now + BID_SECONDS * 1000,
+        // the deck's truth caps the row — see beginAuction.cardCap
+        cardCap: offered,
       })
 
       // ── Atreides prescience ─────────────────────────────────────────────
@@ -2415,6 +2438,25 @@ Deno.serve(async req => {
         .eq('match_id', matchId).eq('player_id', playerId).maybeSingle()
       const secrets = (mineRow?.data ?? {}) as { spice?: number; cards?: string[] }
 
+      // THE ECONOMY STAYS CLOSED even for a conjured card: each granted id is
+      // withdrawn from the deck when the deck holds one, so circulation never
+      // quietly exceeds the printed set — an inflated deck is how a seeded
+      // match came to deadlock bidding on cards that did not exist. A card
+      // the deck lacks is still granted; this is scaffolding, and the
+      // operator was warned the ids are theirs to get right.
+      let grantDecks: Record<string, unknown> = {}
+      if (giveCards.length > 0) {
+        const { data: deckRow } = await admin
+          .from('match_decks').select('cards')
+          .eq('match_id', matchId).eq('deck', 'treachery').maybeSingle()
+        const pile = [...((deckRow?.cards ?? []) as string[])]
+        for (const id of giveCards) {
+          const i = pile.indexOf(id)
+          if (i >= 0) pile.splice(i, 1)
+        }
+        grantDecks = { treachery: pile }
+      }
+
       let forces = [...((state.forces ?? []) as {
         faction: string; territoryId: string; sector: string; count: number; starred?: number
       }[])]
@@ -2459,6 +2501,7 @@ Deno.serve(async req => {
             cards: [...(secrets.cards ?? []), ...giveCards],
           },
         },
+        p_decks: grantDecks,
       })
       if (error) return json({ error: error.message }, 500)
       if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)

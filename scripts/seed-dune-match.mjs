@@ -416,6 +416,19 @@ if (PHASE === 'bidding') {
   await admin.from('match_decks').insert({
     match_id: match.id, deck: 'treachery', cards: treacheryIds(),
   })
+} else if (PHASE === 'battle') {
+  // THE ECONOMY STAYS CLOSED: the battle fixture deals hands, so the deck
+  // holds the printed set MINUS exactly those cards. Dealt without stocking,
+  // a later Bidding phase asked the store for cards that did not exist and
+  // deadlocked the turn on deck-exhausted.
+  const pile = [...treacheryIds()]
+  for (const id of Object.values(BATTLE_HANDS).flat()) {
+    const i = pile.indexOf(id)
+    if (i >= 0) pile.splice(i, 1)
+  }
+  await admin.from('match_decks').insert({
+    match_id: match.id, deck: 'treachery', cards: pile,
+  })
 } else if (PHASE === 'blow') {
   // Two worms then two territories: pile A turns a worm that eats the showing
   // card, a second that is the Fremen's, and then a territory to land on.

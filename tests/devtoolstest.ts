@@ -130,6 +130,20 @@ const base = {
     /returnLeaderToTanks\(\s*[\r\n]+\s*tanks, myFaction as never, name,\s*[\r\n]+\s*\{ wasRevived: revived\.includes\(name\) \}/.test(grant), true)
   check('...keeps the public hand count honest',
     /handCount: p\.handCount \+ giveCards\.length,/.test(grant), true)
+  check('...and withdraws a granted card from the deck it exists in',
+    /const i = pile\.indexOf\(id\)/.test(grant)
+      && /p_decks: grantDecks,/.test(grant), true)
+
+  // AN EXHAUSTED DECK DEGRADES, NEVER DEADLOCKS: the row is as long as the
+  // cards that exist, and a deck with none skips the phase outright.
+  const auction = fn.slice(fn.indexOf('const openTheAuction'), fn.indexOf("case 'OPEN_CHARITY'"))
+  check('the auction offers only what exists',
+    /const offered = Math\.min\(count, available\)/.test(auction), true)
+  check('...capping the row at the deck\'s truth',
+    /cardCap: offered,/.test(auction), true)
+  check('...and a dry deck skips the phase, not the turn',
+    /if \(offered === 0\) \{/.test(auction)
+      && /reason: 'deck-exhausted'/.test(auction), true)
   check('...and refuses an empty grant',
     /code: 'nothing-asked'/.test(grant), true)
 }
@@ -198,6 +212,15 @@ const base = {
     }))
     .filter(x => x.factions.length > 2)
   check('...and no seeded stronghold holds more than two factions', overfull, [])
+
+  // THE ECONOMY STAYS CLOSED. The battle fixture deals hands, so the deck
+  // must hold the printed set minus exactly those cards — dealt without
+  // stocking, a later Bidding asked the store for cards that did not exist
+  // and deadlocked the turn.
+  check('the battle seed stocks the deck it dealt from',
+    /const pile = \[\.\.\.treacheryIds\(\)\]/.test(seed)
+      && /for \(const id of Object\.values\(BATTLE_HANDS\)\.flat\(\)\)/.test(seed)
+      && /deck: 'treachery', cards: pile,/.test(seed), true)
   check('...the three-sider standing on open sand instead',
     [...new Set(fixtureForces
       .filter(x => x.territoryId === 'territory-22').map(x => x.faction))].length, 3)

@@ -92,7 +92,10 @@ function beginAuction(input) {
     order: [...input.order],
     hands: { ...input.hands },
     limits: { ...input.limits },
-    cardCount: cardsOnOffer(input.order, input.hands, input.limits),
+    cardCount: Math.min(
+      cardsOnOffer(input.order, input.hands, input.limits),
+      input.cardCap ?? Number.POSITIVE_INFINITY
+    ),
     index: 0,
     high: null,
     passed: [],
