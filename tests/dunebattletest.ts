@@ -305,8 +305,11 @@ const side = (faction: FactionId, plan: BattlePlan, calledTraitor = false) => {
 }
 
 // ── the deadlines are real numbers ────────────────────────────────────────
+// FIVE MINUTES A BATTLE: the plan is the game's deepest decision. Each
+// pick stamps its own fresh window, so an aggressor with three battles gets
+// five minutes at each wheel — pinned on the server slice below.
 check('the three windows have their seconds',
-  [BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS], [60, 120, 30])
+  [BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS], [120, 300, 60])
 
 // ── the server slice ──────────────────────────────────────────────────────
 // The rules above ride the shared bundle; what the endpoint owns is pinned:
@@ -326,6 +329,8 @@ check('the three windows have their seconds',
   const pick = fn.slice(fn.indexOf("case 'BATTLE_PICK'"), fn.indexOf("case 'BATTLE_PLAN'"))
   check('the aggressor picks, until the clock frees anyone',
     /if \(!expired && myFaction !== aggressor\)/.test(pick), true)
+  check('...and every battle stamps its own fresh five minutes',
+    /closesAt: now \+ BATTLE_PLAN_SECONDS \* 1000/.test(pick), true)
   check('...and an expired pick is the deterministic first',
     /expired \? theirs\[0\]\.territoryId/.test(pick), true)
 
@@ -392,15 +397,35 @@ check('the three windows have their seconds',
     committed: [], closesAt: 9_999_999_999_999,
   }
   const planning = draw({ battles: { ...battles, current } })
-  check('a combatant gets the plan form',
-    [/id="battle-dial"/.test(planning), /data-plan-commit/.test(planning)], [true, true])
-  check('...their leaders priced on the buttons',
-    planning.includes(`data-plan-leader="${JESSICA}"`), true)
-  check('...the hand filtered to weapons and defences',
+  // THE WHEEL, not a number field: numbers round the rim as far as the
+  // forces standing there, a pointer, and a hub waiting for a face.
+  check('a combatant gets the wheel',
+    [/data-layer="battle-wheel"/.test(planning), /data-plan-commit/.test(planning)], [true, true])
+  check('...its numbers running only as far as the forces there',
+    (planning.match(/data-dial-number="/g) ?? []).length, 5)
+  check('...the hub empty until a disc is placed',
+    /data-wheel-leader=""/.test(planning), true)
+  // THE DISC CARRIES THE FACE. The leader row is LeaderDisc art, and the
+  // chosen one renders INTO the hub — pinned in source because placing it
+  // is a click away from a static render.
+  check('...their leaders offered as discs',
+    planning.includes(`data-plan-leader="${JESSICA}"`)
+      && /data-leader-disc/.test(planning) === false
+      ? planning.includes('leader-clip-') || /data-face/.test(planning)
+      : false, true)
+  check('...and the chosen disc slots into the hub',
+    /\{leader \? \(\s*[\r\n]+\s*<LeaderDisc leader=\{leader\} faction=\{faction\} r=\{52\} \/>/.test(
+      readFileSync('src/components/dune/BattlePanel.tsx', 'utf8')), true)
+  // THE CARDS ARE CARDS: rules text on the face, a magnifier to the tray's
+  // floating view, and no card offered as a bare name in a list.
+  check('...the hand drawn as readable card faces',
+    [planning.includes('CRYSKNIFE'), planning.includes('SHIELD'),
+      planning.includes('aria-label="Read Crysknife"')], [true, true, true])
+  check('...weapons and defences filtered to their rows',
     [planning.includes('data-plan-weapon="crysknife"'),
       planning.includes('data-plan-defence="shield"'),
       planning.includes('data-plan-weapon="shield"')], [true, true, false])
-  check('...and the Cheap Hero offered when held',
+  check('...and the Cheap Hero offered as its card when held',
     /data-plan-hero/.test(planning), true)
   check('a committed seat waits without a form',
     /data-plan-commit/.test(draw({

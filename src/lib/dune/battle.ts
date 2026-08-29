@@ -35,11 +35,19 @@ import type { FactionId } from '@/types/Dune/Faction'
 import type { Force, SectorId } from '@/types/Dune/Game'
 
 /** How long the aggressor has to pick a battle before anyone may push one. */
-export const BATTLE_PICK_SECONDS = 60
-/** How long both sides have to commit plans. Silence dials zero. */
-export const BATTLE_PLAN_SECONDS = 120
+export const BATTLE_PICK_SECONDS = 120
+/**
+ * How long both sides have to commit plans: five minutes a battle.
+ *
+ * A battle plan is the deepest decision in the game — the wheel, the leader,
+ * two cards, a bluff — and the first cut's two minutes rushed it. EACH battle
+ * stamps its own fresh window at the pick, so an aggressor fighting three
+ * battles gets five minutes at each wheel, not five for the afternoon.
+ * Silence still dials zero when the window shuts.
+ */
+export const BATTLE_PLAN_SECONDS = 300
 /** The traitor beat after the reveal. Silence declines. */
-export const BATTLE_TRAITOR_SECONDS = 30
+export const BATTLE_TRAITOR_SECONDS = 60
 
 export const CHEAP_HERO_ID = 'cheaphero'
 

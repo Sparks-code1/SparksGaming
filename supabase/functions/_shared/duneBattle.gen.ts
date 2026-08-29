@@ -1321,9 +1321,9 @@ var FACTIONS = {
 var factionById = (id) => FACTIONS[id] ?? null;
 
 // src/lib/dune/battle.ts
-var BATTLE_PICK_SECONDS = 60;
-var BATTLE_PLAN_SECONDS = 120;
-var BATTLE_TRAITOR_SECONDS = 30;
+var BATTLE_PICK_SECONDS = 120;
+var BATTLE_PLAN_SECONDS = 300;
+var BATTLE_TRAITOR_SECONDS = 60;
 var CHEAP_HERO_ID = "cheaphero";
 var card = (id) => TREACHERY_CARDS.find((c) => c.id === id);
 var num = (s) => Number(s.slice("sector-".length));

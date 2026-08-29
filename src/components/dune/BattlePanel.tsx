@@ -20,6 +20,10 @@
  */
 import { useState } from 'react'
 import { FACTION_LOOK } from './SeatLayer'
+import { LeaderDisc } from './LeaderDisc'
+import { TreacheryCardFace } from './TreacheryCardFace'
+import DraggableResizable from '@/components/DraggableResizable'
+import { CARD_ZOOM } from './OwnStrip'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { factionById } from '@/data/dune/factions'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
@@ -27,7 +31,8 @@ import {
   pendingBattles, battlesFor, forcesInBattle, CHEAP_HERO_ID,
 } from '@/lib/dune/battle'
 import type { DuneGameState } from '@/types/Dune/Game'
-import type { FactionId } from '@/types/Dune/Faction'
+import type { FactionId, Leader } from '@/types/Dune/Faction'
+import type { TreacheryCard } from '@/types/Dune/Treachery'
 
 const INK = '#141b2d'
 const SAND = '#f0e2bb'
@@ -53,6 +58,76 @@ export interface BattlePanelProps {
     dial: number; leader?: string; cheapHero?: boolean; weapon?: string; defence?: string
   }) => void
   onAnswer: (call: boolean) => void
+}
+
+/**
+ * THE WHEEL, as the table knows it: numbers round the rim, a pointer at the
+ * chosen one, and the leader's own face slotted into the hub — you see WHOSE
+ * face you are committing, not a name in a list. A click on a number sets
+ * the dial; the numbers run only as high as the forces actually standing in
+ * the territory, because the wheel cannot promise what the ground does not
+ * hold.
+ */
+export function BattleWheel({ faction, max, dial, onDial, leader, hero }: {
+  faction: FactionId
+  max: number
+  dial: number
+  onDial: (n: number) => void
+  leader: Leader | null
+  hero: boolean
+}) {
+  const R = 106
+  const start = -225
+  const step = max > 0 ? 270 / max : 0
+  const at = (n: number) => {
+    const a = (start + n * step) * Math.PI / 180
+    return { x: Math.cos(a) * R, y: Math.sin(a) * R }
+  }
+  const p = at(dial)
+  return (
+    <svg data-layer="battle-wheel" data-wheel-dial={dial}
+      data-wheel-leader={leader ? leader.name : hero ? 'cheap-hero' : ''}
+      viewBox="-130 -130 260 260" width="252" height="252"
+      style={{ display: 'block', margin: '10px auto' }}>
+      <circle r="126" fill="#1d2a44" stroke={`${SAND}55`} strokeWidth="2" />
+      <circle r="86" fill="#101726" stroke={`${SAND}33`} strokeWidth="1.5" />
+      <line x1={p.x * 0.62} y1={p.y * 0.62} x2={p.x * 0.82} y2={p.y * 0.82}
+        stroke="#c9542a" strokeWidth="5" strokeLinecap="round" />
+      {Array.from({ length: max + 1 }, (_, n) => {
+        const q = at(n)
+        const on = n === dial
+        return (
+          <g key={n} data-dial-number={n} onClick={() => onDial(n)}
+            style={{ cursor: 'pointer' }}>
+            <title>{`Dial ${n}`}</title>
+            <circle cx={q.x} cy={q.y} r="13" fill={on ? '#c9542a' : '#22304f'}
+              stroke={on ? SAND : `${SAND}44`} strokeWidth={on ? 2 : 1} />
+            <text x={q.x} y={q.y} fontSize="11" fill={SAND} textAnchor="middle"
+              dominantBaseline="central" fontFamily={SERIF}>{n}</text>
+          </g>
+        )
+      })}
+      {/* THE HUB: the disc goes onto the wheel the way the real one slots in. */}
+      {leader ? (
+        <LeaderDisc leader={leader} faction={faction} r={52} />
+      ) : hero ? (
+        <g>
+          <circle r="52" fill="#22304f" stroke={SAND} strokeWidth="1.5" />
+          <text y="-7" fontSize="13" fill={SAND} textAnchor="middle"
+            fontFamily={SERIF}>Cheap</text>
+          <text y="11" fontSize="13" fill={SAND} textAnchor="middle"
+            fontFamily={SERIF}>Hero</text>
+        </g>
+      ) : (
+        <g>
+          <circle r="52" fill="none" stroke={`${SAND}44`} strokeWidth="1.5"
+            strokeDasharray="5 4" />
+          <text fontSize="11" fill={SAND} opacity="0.6" textAnchor="middle"
+            dominantBaseline="central" fontFamily={SERIF}>no leader</text>
+        </g>
+      )}
+    </svg>
+  )
 }
 
 const btn: React.CSSProperties = {
@@ -88,6 +163,8 @@ export function BattlePanel({
   const [weapon, setWeapon] = useState<string | null>(null)
   const [defence, setDefence] = useState<string | null>(null)
   const [shut, setShut] = useState(false)
+  /** One card opened at reading size — the tray's floating view. */
+  const [zoomCard, setZoomCard] = useState<TreacheryCard | null>(null)
 
   const c = battles.current
   const aggressor = battles.order[battles.at]
@@ -258,6 +335,43 @@ export function BattlePanel({
   const weapons = hand.filter(id => TREACHERY_CARDS.find(x => x.id === id)?.kind === 'weapon')
   const defences = hand.filter(id => TREACHERY_CARDS.find(x => x.id === id)?.kind === 'defense')
   const mayPlayCards = !!leader || hero
+  const leaderObj = usable.find(l => l.name === leader) ?? null
+  const heroCard = TREACHERY_CARDS.find(x => x.id === CHEAP_HERO_ID)!
+
+  /** Weapon or defence, drawn as the CARD it is — rules text on its face,
+   *  a magnifier to the tray's floating view — dark until a leader or the
+   *  hero can carry it. */
+  const cardRow = (ids: string[], picked: string | null,
+    set: (id: string | null) => void, tag: 'weapon' | 'defence') => (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      {ids.map(id => {
+        const cardObj = TREACHERY_CARDS.find(x => x.id === id)!
+        return (
+          <div key={id} style={{ position: 'relative' }}>
+            <button type="button" aria-pressed={picked === id}
+              disabled={!mayPlayCards}
+              {...(tag === 'weapon' ? { 'data-plan-weapon': id } : { 'data-plan-defence': id })}
+              onClick={() => set(picked === id ? null : id)}
+              style={{
+                background: 'none', padding: 2, lineHeight: 0,
+                cursor: mayPlayCards ? 'pointer' : 'default',
+                border: picked === id ? '2px solid #c9542a' : `2px solid ${SAND}22`,
+                borderRadius: 8, opacity: mayPlayCards ? 1 : 0.5,
+              }}>
+              <TreacheryCardFace card={cardObj} width={150} />
+            </button>
+            <button type="button" aria-label={`Read ${cardObj.name}`}
+              onClick={() => setZoomCard(cardObj)}
+              style={{
+                position: 'absolute', top: 6, right: 6, padding: '1px 5px',
+                background: '#000000aa', color: SAND, border: `1px solid ${SAND}55`,
+                borderRadius: 4, cursor: 'zoom-in', fontSize: 12,
+              }}>🔍</button>
+          </div>
+        )
+      })}
+    </div>
+  )
 
   return frame(
     <>
@@ -265,62 +379,59 @@ export function BattlePanel({
         Your battle plan — {territoryName(c.territoryId)} vs{' '}
         {FACTION_LOOK[seat === c.aggressor ? c.defender : c.aggressor].name}
       </b>
-      <label htmlFor="battle-dial" style={{ display: 'block', marginTop: 8, fontSize: 12, opacity: 0.8 }}>
-        Forces dialled (0–{maxDial}) — the dial is lost win or lose
-      </label>
-      <input id="battle-dial" type="number" min={0} max={maxDial} value={dial}
-        onChange={e => setDial(Math.max(0, Math.min(maxDial, Number(e.target.value))))}
-        style={{
-          width: 80, background: '#ffffff12', color: SAND,
-          border: `1px solid ${SAND}44`, borderRadius: 4, padding: '4px 6px',
-          userSelect: 'text', WebkitUserSelect: 'text',
-        }} />
-      <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>Leader</div>
-      {usable.map(l => (
-        <button key={l.name} type="button" data-plan-leader={l.name}
-          onClick={() => { setLeader(leader === l.name ? null : l.name); setHero(false) }}
-          style={leader === l.name ? chosen : btn}>
-          {l.name} — strength {l.strength}
-        </button>
-      ))}
-      {heroHeld && (
-        <button type="button" data-plan-hero=""
-          onClick={() => { setHero(!hero); setLeader(null) }}
-          style={hero ? chosen : btn}>
-          Cheap Hero — strength 0, spent when played
-        </button>
-      )}
+      <BattleWheel faction={seat!} max={maxDial} dial={dial} onDial={setDial}
+        leader={leaderObj} hero={hero} />
+      <div style={{ textAlign: 'center', fontSize: 12, opacity: 0.8, marginTop: -4 }}>
+        The dial is lost win or lose
+      </div>
+
+      <div style={{ marginTop: 10, fontSize: 12, opacity: 0.8 }}>
+        The disc for the hub
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        {usable.map(l => (
+          <button key={l.name} type="button" data-plan-leader={l.name}
+            aria-pressed={leader === l.name}
+            title={`${l.name} — strength ${l.strength}`}
+            onClick={() => { setLeader(leader === l.name ? null : l.name); setHero(false) }}
+            style={{
+              background: 'none', padding: 2, lineHeight: 0, cursor: 'pointer',
+              border: leader === l.name ? '2px solid #c9542a' : '2px solid transparent',
+              borderRadius: '50%',
+            }}>
+            <svg viewBox="-34 -34 68 68" width="64" height="64">
+              <LeaderDisc leader={l} faction={seat!} r={32} />
+            </svg>
+          </button>
+        ))}
+        {heroHeld && (
+          <button type="button" data-plan-hero=""
+            aria-pressed={hero}
+            onClick={() => { setHero(!hero); setLeader(null) }}
+            style={{
+              background: 'none', padding: 2, lineHeight: 0, cursor: 'pointer',
+              border: hero ? '2px solid #c9542a' : `2px solid ${SAND}22`,
+              borderRadius: 6,
+            }}>
+            <TreacheryCardFace card={heroCard} width={56} />
+          </button>
+        )}
+      </div>
       {usable.length === 0 && !heroHeld && (
         <p style={{ fontSize: 12, opacity: 0.75 }}>
           No leader and no Cheap Hero: you fight with forces alone and may
           play no treachery cards.
         </p>
       )}
-      {/* THE CARDS SHOW WHILE THE LEADER IS STILL BEING CHOSEN — a plan is
-          priced as a whole — but they stay dark until someone can carry
-          them: no leader and no hero plays no treachery. */}
+
       {(usable.length > 0 || heroHeld) && (weapons.length > 0 || defences.length > 0) && (
         <>
-          <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
+          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.8 }}>
             Weapon{mayPlayCards ? '' : ' — pick a leader first'}
           </div>
-          {weapons.map(id => (
-            <button key={id} type="button" data-plan-weapon={id}
-              disabled={!mayPlayCards}
-              onClick={() => setWeapon(weapon === id ? null : id)}
-              style={weapon === id ? chosen : { ...btn, opacity: mayPlayCards ? 1 : 0.5 }}>
-              {cardName(id)}
-            </button>
-          ))}
-          <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>Defence</div>
-          {defences.map(id => (
-            <button key={id} type="button" data-plan-defence={id}
-              disabled={!mayPlayCards}
-              onClick={() => setDefence(defence === id ? null : id)}
-              style={defence === id ? chosen : { ...btn, opacity: mayPlayCards ? 1 : 0.5 }}>
-              {cardName(id)}
-            </button>
-          ))}
+          {cardRow(weapons, weapon, setWeapon, 'weapon')}
+          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.8 }}>Defence</div>
+          {cardRow(defences, defence, setDefence, 'defence')}
         </>
       )}
       <button type="button" disabled={busy} data-plan-commit=""
@@ -334,6 +445,17 @@ export function BattlePanel({
         style={{ ...chosen, marginTop: 12 }}>
         Commit the plan — it reveals with theirs
       </button>
+
+      {zoomCard && (
+        <DraggableResizable title={zoomCard.name}
+          accentColor={seat ? FACTION_LOOK[seat].colour : SAND}
+          width={CARD_ZOOM + 34} storageKey={`dune-card-battle-${seat}`}
+          onClose={() => setZoomCard(null)}>
+          <div data-layer="card-zoom" style={{ display: 'flex', justifyContent: 'center' }}>
+            <TreacheryCardFace card={zoomCard} width={CARD_ZOOM} />
+          </div>
+        </DraggableResizable>
+      )}
     </>,
   )
 }
