@@ -37,25 +37,26 @@ const BACKDROPS = [
   'Arrakeen-Atreides.jpg',
   'Carthag.jpg',
   'Carthag-Harkonnen.jpg',
+  // The first terrain backdrop: an open-desert battle beneath rock
+  // outcroppings — ground for battles in any rock territory, rather than
+  // one named place. Sand is promised to follow.
+  'Dune-Rock.png',
 ]
 
 /**
  * Art that has ARRIVED but is not yet named into the grammar above — looked
- * at, listed, and deliberately not blessed. 'Arkeen-Battle.png' is a stepped
- * citadel under assault — ornithopters overhead, forces storming a causeway:
- * an Arrakeen battle scene under the filename's own spelling. 'Dune-Rock.png'
- * is an open-desert battle beneath rock outcroppings that names no territory
- * at all, which <Territory>[-<Faction>].jpg cannot express.
+ * at, listed, and deliberately not blessed. 'Arrakeen-Battle.png' (renamed
+ * from the file's own 'Arkeen') is a stepped citadel under assault —
+ * ornithopters overhead, forces storming a causeway: an Arrakeen battle
+ * scene. '-Battle' names neither a faction nor a terrain, so which slot it
+ * fills is still the owner's decision.
  *
- * They sit HERE so the nothing-unlisted check still catches the next stray
- * file, while the owner decides what these become: renamed into the grammar,
- * or the grammar grown — a generic-terrain backdrop is a new idea, and not
- * this suite's to invent. Everything in this list is exempt from the naming
- * and JPEG checks below exactly because it has not been claimed yet.
+ * It sits HERE so the nothing-unlisted check still catches the next stray
+ * file. Everything in this list is exempt from the naming and picture
+ * checks below exactly because it has not been claimed yet.
  */
 const UNPLACED = [
-  'Arkeen-Battle.png',
-  'Dune-Rock.png',
+  'Arrakeen-Battle.png',
 ]
 
 const files = readdirSync(DIR).filter(f => !f.endsWith('.md'))
@@ -86,6 +87,25 @@ const files = readdirSync(DIR).filter(f => !f.endsWith('.md'))
   const territories = new Map(DUNE_TERRITORIES.map(t => [t.displayName, t.id]))
   const factions = new Map(FACTION_IDS.map(f => [FACTION_LOOK[f].name, f]))
 
+  // THE TERRAIN FORM: Dune-<Terrain>, a backdrop for a KIND of ground rather
+  // than one place — battles happen all over the desert, and forty-odd
+  // territories will not each get a painting. The terrain half is matched
+  // against the board's own terrain values, so 'Dune-Lava' is caught the
+  // same way a misspelt territory is.
+  const TERRAINS = new Set(DUNE_TERRITORIES.map(t => t.terrain))
+  const terrainName = (file: string) => {
+    const m = /^Dune-(.+)\.(?:jpg|png)$/.exec(file)
+    return m ? m[1].toLowerCase() : null
+  }
+  const isTerrainFile = (f: string) => terrainName(f) !== null
+  check('every terrain backdrop names a terrain the board has',
+    BACKDROPS.filter(f => {
+      const t = terrainName(f)
+      return t !== null && !TERRAINS.has(t as never)
+    }), [])
+
+  const placed = BACKDROPS.filter(f => !isTerrainFile(f))
+
   const parse = (file: string) => {
     const stem = file.replace(/\.jpg$/, '')
     const dash = stem.indexOf('-')
@@ -94,10 +114,10 @@ const files = readdirSync(DIR).filter(f => !f.endsWith('.md'))
       : { place: stem.slice(0, dash), faction: stem.slice(dash + 1) }
   }
 
-  const unknownPlace = BACKDROPS.filter(f => !territories.has(parse(f).place))
+  const unknownPlace = placed.filter(f => !territories.has(parse(f).place))
   check('every backdrop names a territory the board has', unknownPlace, [])
 
-  const unknownFaction = BACKDROPS
+  const unknownFaction = placed
     .map(parse)
     .filter(p => p.faction !== null && !factions.has(p.faction))
     .map(p => p.faction)
@@ -105,9 +125,9 @@ const files = readdirSync(DIR).filter(f => !f.endsWith('.md'))
 
   // A FACTION VARIANT NEEDS ITS PLAIN COUNTERPART. A battle in Arrakeen where
   // the Atreides are not present still has to draw Arrakeen.
-  const orphanedVariants = BACKDROPS
+  const orphanedVariants = placed
     .map(parse)
-    .filter(p => p.faction !== null && !BACKDROPS.includes(`${p.place}.jpg`))
+    .filter(p => p.faction !== null && !placed.includes(`${p.place}.jpg`))
     .map(p => `${p.place}-${p.faction}.jpg`)
   check('...and no faction variant stands alone', orphanedVariants, [])
 
@@ -126,12 +146,18 @@ const files = readdirSync(DIR).filter(f => !f.endsWith('.md'))
 // this folder will not be on a screen for a while — so it is checked by magic
 // bytes rather than by extension, and by size rather than by existing.
 {
+  // BY MAGIC BYTES PER EXTENSION: a .png holding JPEG bytes is as broken as
+  // an empty file — something saved it wrong, and on screen it looks exactly
+  // like a picture that is missing.
   const broken = BACKDROPS.filter(f => {
     const bytes = readFileSync(`${DIR}/${f}`)
     if (bytes.length <= 2048) return true
+    if (f.endsWith('.png')) {
+      return !(bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47)
+    }
     return !(bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff)
   })
-  check('every backdrop is a JPEG with something in it', broken, [])
+  check('every backdrop is a real picture with something in it', broken, [])
 }
 
 // ── and nothing is using them yet ─────────────────────────────────────────

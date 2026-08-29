@@ -13,6 +13,8 @@ because the folder is easier to fill in a few sittings than in one.
 | `Arrakeen-Atreides.jpg` | Arrakeen | the Atreides, who start there |
 | `Carthag.jpg` | Carthag (`territory-26`) | nobody in particular |
 | `Carthag-Harkonnen.jpg` | Carthag | the Harkonnen, who start there |
+| `Dune-Rock.png` | any rock territory | nobody in particular |
+| `Arrakeen-Battle.png` | *unplaced* — an Arrakeen assault scene awaiting a slot | — |
 
 ## The naming
 
@@ -22,6 +24,12 @@ halves are matched against the game's own data — the territory against
 `displayName` in `src/data/dune/boardData.ts`, the faction against
 `FACTION_IDS` — so a misspelt file is caught now rather than as a battle that
 loads no picture.
+
+`Dune-<Terrain>.jpg` (or `.png`) for a backdrop that shows a KIND of ground
+rather than one place — `Dune-Rock`, `Dune-Sand` — matched against the
+board's own terrain values. Battles happen all over the desert, and forty-odd
+territories will not each get a painting; a battle with no painting of its own
+place can fall back to its ground.
 
 A faction variant needs its plain counterpart: a battle in Arrakeen where the
 Atreides are not present still has to draw Arrakeen.
