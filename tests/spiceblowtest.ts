@@ -6,7 +6,11 @@ import {
   shuffle, showing, SHAI_HULUD_COUNT,
 } from '@/lib/dune/spiceBlow'
 import type { SpiceCard } from '@/lib/dune/spiceBlow'
-import { beginDoubleSpiceBlow, placeFremenWorms, WORM_SECONDS } from '@/lib/dune/spiceBlow'
+import {
+  beginDoubleSpiceBlow, placeFremenWorms, WORM_SECONDS,
+  rideTerritories, judgeWormRide, WORM_RIDE_SECONDS, devourTerritory,
+} from '@/lib/dune/spiceBlow'
+import { readFileSync } from 'node:fs'
 import { BID_SECONDS } from '@/lib/dune/bidding'
 import { isAwaiting, runToSettled, deadlinePassed } from '@/lib/dune/phase'
 import type { Force, SectorId, TerritoryId } from '@/types/Dune/Game'
@@ -672,6 +676,131 @@ function awaitingAgain(carry: Parameters<typeof placeFremenWorms>[0]) {
   check('declining finishes the phase', declined.devouredByFremen, [])
   check('...and the worms were still counted as offered',
     declined.wormsForFremenToPlace > 0, true)
+}
+
+// ── the Fremen ride Shai-Hulud ────────────────────────────────────────────
+// Their basic advantage in two halves: the worm SPARES them — devourTerritory
+// has said so from the start — and after the Nexus they may ride, moving some
+// or all of a struck territory's forces ANYWHERE: no range and no path, only
+// the storm and the stronghold gate still standing.
+{
+  const board = [
+    { faction: 'fremen', territoryId: 'territory-30', sector: 'sector-8', count: 5, starred: 1 },
+    { faction: 'harkonnen', territoryId: 'territory-30', sector: 'sector-8', count: 3 },
+    { faction: 'fremen', territoryId: 'territory-22', sector: 'sector-15', count: 2 },
+    { faction: 'atreides', territoryId: 'territory-13', sector: 'sector-10', count: 1 },
+    { faction: 'harkonnen', territoryId: 'territory-13', sector: 'sector-10', count: 1 },
+  ] as never[]
+
+  // The rides on offer come from the meals: only where the spared still stand.
+  const meal = devourTerritory('territory-30' as never, board as never, {})
+  check('the worm spares the Fremen where it feeds',
+    [meal.forcesSpared.every(f => f.faction === 'fremen'),
+      meal.forcesKilled.every(f => f.faction !== 'fremen')], [true, true])
+  check('a fed territory with Fremen standing offers a ride',
+    rideTerritories([{ devoured: [meal] }]), ['territory-30'])
+  check('...and one without them offers none',
+    rideTerritories([{
+      devoured: [devourTerritory('territory-13' as never, [
+        { faction: 'atreides', territoryId: 'territory-13', sector: 'sector-10', count: 1 },
+      ] as never, {})],
+    }]), [])
+
+  const ride = (over: Record<string, unknown> = {}) => judgeWormRide({
+    from: 'territory-30',
+    gather: [{ sector: 'sector-8', count: 3, starred: 1 }],
+    to: { territoryId: 'territory-40', sector: undefined },
+    forces: board as never,
+    storm: 'sector-12' as never,
+    rideTerritories: ['territory-30'],
+    ...over,
+  } as never)
+
+  check('a ride crosses the whole board in one hop',
+    (() => { const r = ride(); return r.ok && r.moving })(), 3)
+  check('...but only from a territory the worm struck',
+    (ride({ from: 'territory-22', rideTerritories: ['territory-30'] }) as { refusal: string }).refusal,
+    'not-a-ride')
+  check('...never into the storm',
+    (ride({ to: { territoryId: 'territory-40' }, storm: 'sector-3' }) as { refusal: string })
+      .refusal === 'stormed'
+      || (() => {
+        const r = judgeWormRide({
+          from: 'territory-30', gather: [{ sector: 'sector-8', count: 1 }],
+          to: { territoryId: 'territory-02', sector: 'sector-4' },
+          forces: board as never, storm: 'sector-4' as never,
+          rideTerritories: ['territory-30'],
+        } as never)
+        return !r.ok && r.refusal === 'stormed'
+      })(), true)
+  check('...never through a full stronghold gate',
+    (judgeWormRide({
+      from: 'territory-30', gather: [{ sector: 'sector-8', count: 1 }],
+      to: { territoryId: 'territory-13' },
+      forces: board as never, storm: 'sector-12' as never,
+      rideTerritories: ['territory-30'],
+    } as never) as { refusal: string }).refusal, 'stronghold-full')
+  check('...never back where it started',
+    (ride({ to: { territoryId: 'territory-30' } }) as { refusal: string }).refusal,
+    'same-territory')
+  check('...and never more than stands there',
+    (ride({ gather: [{ sector: 'sector-8', count: 6 }] }) as { refusal: string }).refusal,
+    'nothing-there')
+  check('the ride window has its minute', WORM_RIDE_SECONDS, 60)
+}
+
+// ── the wiring, pinned ────────────────────────────────────────────────────
+{
+  const strip = (s: string) => s
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  const fn = strip(readFileSync('supabase/functions/dune-action/index.ts', 'utf8'))
+  check('the blow stamps the rides where the worms fed',
+    /const rides = seatOfFaction\['fremen'\]/.test(fn)
+      && /wormRide: \{ turn, territories: rides, closesAt: now \+ WORM_RIDE_SECONDS \* 1000 \}/.test(fn), true)
+  check('...and the advance clears an unridden window',
+    /if \(state\.phase === 'Spice Blow and Nexus'\) delete base\.wormRide/.test(fn), true)
+  check('the ride is judged by the shared law', /judgeWormRide\(\{/.test(fn), true)
+  check('...and only the Fremen ride',
+    /if \(myFaction !== 'fremen'\) \{\s*[\r\n]+\s*return json\(\{ error: 'only the Fremen ride'/.test(fn), true)
+
+  const hold = strip(readFileSync('src/lib/dune/phaseAdvance.ts', 'utf8'))
+  check('the ride holds the phase inside its window',
+    /code: 'worm-ride', until: state\.wormRide\.closesAt/.test(hold), true)
+
+  const screen = strip(readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8'))
+  check('the rail rises for the Fremen while the worm waits',
+    /seat === 'fremen' && state\.wormRide && now < state\.wormRide\.closesAt && onWormRide && \(/.test(screen), true)
+  check('...gathering per stack, capped at the stack',
+    /piles\[f\.sector\] = Math\.min\(f\.count, \(piles\[f\.sector\] \?\? 0\) \+ 1\)/.test(screen), true)
+  check('...landing anywhere but storm, gate and home',
+    /\.filter\(\(\) => !strongholdClosed\(state\.forces, 'fremen', t\.id\)\)/.test(screen), true)
+
+  const rail = readFileSync('src/components/dune/RideRail.tsx', 'utf8')
+  check('the rail says the ruling\'s own sentence',
+    /Click on units to ride the sandworm to move some or all of the forces/.test(rail), true)
+}
+
+// ── the watchers follow the ships ─────────────────────────────────────────
+{
+  const strip = (s: string) => s
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  const { bgFollowsShip } = await import('@/lib/dune/shipment')
+  check('another faction\'s off-planet shipment brings the watcher',
+    [bgFollowsShip('atreides' as never, 'off-planet'),
+      bgFollowsShip('spacing-guild' as never, 'off-planet')], [true, true])
+  check('...their own does not', bgFollowsShip('bene-gesserit' as never, 'off-planet'), false)
+  check('...nor the Fremen\'s, whose reserves never left the planet',
+    bgFollowsShip('fremen' as never, 'off-planet'), false)
+  check('...nor a cross-shipment or a retreat to reserves',
+    [bgFollowsShip('atreides' as never, 'cross'),
+      bgFollowsShip('spacing-guild' as never, 'to-reserves')], [false, false])
+
+  const fn = strip(readFileSync('supabase/functions/dune-action/index.ts', 'utf8'))
+  check('the follow rides in the shipment\'s own write',
+    /bgFollowsShip\(myFaction as never, kind\)/.test(fn)
+      && /POLAR_SINK, POLAR_SINK_SECTOR as never, 1, 0\)/.test(fn), true)
+  check('...and never overdraws an empty reserve',
+    /p\?\.faction === 'bene-gesserit' && p\.reserves > 0/.test(fn), true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

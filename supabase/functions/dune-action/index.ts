@@ -35,6 +35,10 @@ import {
   buildSpiceDeck, resolveSpiceBlow, beginDoubleSpiceBlow, placeFremenWorms,
   applyBlowToBoard, publicSpiceDeck, WORM_SECONDS,
 } from '../_shared/duneSpiceBlow.gen.ts'
+import {
+  rideTerritories, judgeWormRide, WORM_RIDE_SECONDS,
+} from '../_shared/duneSpiceBlow.gen.ts'
+import { bgFollowsShip, POLAR_SINK, POLAR_SINK_SECTOR } from '../_shared/duneShipment.gen.ts'
 import { prescienceFor, withReveal, PRESCIENT_FACTION } from '../_shared/dunePrescience.gen.ts'
 import {
   openingPosition, answerFremenPlacement, answerPrediction, answerTraitor,
@@ -206,6 +210,7 @@ Deno.serve(async req => {
    * spice placed without the shortened deck deals the same card twice.
    */
   const commitBlow = async (done: {
+    wormRide?: { turn: number; territories: string[]; closesAt: number }
     turn: number
     spiceDeck: Record<string, unknown>
     spiceOnBoard: Record<string, number>
@@ -227,6 +232,7 @@ Deno.serve(async req => {
         spiceDeck: { ...done.spiceDeck, turn: done.turn },
         spiceOnBoard: done.spiceOnBoard,
         forces: done.forces,
+        ...(done.wormRide ? { wormRide: done.wormRide } : null),
         // THE DEVOURED GO TO THE TANKS, in the same write that removed them
         // from the board — split across two, a crash between cremates them.
         tanks: bankDead(
@@ -305,7 +311,19 @@ Deno.serve(async req => {
       blockedByStorm?: unknown; devouredByFremen?: unknown
       toTanks?: ForceRow[]
     }
+    // THE RIDES ON OFFER: everywhere a worm fed and the Fremen still stand —
+    // spared by the basic advantage — they may ride after the Nexus. Derived
+    // by the shared law from every meal this blow served, deck-drawn and
+    // placed alike, and stamped only when the Fremen are at the table.
+    const rides = seatOfFaction['fremen']
+      ? rideTerritories(
+        [out.a, out.b] as never,
+        (out.devouredByFremen ?? []) as never)
+      : []
     return await commitBlow({
+      ...(rides.length
+        ? { wormRide: { turn, territories: rides, closesAt: now + WORM_RIDE_SECONDS * 1000 } }
+        : null),
       turn,
       spiceDeck: publicSpiceDeck({ deck: out.deck, discardA: out.discardA, discardB: out.discardB }),
       spiceOnBoard: out.spiceOnBoard,
@@ -1405,6 +1423,9 @@ Deno.serve(async req => {
       // An expired charity window is closed by the advance that leaves it, the
       // way CLOSE_CHARITY would have. The claims stand; the window is over.
       if (state.phase === 'CHOAM Charity') delete base.charity
+      // An unridden worm is a ride declined: the advance past the deadline
+      // clears it, the same shape as charity's window.
+      if (state.phase === 'Spice Blow and Nexus') delete base.wormRide
 
       /** The plain write most entries need: the pointer, and nothing else. */
       const plainly = async (
@@ -1708,7 +1729,22 @@ Deno.serve(async req => {
         p_match_id: matchId,
         p_expected_version: match.version,
         p_state: {
-          ...state, forces, players,
+          ...state,
+          // THE WATCHERS FOLLOW: any other faction's off-planet shipment
+          // ships one Bene Gesserit force free into the Polar Sink, in the
+          // SAME write — automatic, because the basic game leaves them no
+          // decision to make. See bgFollowsShip for who triggers it.
+          ...(bgFollowsShip(myFaction as never, kind)
+            && players.some((p) => p?.faction === 'bene-gesserit' && p.reserves > 0)
+            ? {
+              forces: landForces(
+                forces as never, 'bene-gesserit' as never,
+                POLAR_SINK, POLAR_SINK_SECTOR as never, 1, 0),
+              players: players.map((p) => p?.faction === 'bene-gesserit'
+                ? { ...p, reserves: p.reserves - 1 }
+                : p),
+            }
+            : { forces, players }),
           shipping: { ...w, done: { ...w.done, shipped: true } },
         },
         p_secrets: secretsPatch,
@@ -2247,6 +2283,66 @@ Deno.serve(async req => {
         winner: outcome.winner, explosion: outcome.explosion, traitors: outcome.traitors,
         version: data[0].version,
       })
+    }
+
+    // ── The Fremen ride Shai-Hulud ──────────────────────────────────────────
+    // Some or all of a struck territory's forces, to anywhere: no range and
+    // no path — the worm carries them. The storm and the stronghold gate
+    // still stand, judged by the shared law. One ride per territory; the
+    // window rides out on its own clock.
+    case 'WORM_RIDE': {
+      const ride = state.wormRide as
+        { turn: number; territories: string[]; closesAt: number } | undefined
+      if (!ride) return json({ error: 'no worm to ride', code: 'no-ride' }, 409)
+      if (myFaction !== 'fremen') {
+        return json({ error: 'only the Fremen ride', code: 'not-your-decision' }, 403)
+      }
+      if (now >= ride.closesAt) {
+        return json({ error: 'the worm has gone', code: 'window-shut' }, 409)
+      }
+      const from = String(action.from ?? '')
+      const gather = Array.isArray(action.gather)
+        ? action.gather as { sector: string; count: number; starred?: number }[]
+        : []
+      const to = (action.to ?? {}) as { territoryId: string; sector?: string }
+      const judged = judgeWormRide({
+        from, gather, to,
+        forces: (state.forces ?? []) as never,
+        storm: state.storm as never,
+        rideTerritories: ride.territories,
+      })
+      if (!judged.ok) return json({ error: 'that ride is not legal', code: judged.refusal }, 409)
+
+      let forces = [...((state.forces ?? []) as {
+        faction: string; territoryId: string; sector: string; count: number; starred?: number
+      }[])]
+      let landedStarred = 0
+      for (const g of gather) {
+        const starred = Math.max(0, Math.floor(Number(g.starred ?? 0)))
+        forces = liftForces(
+          forces as never, 'fremen' as never, from, g.sector, g.count, starred) as never
+        landedStarred += starred
+      }
+      const total = gather.reduce((n, g) => n + g.count, 0)
+      forces = landForces(
+        forces as never, 'fremen' as never,
+        to.territoryId, judged.sector, total, landedStarred) as never
+
+      const territoriesLeft = ride.territories.filter((t) => t !== from)
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state, forces,
+          ...(territoriesLeft.length
+            ? { wormRide: { ...ride, territories: territoriesLeft } }
+            : { wormRide: undefined }),
+        },
+        p_secrets: {},
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ moved: judged.moving, to: to.territoryId, version: data[0].version })
     }
 
     // ── Dev scaffolding: re-run an expired window ───────────────────────────

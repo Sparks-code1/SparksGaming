@@ -792,6 +792,11 @@ var SHIP_STRONGHOLD_SPICE = 1;
 var SHIP_OPEN_SPICE = 2;
 var GUILD_RETURN_PER = 2;
 var GREAT_FLAT = "territory-22";
+var POLAR_SINK = "territory-03";
+var POLAR_SINK_SECTOR = "sector-1";
+function bgFollowsShip(shipper, kind) {
+  return kind === "off-planet" && shipper !== "bene-gesserit" && shipper !== "fremen";
+}
 var FREMEN_SHIP_RADIUS = 2;
 var ARRAKEEN = "territory-13";
 var CARTHAG = "territory-26";
@@ -1031,11 +1036,14 @@ export {
   FREMEN_SHIP_RADIUS,
   GREAT_FLAT,
   GUILD_RETURN_PER,
+  POLAR_SINK,
+  POLAR_SINK_SECTOR,
   SHIPMENT_PHASE,
   SHIPMENT_SECONDS,
   SHIP_OPEN_SPICE,
   SHIP_STRONGHOLD_SPICE,
   STRONGHOLD_CAP,
+  bgFollowsShip,
   fremenShipTargets,
   inStorm,
   judgeMove,

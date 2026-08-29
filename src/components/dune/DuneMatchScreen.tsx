@@ -709,6 +709,7 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
                 'auction-running': 'The auction is running.',
                 'shipping-underway': 'Seats are shipping and moving, in storm order.',
                 'battles-underway': 'Battles are being fought, in storm order.',
+                'worm-ride': 'Shai-Hulud waits — the Fremen may ride.',
                 'game-over': 'The game is over.',
                 'setup-not-finished': 'Setting up.',
               }[hold.code] ?? hold.code}
@@ -819,6 +820,7 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
           : undefined}
         onShipSpecial={seat ? a => void ship(a) : undefined}
         onRevive={seat ? a => void revive(a) : undefined}
+        onWormRide={seat ? a => void send({ type: 'WORM_RIDE', ...a }) : undefined}
         onBattlePick={seat
           ? (territoryId, opponent) => void send({ type: 'BATTLE_PICK', territoryId, opponent })
           : undefined}

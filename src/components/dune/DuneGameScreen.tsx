@@ -53,7 +53,8 @@ import { BiddingPanel } from './BiddingPanel'
 import { CharityModal } from './CharityModal'
 import { SetupWindow, SetupBoardTargets } from './SetupWindow'
 import { ShipRail } from './ShipRail'
-import { inStorm, moveTargets } from '@/lib/dune/shipment'
+import { inStorm, moveTargets, strongholdClosed } from '@/lib/dune/shipment'
+import { RideRail } from './RideRail'
 import { RevivalRail } from './RevivalRail'
 import { BattlePanel } from './BattlePanel'
 import { REVIVAL_CAP, STARRED_REVIVALS_PER_TURN, revivableLeaders } from '@/lib/dune/revival'
@@ -172,6 +173,13 @@ export interface DuneGameScreenProps {
   /** Territories where Shai-Hulud stands — the Fremen's pending worm
    *  placements, drawn with the sandworm icon on the board. */
   worms?: readonly string[]
+  /** Ride the worm: some or all of a struck territory's forces, anywhere.
+   *  The server judges the window, the storm and the gate. */
+  onWormRide?: (a: {
+    from: string
+    gather: { sector: string; count: number; starred?: number }[]
+    to: { territoryId: string; sector: string }
+  }) => void
   /**
    * The live auction, or null.
    *
@@ -224,7 +232,7 @@ export interface DuneGameScreenProps {
 export function DuneGameScreen({
   state, seat, own, chat, onSend, talkingTo, seatNames, notices, onShipReserves, onMoveStack,
   onShipSpecial, onRevive, onBattlePick, onBattlePlan, onBattleAnswer, battleRefusal,
-  worms = [],
+  worms = [], onWormRide,
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
   const [chatShut, setChatShut] = useState(false)
@@ -256,6 +264,11 @@ export function DuneGameScreen({
   // gathered pile is one cell's forces, counted up click by click.
   /** Dead staged on the revival rail, cleared when the phase moves on. */
   const [revStaged, setRevStaged] = useState({ plain: 0, starred: 0 })
+  /** Riders picked up for the worm: one territory's stacks, counted per
+   *  sector as they are clicked. */
+  const [ridePile, setRidePile] = useState<{
+    territoryId: string; piles: Record<string, number>
+  } | null>(null)
   const [guildKind, setGuildKind] = useState<GuildShipKind>('off-planet')
   const [gather, setGather] = useState<{
     territoryId: string; sector: string; count: number
@@ -266,6 +279,7 @@ export function DuneGameScreen({
   useEffect(() => {
     if (state.phase !== 'Revival') setRevStaged({ plain: 0, starred: 0 })
   }, [state.phase])
+  useEffect(() => { if (!state.wormRide) setRidePile(null) }, [state.wormRide])
   const myRow = rows.find(r => r.faction === seat) ?? null
 
   // Stacks are per faction so the board can colour them. Summed by cell rather
@@ -489,6 +503,18 @@ export function DuneGameScreen({
             } : undefined} />
         )}
 
+        {/* THE RIDE'S RAIL: Shai-Hulud struck where the Fremen stand, and
+            until the window shuts they may board. The sentence on it is the
+            ruling's own words; the counting happens on the board. */}
+        {seat === 'fremen' && state.wormRide && now < state.wormRide.closesAt && onWormRide && (
+          <RideRail
+            faction={seat}
+            gathered={ridePile
+              ? Object.values(ridePile.piles).reduce((n, c) => n + c, 0)
+              : 0}
+            onReset={() => setRidePile(null)} />
+        )}
+
         {/* PHASE FIVE'S RAIL: the tanks pay out. Rendered for a seat with
             anything to raise — dead forces or an offered leader — with the
             elites on their own bubble, because one Fedaykin or Sardaukar may
@@ -602,12 +628,93 @@ export function DuneGameScreen({
             worms={worms as never}
             interactive={(setupActive && (owesFremen || advisorOpen))
               || (myShipWindow && staged.plain + staged.starred > 0)
-              || myMoveWindow}>
+              || myMoveWindow
+              || (seat === 'fremen' && !!state.wormRide && now < state.wormRide.closesAt && !!onWormRide)}>
             {/* DURING SETUP THE MAP TAKES THE ANSWER. Rings on the cells a
                 click means something at — the Fremen's three territories, or
                 the whole board for the advisor — with the pending pieces drawn
                 as the real stacks above. Clicks add; the window column takes
                 them back. */}
+            {/* THE RIDE: stacks in the struck territories count up per
+                click — a different struck territory starts the pile over —
+                and any clear cell outside the source lands them, the
+                stronghold gate and the storm standing, distance nothing. */}
+            {seat === 'fremen' && state.wormRide && now < state.wormRide.closesAt
+              && onWormRide && (() => {
+              const ride = state.wormRide
+              const total = ridePile
+                ? Object.values(ridePile.piles).reduce((n, c) => n + c, 0)
+                : 0
+              return (
+                <g data-layer="worm-ride">
+                  {state.forces
+                    .filter(f => f.faction === 'fremen' && f.count > 0
+                      && ride.territories.includes(f.territoryId))
+                    .map(f => {
+                      const at = cellAt(f.territoryId, f.sector)
+                      if (!at) return null
+                      const inPile = ridePile?.territoryId === f.territoryId
+                        ? ridePile.piles[f.sector] ?? 0
+                        : 0
+                      return (
+                        <g key={`ride|${f.territoryId}|${f.sector}`}
+                          data-ride-source={`${f.territoryId}|${f.sector}`}
+                          style={{ cursor: 'pointer' }}
+                          onClick={() => setRidePile(p => {
+                            const same = p && p.territoryId === f.territoryId
+                            const piles = same ? { ...p.piles } : {}
+                            piles[f.sector] = Math.min(f.count, (piles[f.sector] ?? 0) + 1)
+                            return { territoryId: f.territoryId, piles }
+                          })}>
+                          <title>{inPile > 0
+                            ? `${inPile} riding — click for one more`
+                            : 'Click to board Shai-Hulud'}</title>
+                          <circle cx={at.x} cy={at.y} r="13" fill="transparent" />
+                          <circle cx={at.x} cy={at.y} r="13" fill="none"
+                            stroke="#c9852a"
+                            strokeWidth={inPile > 0 ? 3 : 1.6}
+                            strokeDasharray={inPile > 0 ? undefined : '4 3'} />
+                        </g>
+                      )
+                    })}
+                  {ridePile && total > 0 && DUNE_TERRITORIES.flatMap(t => t.cells
+                    .filter(c => !inStorm(t.id, c.sector, state.storm))
+                    .filter(() => t.id !== ridePile.territoryId)
+                    .filter(() => !strongholdClosed(state.forces, 'fremen', t.id))
+                    .map(c => (
+                      <g key={`land|${t.id}|${c.sector}`} data-ride-target={`${t.id}|${c.sector}`}
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => {
+                          // STARRED RIDE LAST, per cell: the plain board the
+                          // worm first, so a part-ride leaves the Fedaykin
+                          // standing — same order every stage grammar uses.
+                          const gather = Object.entries(ridePile.piles)
+                            .filter(([, count]) => count > 0)
+                            .map(([sector, count]) => {
+                              const stack = state.forces.find(f =>
+                                f.faction === 'fremen'
+                                && f.territoryId === ridePile.territoryId
+                                && f.sector === sector)
+                              const stackStarred = Math.min(stack?.count ?? 0, stack?.starred ?? 0)
+                              const plain = (stack?.count ?? 0) - stackStarred
+                              const starred = Math.max(0, count - plain)
+                              return { sector, count, ...(starred > 0 ? { starred } : null) }
+                            })
+                          onWormRide({
+                            from: ridePile.territoryId, gather,
+                            to: { territoryId: t.id, sector: c.sector },
+                          })
+                          setRidePile(null)
+                        }}>
+                        <title>{`${t.displayName} — ${c.sector}`}</title>
+                        <circle cx={c.at.x} cy={c.at.y} r="11" fill="#c9852a22"
+                          stroke="#c9852a" strokeWidth="1.2" strokeDasharray="3 3" />
+                      </g>
+                    )))}
+                </g>
+              )
+            })()}
+
             {/* THE GUILD'S SPECIAL SHIPMENTS, kind already chosen on the
                 rail: stack clicks pick forces up — one per click, capped at
                 the stack, another stack starts the pile over — and a

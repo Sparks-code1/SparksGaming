@@ -1237,6 +1237,9 @@ function advanceHold(state, now) {
   if (state.phase === "Spice Blow and Nexus") {
     if (state.spiceBlow) return { code: "worms-pending", until: state.spiceBlow.closesAt };
     if (state.spiceDeck?.turn !== state.turn) return { code: "blow-not-turned" };
+    if (state.wormRide && now < state.wormRide.closesAt) {
+      return { code: "worm-ride", until: state.wormRide.closesAt };
+    }
     return null;
   }
   if (state.phase === "CHOAM Charity") {

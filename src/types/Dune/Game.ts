@@ -430,6 +430,14 @@ export interface DuneGameState {
    */
   revivedLeaders?: string[]
   /**
+   * The Fremen's ride, while it is on offer: Shai-Hulud struck these
+   * territories, their forces survived (the basic advantage), and until the
+   * deadline they may move some or all of each territory's forces anywhere
+   * on the board. One ride per territory; the advance past the deadline
+   * clears what was not ridden. See lib/dune/spiceBlow.
+   */
+  wormRide?: { turn: number; territories: string[]; closesAt: number }
+  /**
    * The current phase's look-at-it window — see PHASE_SECONDS in
    * lib/dune/phaseAdvance. Before it shuts only the host advances; after it,
    * anyone. Carries its own (turn, phase) so a clock outliving its phase

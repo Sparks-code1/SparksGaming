@@ -99,6 +99,7 @@ export interface AdvanceState {
     closesAt: number
     current?: { closesAt: number; revealed?: { traitor: { closesAt: number } } } | null
   }
+  wormRide?: { closesAt: number }
   phaseClock?: PhaseClock
 }
 
@@ -125,7 +126,7 @@ export function phaseAfter(phase: GamePhase): { phase: GamePhase; newTurn: boole
 export interface AdvanceHold {
   code: 'setup-not-finished' | 'game-over' | 'blow-not-turned'
     | 'worms-pending' | 'charity-open' | 'auction-running' | 'shipping-underway'
-    | 'battles-underway'
+    | 'battles-underway' | 'worm-ride'
   until?: number
 }
 
@@ -144,6 +145,11 @@ export function advanceHold(state: AdvanceState, now: number): AdvanceHold | nul
     // The blow is stamped with the turn it was last turned for; anything else
     // means this turn's cards have not been dealt with.
     if (state.spiceDeck?.turn !== state.turn) return { code: 'blow-not-turned' }
+    // THE RIDE HOLDS LIKE CHARITY: inside its window it is the Fremen's
+    // moment; past it, the advance clears what was not ridden.
+    if (state.wormRide && now < state.wormRide.closesAt) {
+      return { code: 'worm-ride', until: state.wormRide.closesAt }
+    }
     return null
   }
 

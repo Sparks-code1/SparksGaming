@@ -45,6 +45,25 @@ export const SHIP_OPEN_SPICE = 2
 export const GUILD_RETURN_PER = 2
 
 export const GREAT_FLAT = 'territory-22'
+
+/** Where the watchers watch from. */
+export const POLAR_SINK = 'territory-03'
+export const POLAR_SINK_SECTOR = 'sector-1'
+
+/**
+ * THE WATCHERS FOLLOW THE SHIPS — the Bene Gesserit's basic rule: whenever
+ * any other faction ships forces onto Dune from off-planet, one BG force
+ * ships free from their reserves into the Polar Sink, beside their own
+ * normal shipment. AUTOMATIC, because in the basic game there is no decision
+ * in it. The FREMEN never trigger it: their reserves are on the planet, so
+ * their shipping is not "from off-planet" — the sheet's "any other faction
+ * ships... from off-planet" excludes them by construction. The Guild's own
+ * off-planet shipments trigger it like anyone's. Advanced sends an advisor
+ * to the shipper's territory instead and is NOT built.
+ */
+export function bgFollowsShip(shipper: FactionId, kind: GuildShipKind): boolean {
+  return kind === 'off-planet' && shipper !== 'bene-gesserit' && shipper !== 'fremen'
+}
 /** How far from the Great Flat the desert's own shipment reaches. */
 export const FREMEN_SHIP_RADIUS = 2
 

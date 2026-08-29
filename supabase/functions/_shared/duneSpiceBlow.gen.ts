@@ -804,6 +804,31 @@ function runToSettled(first, answer, limit = 10) {
   );
 }
 
+// src/lib/dune/shipment.ts
+var STRONGHOLD_CAP = 2;
+var territory = (id) => DUNE_TERRITORIES.find((t) => t.id === id);
+function settleSector(territoryId, sector) {
+  const t = territory(territoryId);
+  if (!t) return { ok: false, refusal: "no-such-territory" };
+  if (t.sectors.length === 1) return { ok: true, sector: t.sectors[0] };
+  if (!sector) return { ok: false, refusal: "sector-needed" };
+  if (!t.sectors.includes(sector)) return { ok: false, refusal: "no-such-sector" };
+  return { ok: true, sector };
+}
+function inStorm(territoryId, sector, storm) {
+  const t = territory(territoryId);
+  if (t?.terrain === "polar-sink") return false;
+  return sector === storm;
+}
+function strongholdClosed(forces, faction, territoryId) {
+  const t = territory(territoryId);
+  if (!t?.stronghold) return false;
+  const inside = new Set(
+    forces.filter((f) => f.territoryId === territoryId && f.count > 0).map((f) => f.faction)
+  );
+  return !inside.has(faction) && inside.size >= STRONGHOLD_CAP;
+}
+
 // src/lib/dune/spiceBlow.ts
 var SHAI_HULUD_COUNT = 6;
 var WORM_SECONDS = 60;
@@ -834,6 +859,39 @@ function publicSpiceDeck(input) {
     discardA: [...input.discardA],
     discardB: [...input.discardB ?? []]
   };
+}
+var WORM_RIDE_SECONDS = 60;
+function rideTerritories(meals, placed = []) {
+  const out = /* @__PURE__ */ new Set();
+  const all = [...meals.flatMap((m) => m?.devoured ?? []), ...placed];
+  for (const d of all) {
+    if (d.forcesSpared.some((f) => f.count > 0)) out.add(d.territoryId);
+  }
+  return [...out];
+}
+function judgeWormRide(input) {
+  const { from, gather, to, forces, storm } = input;
+  if (!input.rideTerritories.includes(from)) return { ok: false, refusal: "not-a-ride" };
+  if (gather.length === 0 || gather.some((g) => g.count <= 0)) {
+    return { ok: false, refusal: "nothing-asked" };
+  }
+  if (to.territoryId === from) return { ok: false, refusal: "same-territory" };
+  const settled2 = settleSector(to.territoryId, to.sector);
+  if (!settled2.ok) return settled2;
+  if (inStorm(to.territoryId, settled2.sector, storm)) return { ok: false, refusal: "stormed" };
+  if (strongholdClosed(forces, "fremen", to.territoryId)) {
+    return { ok: false, refusal: "stronghold-full" };
+  }
+  let moving = 0;
+  for (const g of gather) {
+    const held = forces.find((f) => f.faction === "fremen" && f.territoryId === from && f.sector === g.sector);
+    const heldStarred = Math.min(held?.count ?? 0, held?.starred ?? 0);
+    if (!held || held.count < g.count || heldStarred < (g.starred ?? 0)) {
+      return { ok: false, refusal: "nothing-there" };
+    }
+    moving += g.count;
+  }
+  return { ok: true, sector: settled2.sector, moving };
 }
 function devourTerritory(territoryId, forces, spiceOnBoard) {
   const inTerritory = forces.filter((f) => f.territoryId === territoryId);
@@ -1042,16 +1100,19 @@ function resolveDoubleSpiceBlow(input) {
 }
 export {
   SHAI_HULUD_COUNT,
+  WORM_RIDE_SECONDS,
   WORM_SECONDS,
   applyBlowToBoard,
   applySpicePlacement,
   beginDoubleSpiceBlow,
   buildSpiceDeck,
   devourTerritory,
+  judgeWormRide,
   placeFremenWorms,
   publicSpiceDeck,
   resolveDoubleSpiceBlow,
   resolveSpiceBlow,
+  rideTerritories,
   showing,
   shuffle
 };

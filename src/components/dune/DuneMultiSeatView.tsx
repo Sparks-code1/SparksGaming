@@ -651,6 +651,9 @@ export default function DuneMultiSeatView() {
         onRevive={mine
           ? a => void send(mine, 'REVIVE', a as never)
           : undefined}
+        onWormRide={mine
+          ? a => void send(mine, 'WORM_RIDE', a as never)
+          : undefined}
         onBattlePick={mine
           ? (territoryId, opponent) => void send(mine, 'BATTLE_PICK', { territoryId, opponent } as never)
           : undefined}

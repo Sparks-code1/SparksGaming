@@ -25,6 +25,8 @@ import type {
 import { awaiting, awaitingBy, runToSettled, settled } from './phase'
 import type { Step } from './phase'
 
+import { settleSector, inStorm, strongholdClosed } from './shipment'
+
 // The card type lives in @/types/Dune/Game now, because the public game state
 // names it too. Re-exported so every `from '@/lib/dune/spiceBlow'` still works.
 export type { SpiceCard } from '@/types/Dune/Game'
@@ -129,6 +131,73 @@ export interface Devoured {
  * sparing the Fremen. Two copies of this would drift, and the copy that drifted
  * would be the one nobody was looking at.
  */
+/** How long the Fremen have to ride after the worms have fed. */
+export const WORM_RIDE_SECONDS = 60
+
+/**
+ * The rides on offer: territories where Shai-Hulud struck and the Fremen
+ * still stand. Their forces were SPARED — that is the basic advantage — and
+ * after the Nexus they may ride, moving some or all of them anywhere on the
+ * board. One list from every worm this blow fed, deck-drawn and placed
+ * alike, deduplicated.
+ */
+export function rideTerritories(
+  meals: ReadonlyArray<{ devoured?: readonly Devoured[] } | null | undefined>,
+  placed: readonly Devoured[] = [],
+): string[] {
+  const out = new Set<string>()
+  const all = [...meals.flatMap(m => m?.devoured ?? []), ...placed]
+  for (const d of all) {
+    if (d.forcesSpared.some(f => f.count > 0)) out.add(d.territoryId)
+  }
+  return [...out]
+}
+
+export type RideRefusal =
+  | 'not-a-ride' | 'nothing-asked' | 'nothing-there' | 'same-territory'
+  | 'sector-needed' | 'no-such-territory' | 'stormed' | 'stronghold-full'
+
+/**
+ * Judge one ride: some or all of the Fremen's forces in a struck territory,
+ * to ANY other territory — no range, no path; the worm carries them. What
+ * still stands: the storm (no ground at all) and the stronghold gate, judged
+ * by the same functions shipping and movement use.
+ */
+export function judgeWormRide(input: {
+  from: string
+  gather: readonly { sector: string; count: number; starred?: number }[]
+  to: { territoryId: string; sector?: string }
+  forces: readonly Force[]
+  storm: SectorId
+  rideTerritories: readonly string[]
+}): { ok: true; sector: SectorId; moving: number } | { ok: false; refusal: RideRefusal } {
+  const { from, gather, to, forces, storm } = input
+  if (!input.rideTerritories.includes(from)) return { ok: false, refusal: 'not-a-ride' }
+  if (gather.length === 0 || gather.some(g => g.count <= 0)) {
+    return { ok: false, refusal: 'nothing-asked' }
+  }
+  if (to.territoryId === from) return { ok: false, refusal: 'same-territory' }
+  const settled = settleSector(to.territoryId, to.sector)
+  // settleSector's two refusals are both in RideRefusal; the cast narrows the
+  // wider shipping union to this judge's own.
+  if (!settled.ok) return settled as { ok: false; refusal: RideRefusal }
+  if (inStorm(to.territoryId, settled.sector, storm)) return { ok: false, refusal: 'stormed' }
+  if (strongholdClosed(forces, 'fremen', to.territoryId)) {
+    return { ok: false, refusal: 'stronghold-full' }
+  }
+  let moving = 0
+  for (const g of gather) {
+    const held = forces.find(f =>
+      f.faction === 'fremen' && f.territoryId === from && f.sector === g.sector)
+    const heldStarred = Math.min(held?.count ?? 0, held?.starred ?? 0)
+    if (!held || held.count < g.count || heldStarred < (g.starred ?? 0)) {
+      return { ok: false, refusal: 'nothing-there' }
+    }
+    moving += g.count
+  }
+  return { ok: true, sector: settled.sector, moving }
+}
+
 export function devourTerritory(
   territoryId: TerritoryId,
   forces: readonly Force[],
