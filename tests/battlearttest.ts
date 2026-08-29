@@ -37,14 +37,24 @@ const BACKDROPS = [
   'Arrakeen-Atreides.jpg',
   'Carthag.jpg',
   'Carthag-Harkonnen.jpg',
-  // Arrived unclaimed 2026-08-28, looked at and listed: a stepped citadel
-  // under assault — ornithopters overhead, forces storming the causeway —
-  // an Arrakeen battle scene. The filename's 'Arkeen' is the file's own
-  // spelling; renaming is the owner's call, and whatever loads it must
-  // spell it the same way.
+]
+
+/**
+ * Art that has ARRIVED but is not yet named into the grammar above — looked
+ * at, listed, and deliberately not blessed. 'Arkeen-Battle.png' is a stepped
+ * citadel under assault — ornithopters overhead, forces storming a causeway:
+ * an Arrakeen battle scene under the filename's own spelling. 'Dune-Rock.png'
+ * is an open-desert battle beneath rock outcroppings that names no territory
+ * at all, which <Territory>[-<Faction>].jpg cannot express.
+ *
+ * They sit HERE so the nothing-unlisted check still catches the next stray
+ * file, while the owner decides what these become: renamed into the grammar,
+ * or the grammar grown — a generic-terrain backdrop is a new idea, and not
+ * this suite's to invent. Everything in this list is exempt from the naming
+ * and JPEG checks below exactly because it has not been claimed yet.
+ */
+const UNPLACED = [
   'Arkeen-Battle.png',
-  // Same arrival: an open-desert battle beneath rock outcroppings — a
-  // backdrop for the rock territories rather than any one named place.
   'Dune-Rock.png',
 ]
 
@@ -54,10 +64,15 @@ const files = readdirSync(DIR).filter(f => !f.endsWith('.md'))
 {
   check('every backdrop listed is actually there',
     BACKDROPS.filter(f => !files.includes(f)), [])
+  // The unplaced are tracked with the same strictness: one renamed or
+  // removed must leave the list, or the list quietly describes a folder
+  // that no longer exists.
+  check('...and so is every unplaced arrival',
+    UNPLACED.filter(f => !files.includes(f)), [])
   // AND NOTHING ELSE IS. A file nobody has claimed is a file nobody will
   // notice is missing from a screen that has not been written yet.
   check('...and nothing is there that is not listed',
-    files.filter(f => !BACKDROPS.includes(f)), [])
+    files.filter(f => !BACKDROPS.includes(f) && !UNPLACED.includes(f)), [])
 
   // The note travels with the pictures, because there is no code to put it in.
   check('the folder explains itself', existsSync(`${DIR}/README.md`), true)
