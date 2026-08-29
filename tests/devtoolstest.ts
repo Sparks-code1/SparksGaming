@@ -17,7 +17,7 @@ import { WORM_SECONDS } from '@/lib/dune/spiceBlow'
 import { SETUP_SECONDS } from '@/lib/dune/setup'
 import {
   BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
-  BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS,
+  BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS, BATTLE_ALLOCATE_SECONDS,
 } from '@/lib/dune/battle'
 
 let pass = true
@@ -41,6 +41,7 @@ const LENGTHS = {
   battleTraitorSeconds: BATTLE_TRAITOR_SECONDS,
   battleVoiceSeconds: BATTLE_VOICE_SECONDS,
   battlePrescienceSeconds: BATTLE_PRESCIENCE_SECONDS,
+  battleAllocateSeconds: BATTLE_ALLOCATE_SECONDS,
 }
 const base = {
   phase: 'Storm', turn: 2, mode: 'basic', storm: 'sector-3',
@@ -132,6 +133,21 @@ const base = {
       current: { prescience: { closesAt: number } }
     }).current.prescience.closesAt, pres.reset],
     [NOW + BATTLE_PRESCIENCE_SECONDS * 1000, ['prescience']])
+  const alloc = resetDeadlines({
+    ...(base as object),
+    battles: {
+      closesAt: 5,
+      current: {
+        closesAt: 5,
+        revealed: { traitor: { closesAt: 5 }, allocate: { closesAt: 5 } },
+      },
+    },
+  } as never, NOW, LENGTHS)
+  check('an open choice of losses at its own two minutes',
+    [(alloc.patch.battles as {
+      current: { revealed: { allocate: { closesAt: number } } }
+    }).current.revealed.allocate.closesAt, alloc.reset],
+    [NOW + BATTLE_ALLOCATE_SECONDS * 1000, ['allocate']])
   check('...but a settled Voice yields to the plan clock',
     resetDeadlines({
       ...(base as object),
@@ -152,6 +168,8 @@ const base = {
     /resetDeadlines\(state as never, now, \{/.test(reset), true)
   check('...refusing a state with no clock',
     /code: 'no-clock'/.test(reset), true)
+  check('...and passing the winner\'s window its length',
+    /battleAllocateSeconds: BATTLE_ALLOCATE_SECONDS,/.test(reset), true)
 
   const grant = fn.slice(fn.indexOf("case 'DEV_GRANT'"), fn.indexOf("case 'SEED_SPICE'"))
   check('the grant is dev-gated too',

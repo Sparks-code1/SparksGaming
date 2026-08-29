@@ -670,6 +670,9 @@ export default function DuneMultiSeatView() {
         onBattlePrescience={mine
           ? ask => void send(mine, 'BATTLE_PRESCIENCE', (ask ? { ask } : {}) as never)
           : undefined}
+        onBattleAllocate={mine
+          ? choice => void send(mine, 'BATTLE_ALLOCATE', (choice ?? {}) as never)
+          : undefined}
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused
           ? { type: refusedBy, code: refused }
           : null}

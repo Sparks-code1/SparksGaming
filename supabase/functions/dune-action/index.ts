@@ -59,8 +59,10 @@ import {
   pendingBattles, nextAggressor, judgePlan, resolveBattle, battleLosses,
   explosionLosses, forcesInBattle, CHEAP_HERO_ID,
   BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
-  BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS,
+  BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS, BATTLE_ALLOCATE_SECONDS,
   judgeVoiceCommand, prescienceAnswer, PRESCIENCE_ASKS,
+  piecesInBattle, eliteWorth, fullWithoutSpice,
+  judgeAllocation, firstAllocation, allocationLosses,
 } from '../_shared/duneBattle.gen.ts'
 import {
   phaseAfter, advanceHold, phaseWindowOpen, rollStorm, stormEntry, cityIncome,
@@ -544,6 +546,199 @@ Deno.serve(async req => {
       if (error) return json({ error: error.message }, 500)
       if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
       return json({ auction: step, version: data[0].version })
+  }
+
+  // ── the battle settles: ONE implementation for its two triggers ──────────
+  // The beat's end settles basic battles, and advanced ones where the winner
+  // has nothing to choose; BATTLE_ALLOCATE settles the rest with the winner's
+  // named dead. Two spellings of the settle would disagree the first time
+  // either was fixed.
+  const settleBattle = async (
+    b: {
+      order: unknown[]; at: number; fought: unknown[]
+      usedLeaders?: Record<string, string>
+    } & Record<string, unknown>,
+    c: {
+      territoryId: string; sectors: string[]; aggressor: string; defender: string
+      revealed?: { plans: Record<string, unknown> }
+    } & Record<string, unknown>,
+    calls: string[],
+    allocation: {
+      plainFull: number; plainHalf: number; eliteFull: number; eliteHalf: number
+    } | null,
+  ): Promise<Response> => {
+    // Everything the reveal decided lands in ONE write: forces to the
+    // tanks, leaders down, spice moved, cards discarded, the rotation
+    // stepped. `allocation` is the ADVANCED winner's named dead — null
+    // settles by the basic dial-count rule.
+      const { data: secretRows } = await admin
+        .from('match_secrets').select('player_id, data').eq('match_id', matchId)
+      const rowOf = Object.fromEntries((secretRows ?? []).map((r) => [r.player_id, r.data ?? {}]))
+      const planOf = (f: string) => c.revealed!.plans[f] as {
+        dial: number; spice?: number; leader?: string; cheapHero?: boolean
+        weapon?: string; defence?: string
+      }
+
+      const outcome = resolveBattle({
+        aggressor: {
+          faction: c.aggressor as never, plan: planOf(c.aggressor),
+          calledTraitor: calls.includes(c.aggressor as never),
+        },
+        defender: {
+          faction: c.defender as never, plan: planOf(c.defender),
+          calledTraitor: calls.includes(c.defender as never),
+        },
+      })
+
+      let forces = [...((state.forces ?? []) as {
+        faction: string; territoryId: string; sector: string; count: number; starred?: number
+      }[])]
+      let tanks = (state.tanks ?? { forces: {}, leaders: {} }) as never
+      const killed: unknown[] = []
+      const discard = [...((state.treacheryDiscard ?? []) as string[])]
+      const revived = (state.revivedLeaders ?? []) as string[]
+      const usedLeaders = { ...(b.usedLeaders ?? {}) }
+      const secretsPatch: Record<string, unknown> = {}
+      const moves: { from: string; to: string; amount: number; reason: 'battle' }[] = []
+      const purses: Record<string, number> = {}
+
+      // THE EXPLOSION TAKES THE TERRITORY, not the slice: the card reads
+      // "all forces, leaders, and spice in this battle's territory", and a
+      // bystander standing in another sector burns with the combatants.
+      if (outcome.explosion) {
+        for (const lift of explosionLosses(forces as never, c.territoryId)) {
+          forces = liftForces(
+            forces as never, lift.faction as never,
+            c.territoryId, lift.sector, lift.count, lift.starred) as never
+          killed.push({
+            faction: lift.faction, territoryId: c.territoryId, sector: lift.sector,
+            count: lift.count, ...(lift.starred > 0 ? { starred: lift.starred } : null),
+          })
+        }
+      }
+      const handCounts: Record<string, number> = {}
+      for (const side of outcome.sides) {
+        const f = side.faction
+        const seatId = seatOfFaction[f]
+        const plan = planOf(f)
+        // forces to the tanks, cell by cell — already lifted whole by the
+        // explosion when there was one
+        // The ADVANCED winner's dead are the pieces they NAMED; everyone
+        // else — and every basic battle — falls by the dial-count rule.
+        const lifts = outcome.explosion ? []
+          : allocation && f === outcome.winner
+            ? allocationLosses(
+              forces as never, f as never, c.territoryId, c.sectors, allocation)
+            : battleLosses(
+              forces as never, f as never, c.territoryId, c.sectors, side)
+        for (const lift of lifts) {
+          forces = liftForces(
+            forces as never, f as never, c.territoryId, lift.sector, lift.count, lift.starred) as never
+          killed.push({
+            faction: f, territoryId: c.territoryId, sector: lift.sector,
+            count: lift.count, ...(lift.starred > 0 ? { starred: lift.starred } : null),
+          })
+        }
+        // the leader: dead to the tanks, or standing where it fought
+        if (plan.leader) {
+          if (side.leaderDies) {
+            tanks = returnLeaderToTanks(
+              tanks, f as never, plan.leader,
+              { wasRevived: revived.includes(plan.leader) }) as never
+            delete usedLeaders[plan.leader]
+          } else {
+            usedLeaders[plan.leader] = c.territoryId
+          }
+        }
+        // cards out of the hand, into the discard; a called traitor card is
+        // spent with them
+        const row = (rowOf[seatId] ?? {}) as {
+          cards?: string[]; traitors?: string[]; battlePlan?: unknown
+        }
+        const outCards = new Set(side.discards)
+        const hand = (row.cards ?? []).filter((id) => !outCards.has(id))
+        for (const id of side.discards) discard.push(id)
+        const other = outcome.sides.find((s) => s.faction !== f)!
+        const theirLeader = planOf(other.faction).leader
+        const traitors = calls.includes(f as never) && theirLeader
+          ? (row.traitors ?? []).filter((n) => n !== theirLeader)
+          : row.traitors
+        secretsPatch[seatId] = {
+          ...row, cards: hand, ...(traitors ? { traitors } : null), battlePlan: null,
+        }
+        handCounts[f] = hand.length
+        purses[seatId] = readSpice(row as never)
+        for (const s of side.spice) {
+          moves.push({ from: BANK, to: seatId, amount: s.amount, reason: 'battle' })
+        }
+        // ── ADVANCED: the plan's spice leaves for the bank, win or lose —
+        // except a traitor-calling winner, whose spends the law zeroed.
+        if (side.spends > 0) {
+          moves.push({ from: seatId, to: BANK, amount: side.spends, reason: 'battle-spice' })
+        }
+      }
+      const paid = moves.filter((m) => m.amount > 0)
+      const moved = applySpiceMoves(purses, paid as never)
+      if (!moved.ok) return json({ error: 'the spice could not move', code: moved.refusal }, 500)
+      for (const seatId of Object.keys(secretsPatch)) {
+        if (moved.purses[seatId] !== undefined) {
+          (secretsPatch[seatId] as { spice?: number }).spice = moved.purses[seatId]
+        }
+      }
+
+      tanks = bankDead(tanks, killed as never) as never
+
+      // the explosion burns the spice lying there too
+      const spiceOnBoard = { ...((state.spiceOnBoard ?? {}) as Record<string, number>) }
+      if (outcome.clearSpice) delete spiceOnBoard[c.territoryId]
+
+      const fought = [...b.fought, {
+        territoryId: c.territoryId, aggressor: c.aggressor, defender: c.defender,
+        winner: outcome.winner,
+        ...(outcome.explosion ? { explosion: true } : null),
+        ...(outcome.traitors.length ? { traitors: outcome.traitors } : null),
+      }]
+
+      // the rotation walks on over the board as it now stands
+      const pendingAfter = pendingBattles(forces as never, state.storm as never)
+      const next = nextAggressor(b.order as never, pendingAfter, b.at)
+      const battlesAfter = next
+        ? {
+          ...b, at: next.at, current: null, fought, usedLeaders,
+          closesAt: now + BATTLE_PICK_SECONDS * 1000,
+        }
+        : undefined
+
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state, forces, tanks, spiceOnBoard,
+          // THE PUBLIC COUNT MOVES WITH THE HAND — a discard that shrank a
+          // hand while the count stood still held a whole hand back as stale.
+          players: ((state.players ?? []) as { faction: string; handCount?: number }[])
+            .map((p) => handCounts[p.faction] != null
+              ? { ...p, handCount: handCounts[p.faction] }
+              : p),
+          treacheryDiscard: discard,
+          ...(battlesAfter ? { battles: battlesAfter } : { battles: undefined }),
+          awaiting: next ? next.faction : null,
+          lastBattle: {
+            turn: state.turn ?? 0, at: now,
+            territoryId: c.territoryId, aggressor: c.aggressor, defender: c.defender,
+            winner: outcome.winner,
+            ...(outcome.explosion ? { explosion: true } : null),
+            ...(outcome.traitors.length ? { traitors: outcome.traitors } : null),
+          },
+        },
+        p_secrets: secretsPatch,
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({
+        winner: outcome.winner, explosion: outcome.explosion, traitors: outcome.traitors,
+        version: data[0].version,
+      })
   }
 
   switch (action.type) {
@@ -2088,6 +2283,7 @@ Deno.serve(async req => {
         const mine = rowOf[playerId] ?? {}
         const plan = {
           dial: Number(action.dial ?? 0),
+          ...(action.spice != null ? { spice: Number(action.spice) } : null),
           ...(action.leader ? { leader: String(action.leader) } : null),
           ...(action.cheapHero ? { cheapHero: true } : null),
           ...(action.weapon ? { weapon: String(action.weapon) } : null),
@@ -2100,6 +2296,10 @@ Deno.serve(async req => {
           deadLeaders: (tanks.leaders[myFaction] ?? []).map((l) => l.name),
           usedLeaders: b.usedLeaders ?? {},
           plan,
+          // ── ADVANCED wiring: the mode, the facing, and the purse ────────
+          mode: (state.mode === 'advanced' ? 'advanced' : 'basic') as never,
+          opponent: combatants.find((f) => f !== myFaction) as never,
+          purse: readSpice(mine as never),
           // the Voice binds only the seat it was aimed at
           voiced: voiceNow?.done && voiceNow.command && myFaction !== voiceNow.by
             ? voiceNow.command as never
@@ -2322,6 +2522,9 @@ Deno.serve(async req => {
       if (state.phase !== 'Battles' || !b || !c?.revealed) {
         return json({ error: 'no reveal to answer', code: 'no-battle' }, 409)
       }
+      if ((c.revealed as { allocate?: unknown }).allocate) {
+        return json({ error: 'the winner is choosing their losses', code: 'allocation-open' }, 409)
+      }
       const beat = c.revealed.traitor
       const combatants = [c.aggressor, c.defender]
       const expired = now >= beat.closesAt
@@ -2375,14 +2578,15 @@ Deno.serve(async req => {
         return json({ answered, version: data[0].version })
       }
 
-      // ── both have spoken: the battle resolves, all of it in one write ────
-      const { data: secretRows } = await admin
-        .from('match_secrets').select('player_id, data').eq('match_id', matchId)
-      const rowOf = Object.fromEntries((secretRows ?? []).map((r) => [r.player_id, r.data ?? {}]))
+      // ── both have spoken: the beat is settled ───────────────────────────
       const planOf = (f: string) => c.revealed!.plans[f] as {
-        dial: number; leader?: string; cheapHero?: boolean; weapon?: string; defence?: string
+        dial: number
+        spice?: number
+        leader?: string
+        cheapHero?: boolean
+        weapon?: string
+        defence?: string
       }
-
       const outcome = resolveBattle({
         aggressor: {
           faction: c.aggressor as never, plan: planOf(c.aggressor),
@@ -2394,144 +2598,95 @@ Deno.serve(async req => {
         },
       })
 
-      let forces = [...((state.forces ?? []) as {
-        faction: string; territoryId: string; sector: string; count: number; starred?: number
-      }[])]
-      let tanks = (state.tanks ?? { forces: {}, leaders: {} }) as never
-      const killed: unknown[] = []
-      const discard = [...((state.treacheryDiscard ?? []) as string[])]
-      const revived = (state.revivedLeaders ?? []) as string[]
-      const usedLeaders = { ...(b.usedLeaders ?? {}) }
-      const secretsPatch: Record<string, unknown> = {}
-      const moves: { from: string; to: string; amount: number; reason: 'battle' }[] = []
-      const purses: Record<string, number> = {}
-
-      // THE EXPLOSION TAKES THE TERRITORY, not the slice: the card reads
-      // "all forces, leaders, and spice in this battle's territory", and a
-      // bystander standing in another sector burns with the combatants.
-      if (outcome.explosion) {
-        for (const lift of explosionLosses(forces as never, c.territoryId)) {
-          forces = liftForces(
-            forces as never, lift.faction as never,
-            c.territoryId, lift.sector, lift.count, lift.starred) as never
-          killed.push({
-            faction: lift.faction, territoryId: c.territoryId, sector: lift.sector,
-            count: lift.count, ...(lift.starred > 0 ? { starred: lift.starred } : null),
-          })
-        }
-      }
-      const handCounts: Record<string, number> = {}
-      for (const side of outcome.sides) {
-        const f = side.faction
-        const seatId = seatOfFaction[f]
-        const plan = planOf(f)
-        // forces to the tanks, cell by cell — already lifted whole by the
-        // explosion when there was one
-        const lifts = outcome.explosion ? [] : battleLosses(
-          forces as never, f as never, c.territoryId, c.sectors, side)
-        for (const lift of lifts) {
-          forces = liftForces(
-            forces as never, f as never, c.territoryId, lift.sector, lift.count, lift.starred) as never
-          killed.push({
-            faction: f, territoryId: c.territoryId, sector: lift.sector,
-            count: lift.count, ...(lift.starred > 0 ? { starred: lift.starred } : null),
-          })
-        }
-        // the leader: dead to the tanks, or standing where it fought
-        if (plan.leader) {
-          if (side.leaderDies) {
-            tanks = returnLeaderToTanks(
-              tanks, f as never, plan.leader,
-              { wasRevived: revived.includes(plan.leader) }) as never
-            delete usedLeaders[plan.leader]
-          } else {
-            usedLeaders[plan.leader] = c.territoryId
-          }
-        }
-        // cards out of the hand, into the discard; a called traitor card is
-        // spent with them
-        const row = (rowOf[seatId] ?? {}) as {
-          cards?: string[]; traitors?: string[]; battlePlan?: unknown
-        }
-        const outCards = new Set(side.discards)
-        const hand = (row.cards ?? []).filter((id) => !outCards.has(id))
-        for (const id of side.discards) discard.push(id)
-        const other = outcome.sides.find((s) => s.faction !== f)!
-        const theirLeader = planOf(other.faction).leader
-        const traitors = calls.includes(f as never) && theirLeader
-          ? (row.traitors ?? []).filter((n) => n !== theirLeader)
-          : row.traitors
-        secretsPatch[seatId] = {
-          ...row, cards: hand, ...(traitors ? { traitors } : null), battlePlan: null,
-        }
-        handCounts[f] = hand.length
-        purses[seatId] = readSpice(row as never)
-        for (const s of side.spice) {
-          moves.push({ from: BANK, to: seatId, amount: s.amount, reason: 'battle' })
-        }
-      }
-      const paid = moves.filter((m) => m.amount > 0)
-      const moved = applySpiceMoves(purses, paid as never)
-      if (!moved.ok) return json({ error: 'the spice could not move', code: moved.refusal }, 500)
-      for (const seatId of Object.keys(secretsPatch)) {
-        if (moved.purses[seatId] !== undefined) {
-          (secretsPatch[seatId] as { spice?: number }).spice = moved.purses[seatId]
-        }
-      }
-
-      tanks = bankDead(tanks, killed as never) as never
-
-      // the explosion burns the spice lying there too
-      const spiceOnBoard = { ...((state.spiceOnBoard ?? {}) as Record<string, number>) }
-      if (outcome.clearSpice) delete spiceOnBoard[c.territoryId]
-
-      const fought = [...b.fought, {
-        territoryId: c.territoryId, aggressor: c.aggressor, defender: c.defender,
-        winner: outcome.winner,
-        ...(outcome.explosion ? { explosion: true } : null),
-        ...(outcome.traitors.length ? { traitors: outcome.traitors } : null),
-      }]
-
-      // the rotation walks on over the board as it now stands
-      const pendingAfter = pendingBattles(forces as never, state.storm as never)
-      const next = nextAggressor(b.order as never, pendingAfter, b.at)
-      const battlesAfter = next
-        ? {
-          ...b, at: next.at, current: null, fought, usedLeaders,
-          closesAt: now + BATTLE_PICK_SECONDS * 1000,
-        }
-        : undefined
-
-      const { data, error } = await admin.rpc('apply_match_write', {
-        p_match_id: matchId,
-        p_expected_version: match.version,
-        p_state: {
-          ...state, forces, tanks, spiceOnBoard,
-          // THE PUBLIC COUNT MOVES WITH THE HAND — a discard that shrank a
-          // hand while the count stood still held a whole hand back as stale.
-          players: ((state.players ?? []) as { faction: string; handCount?: number }[])
-            .map((p) => handCounts[p.faction] != null
-              ? { ...p, handCount: handCounts[p.faction] }
-              : p),
-          treacheryDiscard: discard,
-          ...(battlesAfter ? { battles: battlesAfter } : { battles: undefined }),
-          awaiting: next ? next.faction : null,
-          lastBattle: {
-            turn: state.turn ?? 0, at: now,
-            territoryId: c.territoryId, aggressor: c.aggressor, defender: c.defender,
-            winner: outcome.winner,
-            ...(outcome.explosion ? { explosion: true } : null),
-            ...(outcome.traitors.length ? { traitors: outcome.traitors } : null),
+      // ── ADVANCED: the winner names their dead before anything settles ───
+      // The window opens exactly when a choice exists: a winner with a dial
+      // to pay, no explosion, and no traitor call in their favour — a
+      // traitor-calling winner loses nothing, so there is nothing to choose.
+      // The beat's answers ride the same write so the settle can recompute.
+      const winnerDial = outcome.winner ? (planOf(outcome.winner).dial ?? 0) : 0
+      if (state.mode === 'advanced' && outcome.winner && !outcome.explosion
+        && !outcome.traitors.includes(outcome.winner as never) && winnerDial > 0) {
+        const { data, error } = await admin.rpc('apply_match_write', {
+          p_match_id: matchId,
+          p_expected_version: match.version,
+          p_state: {
+            ...state,
+            battles: {
+              ...b,
+              current: {
+                ...c,
+                revealed: {
+                  ...c.revealed,
+                  traitor: { ...beat, answered, calls },
+                  allocate: {
+                    by: outcome.winner,
+                    closesAt: now + BATTLE_ALLOCATE_SECONDS * 1000,
+                  },
+                },
+              },
+            },
           },
-        },
-        p_secrets: secretsPatch,
-      })
-      if (error) return json({ error: error.message }, 500)
-      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
-      return json({
-        winner: outcome.winner, explosion: outcome.explosion, traitors: outcome.traitors,
-        version: data[0].version,
-      })
+          p_secrets: {},
+        })
+        if (error) return json({ error: error.message }, 500)
+        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+        return json({ allocate: outcome.winner, version: data[0].version })
+      }
+
+      return await settleBattle(b as never, c as never, calls as never, null)
+    }
+
+    // ── ADVANCED: the winner names their dead ───────────────────────────────
+    // The dial and the spice CONSTRAIN the choice — the same enumeration that
+    // admitted the plan lists the legal answers, and the pick must be one of
+    // them. The choice is the winner's alone until the clock frees anyone to
+    // push the deterministic first. It settles in the same write that applies
+    // it, so it is private until it is real.
+    case 'BATTLE_ALLOCATE': {
+      const b = state.battles
+      const c = b?.current
+      const allocate = c?.revealed
+        ? (c.revealed as { allocate?: { by: string; closesAt: number } }).allocate
+        : undefined
+      if (state.phase !== 'Battles' || !b || !c?.revealed || !allocate) {
+        return json({ error: 'no losses to choose', code: 'no-allocation' }, 409)
+      }
+      const plan = c.revealed.plans[allocate.by] as { dial: number; spice?: number }
+      const opponent = [c.aggressor, c.defender].find((f) => f !== allocate.by)!
+      const constraint = {
+        pieces: piecesInBattle(
+          (state.forces ?? []) as never, allocate.by as never, c.territoryId, c.sectors),
+        dial: plan.dial,
+        spice: plan.spice ?? 0,
+        worth: eliteWorth(allocate.by as never, opponent as never),
+        freeFull: fullWithoutSpice(allocate.by as never),
+      }
+      const expired = now >= allocate.closesAt
+      let choice
+      if (!expired) {
+        if (myFaction !== allocate.by) {
+          return json({ error: 'the winner chooses', code: 'not-your-choice' }, 403)
+        }
+        choice = {
+          plainFull: Number(action.plainFull ?? 0),
+          plainHalf: Number(action.plainHalf ?? 0),
+          eliteFull: Number(action.eliteFull ?? 0),
+          eliteHalf: Number(action.eliteHalf ?? 0),
+        }
+        if (!judgeAllocation(choice, constraint)) {
+          return json({
+            error: 'that choice does not pay the dial', code: 'allocation-mismatch',
+          }, 409)
+        }
+      } else {
+        choice = firstAllocation(constraint)
+        if (!choice) {
+          // Unreachable for an admitted plan; refused rather than guessed.
+          return json({ error: 'no legal choice exists', code: 'no-allocation' }, 409)
+        }
+      }
+      return await settleBattle(
+        b as never, c as never, [...c.revealed.traitor.calls] as never, choice)
     }
 
     // ── The Fremen ride Shai-Hulud ──────────────────────────────────────────
@@ -2617,6 +2772,7 @@ Deno.serve(async req => {
         battleTraitorSeconds: BATTLE_TRAITOR_SECONDS,
         battleVoiceSeconds: BATTLE_VOICE_SECONDS,
         battlePrescienceSeconds: BATTLE_PRESCIENCE_SECONDS,
+        battleAllocateSeconds: BATTLE_ALLOCATE_SECONDS,
       })
       if (reset.length === 0) {
         return json({ error: 'nothing here holds a clock', code: 'no-clock' }, 409)

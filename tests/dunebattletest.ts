@@ -12,9 +12,11 @@ import {
   pendingBattles, battlesFor, nextAggressor, forcesInBattle, judgePlan,
   resolveBattle, battleLosses, explosionLosses, CHEAP_HERO_ID,
   BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
-  BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS,
+  BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS, BATTLE_ALLOCATE_SECONDS,
   planPlaysTarget, canComplyWithVoice, voiceViolation, judgeVoiceCommand,
   prescienceAnswer,
+  piecesInBattle, eliteWorth, fullWithoutSpice, battleStrengthCap,
+  allocationsFor, judgeAllocation, firstAllocation, allocationLosses,
 } from '@/lib/dune/battle'
 import type { BattlePlan } from '@/lib/dune/battle'
 import { factionById } from '@/data/dune/factions'
@@ -180,7 +182,7 @@ const side = (faction: FactionId, plan: BattlePlan, calledTraitor = false) => {
   check('...the loser loses every force there',
     plain.sides[1], {
       faction: 'harkonnen', losesAll: true, losses: 0, leaderDies: false,
-      discards: [], spice: [],
+      discards: [], spice: [], spends: 0,
     })
   check('...the winner pays the dial and keeps the field',
     [plain.sides[0].losesAll, plain.sides[0].losses], [false, 3])
@@ -367,6 +369,7 @@ check('the three windows have their seconds',
     /\} else if \(expired\) \{\s*[\r\n]+\s*plans\[f\] = \{ dial: 0 \}/.test(plan), true)
 
   const beat = fn.slice(fn.indexOf("case 'BATTLE_TRAITOR'"), fn.indexOf("case 'SEED_SPICE'"))
+    + fn.slice(fn.indexOf('const settleBattle'), fn.indexOf('switch (action.type)'))
   check('a false traitor call is refused privately',
     /return json\(\{ error: 'that call is not yours to make', code: 'no-traitor' \}, 409\)/.test(beat), true)
   check('the resolution rides the shared law', /resolveBattle\(\{/.test(beat), true)
@@ -382,7 +385,7 @@ check('the three windows have their seconds',
   check('...harvesting the whole territory, bystanders included',
     /if \(outcome\.explosion\) \{\s*[\r\n]+\s*for \(const lift of explosionLosses\(forces as never, c\.territoryId\)\)/.test(beat), true)
   check('...and never lifting the sides twice',
-    /const lifts = outcome\.explosion \? \[\] : battleLosses\(/.test(beat), true)
+    /const lifts = outcome\.explosion \? \[\]/.test(beat), true)
   check('the fought-out phase clears itself',
     /: undefined[\s\S]{0,700}battles: battlesAfter \} : \{ battles: undefined \}/.test(beat), true)
 
@@ -866,6 +869,288 @@ check('the three windows have their seconds',
     [/BATTLE_VOICE/.test(matchSrc2), /BATTLE_PRESCIENCE/.test(matchSrc2),
       /BATTLE_VOICE/.test(harnessSrc2), /BATTLE_PRESCIENCE/.test(harnessSrc2)],
     [true, true, true, true])
+}
+
+// ── advanced combat: spice, elites, and the winner's choice ───────────────
+// Pass three. Each force counts FULL on a spice and HALF without; elites are
+// double (Sardaukar single against the Fremen); the Fremen are full for free;
+// and the winner CHOOSES which pieces die, constrained to pay exactly the
+// dial with exactly the spice — the rulebook's example is tested verbatim.
+{
+  check('elites are double, except Sardaukar facing the Fremen',
+    [eliteWorth('fremen', 'emperor'), eliteWorth('emperor', 'atreides'),
+      eliteWorth('emperor', 'fremen')], [2, 2, 1])
+  check('only the Fremen count full for free',
+    [fullWithoutSpice('fremen'), fullWithoutSpice('emperor')], [true, false])
+  check('the cap is every piece at full',
+    [battleStrengthCap({ plain: 5, elite: 1 }, 2),
+      battleStrengthCap({ plain: 5, elite: 1 }, 1)], [7, 6])
+
+  // THE RULEBOOK'S EMPEROR: 1 Sardaukar and 5 ordinary, dialling 3 on 1
+  // spice. The law enumerates every way to pay it — both of the book's
+  // options are members, and so is the third the same constraint admits
+  // (the spice on an ordinary, the Sardaukar dying at half).
+  const book = allocationsFor(
+    { pieces: { plain: 5, elite: 1 }, dial: 3, spice: 1, worth: 2, freeFull: false })
+  check('the rulebook example enumerates its options',
+    book, [
+      { plainFull: 1, plainHalf: 4, eliteFull: 0, eliteHalf: 0 },
+      { plainFull: 1, plainHalf: 2, eliteFull: 0, eliteHalf: 1 },
+      { plainFull: 0, plainHalf: 2, eliteFull: 1, eliteHalf: 0 },
+    ])
+  check('...the choice must be a member, whole and exact',
+    [judgeAllocation({ plainFull: 0, plainHalf: 2, eliteFull: 1, eliteHalf: 0 },
+      { pieces: { plain: 5, elite: 1 }, dial: 3, spice: 1, worth: 2, freeFull: false }),
+      judgeAllocation({ plainFull: 3, plainHalf: 0, eliteFull: 0, eliteHalf: 0 },
+        { pieces: { plain: 5, elite: 1 }, dial: 3, spice: 1, worth: 2, freeFull: false }),
+      judgeAllocation({ plainFull: 1, plainHalf: 4.5, eliteFull: 0, eliteHalf: 0 },
+        { pieces: { plain: 5, elite: 1 }, dial: 3, spice: 1, worth: 2, freeFull: false })],
+    [true, false, false])
+  check('...and the expired push is the enumeration\'s first',
+    firstAllocation(
+      { pieces: { plain: 5, elite: 1 }, dial: 3, spice: 1, worth: 2, freeFull: false }),
+    { plainFull: 1, plainHalf: 4, eliteFull: 0, eliteHalf: 0 })
+
+  check('Sardaukar facing the Fremen pay at one',
+    [allocationsFor({ pieces: { plain: 0, elite: 2 }, dial: 2, spice: 2, worth: 1, freeFull: false }),
+      allocationsFor({ pieces: { plain: 0, elite: 2 }, dial: 2, spice: 0, worth: 1, freeFull: false })],
+    [[{ plainFull: 0, plainHalf: 0, eliteFull: 2, eliteHalf: 0 }], []])
+  check('the Fremen pay full for free, and their dials are whole',
+    [allocationsFor({ pieces: { plain: 3, elite: 2 }, dial: 5, spice: 0, worth: 2, freeFull: true }),
+      allocationsFor({ pieces: { plain: 3, elite: 2 }, dial: 5, spice: 1, worth: 2, freeFull: true }),
+      allocationsFor({ pieces: { plain: 3, elite: 2 }, dial: 2.5, spice: 0, worth: 2, freeFull: true })],
+    [[{ plainFull: 3, plainHalf: 0, eliteFull: 1, eliteHalf: 0 },
+      { plainFull: 1, plainHalf: 0, eliteFull: 2, eliteHalf: 0 }], [], []])
+
+  check('pieces are counted by class, inside the battle\'s slice',
+    piecesInBattle([
+      f('emperor', 'territory-13', 'sector-10', 4, { starred: 1 }),
+      f('emperor', 'territory-13', 'sector-09', 2, { starred: 1 }),
+      f('emperor', 'territory-22', 'sector-15', 3, { starred: 3 }),
+    ], 'emperor', 'territory-13', ['sector-10']),
+    { plain: 3, elite: 1 })
+
+  // the judge, in advanced mode
+  const battle = { territoryId: 'territory-13', sectors: ['sector-10'] }
+  const board = [
+    f('atreides', 'territory-13', 'sector-10', 4),
+    f('harkonnen', 'territory-13', 'sector-10', 3),
+  ]
+  const adv = (plan: BattlePlan, over: Record<string, unknown> = {}) => judgePlan({
+    faction: 'atreides', battle, forces: board, hand: [],
+    deadLeaders: [], usedLeaders: {}, plan,
+    mode: 'advanced', opponent: 'harkonnen', purse: 5, ...over,
+  } as never)
+  check('a half dial the pieces can pay stands',
+    adv({ dial: 2.5, spice: 1 }), { ok: true })
+  check('...a quarter dial is no dial',
+    (adv({ dial: 2.25, spice: 1 }) as { refusal: string }).refusal, 'dial-out-of-range')
+  check('...a dial past every piece at full is out of range',
+    (adv({ dial: 5, spice: 4 }) as { refusal: string }).refusal, 'dial-out-of-range')
+  check('a dial no pieces can pay with that spice is refused by name',
+    (adv({ dial: 3, spice: 0 }) as { refusal: string }).refusal, 'dial-spice-mismatch')
+  check('spice past the purse is refused privately',
+    (adv({ dial: 3, spice: 6 }, { purse: 5 }) as { refusal: string }).refusal,
+    'more-spice-than-you-hold')
+  check('the Fremen may not spend what they do not need',
+    (judgePlan({
+      faction: 'fremen', battle,
+      forces: [f('fremen', 'territory-13', 'sector-10', 4),
+        f('harkonnen', 'territory-13', 'sector-10', 3)],
+      hand: [], deadLeaders: [], usedLeaders: {},
+      plan: { dial: 2, spice: 1 }, mode: 'advanced', opponent: 'harkonnen', purse: 5,
+    } as never) as { refusal: string }).refusal, 'fremen-need-no-spice')
+  check('basic battles take no spice and no halves',
+    [(judge => (judge as { refusal: string }).refusal)(judgePlan({
+      faction: 'atreides', battle, forces: board, hand: [],
+      deadLeaders: [], usedLeaders: {}, plan: { dial: 1, spice: 1 },
+    } as never)),
+    (judge => (judge as { refusal: string }).refusal)(judgePlan({
+      faction: 'atreides', battle, forces: board, hand: [],
+      deadLeaders: [], usedLeaders: {}, plan: { dial: 2.5 },
+    } as never))], ['spice-is-advanced', 'dial-out-of-range'])
+  check('a broken spice number is refused in any mode',
+    (adv({ dial: 1, spice: -1 }) as { refusal: string }).refusal, 'spice-out-of-range')
+
+  // what is spent, and who is excused
+  const spent = resolveBattle({
+    aggressor: side('atreides', { dial: 3, leader: JESSICA, spice: 2 }),
+    defender: side('harkonnen', { dial: 1, leader: KUDU, spice: 1 }),
+  })
+  check('spice spent leaves for the bank win or lose',
+    spent.sides.map(s => s.spends), [2, 1])
+  const betrayedFight = resolveBattle({
+    aggressor: side('atreides', { dial: 3, leader: JESSICA, spice: 2 }, true),
+    defender: side('harkonnen', { dial: 1, leader: FEYD, spice: 1 }),
+  })
+  check('...except a traitor-calling winner, who spends nothing',
+    [betrayedFight.winner, betrayedFight.sides.map(s => s.spends)],
+    ['atreides', [0, 1]])
+  check('...while mutual ruin spends both',
+    resolveBattle({
+      aggressor: side('atreides', { dial: 3, spice: 2 }, true),
+      defender: side('harkonnen', { dial: 1, spice: 1 }, true),
+    }).sides.map(s => s.spends), [2, 1])
+
+  // the chosen dead leave by class, cells in sector order
+  check('an allocation lifts what it names, in sector order',
+    allocationLosses([
+      f('atreides', 'territory-13', 'sector-10', 4, { starred: 1 }),
+      f('atreides', 'territory-13', 'sector-11', 2, { starred: 1 }),
+    ], 'atreides', 'territory-13', ['sector-10', 'sector-11'],
+    { plainFull: 1, plainHalf: 2, eliteFull: 1, eliteHalf: 1 }),
+    [{ sector: 'sector-10', count: 4, starred: 1 },
+      { sector: 'sector-11', count: 1, starred: 1 }])
+
+  check('the window has its two minutes', BATTLE_ALLOCATE_SECONDS, 120)
+
+  // ── the server slice ────────────────────────────────────────────────────
+  const fn = code('supabase/functions/dune-action/index.ts')
+  const planCase = fn.slice(fn.indexOf("case 'BATTLE_PLAN'"), fn.indexOf("case 'BATTLE_VOICE'"))
+  check('the plan carries its spice into the row',
+    /\.\.\.\(action\.spice != null \? \{ spice: Number\(action\.spice\) \} : null\),/.test(planCase), true)
+  check('...and the judge is told the mode, the facing, and the purse',
+    [/mode: \(state\.mode === 'advanced' \? 'advanced' : 'basic'\) as never,/.test(planCase),
+      /opponent: combatants\.find\(\(f\) => f !== myFaction\) as never,/.test(planCase),
+      /purse: readSpice\(mine as never\),/.test(planCase)], [true, true, true])
+  const beatCase = fn.slice(fn.indexOf("case 'BATTLE_TRAITOR'"), fn.indexOf("case 'BATTLE_ALLOCATE'"))
+  check('the beat opens the winner\'s window exactly when a choice exists',
+    /if \(state\.mode === 'advanced' && outcome\.winner && !outcome\.explosion/.test(beatCase)
+      && /!outcome\.traitors\.includes\(outcome\.winner as never\) && winnerDial > 0\)/.test(beatCase),
+    true)
+  check('...and cannot reopen it over the winner\'s head',
+    /code: 'allocation-open' \}, 409\)/.test(beatCase), true)
+  const allocCase = fn.slice(fn.indexOf("case 'BATTLE_ALLOCATE'"), fn.indexOf('// ── The Fremen ride'))
+  check('the choice is the winner\'s alone until the clock frees anyone',
+    [/code: 'not-your-choice' \}, 403\)/.test(allocCase),
+      /if \(!judgeAllocation\(choice, constraint\)\)/.test(allocCase),
+      /choice = firstAllocation\(constraint\)/.test(allocCase)], [true, true, true])
+  check('...and both triggers settle through ONE implementation',
+    [/return await settleBattle\(/.test(allocCase),
+      /return await settleBattle\(b as never, c as never, calls as never, null\)/.test(beatCase)],
+    [true, true])
+  const settle = fn.slice(fn.indexOf('const settleBattle'), fn.indexOf('switch (action.type)'))
+  check('the winner\'s named dead replace the dial-count rule',
+    /allocation && f === outcome\.winner/.test(settle)
+      && /allocationLosses\(/.test(settle), true)
+  check('...and the spent spice moves to the bank in the same write',
+    /moves\.push\(\{ from: seatId, to: BANK, amount: side\.spends, reason: 'battle-spice' \}\)/.test(settle),
+    true)
+  const hold = code('src/lib/dune/phaseAdvance.ts')
+  check('the phase holds for the winner\'s window',
+    /until: c\?\.revealed\?\.allocate\?\.closesAt/.test(hold), true)
+
+  // ── the panel ───────────────────────────────────────────────────────────
+  const battles2 = {
+    turn: 3, order: ['emperor', 'harkonnen'] as FactionId[], at: 0,
+    current: null, fought: [], usedLeaders: {}, closesAt: 9_999_999_999_999,
+  }
+  const advBoard = [
+    f('emperor', 'territory-13', 'sector-10', 6, { starred: 1 }),
+    f('harkonnen', 'territory-13', 'sector-10', 3),
+  ]
+  const drawAdv = (over: Record<string, unknown> = {}) =>
+    renderToStaticMarkup(createElement(BattlePanel, {
+      battles: battles2, forces: advBoard, storm: CALM, tanks: null,
+      seat: 'emperor' as FactionId,
+      hand: [], traitors: [], now: 1, busy: false,
+      onPick: () => {}, onPlan: () => {}, onAnswer: () => {},
+      onVoice: () => {}, onPrescience: () => {}, onAllocate: () => {},
+      mode: 'advanced', purse: 5,
+      ...over,
+    } as never))
+
+  const advCurrent = {
+    territoryId: 'territory-13', sectors: ['sector-10'],
+    aggressor: 'emperor', defender: 'harkonnen',
+    committed: [], closesAt: 9_999_999_999_999,
+  }
+  const advForm = drawAdv({ battles: { ...battles2, current: advCurrent } })
+  check('the advanced form offers the half-dial and the spice stepper',
+    [/data-dial-half/.test(advForm), /data-plan-spice-up/.test(advForm),
+      /data-plan-spice="0"/.test(advForm)], [true, true, true])
+  check('...which basic battles never see',
+    (() => {
+      const b = drawAdv({ battles: { ...battles2, current: advCurrent }, mode: 'basic' })
+      return [/data-dial-half/.test(b), /data-plan-spice-up/.test(b)]
+    })(), [false, false])
+  check('...and the Fremen see neither, being full for free',
+    (() => {
+      const fr = drawAdv({
+        battles: {
+          ...battles2,
+          current: { ...advCurrent, aggressor: 'fremen' },
+        },
+        forces: [f('fremen', 'territory-13', 'sector-10', 4),
+          f('harkonnen', 'territory-13', 'sector-10', 3)],
+        seat: 'fremen',
+      })
+      return [/data-fremen-free/.test(fr), /data-dial-half/.test(fr)]
+    })(), [true, false])
+
+  const advRevealed = {
+    ...advCurrent, committed: ['emperor', 'harkonnen'],
+    revealed: {
+      plans: {
+        emperor: { dial: 3, spice: 1, leader: KUDU },
+        harkonnen: { dial: 2.5, leader: FEYD },
+      },
+      traitor: { answered: ['emperor', 'harkonnen'], calls: [], closesAt: 1 },
+      allocate: { by: 'emperor', closesAt: 9_999_999_999_999 },
+    },
+  }
+  const choosing = drawAdv({ battles: { ...battles2, current: advRevealed } })
+  check('the reveal prints the spice and the half-dial',
+    [/data-plan-spice-shown/.test(choosing), choosing.includes('2½')], [true, true])
+  check('the winner is offered every legal way to pay, and only those',
+    [(choosing.match(/data-allocate-option="/g) ?? []).length,
+      choosing.includes('1 Sardaukar at full + 2 ordinary at half'),
+      choosing.includes('1 ordinary at full + 4 ordinary at half')], [3, true, true])
+  check('...everyone else waits on the choice',
+    (() => {
+      const w = drawAdv({ battles: { ...battles2, current: advRevealed }, seat: 'harkonnen' })
+      return [/data-allocate-waits/.test(w), /data-allocate-option/.test(w),
+        /data-call-traitor|data-no-traitor/.test(w)]
+    })(), [true, false, false])
+  check('...and an expired choice can be pushed to the first lawful one',
+    /data-allocate-push/.test(drawAdv({
+      battles: {
+        ...battles2,
+        current: {
+          ...advRevealed,
+          revealed: {
+            ...advRevealed.revealed,
+            allocate: { by: 'emperor', closesAt: 0 },
+          },
+        },
+      },
+      seat: 'harkonnen',
+    })), true)
+  check('an unpayable pair is stopped at the form, by name',
+    (() => {
+      const s = drawAdv({
+        battles: { ...battles2, current: advCurrent },
+        forces: [f('emperor', 'territory-13', 'sector-10', 6, { starred: 1 }),
+          f('harkonnen', 'territory-13', 'sector-10', 3)],
+        purse: 0,
+      })
+      // dial 0 spice 0 is payable; the pin is that the gate EXISTS and the
+      // commit reads it — the unpayable state needs a click, so the source
+      // is pinned instead.
+      return /data-dial-unsupported/.test(s)
+    })(), false)
+  const panelSrc2 = code('src/components/dune/BattlePanel.tsx')
+  check('...the commit is gated on the same law the server judges by',
+    /disabled=\{busy \|\| !!violation \|\| !supported\} data-plan-commit=""/.test(panelSrc2)
+      && /const supported = !advanced \|\| allocationsFor\(\{/.test(panelSrc2), true)
+  const game2 = code('src/components/dune/DuneGameScreen.tsx')
+  check('the clock knows the winner\'s window, and the screen feeds the purse',
+    [/BATTLE_ALLOCATE_SECONDS \* 1000/.test(game2),
+      /purse=\{own\?\.spice \?\? 0\}/.test(game2)], [true, true])
+  const match2 = code('src/components/dune/DuneMatchScreen.tsx')
+  const harness2 = code('src/components/dune/DuneMultiSeatView.tsx')
+  check('both drivers post the choice',
+    [/BATTLE_ALLOCATE/.test(match2), /BATTLE_ALLOCATE/.test(harness2)], [true, true])
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

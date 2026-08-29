@@ -1327,6 +1327,7 @@ var BATTLE_TRAITOR_SECONDS = 60;
 var CHEAP_HERO_ID = "cheaphero";
 var BATTLE_VOICE_SECONDS = 60;
 var BATTLE_PRESCIENCE_SECONDS = 60;
+var BATTLE_ALLOCATE_SECONDS = 120;
 var VOICE_TARGETS = [
   "projectile",
   "poison",
@@ -1432,11 +1433,39 @@ function forcesInBattle(forces, faction, territoryId, sectors) {
   return forces.filter((f) => f.faction === faction && f.territoryId === territoryId && sectors.includes(f.sector)).reduce((n, f) => n + f.count, 0);
 }
 function judgePlan(input) {
-  const { faction, battle, forces, hand, deadLeaders, usedLeaders, plan, voiced } = input;
+  const { faction, battle, forces, hand, deadLeaders, usedLeaders, plan, voiced, purse } = input;
   const strength = forcesInBattle(forces, faction, battle.territoryId, battle.sectors);
   if (strength <= 0) return { ok: false, refusal: "not-in-this-battle" };
-  if (!Number.isInteger(plan.dial) || plan.dial < 0 || plan.dial > strength) {
-    return { ok: false, refusal: "dial-out-of-range" };
+  const spice = plan.spice ?? 0;
+  if (!Number.isInteger(spice) || spice < 0) {
+    return { ok: false, refusal: "spice-out-of-range" };
+  }
+  if ((input.mode ?? "basic") === "advanced") {
+    if (purse != null && spice > purse) {
+      return { ok: false, refusal: "more-spice-than-you-hold" };
+    }
+    if (fullWithoutSpice(faction) && spice > 0) {
+      return { ok: false, refusal: "fremen-need-no-spice" };
+    }
+    const pieces = piecesInBattle(forces, faction, battle.territoryId, battle.sectors);
+    const worth = eliteWorth(faction, input.opponent ?? faction);
+    if (plan.dial < 0 || plan.dial > battleStrengthCap(pieces, worth) || !Number.isInteger(plan.dial * 2)) {
+      return { ok: false, refusal: "dial-out-of-range" };
+    }
+    if (allocationsFor({
+      pieces,
+      dial: plan.dial,
+      spice,
+      worth,
+      freeFull: fullWithoutSpice(faction)
+    }).length === 0) {
+      return { ok: false, refusal: "dial-spice-mismatch" };
+    }
+  } else {
+    if (spice > 0) return { ok: false, refusal: "spice-is-advanced" };
+    if (!Number.isInteger(plan.dial) || plan.dial < 0 || plan.dial > strength) {
+      return { ok: false, refusal: "dial-out-of-range" };
+    }
   }
   if (plan.leader && plan.cheapHero) return { ok: false, refusal: "two-leaders" };
   if (plan.leader) {
@@ -1493,7 +1522,8 @@ function resolveBattle(input) {
     losses: 0,
     leaderDies: false,
     discards: [],
-    spice: []
+    spice: [],
+    spends: me.plan.spice ?? 0
   });
   const a = side(aggressor);
   const d = side(defender);
@@ -1521,6 +1551,7 @@ function resolveBattle(input) {
         for: `the traitor ${betrayed.plan.leader}`
       });
     }
+    callerOut.spends = 0;
     return finish(callerOut.faction, false, traitors);
   }
   const plans = [aggressor.plan, defender.plan];
@@ -1572,6 +1603,72 @@ function resolveBattle(input) {
   }
   return finish(winSide.faction, false, []);
 }
+function piecesInBattle(forces, faction, territoryId, sectors) {
+  const mine = forces.filter((f) => f.faction === faction && f.territoryId === territoryId && sectors.includes(f.sector));
+  const total = mine.reduce((n, f) => n + f.count, 0);
+  const elite = mine.reduce((n, f) => n + Math.min(f.count, f.starred ?? 0), 0);
+  return { plain: total - elite, elite };
+}
+function eliteWorth(faction, opponent) {
+  return faction === "emperor" && opponent === "fremen" ? 1 : 2;
+}
+var fullWithoutSpice = (faction) => faction === "fremen";
+function allocationsFor(input) {
+  const { pieces, dial, spice, worth, freeFull } = input;
+  const dial2 = Math.round(dial * 2);
+  if (dial2 < 0 || Math.abs(dial * 2 - dial2) > 1e-9) return [];
+  const out = [];
+  if (freeFull) {
+    if (spice !== 0 || dial2 % 2 !== 0) return out;
+    for (let ef = 0; ef <= pieces.elite; ef++) {
+      const pf = dial - ef * worth;
+      if (Number.isInteger(pf) && pf >= 0 && pf <= pieces.plain) {
+        out.push({ plainFull: pf, plainHalf: 0, eliteFull: ef, eliteHalf: 0 });
+      }
+    }
+    return out;
+  }
+  for (let ef = 0; ef <= Math.min(pieces.elite, spice); ef++) {
+    const pf = spice - ef;
+    if (pf > pieces.plain) continue;
+    for (let eh = 0; eh + ef <= pieces.elite; eh++) {
+      const ph = dial2 - pf * 2 - ef * 2 * worth - eh * worth;
+      if (ph < 0 || ph > pieces.plain - pf) continue;
+      out.push({ plainFull: pf, plainHalf: ph, eliteFull: ef, eliteHalf: eh });
+    }
+  }
+  return out;
+}
+function judgeAllocation(choice, input) {
+  const whole = (n) => Number.isInteger(n) && n >= 0;
+  if (![choice.plainFull, choice.plainHalf, choice.eliteFull, choice.eliteHalf].every(whole)) return false;
+  return allocationsFor(input).some((a) => a.plainFull === choice.plainFull && a.plainHalf === choice.plainHalf && a.eliteFull === choice.eliteFull && a.eliteHalf === choice.eliteHalf);
+}
+var firstAllocation = (input) => allocationsFor(input)[0] ?? null;
+function battleStrengthCap(pieces, worth) {
+  return pieces.plain + pieces.elite * worth;
+}
+function allocationLosses(forces, faction, territoryId, sectors, choice) {
+  const mine = forces.filter((f) => f.faction === faction && f.territoryId === territoryId && sectors.includes(f.sector) && f.count > 0).sort((x, y) => num(x.sector) - num(y.sector));
+  let plain = choice.plainFull + choice.plainHalf;
+  let starred = choice.eliteFull + choice.eliteHalf;
+  const lifts = [];
+  for (const f of mine) {
+    const cellElite = Math.min(f.count, f.starred ?? 0);
+    const takePlain = Math.min(plain, f.count - cellElite);
+    const takeElite = Math.min(starred, cellElite);
+    plain -= takePlain;
+    starred -= takeElite;
+    if (takePlain + takeElite > 0) {
+      lifts.push({
+        sector: f.sector,
+        count: takePlain + takeElite,
+        starred: takeElite
+      });
+    }
+  }
+  return lifts;
+}
 function explosionLosses(forces, territoryId) {
   return forces.filter((f) => f.territoryId === territoryId && f.count > 0).sort((x, y) => x.faction.localeCompare(y.faction) || num(x.sector) - num(y.sector)).map((f) => ({
     faction: f.faction,
@@ -1611,6 +1708,7 @@ function battleLosses(forces, faction, territoryId, sectors, outcome) {
   return out;
 }
 export {
+  BATTLE_ALLOCATE_SECONDS,
   BATTLE_PICK_SECONDS,
   BATTLE_PLAN_SECONDS,
   BATTLE_PRESCIENCE_SECONDS,
@@ -1619,15 +1717,23 @@ export {
   CHEAP_HERO_ID,
   PRESCIENCE_ASKS,
   VOICE_TARGETS,
+  allocationLosses,
+  allocationsFor,
   battleLosses,
+  battleStrengthCap,
   battlesFor,
   canComplyWithVoice,
+  eliteWorth,
   explosionLosses,
+  firstAllocation,
   forcesInBattle,
+  fullWithoutSpice,
+  judgeAllocation,
   judgePlan,
   judgeVoiceCommand,
   nextAggressor,
   pendingBattles,
+  piecesInBattle,
   planPlaysTarget,
   prescienceAnswer,
   resolveBattle,

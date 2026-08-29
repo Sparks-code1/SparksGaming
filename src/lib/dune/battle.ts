@@ -55,6 +55,8 @@ export const CHEAP_HERO_ID = 'cheaphero'
 export const BATTLE_VOICE_SECONDS = 60
 /** The Atreides' question, after the opponent commits, before the reveal. */
 export const BATTLE_PRESCIENCE_SECONDS = 60
+/** ADVANCED: the winner's window to choose which pieces die. */
+export const BATTLE_ALLOCATE_SECONDS = 120
 
 // ── the Voice ─────────────────────────────────────────────────────────────
 
@@ -240,6 +242,12 @@ export interface BattlePlan {
   leader?: string
   /** The Cheap Hero played in the leader's place. */
   cheapHero?: boolean
+  /**
+   * ADVANCED: spice spent to support the dial — one per full-strength
+   * piece. Hidden with the plan until the reveal; it leaves for the bank
+   * win or lose, except a traitor-calling winner, who spends nothing.
+   */
+  spice?: number
   /** Card ids out of the hand. */
   weapon?: string
   defence?: string
@@ -251,6 +259,8 @@ export type PlanRefusal =
   | 'card-not-held' | 'not-a-weapon' | 'not-a-defence'
   | 'no-leader-no-cards' | 'one-card-twice'
   | 'voice-demands' | 'voice-forbids'
+  | 'spice-out-of-range' | 'more-spice-than-you-hold' | 'spice-is-advanced'
+  | 'fremen-need-no-spice' | 'dial-spice-mismatch'
 
 /** How many forces a faction has standing in the battle's slice. */
 export function forcesInBattle(
@@ -278,13 +288,49 @@ export function judgePlan(input: {
   plan: BattlePlan
   /** The Voice standing over this plan, when the Bene Gesserit spoke. */
   voiced?: VoiceCommand | null
+  /** 'advanced' turns on spice-supported strength; absent means basic. */
+  mode?: 'basic' | 'advanced'
+  /** The other combatant — the Sardaukar's worth depends on who they face. */
+  opponent?: FactionId
+  /** The planner's purse, when the caller can see it: spice is capped by it. */
+  purse?: number
 }): { ok: true } | { ok: false; refusal: PlanRefusal } {
-  const { faction, battle, forces, hand, deadLeaders, usedLeaders, plan, voiced } = input
+  const { faction, battle, forces, hand, deadLeaders, usedLeaders, plan, voiced, purse } = input
 
   const strength = forcesInBattle(forces, faction, battle.territoryId, battle.sectors)
   if (strength <= 0) return { ok: false, refusal: 'not-in-this-battle' }
-  if (!Number.isInteger(plan.dial) || plan.dial < 0 || plan.dial > strength) {
-    return { ok: false, refusal: 'dial-out-of-range' }
+  const spice = plan.spice ?? 0
+  if (!Number.isInteger(spice) || spice < 0) {
+    return { ok: false, refusal: 'spice-out-of-range' }
+  }
+  if ((input.mode ?? 'basic') === 'advanced') {
+    // ── ADVANCED: the dial is STRENGTH and must be PAYABLE ────────────────
+    // Spice sits on exactly the full-strength pieces, the rest count half;
+    // elites are double (the Sardaukar single against the Fremen); the
+    // Fremen count full for free. A dial-and-spice pair no set of pieces
+    // can pay is refused here by the same law the winner's choice obeys.
+    if (purse != null && spice > purse) {
+      return { ok: false, refusal: 'more-spice-than-you-hold' }
+    }
+    if (fullWithoutSpice(faction) && spice > 0) {
+      return { ok: false, refusal: 'fremen-need-no-spice' }
+    }
+    const pieces = piecesInBattle(forces, faction, battle.territoryId, battle.sectors)
+    const worth = eliteWorth(faction, input.opponent ?? faction)
+    if (plan.dial < 0 || plan.dial > battleStrengthCap(pieces, worth)
+      || !Number.isInteger(plan.dial * 2)) {
+      return { ok: false, refusal: 'dial-out-of-range' }
+    }
+    if (allocationsFor({
+      pieces, dial: plan.dial, spice, worth, freeFull: fullWithoutSpice(faction),
+    }).length === 0) {
+      return { ok: false, refusal: 'dial-spice-mismatch' }
+    }
+  } else {
+    if (spice > 0) return { ok: false, refusal: 'spice-is-advanced' }
+    if (!Number.isInteger(plan.dial) || plan.dial < 0 || plan.dial > strength) {
+      return { ok: false, refusal: 'dial-out-of-range' }
+    }
   }
 
   if (plan.leader && plan.cheapHero) return { ok: false, refusal: 'two-leaders' }
@@ -365,6 +411,9 @@ export interface SideOutcome {
   discards: string[]
   /** Spice this side takes from the bank, and what for. */
   spice: { amount: number; for: string }[]
+  /** ADVANCED: the plan's spent spice, leaving for the bank — win or lose,
+   *  except a traitor-calling winner, who spends nothing. */
+  spends: number
 }
 
 export interface BattleOutcome {
@@ -415,7 +464,7 @@ export function resolveBattle(input: {
 
   const side = (me: SideInput): SideOutcome => ({
     faction: me.faction, losesAll: false, losses: 0, leaderDies: false,
-    discards: [], spice: [],
+    discards: [], spice: [], spends: me.plan.spice ?? 0,
   })
   const a = side(aggressor)
   const d = side(defender)
@@ -450,6 +499,8 @@ export function resolveBattle(input: {
         for: `the traitor ${betrayed.plan.leader}`,
       })
     }
+    // "Except when a traitor is revealed, where the winner spends nothing."
+    callerOut.spends = 0
     void caller
     return finish(callerOut.faction, false, traitors)
   }
@@ -524,6 +575,144 @@ export function resolveBattle(input: {
   }
 
   return finish(winSide.faction, false, [])
+}
+
+// ── advanced combat: spice, elites, and the winner's choice ───────────────
+
+/** The two classes a stack holds: ordinary pieces and starred elites. */
+export interface BattlePieces { plain: number; elite: number }
+
+/** A faction's pieces standing in the battle's slice, by class. */
+export function piecesInBattle(
+  forces: readonly Force[], faction: FactionId,
+  territoryId: string, sectors: readonly string[],
+): BattlePieces {
+  const mine = forces.filter(f => f.faction === faction
+    && f.territoryId === territoryId && sectors.includes(f.sector))
+  const total = mine.reduce((n, f) => n + f.count, 0)
+  const elite = mine.reduce((n, f) => n + Math.min(f.count, f.starred ?? 0), 0)
+  return { plain: total - elite, elite }
+}
+
+/**
+ * What one ELITE is worth in this battle: Fedaykin two against everyone,
+ * Sardaukar two — except against the Fremen, where they count as one.
+ */
+export function eliteWorth(faction: FactionId, opponent: FactionId): 1 | 2 {
+  return faction === 'emperor' && opponent === 'fremen' ? 1 : 2
+}
+
+/** The Fremen never need spice: every piece of theirs counts at full. */
+export const fullWithoutSpice = (faction: FactionId): boolean => faction === 'fremen'
+
+/** One way to pay the dial in dead pieces: how many of each class die at
+ *  full strength (a spice on each) and how many at half. */
+export interface LossAllocation {
+  plainFull: number
+  plainHalf: number
+  eliteFull: number
+  eliteHalf: number
+}
+
+/**
+ * Every legal allocation for a dial and spice against the pieces standing
+ * there: the spent spice sits on exactly the full-strength dead, the rest
+ * die at half, and the contributions sum to the dial. This is CONSTRAINT
+ * SATISFACTION, not subtraction — the rulebook's Emperor with one Sardaukar
+ * and five ordinary, dialling 3 on 1 spice, may lose the Sardaukar full
+ * plus two ordinary at half, or one ordinary full plus four at half, and
+ * nothing else. Strengths are half-exact, so the arithmetic runs in
+ * HALF-UNITS. judgePlan admits a plan only when this is non-empty, and the
+ * winner's choice must be a member.
+ */
+export function allocationsFor(input: {
+  pieces: BattlePieces
+  dial: number
+  spice: number
+  worth: 1 | 2
+  freeFull: boolean
+}): LossAllocation[] {
+  const { pieces, dial, spice, worth, freeFull } = input
+  const dial2 = Math.round(dial * 2)
+  if (dial2 < 0 || Math.abs(dial * 2 - dial2) > 1e-9) return []
+  const out: LossAllocation[] = []
+  if (freeFull) {
+    // Every piece counts full and no spice is spent: integer dials only.
+    if (spice !== 0 || dial2 % 2 !== 0) return out
+    for (let ef = 0; ef <= pieces.elite; ef++) {
+      const pf = dial - ef * worth
+      if (Number.isInteger(pf) && pf >= 0 && pf <= pieces.plain) {
+        out.push({ plainFull: pf, plainHalf: 0, eliteFull: ef, eliteHalf: 0 })
+      }
+    }
+    return out
+  }
+  for (let ef = 0; ef <= Math.min(pieces.elite, spice); ef++) {
+    const pf = spice - ef
+    if (pf > pieces.plain) continue
+    for (let eh = 0; eh + ef <= pieces.elite; eh++) {
+      // full plain 2, full elite 2·worth, half plain 1, half elite worth
+      const ph = dial2 - pf * 2 - ef * 2 * worth - eh * worth
+      if (ph < 0 || ph > pieces.plain - pf) continue
+      out.push({ plainFull: pf, plainHalf: ph, eliteFull: ef, eliteHalf: eh })
+    }
+  }
+  return out
+}
+
+/** Whether the winner's named choice is one of the legal allocations. */
+export function judgeAllocation(
+  choice: LossAllocation,
+  input: Parameters<typeof allocationsFor>[0],
+): boolean {
+  const whole = (n: unknown) => Number.isInteger(n) && (n as number) >= 0
+  if (![choice.plainFull, choice.plainHalf, choice.eliteFull, choice.eliteHalf]
+    .every(whole)) return false
+  return allocationsFor(input).some(a =>
+    a.plainFull === choice.plainFull && a.plainHalf === choice.plainHalf
+    && a.eliteFull === choice.eliteFull && a.eliteHalf === choice.eliteHalf)
+}
+
+/** The deterministic answer for a window that ran out: the enumeration's
+ *  first. Null only for a plan no allocation supports, which judgePlan
+ *  already refused. */
+export const firstAllocation = (
+  input: Parameters<typeof allocationsFor>[0],
+): LossAllocation | null => allocationsFor(input)[0] ?? null
+
+/** The wheel's ceiling: every piece counted at full strength. */
+export function battleStrengthCap(pieces: BattlePieces, worth: 1 | 2): number {
+  return pieces.plain + pieces.elite * worth
+}
+
+/** The pieces an allocation sends to the tanks — cells in sector order,
+ *  each class drawn separately. */
+export function allocationLosses(
+  forces: readonly Force[], faction: FactionId,
+  territoryId: string, sectors: readonly string[],
+  choice: LossAllocation,
+): { sector: SectorId; count: number; starred: number }[] {
+  const mine = forces
+    .filter(f => f.faction === faction && f.territoryId === territoryId
+      && sectors.includes(f.sector) && f.count > 0)
+    .sort((x, y) => num(x.sector) - num(y.sector))
+  let plain = choice.plainFull + choice.plainHalf
+  let starred = choice.eliteFull + choice.eliteHalf
+  const lifts: { sector: SectorId; count: number; starred: number }[] = []
+  for (const f of mine) {
+    const cellElite = Math.min(f.count, f.starred ?? 0)
+    const takePlain = Math.min(plain, f.count - cellElite)
+    const takeElite = Math.min(starred, cellElite)
+    plain -= takePlain
+    starred -= takeElite
+    if (takePlain + takeElite > 0) {
+      lifts.push({
+        sector: f.sector as SectorId,
+        count: takePlain + takeElite, starred: takeElite,
+      })
+    }
+  }
+  return lifts
 }
 
 /**

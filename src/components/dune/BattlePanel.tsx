@@ -31,8 +31,11 @@ import {
   pendingBattles, battlesFor, forcesInBattle, CHEAP_HERO_ID,
   VOICE_TARGETS, voiceViolation, voiceCardMatches, canComplyWithVoice,
   PRESCIENCE_ASKS,
+  piecesInBattle, eliteWorth, fullWithoutSpice, battleStrengthCap, allocationsFor,
 } from '@/lib/dune/battle'
-import type { VoiceCommand, VoiceTarget, PrescienceAsk } from '@/lib/dune/battle'
+import type {
+  VoiceCommand, VoiceTarget, PrescienceAsk, LossAllocation,
+} from '@/lib/dune/battle'
 import type { DuneGameState } from '@/types/Dune/Game'
 import type { FactionId, Leader } from '@/types/Dune/Faction'
 import type { TreacheryCard } from '@/types/Dune/Treachery'
@@ -65,6 +68,15 @@ export const PLAN_REFUSAL_TEXT: Record<string, string> = {
   'voiced-first': 'The Voice has not spoken — your plan waits for the command.',
   'voice-demands': 'The Voice commands a play this plan does not make — and your hand can obey.',
   'voice-forbids': 'The Voice forbids what this plan plays.',
+  'spice-out-of-range': 'Spice in support must be a whole, unnegative number.',
+  'more-spice-than-you-hold': 'You do not have that much spice.',
+  'spice-is-advanced': 'Spice supports battles only in the advanced game.',
+  'fremen-need-no-spice': 'The Fremen count at full strength for free — no spice.',
+  'dial-spice-mismatch': 'No set of your pieces can pay that dial with that spice.',
+  'allocation-mismatch': 'That choice does not pay the dial.',
+  'allocation-open': 'The winner is choosing their losses.',
+  'not-your-choice': 'The winner chooses which pieces die.',
+  'no-allocation': 'There are no losses to choose.',
   'already-committed': 'Your plan is already in.',
   'already-revealed': 'Plans are on the table.',
   'no-battle': 'No battle is open.',
@@ -105,6 +117,13 @@ export interface BattlePanelProps {
   onPrescience?: (ask: PrescienceAsk | null) => void
   /** The Atreides' own answer, from their row — private until the reveal. */
   prescienceAnswer?: { ask: string; answer: string | number } | null
+  /** ADVANCED: the winner posts which pieces die; null pushes an expired
+   *  window to the deterministic first. */
+  onAllocate?: (choice: LossAllocation | null) => void
+  /** 'advanced' turns on spice-supported dials and the winner's choice. */
+  mode?: 'basic' | 'advanced'
+  /** This seat's purse — the spice stepper's ceiling. */
+  purse?: number
 }
 
 /**
@@ -185,14 +204,22 @@ const btn: React.CSSProperties = {
 }
 const chosen: React.CSSProperties = { ...btn, background: '#2f6fb5', border: `1px solid ${SAND}` }
 
+const dialText = (n: number) => (Number.isInteger(n) ? String(n) : `${Math.floor(n)}½`)
+
 function PlanLine({ faction, plan }: {
   faction: FactionId
-  plan: { dial: number; leader?: string; cheapHero?: boolean; weapon?: string; defence?: string }
+  plan: {
+    dial: number; spice?: number
+    leader?: string; cheapHero?: boolean; weapon?: string; defence?: string
+  }
 }) {
   return (
     <div data-revealed-plan={faction} style={{ flex: 1, minWidth: 150 }}>
       <b style={{ color: FACTION_LOOK[faction].colour }}>{FACTION_LOOK[faction].name}</b>
-      <div>Dialled <b>{plan.dial}</b></div>
+      <div>
+        Dialled <b>{dialText(plan.dial)}</b>
+        {plan.spice ? <span data-plan-spice-shown=""> · {plan.spice} spice in support</span> : null}
+      </div>
       <div>{plan.leader ?? (plan.cheapHero ? 'Cheap Hero' : 'no leader')}</div>
       {plan.weapon && <div>Weapon: {cardName(plan.weapon)}</div>}
       {plan.defence && <div>Defence: {cardName(plan.defence)}</div>}
@@ -204,10 +231,13 @@ export function BattlePanel({
   battles, forces, storm, tanks, seat, hand, traitors, now, busy,
   refusal = null, refusedAction = null, handCount = null,
   onPick, onPlan, onAnswer, onVoice, onPrescience, prescienceAnswer = null,
+  onAllocate, mode = 'basic', purse = 0,
 }: BattlePanelProps) {
   const [voiceMode, setVoiceMode] = useState<'play' | 'not-play'>('play')
   const [voiceTarget, setVoiceTarget] = useState<VoiceTarget | null>(null)
   const [dial, setDial] = useState(0)
+  const [half, setHalf] = useState(false)
+  const [spiceSpent, setSpiceSpent] = useState(0)
   const [leader, setLeader] = useState<string | null>(null)
   const [hero, setHero] = useState(false)
   const [weapon, setWeapon] = useState<string | null>(null)
@@ -298,6 +328,70 @@ export function BattlePanel({
           <button type="button" disabled={busy} data-pick-push=""
             onClick={() => onPick('', '' as FactionId)} style={btn}>
             The clock has run out — open their first battle
+          </button>
+        )}
+      </>,
+    )
+  }
+
+  // ── ADVANCED: the winner names their dead ───────────────────────────────
+  // The beat is settled; what stands open is the winner's choice, listed as
+  // the LAW's own enumeration — every button is one legal way to pay the
+  // dial, so an illegal choice cannot be posted from here at all.
+  if (c.revealed?.allocate) {
+    const al = c.revealed.allocate
+    const alExpired = now >= al.closesAt
+    const winPlan = c.revealed.plans[al.by]
+    const alOpp = [c.aggressor, c.defender].find(f => f !== al.by)!
+    const options = allocationsFor({
+      pieces: piecesInBattle(forces, al.by, c.territoryId, c.sectors),
+      dial: winPlan?.dial ?? 0,
+      spice: winPlan?.spice ?? 0,
+      worth: eliteWorth(al.by, alOpp),
+      freeFull: fullWithoutSpice(al.by),
+    })
+    const eliteName = al.by === 'fremen' ? 'Fedaykin'
+      : al.by === 'emperor' ? 'Sardaukar' : 'starred'
+    const optionLabel = (o: LossAllocation) => [
+      o.eliteFull > 0 ? `${o.eliteFull} ${eliteName} at full` : '',
+      o.plainFull > 0 ? `${o.plainFull} ordinary at full` : '',
+      o.eliteHalf > 0 ? `${o.eliteHalf} ${eliteName} at half` : '',
+      o.plainHalf > 0 ? `${o.plainHalf} ordinary at half` : '',
+    ].filter(Boolean).join(' + ') || 'nothing'
+    return frame(
+      <>
+        <b style={{ display: 'block', fontSize: 16 }}>
+          {FACTION_LOOK[al.by].name} won — {territoryName(c.territoryId)}
+        </b>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 8 }}>
+          <PlanLine faction={c.aggressor} plan={c.revealed.plans[c.aggressor] as never} />
+          <PlanLine faction={c.defender} plan={c.revealed.plans[c.defender] as never} />
+        </div>
+        {seat === al.by && onAllocate && !alExpired ? (
+          <>
+            <p style={{ opacity: 0.8, fontSize: 13 }}>
+              Choose WHICH of your pieces pay the dial — the spent spice on
+              the full-strength dead, the rest at half. Only you see the
+              choice until it settles.
+            </p>
+            {options.map((o, i) => (
+              <button key={i} type="button" disabled={busy}
+                data-allocate-option={i}
+                onClick={() => onAllocate(o)} style={btn}>
+                Lose {optionLabel(o)}
+              </button>
+            ))}
+          </>
+        ) : (
+          <p style={{ opacity: 0.8 }} data-allocate-waits="">
+            The winner chooses which of their pieces die.
+          </p>
+        )}
+        {alExpired && onAllocate && (
+          <button type="button" disabled={busy} data-allocate-push=""
+            onClick={() => onAllocate(null)}
+            style={{ ...btn, width: 'auto', display: 'inline-block' }}>
+            The clock has run out — the first lawful choice settles
           </button>
         )}
       </>,
@@ -526,9 +620,30 @@ export function BattlePanel({
     )
   }
 
-  const maxDial = seat
-    ? forcesInBattle(forces, seat, c.territoryId, c.sectors)
-    : 0
+  // ── ADVANCED: the dial is STRENGTH — halves, elites, and spice ─────────
+  const advanced = mode === 'advanced'
+  const oppFaction = seat === c.aggressor ? c.defender : c.aggressor
+  const pieces = seat
+    ? piecesInBattle(forces, seat, c.territoryId, c.sectors)
+    : { plain: 0, elite: 0 }
+  const worth = seat ? eliteWorth(seat, oppFaction) : 2
+  const freeFull = !!seat && fullWithoutSpice(seat)
+  const spiceMax = Math.min(purse, pieces.plain + pieces.elite)
+  const maxDial = advanced
+    ? battleStrengthCap(pieces, worth)
+    : seat
+      ? forcesInBattle(forces, seat, c.territoryId, c.sectors)
+      : 0
+  // The SAME enumeration the server admits plans by: a dial-and-spice pair
+  // no set of pieces can pay is stopped at the form, with its reason.
+  const supported = !advanced || allocationsFor({
+    pieces, dial, spice: freeFull ? 0 : spiceSpent, worth, freeFull,
+  }).length > 0
+  const toggleHalf = () => {
+    const nextHalf = !half
+    setHalf(nextHalf)
+    setDial(Math.min(maxDial, Math.floor(dial) + (nextHalf ? 0.5 : 0)))
+  }
   const sheet = seat ? factionById(seat) : null
   const dead = new Set((tanks?.leaders?.[seat ?? ''] ?? []).map(l => l.name))
   const usable = (sheet?.leaders ?? []).filter(l =>
@@ -625,11 +740,46 @@ export function BattlePanel({
         </p>
       )}
       {foresight}
-      <BattleWheel faction={seat!} max={maxDial} dial={dial} onDial={setDial}
+      <BattleWheel faction={seat!} max={maxDial} dial={Math.floor(dial)}
+        onDial={n => setDial(n >= maxDial ? n : n + (half ? 0.5 : 0))}
         leader={leaderObj} hero={hero} />
       <div style={{ textAlign: 'center', fontSize: 12, opacity: 0.8, marginTop: -4 }}>
-        The dial is lost win or lose
+        {advanced
+          ? <>Dialled <b data-dial-shown="">{dialText(dial)}</b> — lost win or lose</>
+          : 'The dial is lost win or lose'}
       </div>
+      {advanced && !freeFull && (
+        <div style={{ textAlign: 'center', marginTop: 6 }}>
+          <button type="button" data-dial-half="" aria-pressed={half}
+            disabled={Math.floor(dial) >= maxDial}
+            onClick={toggleHalf}
+            style={{ ...(half ? chosen : btn), width: 'auto', display: 'inline-block' }}>
+            +½ on the dial
+          </button>
+        </div>
+      )}
+      {advanced && !freeFull && (
+        <div style={{ marginTop: 10 }}>
+          <span style={{ fontSize: 12, opacity: 0.8 }}>
+            Spice in support — one per full-strength piece; the rest count half
+          </span>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
+            <button type="button" data-plan-spice-down="" disabled={busy || spiceSpent <= 0}
+              onClick={() => setSpiceSpent(spiceSpent - 1)}
+              style={{ ...btn, width: 'auto', display: 'inline-block', margin: 0 }}>−</button>
+            <b data-plan-spice={spiceSpent}>{spiceSpent}</b>
+            <button type="button" data-plan-spice-up="" disabled={busy || spiceSpent >= spiceMax}
+              onClick={() => setSpiceSpent(spiceSpent + 1)}
+              style={{ ...btn, width: 'auto', display: 'inline-block', margin: 0 }}>+</button>
+            <span style={{ fontSize: 12, opacity: 0.7 }}>of {spiceMax} you can spend</span>
+          </div>
+        </div>
+      )}
+      {advanced && freeFull && (
+        <p data-fremen-free="" style={{ fontSize: 12, opacity: 0.75, textAlign: 'center' }}>
+          Fremen forces count at full strength without spice.
+        </p>
+      )}
 
       <div style={{ marginTop: 10, fontSize: 12, opacity: 0.8 }}>
         The disc for the hub
@@ -694,10 +844,16 @@ export function BattlePanel({
           {PLAN_REFUSAL_TEXT[violation]}
         </p>
       )}
-      <button type="button" disabled={busy || !!violation} data-plan-commit=""
+      {!supported && (
+        <p data-dial-unsupported="" style={{ fontSize: 12, color: '#e8a0a0' }}>
+          No set of your pieces can pay {dialText(dial)} with {spiceSpent} spice.
+        </p>
+      )}
+      <button type="button" disabled={busy || !!violation || !supported} data-plan-commit=""
         onClick={() => onPlan({
           territoryId: c.territoryId,
           dial,
+          ...(advanced && !freeFull && spiceSpent > 0 ? { spice: spiceSpent } : null),
           ...(leader ? { leader } : null),
           ...(hero ? { cheapHero: true } : null),
           ...(mayPlayCards && weapon ? { weapon } : null),

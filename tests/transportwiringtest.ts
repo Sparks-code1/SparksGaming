@@ -249,7 +249,9 @@ const SRC = [...sources('src'), ...sources('supabase/functions')]
     // the window — the guard failed on code that was correct, which is the same
     // "the threshold is a guess" mistake as counting occurrences earlier in
     // this file.
-    const at = fn.indexOf('const secretsPatch')
+    // The AUCTION'S OWN patch line, not the first `const secretsPatch` in the
+    // file — the battle settle's extracted helper declares one earlier now.
+    const at = fn.indexOf('const secretsPatch: Record<string, unknown> = { ...paidSecrets }')
     const end = at < 0 ? -1 : fn.indexOf('if (error) return json', at)
     const settleCall = at < 0 || end < 0 ? '' : fn.slice(at, end)
     check('the settlement block is where it is expected', settleCall.length > 0, true)

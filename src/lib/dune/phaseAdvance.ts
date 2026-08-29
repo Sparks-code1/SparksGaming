@@ -99,7 +99,10 @@ export interface AdvanceState {
     closesAt: number
     current?: {
       closesAt: number
-      revealed?: { traitor: { closesAt: number } }
+      revealed?: {
+        traitor: { closesAt: number }
+        allocate?: { closesAt: number }
+      }
       voice?: { closesAt: number; done: boolean }
       prescience?: { closesAt: number; done: boolean }
     } | null
@@ -185,7 +188,8 @@ export function advanceHold(state: AdvanceState, now: number): AdvanceHold | nul
       const c = state.battles.current
       return {
         code: 'battles-underway',
-        until: c?.revealed?.traitor.closesAt
+        until: c?.revealed?.allocate?.closesAt
+          ?? c?.revealed?.traitor.closesAt
           ?? (c?.prescience && !c.prescience.done ? c.prescience.closesAt : undefined)
           ?? (c?.voice && !c.voice.done ? c.voice.closesAt : undefined)
           ?? c?.closesAt ?? state.battles.closesAt,
@@ -515,7 +519,10 @@ export function resetDeadlines(
       closesAt: number
       current?: {
         closesAt: number
-        revealed?: { traitor: { closesAt: number } }
+        revealed?: {
+          traitor: { closesAt: number }
+          allocate?: { closesAt: number }
+        }
       } | null
     }
   },
@@ -531,6 +538,7 @@ export function resetDeadlines(
     battleTraitorSeconds: number
     battleVoiceSeconds: number
     battlePrescienceSeconds: number
+    battleAllocateSeconds: number
   },
 ): { patch: Record<string, unknown>; reset: string[] } {
   const patch: Record<string, unknown> = {}
@@ -558,9 +566,25 @@ export function resetDeadlines(
   }
   if (state.battles) {
     const b = state.battles
-    // Whichever window is LIVE gets the fresh stamp: the traitor beat, the
-    // plan, or the aggressor's pick — one at a time, the way they run.
-    if (b.current?.revealed) {
+    // Whichever window is LIVE gets the fresh stamp: the winner's choice,
+    // the traitor beat, the plan, or the aggressor's pick — one at a time,
+    // the way they run.
+    if (b.current?.revealed?.allocate) {
+      patch.battles = {
+        ...b,
+        current: {
+          ...b.current,
+          revealed: {
+            ...b.current.revealed,
+            allocate: {
+              ...b.current.revealed.allocate,
+              closesAt: now + lengths.battleAllocateSeconds * 1000,
+            },
+          },
+        },
+      }
+      reset.push('allocate')
+    } else if (b.current?.revealed) {
       patch.battles = {
         ...b,
         current: {

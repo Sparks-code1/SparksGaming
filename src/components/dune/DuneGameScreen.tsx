@@ -51,7 +51,7 @@ import { CHARITY_WINDOW_MS } from '@/lib/dune/charity'
 import { WORM_SECONDS, WORM_RIDE_SECONDS } from '@/lib/dune/spiceBlow'
 import {
   BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
-  BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS,
+  BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS, BATTLE_ALLOCATE_SECONDS,
 } from '@/lib/dune/battle'
 import { BiddingPanel } from './BiddingPanel'
 import { CharityModal } from './CharityModal'
@@ -172,6 +172,9 @@ export interface DuneGameScreenProps {
   onBattleAnswer?: (call: boolean) => void
   onBattleVoice?: (command: { mode: 'play' | 'not-play'; target: string } | null) => void
   onBattlePrescience?: (ask: string | null) => void
+  onBattleAllocate?: (choice: {
+    plainFull: number; plainHalf: number; eliteFull: number; eliteHalf: number
+  } | null) => void
   /** The last BATTLE action's refusal — its code AND which action, so the
    *  panel names both and a stray refusal from another surface never
    *  freezes on it. */
@@ -241,7 +244,7 @@ export interface DuneGameScreenProps {
 export function DuneGameScreen({
   state, seat, own, chat, onSend, talkingTo, seatNames, notices, onShipReserves, onMoveStack,
   onShipSpecial, onRevive, onBattlePick, onBattlePlan, onBattleAnswer,
-  onBattleVoice, onBattlePrescience, battleRefusal,
+  onBattleVoice, onBattlePrescience, onBattleAllocate, battleRefusal,
   worms = [], onWormRide, onPassTurn,
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
@@ -348,7 +351,9 @@ export function DuneGameScreen({
   // fell back to the 30-second phase look-window and counted down a clock
   // no battle was actually on.
   const battleWindow = state.battles
-    ? (state.battles.current?.revealed
+    ? (state.battles.current?.revealed?.allocate
+      ? { closesAt: state.battles.current.revealed.allocate.closesAt, ms: BATTLE_ALLOCATE_SECONDS * 1000 }
+      : state.battles.current?.revealed
       ? { closesAt: state.battles.current.revealed.traitor.closesAt, ms: BATTLE_TRAITOR_SECONDS * 1000 }
       : state.battles.current?.prescience && !state.battles.current.prescience.done
         ? { closesAt: state.battles.current.prescience.closesAt, ms: BATTLE_PRESCIENCE_SECONDS * 1000 }
@@ -1035,6 +1040,11 @@ export function DuneGameScreen({
               onAnswer={onBattleAnswer}
               onVoice={onBattleVoice}
               onPrescience={onBattlePrescience}
+              onAllocate={onBattleAllocate}
+              // ADVANCED wiring: the mode turns on spice dials; the purse
+              // caps the stepper. Both are this seat's own to know.
+              mode={state.mode === 'advanced' ? 'advanced' : 'basic'}
+              purse={own?.spice ?? 0}
               // THE FORESEEN ELEMENT rides this seat's own secrets row — the
               // server wrote it there and nowhere public — and is only shown
               // against the battle it was asked in.

@@ -414,10 +414,15 @@ export interface DuneGameState {
           dial: number
           leader?: string
           cheapHero?: boolean
+          /** ADVANCED: spice the plan spent — public from the reveal on. */
+          spice?: number
           weapon?: string
           defence?: string
         }>
         traitor: { answered: FactionId[]; calls: FactionId[]; closesAt: number }
+        /** ADVANCED: the winner's open choice of which pieces die. The
+         *  choice itself stays with the winner until it settles. */
+        allocate?: { by: FactionId; closesAt: number }
       }
     } | null
     /** The public record of what this phase settled. */

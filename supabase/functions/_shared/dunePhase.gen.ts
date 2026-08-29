@@ -1258,7 +1258,7 @@ function advanceHold(state, now) {
       const c = state.battles.current;
       return {
         code: "battles-underway",
-        until: c?.revealed?.traitor.closesAt ?? (c?.prescience && !c.prescience.done ? c.prescience.closesAt : void 0) ?? (c?.voice && !c.voice.done ? c.voice.closesAt : void 0) ?? c?.closesAt ?? state.battles.closesAt
+        until: c?.revealed?.allocate?.closesAt ?? c?.revealed?.traitor.closesAt ?? (c?.prescience && !c.prescience.done ? c.prescience.closesAt : void 0) ?? (c?.voice && !c.voice.done ? c.voice.closesAt : void 0) ?? c?.closesAt ?? state.battles.closesAt
       };
     }
     return null;
@@ -1403,7 +1403,22 @@ function resetDeadlines(state, now, lengths) {
   }
   if (state.battles) {
     const b = state.battles;
-    if (b.current?.revealed) {
+    if (b.current?.revealed?.allocate) {
+      patch.battles = {
+        ...b,
+        current: {
+          ...b.current,
+          revealed: {
+            ...b.current.revealed,
+            allocate: {
+              ...b.current.revealed.allocate,
+              closesAt: now + lengths.battleAllocateSeconds * 1e3
+            }
+          }
+        }
+      };
+      reset.push("allocate");
+    } else if (b.current?.revealed) {
       patch.battles = {
         ...b,
         current: {
