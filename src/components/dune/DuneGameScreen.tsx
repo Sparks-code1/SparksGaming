@@ -528,6 +528,7 @@ export function DuneGameScreen({
             seating={seating} deck={state.spiceDeck} mode={state.mode}
             awaiting={state.awaiting} phase={state.phase} turn={state.turn}
             closesAt={closesAt} windowMs={windowMs} now={now}
+            tanks={state.tanks?.forces ?? null}
             interactive={(setupActive && (owesFremen || advisorOpen))
               || (myShipWindow && staged.plain + staged.starred > 0)
               || myMoveWindow}>

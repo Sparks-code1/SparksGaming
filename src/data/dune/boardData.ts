@@ -924,6 +924,13 @@ export const DUNE_SPICE_MARKERS: DuneSpiceMarker[] = [
 export const DUNE_SPICE_DECK_AREA: DuneArea = { x: 789.6, y: 952.96, width: 174, height: 144 }
 
 /**
+ * The usable inside of the Tleilaxu Tanks box, measured the same way.
+ * The overlay draws every faction's tanked forces here — revival reads
+ * from the tanks, so the tanks must be readable.
+ */
+export const DUNE_TANKS_AREA: DuneArea = { x: 5.5, y: 952.96, width: 174, height: 144 }
+
+/**
  * The turn dial, top left: ten numbered wedges.
  *
  * Taken from the export's own circle rather than measured off the picture —

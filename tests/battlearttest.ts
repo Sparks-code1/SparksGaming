@@ -37,6 +37,15 @@ const BACKDROPS = [
   'Arrakeen-Atreides.jpg',
   'Carthag.jpg',
   'Carthag-Harkonnen.jpg',
+  // Arrived unclaimed 2026-08-28, looked at and listed: a stepped citadel
+  // under assault — ornithopters overhead, forces storming the causeway —
+  // an Arrakeen battle scene. The filename's 'Arkeen' is the file's own
+  // spelling; renaming is the owner's call, and whatever loads it must
+  // spell it the same way.
+  'Arkeen-Battle.png',
+  // Same arrival: an open-desert battle beneath rock outcroppings — a
+  // backdrop for the rock territories rather than any one named place.
+  'Dune-Rock.png',
 ]
 
 const files = readdirSync(DIR).filter(f => !f.endsWith('.md'))

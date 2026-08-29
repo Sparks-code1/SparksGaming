@@ -1655,6 +1655,9 @@ const offBoardBoxes = offBoard.map(o => {
 const spiceBox = offBoardBoxes.find(b => !b.tanks)
 if (!spiceBox) throw new Error('no right-hand off-board box: the spice deck has nowhere to sit')
 const spiceCards_area = largestInscribedRect(spiceBox.o.poly)
+const tanksBox = offBoardBoxes.find(b => b.tanks)
+if (!tanksBox) throw new Error('no left-hand off-board box: the tanks have nowhere to sit')
+const tanks_area = largestInscribedRect(tanksBox.o.poly)
 
 for (const { o, tanks, x0, x1, y1 } of offBoardBoxes) {
   // NOT 'Spice Bank' any more. The bank is not a place — spice paid leaves one
@@ -1918,6 +1921,15 @@ lines.push(` */`)
 lines.push(`export const DUNE_SPICE_DECK_AREA: DuneArea = { `
   + `x: ${round(spiceCards_area.x)}, y: ${round(spiceCards_area.y)}, `
   + `width: ${round(spiceCards_area.width)}, height: ${round(spiceCards_area.height)} }`)
+lines.push(``)
+lines.push(`/**`)
+lines.push(` * The usable inside of the Tleilaxu Tanks box, measured the same way.`)
+lines.push(` * The overlay draws every faction's tanked forces here — revival reads`)
+lines.push(` * from the tanks, so the tanks must be readable.`)
+lines.push(` */`)
+lines.push(`export const DUNE_TANKS_AREA: DuneArea = { `
+  + `x: ${round(tanks_area.x)}, y: ${round(tanks_area.y)}, `
+  + `width: ${round(tanks_area.width)}, height: ${round(tanks_area.height)} }`)
 lines.push(``)
 lines.push(`/**`)
 lines.push(` * The turn dial, top left: ten numbered wedges.`)

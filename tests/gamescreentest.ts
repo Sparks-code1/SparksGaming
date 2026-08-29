@@ -135,6 +135,51 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   }
 }
 
+// ── the tanks are readable ────────────────────────────────────────────────
+// The storm banks its dead and revival buys them back, but until this the
+// Tleilaxu Tanks box drew nothing: losses landed in state and vanished from
+// sight. Every faction's tanked forces now draw in the box, for everyone —
+// they are public at a table — with the elites star-marked, the same badge
+// a living stack wears.
+{
+  const tanked = draw({
+    state: {
+      ...state,
+      tanks: {
+        forces: {
+          fremen: { plain: 2, starred: 1 },
+          emperor: { plain: 1, starred: 0 },
+          'bene-gesserit': { plain: 5, starred: 0 },
+        },
+        leaders: {},
+      },
+    } as never,
+  })
+  check('the tanks box holds every faction\'s dead',
+    /data-layer="tanks-forces"/.test(tanked), true)
+  check('...counted per faction, stars and all',
+    /data-tanked="fremen\|3\|1★"/.test(tanked), true)
+  check('...and plainly for a plain hand',
+    /data-tanked="emperor\|1"/.test(tanked), true)
+  check('...with the elite badge a living stack wears', tanked.includes('★1'), true)
+  // ZERO IS NOT A DEATH. A faction whose entry has emptied draws no bubble —
+  // the fixture holds a zeroed row, so a dropped filter fails here rather
+  // than drawing a ghost.
+  const emptied = draw({
+    state: {
+      ...state,
+      tanks: { forces: { fremen: { plain: 0, starred: 0 } }, leaders: {} },
+    } as never,
+  })
+  check('an emptied tanks row draws nothing',
+    /data-layer="tanks-forces"/.test(emptied), false)
+  // In the box the artwork gave them, not a hand-placed corner a regenerate
+  // would strand.
+  const boardSrc = readFileSync('src/components/dune/DuneBoard.tsx', 'utf8')
+  check('...anchored to the board\'s own tanks area',
+    /DUNE_TANKS_AREA\.x \+ 16 \+ \(i % cols\) \* per/.test(boardSrc), true)
+}
+
 // ── the hand is face down until it is asked for ───────────────────────────
 {
   const rows = hudRows(state)

@@ -17,8 +17,8 @@
  */
 import { useEffect, useState } from 'react'
 import {
-  DUNE_BOARD, DUNE_PLAYER_POSITIONS, DUNE_SECTORS, DUNE_STORM_RING, DUNE_TERRITORIES,
-  DUNE_TRACK, DUNE_TURN_DIAL,
+  DUNE_BOARD, DUNE_PLAYER_POSITIONS, DUNE_SECTORS, DUNE_STORM_RING, DUNE_TANKS_AREA,
+  DUNE_TERRITORIES, DUNE_TRACK, DUNE_TURN_DIAL,
 } from '@/data/dune/boardData'
 import { DUNE_PHASES } from '@/types/Dune/Game'
 import type { FactionId } from '@/types/Dune/Faction'
@@ -274,6 +274,9 @@ export interface DuneBoardProps {
   turn?: number | null
   /** The board takes clicks only when a caller wants them. */
   interactive?: boolean
+  /** Every faction's tanked forces, drawn in the Tleilaxu Tanks box for
+   *  everyone — the record revival buys back from. */
+  tanks?: Readonly<Record<string, { plain: number; starred: number }>> | null
   children?: React.ReactNode
 }
 
@@ -385,7 +388,7 @@ function AwaitingMark({ faction, seating }: {
 export function DuneBoard({
   storm, stacks, spice, seating, deck, mode,
   worms = [], awaiting = null, phase = null, turn = null, interactive = false, children,
-  closesAt = null, windowMs, now = 0,
+  closesAt = null, windowMs, now = 0, tanks = null,
 }: DuneBoardProps) {
   const [svg, setSvg] = useState<string | null>(null)
 
@@ -564,6 +567,57 @@ export function DuneBoard({
             )
           })
         })}
+
+        {/* THE TLEILAXU TANKS, holding what the board has lost. Every
+            faction's tanked forces, drawn for everyone in the box the artwork
+            gave them: revival reads from the tanks, and a loss you cannot
+            see is a loss you cannot plan to buy back. The bubble is the same
+            one the stacks use — a dead Fedaykin reads like a living one,
+            star badge and all. */}
+        {tanks && (() => {
+          const dead = Object.entries(tanks)
+            .map(([faction, t]) => ({
+              faction: faction as FactionId,
+              plain: t?.plain ?? 0,
+              starred: t?.starred ?? 0,
+            }))
+            .filter(t => t.plain + t.starred > 0)
+            .sort((a, b) => a.faction.localeCompare(b.faction))
+          if (dead.length === 0) return null
+          const per = 26
+          const cols = Math.max(1, Math.floor((DUNE_TANKS_AREA.width - 8) / per))
+          return (
+            <g data-layer="tanks-forces">
+              {dead.map((t, i) => {
+                const x = DUNE_TANKS_AREA.x + 16 + (i % cols) * per
+                const y = DUNE_TANKS_AREA.y + 18 + Math.floor(i / cols) * per
+                const count = t.plain + t.starred
+                return (
+                  <g key={t.faction}
+                    data-tanked={`${t.faction}|${count}${t.starred > 0 ? `|${t.starred}★` : ''}`}>
+                    <title>{`${FACTION_LOOK[t.faction].name} in the tanks: ${count}${t.starred > 0 ? ` (${t.starred} elite)` : ''}`}</title>
+                    <circle cx={x} cy={y} r={BUBBLE_R}
+                      fill={FACTION_LOOK[t.faction].colour} stroke={PALE} strokeWidth={1.5} />
+                    <text x={x} y={y} fontSize={10} fill={PALE}
+                      textAnchor="middle" dominantBaseline="central"
+                      fontFamily="Georgia, serif">{count}</text>
+                    {t.starred > 0 && (
+                      <g>
+                        <circle cx={x + 8} cy={y - 8} r={t.starred >= count ? 5.2 : 6.4}
+                          fill="#3f2c1a" stroke="#f0c93f" strokeWidth={1} />
+                        <text x={x + 8} y={y - 8} fontSize={7.5} fill="#f0c93f"
+                          textAnchor="middle" dominantBaseline="central"
+                          fontFamily="Georgia, serif">
+                          {t.starred >= count ? '★' : `★${t.starred}`}
+                        </text>
+                      </g>
+                    )}
+                  </g>
+                )
+              })}
+            </g>
+          )
+        })()}
 
         {Object.entries(spice).map(([id, n]) => {
           const t = DUNE_TERRITORIES.find(x => x.id === id)
