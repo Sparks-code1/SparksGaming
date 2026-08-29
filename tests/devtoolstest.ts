@@ -150,6 +150,12 @@ const base = {
   check('the real match screen never posts a reset',
     /RESET_CLOCK/.test(match), false)
   check('...nor a grant', /DEV_GRANT/.test(match), false)
+
+  // THE SWITCHER CLEARS THE CHAT INPUT: pinned at 10 it sat exactly on the
+  // box people type in.
+  const switcher = code('src/components/dune/DevSeatSwitcher.tsx')
+  check('the seat switcher rides above the chat input',
+    /bottom: 62,/.test(switcher), true)
 }
 
 // ── the seed script reaches the battle phase ──────────────────────────────
@@ -157,6 +163,14 @@ const base = {
   const seed = readFileSync('scripts/seed-dune-match.mjs', 'utf8')
   check('--phase=battle is a fixture now',
     /const PHASES = \['charity', 'blow', 'bidding', 'battle'\]/.test(seed), true)
+  // THE ROTATION IS THE STORM'S, computed by the same bundles the server
+  // runs — a seed that hardcoded seat order started with the wrong
+  // aggressor and walked the wrong way round the board.
+  check('...its rotation walked by the server\'s own stormOrder',
+    /from '\.\.\/supabase\/functions\/_shared\/dunePhase\.gen\.ts'/.test(seed)
+      && /const order = stormOrder\('sector-18', publicPlayers\(seats\)\)/.test(seed), true)
+  check('...and its first aggressor found by the same walk',
+    /nextAggressor\(order, pendingBattles\(BATTLE_FORCES, 'sector-18'\), 0\)/.test(seed), true)
   check('...seeding the Battles phase with the aggressor picking',
     /phase: 'Battles', turn: 3/.test(seed) && /current: null, fought: \[\], usedLeaders: \{\},/.test(seed), true)
   check('...hand counts derived from the dealt hands, never guessed',

@@ -34,7 +34,11 @@ export interface DevSeatSwitcherProps {
 export function DevSeatSwitcher({ sessions, active, onPick }: DevSeatSwitcherProps) {
   return (
     <div data-layer="dev-seat-switcher" style={{
-      position: 'fixed', left: 10, bottom: 10, zIndex: 6,
+      // RAISED OFF THE CHAT INPUT. The chat is real now and its box lives
+      // at the bottom of the left column — pinned at 10 the switcher sat
+      // exactly on it, and typing meant moving the switcher's own seat
+      // pills out of the way first.
+      position: 'fixed', left: 10, bottom: 62, zIndex: 6,
       display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
       background: '#1b2337ee', color: PALE, border: '1px solid #f0e2bb44',
       borderRadius: 6, padding: '6px 8px', font: `12px ${SERIF}`,

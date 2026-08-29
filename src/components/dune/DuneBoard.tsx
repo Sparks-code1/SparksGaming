@@ -20,6 +20,8 @@ import {
   DUNE_BOARD, DUNE_PLAYER_POSITIONS, DUNE_SECTORS, DUNE_STORM_RING, DUNE_TANKS_AREA,
   DUNE_TERRITORIES, DUNE_TRACK, DUNE_TURN_DIAL,
 } from '@/data/dune/boardData'
+import { LeaderDisc, LeaderDiscBack } from './LeaderDisc'
+import { factionById } from '@/data/dune/factions'
 import { DUNE_PHASES } from '@/types/Dune/Game'
 import type { FactionId } from '@/types/Dune/Faction'
 import type { GameMode, GamePhase, SectorId, SpiceDeckPublic, TerritoryId } from '@/types/Dune/Game'
@@ -274,9 +276,12 @@ export interface DuneBoardProps {
   turn?: number | null
   /** The board takes clicks only when a caller wants them. */
   interactive?: boolean
-  /** Every faction's tanked forces, drawn in the Tleilaxu Tanks box for
-   *  everyone — the record revival buys back from. */
-  tanks?: Readonly<Record<string, { plain: number; starred: number }>> | null
+  /** The Tleilaxu Tanks entire — forces AND leaders — drawn in the box for
+   *  everyone: the record revival buys back from. */
+  tanks?: {
+    forces: Readonly<Record<string, { plain: number; starred: number }>>
+    leaders?: Readonly<Record<string, readonly { name: string; faceDown?: boolean }[]>>
+  } | null
   children?: React.ReactNode
 }
 
@@ -575,7 +580,7 @@ export function DuneBoard({
             one the stacks use — a dead Fedaykin reads like a living one,
             star badge and all. */}
         {tanks && (() => {
-          const dead = Object.entries(tanks)
+          const dead = Object.entries(tanks.forces ?? {})
             .map(([faction, t]) => ({
               faction: faction as FactionId,
               plain: t?.plain ?? 0,
@@ -583,11 +588,36 @@ export function DuneBoard({
             }))
             .filter(t => t.plain + t.starred > 0)
             .sort((a, b) => a.faction.localeCompare(b.faction))
-          if (dead.length === 0) return null
+          // THE FALLEN LEADERS, flattened with their factions, drawn as the
+          // discs they are — face-down ones as backs, waiting out the
+          // rotation. Leaders are the other thing revival buys back, and a
+          // dead leader nobody can see is a revival nobody prices.
+          const grave = Object.entries(tanks.leaders ?? {})
+            .flatMap(([faction, list]) => (list ?? []).map(l => ({
+              faction: faction as FactionId, name: l.name, faceDown: !!l.faceDown,
+            })))
+            .sort((a, b) => a.faction.localeCompare(b.faction) || a.name.localeCompare(b.name))
+          if (dead.length === 0 && grave.length === 0) return null
           const per = 26
           const cols = Math.max(1, Math.floor((DUNE_TANKS_AREA.width - 8) / per))
+          const forceRows = Math.ceil(dead.length / cols)
           return (
             <g data-layer="tanks-forces">
+              {grave.map((g, i) => {
+                const x = DUNE_TANKS_AREA.x + 16 + (i % cols) * per
+                const y = DUNE_TANKS_AREA.y + 18 + (forceRows + Math.floor(i / cols)) * per
+                const sheet = factionById(g.faction)?.leaders.find(l => l.name === g.name)
+                return (
+                  <g key={`grave|${g.faction}|${g.name}`}
+                    data-tanked-leader={`${g.faction}|${g.name}${g.faceDown ? '|down' : ''}`}
+                    transform={`translate(${x} ${y})`}>
+                    <title>{`${g.name} — in the tanks${g.faceDown ? ' (face down)' : ''}`}</title>
+                    {g.faceDown || !sheet
+                      ? <LeaderDiscBack faction={g.faction} r={12} />
+                      : <LeaderDisc leader={sheet} faction={g.faction} r={12} />}
+                  </g>
+                )
+              })}
               {dead.map((t, i) => {
                 const x = DUNE_TANKS_AREA.x + 16 + (i % cols) * per
                 const y = DUNE_TANKS_AREA.y + 18 + Math.floor(i / cols) * per

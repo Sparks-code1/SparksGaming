@@ -51,6 +51,12 @@
  *   node scripts/seed-dune-match.mjs --drop            (remove earlier seeds)
  */
 import { createClient } from '@supabase/supabase-js'
+// THE GAME'S OWN LAW, off the same bundles the server runs. Node strips the
+// types on import, and the gen files carry no aliases and no runtime deps —
+// so the seed cannot disagree with the entry it imitates about who goes
+// first or which way the walk runs.
+import { stormOrder } from '../supabase/functions/_shared/dunePhase.gen.ts'
+import { pendingBattles, nextAggressor } from '../supabase/functions/_shared/duneBattle.gen.ts'
 import { readFileSync } from 'node:fs'
 
 const need = name => {
@@ -161,6 +167,16 @@ const BATTLE_TRAITORS = {
   atreides: ['Umman Kudu'],
   harkonnen: ['Duncan Idaho'],
 }
+
+/** The battle fixture's board, named so the rotation can be computed from
+ *  it rather than duplicated beside it. */
+const BATTLE_FORCES = [
+  { faction: 'atreides', territoryId: 'territory-13', sector: 'sector-10', count: 5 },
+  { faction: 'harkonnen', territoryId: 'territory-13', sector: 'sector-10', count: 4 },
+  { faction: 'emperor', territoryId: 'territory-26', sector: 'sector-11', count: 3, starred: 1 },
+  { faction: 'fremen', territoryId: 'territory-26', sector: 'sector-11', count: 6, starred: 2 },
+  { faction: 'harkonnen', territoryId: 'territory-26', sector: 'sector-11', count: 2 },
+]
 
 /**
  * The seats as the whole table sees them.
@@ -328,25 +344,27 @@ const state = PHASE === 'bidding'
       phase: 'Battles', turn: 3, mode: 'advanced', storm: 'sector-18',
       treacheryDiscard: [],
       spiceDeck: { remaining: 21, turn: 3, discardA: [], discardB: [] },
-      forces: [
-        { faction: 'atreides', territoryId: 'territory-13', sector: 'sector-10', count: 5 },
-        { faction: 'harkonnen', territoryId: 'territory-13', sector: 'sector-10', count: 4 },
-        { faction: 'emperor', territoryId: 'territory-26', sector: 'sector-11', count: 3, starred: 1 },
-        { faction: 'fremen', territoryId: 'territory-26', sector: 'sector-11', count: 6, starred: 2 },
-        { faction: 'harkonnen', territoryId: 'territory-26', sector: 'sector-11', count: 2 },
-      ],
+      forces: BATTLE_FORCES,
       spiceOnBoard: {},
       players: publicPlayers(seats).map(p => ({
         ...p, handCount: (BATTLE_HANDS[p.faction] ?? []).length,
       })),
-      battles: {
-        turn: 3,
-        order: seats.map(s => s.faction),
-        at: 0,
-        current: null, fought: [], usedLeaders: {},
-        closesAt: Date.now() + 120_000,
-      },
-      awaiting: seats[0].faction,
+      // THE ROTATION IS THE STORM'S, computed by the same walk the phase
+      // entry runs — counter-clockwise from the marker — and the first
+      // aggressor is the first seat on it with a battle, never seats[0].
+      battles: (() => {
+        const order = stormOrder('sector-18', publicPlayers(seats))
+        const first = nextAggressor(order, pendingBattles(BATTLE_FORCES, 'sector-18'), 0)
+        return {
+          turn: 3, order, at: first?.at ?? 0,
+          current: null, fought: [], usedLeaders: {},
+          closesAt: Date.now() + 120_000,
+        }
+      })(),
+      awaiting: stormOrder('sector-18', publicPlayers(seats))[
+        nextAggressor(
+          stormOrder('sector-18', publicPlayers(seats)),
+          pendingBattles(BATTLE_FORCES, 'sector-18'), 0)?.at ?? 0],
       shieldWall: 'intact',
     }
   : {

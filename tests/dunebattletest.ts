@@ -462,6 +462,11 @@ check('the three windows have their seconds',
   const gameSrc = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
   check('the panel starts fresh for every battle',
     /key=\{state\.battles\.current/.test(gameSrc), true)
+  // THE BEAT READS THE KEPT TRAITORS. dealtTraitors is the setup-time offer
+  // of four, consumed by the keep-one choice — the server validates a call
+  // against the KEPT list, and a panel reading the offer never lit.
+  check('the beat is fed the kept traitors, not the setup offer',
+    /traitors=\{own\?\.traitors \?\? \[\]\}/.test(gameSrc), true)
   const harnessSrc = readFileSync('src/components/dune/DuneMultiSeatView.tsx', 'utf8')
   check('the harness hands the code to the panel',
     /battleRefusal=\{refused\}/.test(harnessSrc), true)

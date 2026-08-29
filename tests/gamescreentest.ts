@@ -151,7 +151,15 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
           emperor: { plain: 1, starred: 0 },
           'bene-gesserit': { plain: 5, starred: 0 },
         },
-        leaders: {},
+        // TWO DEAD LEADERS: one face up, one face down waiting out the
+        // rotation — both must be visible, because leaders are the other
+        // thing revival buys back.
+        leaders: {
+          harkonnen: [
+            { name: 'Feyd-Rautha' },
+            { name: 'Umman Kudu', faceDown: true },
+          ],
+        },
       },
     } as never,
   })
@@ -162,6 +170,13 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   check('...and plainly for a plain hand',
     /data-tanked="emperor\|1"/.test(tanked), true)
   check('...with the elite badge a living stack wears', tanked.includes('★1'), true)
+  // THE GRAVES: dead leaders draw as the discs they are, face-down ones as
+  // backs — a marker carries which, so the rotation's waiting room reads.
+  check('...and the dead leaders beside them',
+    /data-tanked-leader="harkonnen\|Feyd-Rautha"/.test(tanked), true)
+  check('...face-down ones marked as backs',
+    /data-tanked-leader="harkonnen\|Umman Kudu\|down"/.test(tanked)
+      && /data-face="down"/.test(tanked), true)
   // ZERO IS NOT A DEATH. A faction whose entry has emptied draws no bubble —
   // the fixture holds a zeroed row, so a dropped filter fails here rather
   // than drawing a ghost.

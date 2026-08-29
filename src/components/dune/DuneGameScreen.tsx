@@ -592,7 +592,7 @@ export function DuneGameScreen({
             seating={seating} deck={state.spiceDeck} mode={state.mode}
             awaiting={state.awaiting} phase={state.phase} turn={state.turn}
             closesAt={closesAt} windowMs={windowMs} now={now}
-            tanks={state.tanks?.forces ?? null}
+            tanks={state.tanks ?? null}
             interactive={(setupActive && (owesFremen || advisorOpen))
               || (myShipWindow && staged.plain + staged.starred > 0)
               || myMoveWindow}>
@@ -869,7 +869,12 @@ export function DuneGameScreen({
               tanks={state.tanks ?? null}
               seat={seat}
               hand={own?.cards ?? []}
-              traitors={dealtTraitors(own)}
+              // THE KEPT TRAITORS, not the four dealt at setup. dealtTraitors
+              // reads the setup-time offer — the field the keep-one choice
+              // consumes — and the server validates a call against the KEPT
+              // list, so the beat's button read a field that empties the
+              // moment setup ends and never lit again.
+              traitors={own?.traitors ?? []}
               now={now}
               busy={false}
               onPick={onBattlePick}
