@@ -1325,6 +1325,60 @@ var BATTLE_PICK_SECONDS = 120;
 var BATTLE_PLAN_SECONDS = 300;
 var BATTLE_TRAITOR_SECONDS = 60;
 var CHEAP_HERO_ID = "cheaphero";
+var BATTLE_VOICE_SECONDS = 60;
+var BATTLE_PRESCIENCE_SECONDS = 60;
+var VOICE_TARGETS = [
+  "projectile",
+  "poison",
+  "lasgun",
+  "shield",
+  "snooper",
+  "worthless",
+  "cheap-hero"
+];
+function cardMatches(id, target) {
+  const c = card(id);
+  if (!c) return false;
+  if (target === "worthless") return c.kind === "worthless";
+  if (target === "shield") return c.kind === "defense" && c.subtype === "projectile";
+  if (target === "snooper") return c.kind === "defense" && c.subtype === "poison";
+  return c.kind === "weapon" && c.subtype === target;
+}
+function planPlaysTarget(plan, target) {
+  if (target === "cheap-hero") return !!plan.cheapHero;
+  return [plan.weapon, plan.defence].some((id) => !!id && cardMatches(id, target));
+}
+function canComplyWithVoice(command, hand, canFieldLeader) {
+  if (command.mode === "not-play") return true;
+  if (command.target === "cheap-hero") return hand.includes(CHEAP_HERO_ID);
+  if (!canFieldLeader) return false;
+  return hand.some((id) => cardMatches(id, command.target));
+}
+function voiceViolation(plan, command, hand, canFieldLeader) {
+  const plays = planPlaysTarget(plan, command.target);
+  if (command.mode === "not-play" && plays) return "voice-forbids";
+  if (command.mode === "play" && !plays && canComplyWithVoice(command, hand, canFieldLeader)) return "voice-demands";
+  return null;
+}
+function voiceCardMatches(id, target) {
+  return cardMatches(id, target);
+}
+function judgeVoiceCommand(input) {
+  const c = input;
+  return (c?.mode === "play" || c?.mode === "not-play") && VOICE_TARGETS.includes(c?.target);
+}
+var PRESCIENCE_ASKS = [
+  "weapon",
+  "defence",
+  "leader",
+  "dial"
+];
+function prescienceAnswer(plan, ask) {
+  if (ask === "dial") return plan.dial;
+  if (ask === "weapon") return plan.weapon ?? "none";
+  if (ask === "defence") return plan.defence ?? "none";
+  return plan.leader ?? (plan.cheapHero ? "cheap-hero" : "none");
+}
 var card = (id) => TREACHERY_CARDS.find((c) => c.id === id);
 var num = (s) => Number(s.slice("sector-".length));
 var ringAdjacent = (a, b) => {
@@ -1378,7 +1432,7 @@ function forcesInBattle(forces, faction, territoryId, sectors) {
   return forces.filter((f) => f.faction === faction && f.territoryId === territoryId && sectors.includes(f.sector)).reduce((n, f) => n + f.count, 0);
 }
 function judgePlan(input) {
-  const { faction, battle, forces, hand, deadLeaders, usedLeaders, plan } = input;
+  const { faction, battle, forces, hand, deadLeaders, usedLeaders, plan, voiced } = input;
   const strength = forcesInBattle(forces, faction, battle.territoryId, battle.sectors);
   if (strength <= 0) return { ok: false, refusal: "not-in-this-battle" };
   if (!Number.isInteger(plan.dial) || plan.dial < 0 || plan.dial > strength) {
@@ -1406,15 +1460,23 @@ function judgePlan(input) {
   if (plan.cheapHero) played.push(CHEAP_HERO_ID);
   if (plan.weapon) {
     if (!hand.includes(plan.weapon)) return { ok: false, refusal: "card-not-held" };
-    if (card(plan.weapon)?.kind !== "weapon") return { ok: false, refusal: "not-a-weapon" };
+    const kind = card(plan.weapon)?.kind;
+    if (kind !== "weapon" && kind !== "worthless") return { ok: false, refusal: "not-a-weapon" };
     played.push(plan.weapon);
   }
   if (plan.defence) {
     if (!hand.includes(plan.defence)) return { ok: false, refusal: "card-not-held" };
-    if (card(plan.defence)?.kind !== "defense") return { ok: false, refusal: "not-a-defence" };
+    const kind = card(plan.defence)?.kind;
+    if (kind !== "defense" && kind !== "worthless") return { ok: false, refusal: "not-a-defence" };
     played.push(plan.defence);
   }
   if (new Set(played).size !== played.length) return { ok: false, refusal: "one-card-twice" };
+  if (voiced) {
+    const sheet = factionById(faction);
+    const canFieldLeader = !!plan.leader || !!plan.cheapHero || (sheet?.leaders ?? []).some((l) => !deadLeaders.includes(l.name) && (!usedLeaders[l.name] || usedLeaders[l.name] === battle.territoryId)) || hand.includes(CHEAP_HERO_ID);
+    const violation = voiceViolation(plan, voiced, hand, canFieldLeader);
+    if (violation) return { ok: false, refusal: violation };
+  }
   return { ok: true };
 }
 var leaderStrength = (faction, name) => factionById(faction)?.leaders.find((l) => l.name === name)?.strength ?? 0;
@@ -1462,8 +1524,8 @@ function resolveBattle(input) {
     return finish(callerOut.faction, false, traitors);
   }
   const plans = [aggressor.plan, defender.plan];
-  const lasgun = plans.some((p) => p.weapon && card(p.weapon)?.subtype === "lasgun");
-  const shield = plans.some((p) => p.defence && card(p.defence)?.subtype === "projectile");
+  const lasgun = plans.some((p) => p.weapon && card(p.weapon)?.kind === "weapon" && card(p.weapon)?.subtype === "lasgun");
+  const shield = plans.some((p) => p.defence && card(p.defence)?.kind === "defense" && card(p.defence)?.subtype === "projectile");
   if (lasgun && shield) {
     for (const [me, mine] of [[aggressor, a], [defender, d]]) {
       mine.losesAll = true;
@@ -1474,9 +1536,10 @@ function resolveBattle(input) {
   }
   const killedBy = (attacker, target) => {
     if (!attacker.weapon) return false;
+    if (card(attacker.weapon)?.kind !== "weapon") return false;
     if (!target.leader && !target.cheapHero) return false;
     const kind = card(attacker.weapon)?.subtype;
-    const guarded = target.defence && card(target.defence)?.subtype === kind;
+    const guarded = target.defence && card(target.defence)?.kind === "defense" && card(target.defence)?.subtype === kind;
     return !guarded;
   };
   const aLeaderDead = killedBy(defender.plan, aggressor.plan);
@@ -1491,7 +1554,10 @@ function resolveBattle(input) {
   loseOut.discards = playedCards(loseSide.plan);
   winOut.losses = winSide.plan.dial;
   winOut.leaderDies = winDead && !!winSide.plan.leader;
-  winOut.discards = winSide.plan.cheapHero ? [CHEAP_HERO_ID] : [];
+  winOut.discards = [
+    ...winSide.plan.cheapHero ? [CHEAP_HERO_ID] : [],
+    ...[winSide.plan.weapon, winSide.plan.defence].filter((id) => !!id && card(id)?.kind === "worthless")
+  ];
   if (loseDead && loseSide.plan.leader) {
     winOut.spice.push({
       amount: leaderStrength(loseSide.faction, loseSide.plan.leader),
@@ -1547,14 +1613,24 @@ function battleLosses(forces, faction, territoryId, sectors, outcome) {
 export {
   BATTLE_PICK_SECONDS,
   BATTLE_PLAN_SECONDS,
+  BATTLE_PRESCIENCE_SECONDS,
   BATTLE_TRAITOR_SECONDS,
+  BATTLE_VOICE_SECONDS,
   CHEAP_HERO_ID,
+  PRESCIENCE_ASKS,
+  VOICE_TARGETS,
   battleLosses,
   battlesFor,
+  canComplyWithVoice,
   explosionLosses,
   forcesInBattle,
   judgePlan,
+  judgeVoiceCommand,
   nextAggressor,
   pendingBattles,
-  resolveBattle
+  planPlaysTarget,
+  prescienceAnswer,
+  resolveBattle,
+  voiceCardMatches,
+  voiceViolation
 };

@@ -396,6 +396,18 @@ export interface DuneGameState {
       /** Who has a plan in. The plan itself is secret until the reveal. */
       committed: FactionId[]
       closesAt: number
+      /** The Bene Gesserit's window to speak, when they fight here. The
+       *  COMMAND is public — the opponent must hear it to obey it. */
+      voice?: {
+        by: FactionId
+        closesAt: number
+        done: boolean
+        command?: { mode: 'play' | 'not-play'; target: string } | null
+      }
+      /** The Atreides' question: opened when their opponent commits, and
+       *  the reveal waits on it. Which element was asked is public; the
+       *  ANSWER goes to their own row alone. */
+      prescience?: { by: FactionId; closesAt: number; done: boolean; asked?: string }
       /** Both plans, published together, and the traitor beat's state. */
       revealed?: {
         plans: Record<string, {

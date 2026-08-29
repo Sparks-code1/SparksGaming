@@ -59,6 +59,8 @@ import {
   pendingBattles, nextAggressor, judgePlan, resolveBattle, battleLosses,
   explosionLosses, forcesInBattle, CHEAP_HERO_ID,
   BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
+  BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS,
+  judgeVoiceCommand, prescienceAnswer, PRESCIENCE_ASKS,
 } from '../_shared/duneBattle.gen.ts'
 import {
   phaseAfter, advanceHold, phaseWindowOpen, rollStorm, stormEntry, cityIncome,
@@ -1984,6 +1986,17 @@ Deno.serve(async req => {
         territoryId: battle.territoryId, sectors: battle.sectors,
         aggressor, defender: opponent, committed: [],
         closesAt: now + BATTLE_PLAN_SECONDS * 1000,
+        // THE VOICE SPEAKS FIRST. When the Bene Gesserit fight here, their
+        // opponent may not commit until the command is given or declined —
+        // a command over a plan already made is no command at all.
+        ...((aggressor === 'bene-gesserit' || opponent === 'bene-gesserit')
+          ? {
+            voice: {
+              by: 'bene-gesserit', done: false,
+              closesAt: now + BATTLE_VOICE_SECONDS * 1000,
+            },
+          }
+          : null),
       }
       const { data, error } = await admin.rpc('apply_match_write', {
         p_match_id: matchId,
@@ -2017,12 +2030,29 @@ Deno.serve(async req => {
       const plans: Record<string, unknown> = {}
       const secretsPatch: Record<string, unknown> = {}
 
+      // THE VOICE GATES THE VOICED. Until the Bene Gesserit have spoken or
+      // their window has run out, their opponent's plan waits — the command
+      // must be able to bind it. The speaker's own plan commits freely.
+      const voice = (c as { voice?: {
+        by: string; closesAt: number; done: boolean
+        command?: { mode: string; target: string } | null
+      } }).voice
+      let voiceNow = voice
+      if (voice && !voice.done && now >= voice.closesAt) {
+        // silence declines the command; the write below carries the closure
+        voiceNow = { ...voice, done: true, command: null }
+      }
       if (!expired) {
         if (!combatants.includes(myFaction as never)) {
           return json({ error: 'you are not in this battle', code: 'not-your-battle' }, 409)
         }
         if (c.committed.includes(myFaction as never)) {
           return json({ error: 'your plan is in', code: 'already-committed' }, 409)
+        }
+        if (voiceNow && !voiceNow.done && myFaction !== voiceNow.by) {
+          return json({
+            error: 'the Voice has not spoken', code: 'voiced-first',
+          }, 409)
         }
         // THE PLAN NAMES ITS BATTLE. A panel drawn against the last battle
         // can post into the next one — the wheel capped by the OLD stack
@@ -2051,6 +2081,10 @@ Deno.serve(async req => {
           deadLeaders: (tanks.leaders[myFaction] ?? []).map((l) => l.name),
           usedLeaders: b.usedLeaders ?? {},
           plan,
+          // the Voice binds only the seat it was aimed at
+          voiced: voiceNow?.done && voiceNow.command && myFaction !== voiceNow.by
+            ? voiceNow.command as never
+            : null,
         })
         if (!verdict.ok) return json({ error: 'that plan is not legal', code: verdict.refusal }, 409)
         secretsPatch[playerId] = { ...mine, battlePlan: { territoryId: c.territoryId, ...plan } }
@@ -2059,7 +2093,8 @@ Deno.serve(async req => {
 
       // Everyone already committed brings the plan from their own row; past
       // the deadline the silent are committed at zero, which is the fight a
-      // walked-away seat still owes.
+      // walked-away seat still owes — WRITTEN to their row too, so the
+      // prescience that may yet fire reads every plan from one place.
       const committedNow = expired
         ? combatants
         : [...new Set([...c.committed, myFaction])]
@@ -2072,19 +2107,44 @@ Deno.serve(async req => {
           delete (plans[f] as { territoryId?: string }).territoryId
         } else if (expired) {
           plans[f] = { dial: 0 }
+          secretsPatch[seatId] = {
+            ...(rowOf[seatId] ?? {}),
+            battlePlan: { territoryId: c.territoryId, dial: 0 },
+          }
         }
       }
 
+      // THE PRESCIENCE OPENS when the Atreides' opponent has committed and
+      // the question has not yet been settled — and THE REVEAL WAITS on it:
+      // the whole point of asking is planning with the answer.
+      const hasAtreides = combatants.includes('atreides' as never)
+      const atreidesOpponent = combatants.find((f) => f !== 'atreides')
+      const opponentIn = !!atreidesOpponent && (!!plans[atreidesOpponent]
+        || committedNow.includes(atreidesOpponent as never))
+      const pres = (c as { prescience?: {
+        by: string; closesAt: number; done: boolean; asked?: string
+      } }).prescience
+      const presNow = hasAtreides && opponentIn && !pres
+        ? { by: 'atreides', done: false, closesAt: now + BATTLE_PRESCIENCE_SECONDS * 1000 }
+        : pres
+
       const allIn = combatants.every((f) => !!plans[f])
-      const current = allIn
+      const mayReveal = allIn && (!hasAtreides || (presNow?.done ?? false))
+      const current = mayReveal
         ? {
           ...c, committed: combatants,
+          ...(voiceNow ? { voice: voiceNow } : null),
+          ...(presNow ? { prescience: presNow } : null),
           revealed: {
             plans,
             traitor: { answered: [], calls: [], closesAt: now + BATTLE_TRAITOR_SECONDS * 1000 },
           },
         }
-        : { ...c, committed: committedNow }
+        : {
+          ...c, committed: committedNow,
+          ...(voiceNow ? { voice: voiceNow } : null),
+          ...(presNow ? { prescience: presNow } : null),
+        }
 
       const { data, error } = await admin.rpc('apply_match_write', {
         p_match_id: matchId,
@@ -2094,7 +2154,146 @@ Deno.serve(async req => {
       })
       if (error) return json({ error: error.message }, 500)
       if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
-      return json({ committed: current.committed, revealed: !!allIn, version: data[0].version })
+      return json({ committed: current.committed, revealed: mayReveal, version: data[0].version })
+    }
+
+    // ── The Voice speaks ────────────────────────────────────────────────────
+    // Before the opponent may commit: a named command their plan must obey
+    // where obedience is possible. Declining is a command too — the window
+    // closes either way, and past the deadline anyone may close it.
+    case 'BATTLE_VOICE': {
+      const b = state.battles
+      const c = b?.current
+      if (state.phase !== 'Battles' || !b || !c) {
+        return json({ error: 'no battle is open', code: 'no-battle' }, 409)
+      }
+      const voice = (c as { voice?: {
+        by: string; closesAt: number; done: boolean
+        command?: unknown
+      } }).voice
+      if (!voice) return json({ error: 'no Voice in this battle', code: 'no-voice' }, 409)
+      if (voice.done) return json({ error: 'the Voice has spoken', code: 'already-voiced' }, 409)
+      const expired = now >= voice.closesAt
+      let command: unknown = null
+      if (!expired) {
+        if (myFaction !== voice.by) {
+          return json({ error: 'the Voice is not yours', code: 'not-your-voice' }, 403)
+        }
+        if (action.command != null) {
+          if (!judgeVoiceCommand(action.command)) {
+            return json({ error: 'no such command', code: 'bad-command' }, 409)
+          }
+          command = action.command
+        }
+      }
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state,
+          battles: {
+            ...b,
+            current: { ...c, voice: { ...voice, done: true, command } },
+          },
+        },
+        p_secrets: {},
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ command, version: data[0].version })
+    }
+
+    // ── The Atreides ask ────────────────────────────────────────────────────
+    // One element of the committed opposing plan — weapon, defence, leader,
+    // or the dial — answered TRUTHFULLY off the row, into the Atreides' own
+    // row and nowhere else. One question; a "none" is the answer, never a
+    // do-over. The reveal follows the settling of the question in the same
+    // write when both plans are in.
+    case 'BATTLE_PRESCIENCE': {
+      const b = state.battles
+      const c = b?.current
+      if (state.phase !== 'Battles' || !b || !c) {
+        return json({ error: 'no battle is open', code: 'no-battle' }, 409)
+      }
+      if (c.revealed) return json({ error: 'plans are on the table', code: 'already-revealed' }, 409)
+      const pres = (c as { prescience?: {
+        by: string; closesAt: number; done: boolean; asked?: string
+      } }).prescience
+      if (!pres) return json({ error: 'no question is open', code: 'no-prescience' }, 409)
+      if (pres.done) return json({ error: 'the question is settled', code: 'already-asked' }, 409)
+      const expired = now >= pres.closesAt
+
+      const { data: secretRows } = await admin
+        .from('match_secrets').select('player_id, data').eq('match_id', matchId)
+      const rowOf = Object.fromEntries((secretRows ?? []).map((r) => [r.player_id, r.data ?? {}]))
+      const combatants = [c.aggressor, c.defender]
+      const other = combatants.find((f) => f !== pres.by)!
+
+      const secretsPatch: Record<string, unknown> = {}
+      let asked: string | undefined
+      if (!expired) {
+        if (myFaction !== pres.by) {
+          return json({ error: 'the question is not yours', code: 'not-your-question' }, 403)
+        }
+        if (action.ask != null) {
+          const ask = String(action.ask)
+          if (!PRESCIENCE_ASKS.includes(ask as never)) {
+            return json({ error: 'no such question', code: 'bad-question' }, 409)
+          }
+          const theirSeat = seatOfFaction[other]
+          const theirRow = (rowOf[theirSeat] ?? {}) as {
+            battlePlan?: { territoryId?: string; dial?: number }
+          }
+          if (theirRow.battlePlan?.territoryId !== c.territoryId) {
+            return json({ error: 'their plan is not in yet', code: 'nothing-to-see' }, 409)
+          }
+          const { territoryId: _t, ...theirPlan } = theirRow.battlePlan
+          const answer = prescienceAnswer(theirPlan as never, ask as never)
+          const mySeat = seatOfFaction[pres.by]
+          secretsPatch[mySeat] = {
+            ...(rowOf[mySeat] ?? {}),
+            battlePrescience: { territoryId: c.territoryId, ask, answer },
+          }
+          asked = ask
+        }
+      }
+
+      // Settling the question may complete the table: both plans in and the
+      // question done means the reveal rides this same write.
+      const bothIn = combatants.every((f) => {
+        const row = (rowOf[seatOfFaction[f]] ?? {}) as { battlePlan?: { territoryId?: string } }
+        return row.battlePlan?.territoryId === c.territoryId
+      })
+      const presDone = { ...pres, done: true, ...(asked ? { asked } : null) }
+      const plansOut: Record<string, unknown> = {}
+      if (bothIn) {
+        for (const f of combatants) {
+          const row = (rowOf[seatOfFaction[f]] ?? {}) as {
+            battlePlan?: Record<string, unknown>
+          }
+          const { territoryId: _t2, ...plan } = row.battlePlan ?? {}
+          plansOut[f] = plan
+        }
+      }
+      const current = bothIn
+        ? {
+          ...c, committed: combatants, prescience: presDone,
+          revealed: {
+            plans: plansOut,
+            traitor: { answered: [], calls: [], closesAt: now + BATTLE_TRAITOR_SECONDS * 1000 },
+          },
+        }
+        : { ...c, prescience: presDone }
+
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: { ...state, battles: { ...b, current } },
+        p_secrets: secretsPatch,
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ asked: asked ?? null, revealed: bothIn, version: data[0].version })
     }
 
     case 'BATTLE_TRAITOR':
@@ -2389,6 +2588,8 @@ Deno.serve(async req => {
         battlePickSeconds: BATTLE_PICK_SECONDS,
         battlePlanSeconds: BATTLE_PLAN_SECONDS,
         battleTraitorSeconds: BATTLE_TRAITOR_SECONDS,
+        battleVoiceSeconds: BATTLE_VOICE_SECONDS,
+        battlePrescienceSeconds: BATTLE_PRESCIENCE_SECONDS,
       })
       if (reset.length === 0) {
         return json({ error: 'nothing here holds a clock', code: 'no-clock' }, 409)

@@ -29,7 +29,10 @@ import { factionById } from '@/data/dune/factions'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import {
   pendingBattles, battlesFor, forcesInBattle, CHEAP_HERO_ID,
+  VOICE_TARGETS, voiceViolation, voiceCardMatches, canComplyWithVoice,
+  PRESCIENCE_ASKS,
 } from '@/lib/dune/battle'
+import type { VoiceCommand, VoiceTarget, PrescienceAsk } from '@/lib/dune/battle'
 import type { DuneGameState } from '@/types/Dune/Game'
 import type { FactionId, Leader } from '@/types/Dune/Faction'
 import type { TreacheryCard } from '@/types/Dune/Treachery'
@@ -59,6 +62,9 @@ export const PLAN_REFUSAL_TEXT: Record<string, string> = {
   'no-leader-no-cards': 'With no leader and no Cheap Hero, no treachery may be played.',
   'one-card-twice': 'The same card cannot be played twice.',
   'battle-moved-on': 'The table has moved to another battle — this form has refreshed; plan again.',
+  'voiced-first': 'The Voice has not spoken — your plan waits for the command.',
+  'voice-demands': 'The Voice commands a play this plan does not make — and your hand can obey.',
+  'voice-forbids': 'The Voice forbids what this plan plays.',
   'already-committed': 'Your plan is already in.',
   'already-revealed': 'Plans are on the table.',
   'no-battle': 'No battle is open.',
@@ -93,6 +99,12 @@ export interface BattlePanelProps {
     dial: number; leader?: string; cheapHero?: boolean; weapon?: string; defence?: string
   }) => void
   onAnswer: (call: boolean) => void
+  /** The Voice: a command, or null to decline. Also the expired push. */
+  onVoice?: (command: VoiceCommand | null) => void
+  /** The question: an element, or null to decline. Also the expired push. */
+  onPrescience?: (ask: PrescienceAsk | null) => void
+  /** The Atreides' own answer, from their row — private until the reveal. */
+  prescienceAnswer?: { ask: string; answer: string | number } | null
 }
 
 /**
@@ -191,8 +203,10 @@ function PlanLine({ faction, plan }: {
 export function BattlePanel({
   battles, forces, storm, tanks, seat, hand, traitors, now, busy,
   refusal = null, refusedAction = null, handCount = null,
-  onPick, onPlan, onAnswer,
+  onPick, onPlan, onAnswer, onVoice, onPrescience, prescienceAnswer = null,
 }: BattlePanelProps) {
+  const [voiceMode, setVoiceMode] = useState<'play' | 'not-play'>('play')
+  const [voiceTarget, setVoiceTarget] = useState<VoiceTarget | null>(null)
   const [dial, setDial] = useState(0)
   const [leader, setLeader] = useState<string | null>(null)
   const [hero, setHero] = useState(false)
@@ -342,10 +356,153 @@ export function BattlePanel({
     )
   }
 
+  // ── the interrogations, before and between the plans ────────────────────
+  const voice = c.voice
+  const pres = c.prescience
+  const iAmIn2 = seat === c.aggressor || seat === c.defender
+
+  // THE VOICE'S OWN FORM: a command named before the opponent may commit.
+  if (voice && !voice.done && now < voice.closesAt && seat === voice.by && onVoice) {
+    return frame(
+      <>
+        <b style={{ display: 'block', fontSize: 16 }}>
+          The Voice — {territoryName(c.territoryId)}
+        </b>
+        <p style={{ opacity: 0.8, fontSize: 13 }}>
+          Command your opponent's plan: play, or not play, one named thing.
+          If they cannot comply, they plan freely.
+        </p>
+        <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+          {(['play', 'not-play'] as const).map(m => (
+            <button key={m} type="button" data-voice-mode={m}
+              aria-pressed={voiceMode === m}
+              onClick={() => setVoiceMode(m)}
+              style={voiceMode === m ? { ...chosen, width: 'auto' } : { ...btn, width: 'auto' }}>
+              {m === 'play' ? 'Play' : 'Do not play'}
+            </button>
+          ))}
+        </div>
+        {VOICE_TARGETS.map(t => (
+          <button key={t} type="button" data-voice-target={t}
+            aria-pressed={voiceTarget === t}
+            onClick={() => setVoiceTarget(voiceTarget === t ? null : t)}
+            style={voiceTarget === t ? chosen : btn}>
+            {t}
+          </button>
+        ))}
+        <div style={{ marginTop: 10 }}>
+          <button type="button" disabled={busy || !voiceTarget} data-voice-speak=""
+            onClick={() => voiceTarget && onVoice({ mode: voiceMode, target: voiceTarget })}
+            style={{ ...chosen, width: 'auto', display: 'inline-block', marginRight: 8 }}>
+            Voice it
+          </button>
+          <button type="button" disabled={busy} data-voice-decline=""
+            onClick={() => onVoice(null)}
+            style={{ ...btn, width: 'auto', display: 'inline-block' }}>
+            No command
+          </button>
+        </div>
+      </>,
+    )
+  }
+  if (voice && !voice.done && seat !== voice.by) {
+    const vExpired = now >= voice.closesAt
+    return frame(
+      <>
+        <b style={{ display: 'block', fontSize: 16 }}>
+          {FACTION_LOOK[c.aggressor].name} vs {FACTION_LOOK[c.defender].name} — {territoryName(c.territoryId)}
+        </b>
+        <p style={{ opacity: 0.8 }} data-voice-waits="">
+          The Voice is being prepared{iAmIn2 ? ' — your plan waits for it' : ''}.
+        </p>
+        {vExpired && onVoice && (
+          <button type="button" disabled={busy} data-voice-push=""
+            onClick={() => onVoice(null)}
+            style={{ ...btn, width: 'auto', display: 'inline-block' }}>
+            The clock has run out — the Voice stays silent
+          </button>
+        )}
+      </>,
+    )
+  }
+
+  // THE QUESTION: after the opponent commits, before the reveal.
+  if (pres && !pres.done && !c.revealed) {
+    const pExpired = now >= pres.closesAt
+    if (seat === pres.by && onPrescience && !pExpired) {
+      const mineIn = !!seat && c.committed.includes(seat)
+      return frame(
+        <>
+          <b style={{ display: 'block', fontSize: 16 }}>
+            Prescience — {territoryName(c.territoryId)}
+          </b>
+          <p style={{ opacity: 0.8, fontSize: 13 }}>
+            Ask ONE element of the committed plan against you. A "none is
+            played" answer is the answer — there is no second question.
+            {mineIn ? '' : ' Your own plan can still be written with what you learn.'}
+          </p>
+          {PRESCIENCE_ASKS.map(a => (
+            <button key={a} type="button" data-prescience-ask={a}
+              disabled={busy}
+              onClick={() => onPrescience(a)}
+              style={btn}>
+              {a === 'dial' ? 'The number dialled' : 'Their ' + a}
+            </button>
+          ))}
+          <button type="button" disabled={busy} data-prescience-decline=""
+            onClick={() => onPrescience(null)}
+            style={{ ...btn, marginTop: 8 }}>
+            No question
+          </button>
+        </>,
+      )
+    }
+    if (seat !== pres.by || pExpired) {
+      return frame(
+        <>
+          <b style={{ display: 'block', fontSize: 16 }}>
+            {FACTION_LOOK[c.aggressor].name} vs {FACTION_LOOK[c.defender].name} — {territoryName(c.territoryId)}
+          </b>
+          <p style={{ opacity: 0.8 }} data-prescience-waits="">
+            The Atreides peer into the plans.
+          </p>
+          {pExpired && onPrescience && (
+            <button type="button" disabled={busy} data-prescience-push=""
+              onClick={() => onPrescience(null)}
+              style={{ ...btn, width: 'auto', display: 'inline-block' }}>
+              The clock has run out — no question is asked
+            </button>
+          )}
+        </>,
+      )
+    }
+  }
+
   // ── the plan ────────────────────────────────────────────────────────────
   const iAmIn = seat === c.aggressor || seat === c.defender
   const committed = !!seat && c.committed.includes(seat)
   const expired = now >= c.closesAt
+
+  // THE FORESEEN ELEMENT — the server wrote it into the asker's own row and
+  // nowhere public, so this renders for one seat and no other, and keeps
+  // rendering while they wait: what was seen cannot be un-asked.
+  const foresight = prescienceAnswer && iAmIn ? (() => {
+    const a = prescienceAnswer.answer
+    const shown = a === 'none' ? 'none is played'
+      : a === 'cheap-hero' ? 'the Cheap Hero'
+      : typeof a === 'number' ? String(a)
+      : TREACHERY_CARDS.find(x => x.id === a)?.name ?? String(a)
+    return (
+      <p data-foresight="" style={{
+        fontSize: 13, color: '#9fd0e8', border: '1px solid #9fd0e855',
+        borderRadius: 6, padding: '6px 8px',
+      }}>
+        Foreseen — their {prescienceAnswer.ask}: <b>{shown}</b>.
+        Only you see this until the reveal.
+      </p>
+    )
+  })() : null
+
   if (!iAmIn || committed) {
     return frame(
       <>
@@ -357,6 +514,7 @@ export function BattlePanel({
           Plans commit in secret and reveal together
           ({c.committed.length} of 2 in).
         </p>
+        {foresight}
         {expired && (
           <button type="button" disabled={busy} data-plan-push=""
             onClick={() => onPlan({ territoryId: c.territoryId, dial: 0 })}
@@ -381,13 +539,36 @@ export function BattlePanel({
   // caught up, and every card it would offer is a refusal waiting.
   const handSynced = handCount == null || handCount === hand.length
   const heroHeld = handSynced && hand.includes(CHEAP_HERO_ID)
+  // A worthless card may ride either slot — that is what worthless cards
+  // are for, and the Voice can command one be played.
+  const kindOf = (id: string) => TREACHERY_CARDS.find(x => x.id === id)?.kind
   const weapons = handSynced
-    ? hand.filter(id => TREACHERY_CARDS.find(x => x.id === id)?.kind === 'weapon') : []
+    ? hand.filter(id => kindOf(id) === 'weapon' || kindOf(id) === 'worthless') : []
   const defences = handSynced
-    ? hand.filter(id => TREACHERY_CARDS.find(x => x.id === id)?.kind === 'defense') : []
+    ? hand.filter(id => kindOf(id) === 'defense' || kindOf(id) === 'worthless') : []
   const mayPlayCards = !!leader || hero
   const leaderObj = usable.find(l => l.name === leader) ?? null
   const heroCard = TREACHERY_CARDS.find(x => x.id === CHEAP_HERO_ID)!
+
+  // ── THE VOICE STANDS OVER THIS FORM ─────────────────────────────────────
+  // ONE law with the server: the same helper that refuses a defiant plan
+  // grades the draft here, so the form knows which commands are satisfiable
+  // against the hand it holds and can never bless what the judge strikes.
+  const cmd = voice?.done && voice.command && seat !== voice.by
+    ? (voice.command as VoiceCommand) : null
+  const canFieldAny = usable.length > 0 || heroHeld
+  const draftPlan = {
+    dial,
+    ...(leader ? { leader } : null),
+    ...(hero ? { cheapHero: true } : null),
+    ...(mayPlayCards && weapon ? { weapon } : null),
+    ...(mayPlayCards && defence ? { defence } : null),
+  }
+  const obeyable = cmd ? canComplyWithVoice(cmd, handSynced ? hand : [], canFieldAny) : false
+  const violation = cmd ? voiceViolation(draftPlan, cmd, handSynced ? hand : [], canFieldAny) : null
+  const cardForbidden = (id: string) =>
+    !!cmd && cmd.mode === 'not-play' && voiceCardMatches(id, cmd.target)
+  const heroForbidden = !!cmd && cmd.mode === 'not-play' && cmd.target === 'cheap-hero'
 
   /** Weapon or defence, drawn as the CARD it is — rules text on its face,
    *  a magnifier to the tray's floating view — dark until a leader or the
@@ -400,14 +581,15 @@ export function BattlePanel({
         return (
           <div key={id} style={{ position: 'relative' }}>
             <button type="button" aria-pressed={picked === id}
-              disabled={!mayPlayCards}
+              disabled={!mayPlayCards || cardForbidden(id)}
+              title={cardForbidden(id) ? 'The Voice forbids this card' : undefined}
               {...(tag === 'weapon' ? { 'data-plan-weapon': id } : { 'data-plan-defence': id })}
               onClick={() => set(picked === id ? null : id)}
               style={{
                 background: 'none', padding: 2, lineHeight: 0,
-                cursor: mayPlayCards ? 'pointer' : 'default',
+                cursor: mayPlayCards && !cardForbidden(id) ? 'pointer' : 'default',
                 border: picked === id ? '2px solid #c9542a' : `2px solid ${SAND}22`,
-                borderRadius: 8, opacity: mayPlayCards ? 1 : 0.5,
+                borderRadius: 8, opacity: mayPlayCards && !cardForbidden(id) ? 1 : 0.5,
               }}>
               <TreacheryCardFace card={cardObj} width={150} />
             </button>
@@ -430,6 +612,19 @@ export function BattlePanel({
         Your battle plan — {territoryName(c.territoryId)} vs{' '}
         {FACTION_LOOK[seat === c.aggressor ? c.defender : c.aggressor].name}
       </b>
+      {cmd && (
+        <p data-voice-banner={cmd.mode} style={{
+          fontSize: 13, color: '#d8b36a', border: '1px solid #d8b36a55',
+          borderRadius: 6, padding: '6px 8px',
+        }}>
+          {cmd.mode === 'not-play'
+            ? 'The Voice forbids: ' + cmd.target + '. Your plan may not play it.'
+            : obeyable
+              ? 'The Voice commands: play ' + cmd.target + '. Your hand can obey, so your plan must.'
+              : 'The Voice commands: play ' + cmd.target + ' — you cannot comply, so you plan freely.'}
+        </p>
+      )}
+      {foresight}
       <BattleWheel faction={seat!} max={maxDial} dial={dial} onDial={setDial}
         leader={leaderObj} hero={hero} />
       <div style={{ textAlign: 'center', fontSize: 12, opacity: 0.8, marginTop: -4 }}>
@@ -458,6 +653,8 @@ export function BattlePanel({
         {heroHeld && (
           <button type="button" data-plan-hero=""
             aria-pressed={hero}
+            disabled={heroForbidden}
+            title={heroForbidden ? 'The Voice forbids the Cheap Hero' : undefined}
             onClick={() => { setHero(!hero); setLeader(null) }}
             style={{
               background: 'none', padding: 2, lineHeight: 0, cursor: 'pointer',
@@ -492,7 +689,12 @@ export function BattlePanel({
           {cardRow(defences, defence, setDefence, 'defence')}
         </>
       )}
-      <button type="button" disabled={busy} data-plan-commit=""
+      {violation && (
+        <p data-voice-violation={violation} style={{ fontSize: 12, color: '#e8a0a0' }}>
+          {PLAN_REFUSAL_TEXT[violation]}
+        </p>
+      )}
+      <button type="button" disabled={busy || !!violation} data-plan-commit=""
         onClick={() => onPlan({
           territoryId: c.territoryId,
           dial,

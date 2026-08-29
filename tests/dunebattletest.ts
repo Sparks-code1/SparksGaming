@@ -12,6 +12,9 @@ import {
   pendingBattles, battlesFor, nextAggressor, forcesInBattle, judgePlan,
   resolveBattle, battleLosses, explosionLosses, CHEAP_HERO_ID,
   BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
+  BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS,
+  planPlaysTarget, canComplyWithVoice, voiceViolation, judgeVoiceCommand,
+  prescienceAnswer,
 } from '@/lib/dune/battle'
 import type { BattlePlan } from '@/lib/dune/battle'
 import { factionById } from '@/data/dune/factions'
@@ -581,6 +584,284 @@ check('the three windows have their seconds',
   check('...and so does the harness, as the selected seat',
     [/BATTLE_PICK/.test(harness), /BATTLE_PLAN/.test(harness), /BATTLE_TRAITOR/.test(harness)],
     [true, true, true])
+}
+
+// ── the Voice and the foresight ───────────────────────────────────────────
+// Pass two: the Bene Gesserit command a plan before it is made, and the
+// Atreides see one element of a plan after it is. Both are BASIC rules.
+// The compliance law is ONE function shared by the server's judge and the
+// plan form, so the form can never bless what the judge strikes down.
+{
+  // what a plan plays
+  check('a shield answers to shield, not projectile',
+    [planPlaysTarget({ dial: 0, defence: 'shield' }, 'shield'),
+      planPlaysTarget({ dial: 0, defence: 'shield' }, 'projectile')], [true, false])
+  check('a worthless card in a slot answers to worthless',
+    planPlaysTarget({ dial: 0, weapon: 'baliset' }, 'worthless'), true)
+  check('the Cheap Hero answers to its own name',
+    planPlaysTarget({ dial: 0, cheapHero: true }, 'cheap-hero'), true)
+
+  // when obedience is possible
+  check('forbidding can always be obeyed',
+    canComplyWithVoice({ mode: 'not-play', target: 'lasgun' }, [], false), true)
+  check('a demand binds only a hand that holds the thing',
+    [canComplyWithVoice({ mode: 'play', target: 'projectile' }, ['crysknife'], true),
+      canComplyWithVoice({ mode: 'play', target: 'projectile' }, ['chaumas'], true)],
+    [true, false])
+  check('...and only a seat that can field a leader to carry it',
+    canComplyWithVoice({ mode: 'play', target: 'projectile' }, ['crysknife'], false), false)
+  check('...except the hero demand, which carries itself',
+    canComplyWithVoice({ mode: 'play', target: 'cheap-hero' }, [CHEAP_HERO_ID], false), true)
+
+  // the violation — the judge and the form share it
+  check('a forbidden play is a violation',
+    voiceViolation({ dial: 0, leader: JESSICA, weapon: 'crysknife' },
+      { mode: 'not-play', target: 'projectile' }, ['crysknife'], true), 'voice-forbids')
+  check('an unmet demand an able hand could meet is one too',
+    voiceViolation({ dial: 0, leader: JESSICA },
+      { mode: 'play', target: 'projectile' }, ['crysknife'], true), 'voice-demands')
+  check('...but beyond compliance the plan is free',
+    voiceViolation({ dial: 0 },
+      { mode: 'play', target: 'projectile' }, ['chaumas'], true), null)
+  check('an obedient plan stands',
+    voiceViolation({ dial: 0, leader: JESSICA, weapon: 'crysknife' },
+      { mode: 'play', target: 'projectile' }, ['crysknife'], true), null)
+  check('a command is the sheet\'s shape and nothing else',
+    [judgeVoiceCommand({ mode: 'play', target: 'lasgun' }),
+      judgeVoiceCommand({ mode: 'sing', target: 'lasgun' }),
+      judgeVoiceCommand({ mode: 'play', target: 'kanly' })], [true, false, false])
+
+  // the judge carries the Voice
+  const battle = { territoryId: 'territory-13', sectors: ['sector-10'] }
+  const board = [
+    f('atreides', 'territory-13', 'sector-10', 4),
+    f('harkonnen', 'territory-13', 'sector-10', 3),
+  ]
+  const judge = (plan: BattlePlan, over: Record<string, unknown> = {}) => judgePlan({
+    faction: 'atreides', battle, forces: board,
+    hand: ['crysknife', 'shield', CHEAP_HERO_ID],
+    deadLeaders: [], usedLeaders: {}, plan, ...over,
+  } as never)
+  check('the judge refuses in the Voice\'s name',
+    (judge({ dial: 0, leader: JESSICA, weapon: 'crysknife' },
+      { voiced: { mode: 'not-play', target: 'projectile' } }) as { refusal: string }).refusal,
+    'voice-forbids')
+  check('...and demands what the hand can give',
+    (judge({ dial: 0, leader: JESSICA },
+      { voiced: { mode: 'play', target: 'projectile' } }) as { refusal: string }).refusal,
+    'voice-demands')
+  check('a worthless card may ride the weapon slot',
+    judge({ dial: 0, leader: JESSICA, weapon: 'baliset' }, { hand: ['baliset'] }), { ok: true })
+  check('...and the defence slot',
+    judge({ dial: 0, leader: JESSICA, defence: 'baliset' }, { hand: ['baliset'] }), { ok: true })
+
+  // the worthless card in the fight: it does nothing, and is spent
+  const balisetFight = resolveBattle({
+    aggressor: side('atreides', { dial: 3, leader: JESSICA, weapon: 'baliset' }),
+    defender: side('harkonnen', { dial: 1, leader: KUDU }),
+  })
+  check('a worthless weapon cuts nobody',
+    balisetFight.sides[1].leaderDies, false)
+  check('...and the winner discards it',
+    balisetFight.sides[0].discards, ['baliset'])
+  check('a worthless defence stops nothing',
+    resolveBattle({
+      aggressor: side('atreides', { dial: 1, leader: JESSICA, weapon: 'crysknife' }),
+      defender: side('harkonnen', { dial: 2, leader: FEYD, defence: 'baliset' }),
+    }).sides[1].leaderDies, true)
+  check('...and never reads as a shield to the lasgun',
+    [resolveBattle({
+      aggressor: side('atreides', { dial: 1, leader: JESSICA, weapon: 'lasgun' }),
+      defender: side('harkonnen', { dial: 2, leader: FEYD, defence: 'baliset' }),
+    }).explosion,
+    resolveBattle({
+      aggressor: side('atreides', { dial: 1, leader: JESSICA, weapon: 'lasgun' }),
+      defender: side('harkonnen', { dial: 2, leader: FEYD, defence: 'shield' }),
+    }).explosion], [false, true])
+
+  // the foresight reads the committed plan, truthfully
+  check('the four asks read the committed plan',
+    [prescienceAnswer({ dial: 3, leader: JESSICA, weapon: 'crysknife' }, 'weapon'),
+      prescienceAnswer({ dial: 3, leader: JESSICA }, 'defence'),
+      prescienceAnswer({ dial: 3, cheapHero: true }, 'leader'),
+      prescienceAnswer({ dial: 3 }, 'dial')],
+    ['crysknife', 'none', 'cheap-hero', 3])
+  check('an empty slot answers none — and that IS the answer',
+    prescienceAnswer({ dial: 0 }, 'weapon'), 'none')
+  check('the two windows have their minute',
+    [BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS], [60, 60])
+
+  // ── the server slice ────────────────────────────────────────────────────
+  const fn = code('supabase/functions/dune-action/index.ts')
+  const pick = fn.slice(fn.indexOf("case 'BATTLE_PICK'"), fn.indexOf("case 'BATTLE_PLAN'"))
+  check('the pick opens the Voice when the Bene Gesserit fight',
+    /\(aggressor === 'bene-gesserit' \|\| opponent === 'bene-gesserit'\)/.test(pick)
+      && /by: 'bene-gesserit', done: false,/.test(pick), true)
+  const planCase = fn.slice(fn.indexOf("case 'BATTLE_PLAN'"), fn.indexOf("case 'BATTLE_VOICE'"))
+  check('the voiced seat waits for the command',
+    /if \(voiceNow && !voiceNow\.done && myFaction !== voiceNow\.by\)/.test(planCase)
+      && /code: 'voiced-first',/.test(planCase), true)
+  check('...silence past the window declines it',
+    /voiceNow = \{ \.\.\.voice, done: true, command: null \}/.test(planCase), true)
+  check('...and the judge is handed the command, aimed away from its speaker',
+    /voiced: voiceNow\?\.done && voiceNow\.command && myFaction !== voiceNow\.by/.test(planCase), true)
+  check('an expired silence is written to the row the foresight reads',
+    /battlePlan: \{ territoryId: c\.territoryId, dial: 0 \},/.test(planCase), true)
+  check('the question opens when the opponent commits',
+    /const presNow = hasAtreides && opponentIn && !pres/.test(planCase), true)
+  check('...and the reveal WAITS on it',
+    /const mayReveal = allIn && \(!hasAtreides \|\| \(presNow\?\.done \?\? false\)\)/.test(planCase), true)
+  const voiceCase = fn.slice(fn.indexOf("case 'BATTLE_VOICE'"), fn.indexOf("case 'BATTLE_PRESCIENCE'"))
+  check('the Voice is its speaker\'s alone until the clock frees anyone',
+    /code: 'not-your-voice'/.test(voiceCase) && /if \(!expired\) \{/.test(voiceCase), true)
+  check('...a command is judged by the sheet',
+    /if \(!judgeVoiceCommand\(action\.command\)\)/.test(voiceCase)
+      && /code: 'bad-command'/.test(voiceCase), true)
+  check('...and closes spoken or silent',
+    /voice: \{ \.\.\.voice, done: true, command \}/.test(voiceCase), true)
+  const presCase = fn.slice(fn.indexOf("case 'BATTLE_PRESCIENCE'"), fn.indexOf("case 'BATTLE_TRAITOR'"))
+  check('the question is the Atreides\' alone, from the sheet\'s four',
+    /code: 'not-your-question'/.test(presCase)
+      && /PRESCIENCE_ASKS\.includes\(ask as never\)/.test(presCase), true)
+  check('...answered truthfully off the committed row',
+    /const answer = prescienceAnswer\(theirPlan as never, ask as never\)/.test(presCase), true)
+  check('...into the asker\'s own row and nowhere public',
+    /battlePrescience: \{ territoryId: c\.territoryId, ask, answer \},/.test(presCase), true)
+  check('...never before their plan is in',
+    /code: 'nothing-to-see'/.test(presCase), true)
+  check('...and the settled question can complete the table',
+    /const current = bothIn/.test(presCase)
+      && /prescience: presDone,\s*[\r\n]+\s*revealed: \{/.test(presCase), true)
+
+  // ── the panel ───────────────────────────────────────────────────────────
+  const battles = {
+    turn: 3, order: ['bene-gesserit', 'harkonnen'] as FactionId[], at: 0,
+    current: null, fought: [], usedLeaders: {}, closesAt: 9_999_999_999_999,
+  }
+  const bgBoard = [
+    f('bene-gesserit', 'territory-13', 'sector-10', 4),
+    f('harkonnen', 'territory-13', 'sector-10', 3),
+  ]
+  const draw = (over: Record<string, unknown> = {}) =>
+    renderToStaticMarkup(createElement(BattlePanel, {
+      battles, forces: bgBoard, storm: CALM, tanks: null,
+      seat: 'bene-gesserit' as FactionId,
+      hand: [], traitors: [], now: 1, busy: false,
+      onPick: () => {}, onPlan: () => {}, onAnswer: () => {},
+      onVoice: () => {}, onPrescience: () => {},
+      ...over,
+    } as never))
+
+  const voiceOpen = {
+    territoryId: 'territory-13', sectors: ['sector-10'],
+    aggressor: 'bene-gesserit', defender: 'harkonnen',
+    committed: [], closesAt: 9_999_999_999_999,
+    voice: { by: 'bene-gesserit', done: false, closesAt: 9_999_999_999_999 },
+  }
+  const speaking = draw({ battles: { ...battles, current: voiceOpen } })
+  check('the Bene Gesserit get the command form',
+    [/data-voice-speak/.test(speaking), /data-voice-target="projectile"/.test(speaking),
+      /data-voice-decline/.test(speaking)], [true, true, true])
+  const voicedWait = draw({ battles: { ...battles, current: voiceOpen }, seat: 'harkonnen' })
+  check('...their opponent waits for it, formless',
+    [/data-voice-waits/.test(voicedWait), /data-plan-commit/.test(voicedWait)], [true, false])
+  check('...and may push an expired silence closed',
+    /data-voice-push/.test(draw({
+      battles: {
+        ...battles,
+        current: { ...voiceOpen, voice: { ...voiceOpen.voice, closesAt: 0 } },
+      },
+      seat: 'harkonnen',
+    })), true)
+
+  const spoken = (command: unknown) => ({
+    ...voiceOpen,
+    voice: { by: 'bene-gesserit', done: true, closesAt: 1, command },
+  })
+  const bound = draw({
+    battles: { ...battles, current: spoken({ mode: 'not-play', target: 'projectile' }) },
+    seat: 'harkonnen', hand: ['crysknife', 'shield'], handCount: 2,
+  })
+  check('a forbidding command banners the form and greys its target',
+    [/data-voice-banner="not-play"/.test(bound),
+      bound.includes('The Voice forbids: projectile'),
+      /title="The Voice forbids this card"/.test(bound)], [true, true, true])
+  const demanded = draw({
+    battles: { ...battles, current: spoken({ mode: 'play', target: 'projectile' }) },
+    seat: 'harkonnen', hand: ['crysknife'], handCount: 1,
+  })
+  check('a demanding Voice holds the commit until the plan obeys',
+    [/data-voice-banner="play"/.test(demanded),
+      /data-voice-violation="voice-demands"/.test(demanded),
+      /disabled="" data-plan-commit/.test(demanded)], [true, true, true])
+  const freed = draw({
+    battles: { ...battles, current: spoken({ mode: 'play', target: 'lasgun' }) },
+    seat: 'harkonnen', hand: ['crysknife'], handCount: 1,
+  })
+  check('...and an unmeetable demand frees the plan, and says so',
+    [freed.includes('you cannot comply, so you plan freely'),
+      /data-voice-violation/.test(freed)], [true, false])
+
+  const presOpen = {
+    territoryId: 'territory-13', sectors: ['sector-10'],
+    aggressor: 'atreides', defender: 'harkonnen',
+    committed: ['harkonnen'], closesAt: 9_999_999_999_999,
+    prescience: { by: 'atreides', done: false, closesAt: 9_999_999_999_999 },
+  }
+  const asking = draw({ battles: { ...battles, current: presOpen }, seat: 'atreides' })
+  check('the Atreides get the four asks and a decline',
+    [/data-prescience-ask="weapon"/.test(asking), /data-prescience-ask="dial"/.test(asking),
+      /data-prescience-decline/.test(asking)], [true, true, true])
+  check('...everyone else waits on the peering',
+    /data-prescience-waits/.test(
+      draw({ battles: { ...battles, current: presOpen }, seat: 'harkonnen' })), true)
+  check('...and an expired question can be pushed shut',
+    /data-prescience-push/.test(draw({
+      battles: {
+        ...battles,
+        current: { ...presOpen, prescience: { ...presOpen.prescience, closesAt: 0 } },
+      },
+      seat: 'harkonnen',
+    })), true)
+
+  const answered = {
+    ...presOpen,
+    prescience: { by: 'atreides', done: true, closesAt: 1, asked: 'weapon' },
+  }
+  const foreseen = draw({
+    battles: { ...battles, current: answered }, seat: 'atreides',
+    forces: [
+      f('atreides', 'territory-13', 'sector-10', 4),
+      f('harkonnen', 'territory-13', 'sector-10', 3),
+    ],
+    prescienceAnswer: { ask: 'weapon', answer: 'crysknife' },
+  })
+  check('the foreseen element is drawn for the asker, by card name',
+    [/data-foresight/.test(foreseen), foreseen.includes('Crysknife')], [true, true])
+  check('...and a seat handed no answer draws none',
+    /data-foresight/.test(
+      draw({ battles: { ...battles, current: answered }, seat: 'harkonnen' })), false)
+
+  // the wiring: shared law in the form, the row-read in the screen, both drivers
+  const panelSrc = code('src/components/dune/BattlePanel.tsx')
+  check('the new refusals have their sentences',
+    [/'voiced-first': /.test(panelSrc), /'voice-demands': /.test(panelSrc),
+      /'voice-forbids': /.test(panelSrc)], [true, true, true])
+  check('the form and the judge share one violation law',
+    /voiceViolation\(draftPlan, cmd,/.test(panelSrc), true)
+  const game = code('src/components/dune/DuneGameScreen.tsx')
+  check('the screen reads the answer from this seat\'s own row',
+    /battlePrescience/.test(game)
+      && /p\.territoryId === state\.battles\.current\.territoryId/.test(game), true)
+  check('...and the clock knows the two windows',
+    [/BATTLE_PRESCIENCE_SECONDS \* 1000/.test(game),
+      /BATTLE_VOICE_SECONDS \* 1000/.test(game)], [true, true])
+  const matchSrc2 = code('src/components/dune/DuneMatchScreen.tsx')
+  const harnessSrc2 = code('src/components/dune/DuneMultiSeatView.tsx')
+  check('both drivers post the two windows',
+    [/BATTLE_VOICE/.test(matchSrc2), /BATTLE_PRESCIENCE/.test(matchSrc2),
+      /BATTLE_VOICE/.test(harnessSrc2), /BATTLE_PRESCIENCE/.test(harnessSrc2)],
+    [true, true, true, true])
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

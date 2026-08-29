@@ -51,6 +51,104 @@ export const BATTLE_TRAITOR_SECONDS = 60
 
 export const CHEAP_HERO_ID = 'cheaphero'
 
+/** The Bene Gesserit's window to speak, before their opponent may commit. */
+export const BATTLE_VOICE_SECONDS = 60
+/** The Atreides' question, after the opponent commits, before the reveal. */
+export const BATTLE_PRESCIENCE_SECONDS = 60
+
+// ── the Voice ─────────────────────────────────────────────────────────────
+
+/** What the Voice may name: a weapon class, a defence, a worthless card, or
+ *  the Cheap Hero — the sheet's own list, nothing else. */
+export type VoiceTarget =
+  | 'projectile' | 'poison' | 'lasgun' | 'shield' | 'snooper'
+  | 'worthless' | 'cheap-hero'
+export interface VoiceCommand { mode: 'play' | 'not-play'; target: VoiceTarget }
+
+export const VOICE_TARGETS: readonly VoiceTarget[] = [
+  'projectile', 'poison', 'lasgun', 'shield', 'snooper', 'worthless', 'cheap-hero',
+]
+
+/** Whether one card answers a Voice target. */
+function cardMatches(id: string, target: VoiceTarget): boolean {
+  const c = card(id)
+  if (!c) return false
+  if (target === 'worthless') return c.kind === 'worthless'
+  if (target === 'shield') return c.kind === 'defense' && c.subtype === 'projectile'
+  if (target === 'snooper') return c.kind === 'defense' && c.subtype === 'poison'
+  return c.kind === 'weapon' && c.subtype === target
+}
+
+/** Whether a PLAN plays the named thing, in any slot it could ride. */
+export function planPlaysTarget(plan: BattlePlan, target: VoiceTarget): boolean {
+  if (target === 'cheap-hero') return !!plan.cheapHero
+  return [plan.weapon, plan.defence].some(id => !!id && cardMatches(id, target))
+}
+
+/**
+ * Whether this hand COULD obey a 'play' command at all. "If they can't
+ * comply, they may do as they wish" — and playing any card needs a leader
+ * or the Cheap Hero to carry it, so a seat with neither is beyond every
+ * 'play' command's reach.
+ */
+export function canComplyWithVoice(
+  command: VoiceCommand, hand: readonly string[], canFieldLeader: boolean,
+): boolean {
+  if (command.mode === 'not-play') return true   // refusing is always possible
+  if (command.target === 'cheap-hero') return hand.includes(CHEAP_HERO_ID)
+  if (!canFieldLeader) return false
+  return hand.some(id => cardMatches(id, command.target))
+}
+
+/**
+ * Whether a plan defies the Voice — ONE law, used by the judge to refuse
+ * and by the plan form to guide, so the form can never bless what the
+ * server will strike down. Null means the plan stands.
+ */
+export function voiceViolation(
+  plan: BattlePlan, command: VoiceCommand,
+  hand: readonly string[], canFieldLeader: boolean,
+): 'voice-demands' | 'voice-forbids' | null {
+  const plays = planPlaysTarget(plan, command.target)
+  if (command.mode === 'not-play' && plays) return 'voice-forbids'
+  if (command.mode === 'play' && !plays
+    && canComplyWithVoice(command, hand, canFieldLeader)) return 'voice-demands'
+  return null
+}
+
+/** Whether one held card answers the Voice's target — for a form greying
+ *  out what a 'not-play' forbids. */
+export function voiceCardMatches(id: string, target: VoiceTarget): boolean {
+  return cardMatches(id, target)
+}
+
+/** A Voice command's own shape, judged before it is spoken. */
+export function judgeVoiceCommand(input: unknown): input is VoiceCommand {
+  const c = input as { mode?: unknown; target?: unknown }
+  return (c?.mode === 'play' || c?.mode === 'not-play')
+    && VOICE_TARGETS.includes(c?.target as VoiceTarget)
+}
+
+// ── the prescience ────────────────────────────────────────────────────────
+
+/** The four things the Atreides may ask after the opponent commits. One
+ *  question only — a "none is played" answer is the answer, never a
+ *  do-over. */
+export type PrescienceAsk = 'weapon' | 'defence' | 'leader' | 'dial'
+export const PRESCIENCE_ASKS: readonly PrescienceAsk[] = [
+  'weapon', 'defence', 'leader', 'dial',
+]
+
+/** The answer, read off the committed plan — truthful by construction. */
+export function prescienceAnswer(
+  plan: BattlePlan, ask: PrescienceAsk,
+): string | number {
+  if (ask === 'dial') return plan.dial
+  if (ask === 'weapon') return plan.weapon ?? 'none'
+  if (ask === 'defence') return plan.defence ?? 'none'
+  return plan.leader ?? (plan.cheapHero ? 'cheap-hero' : 'none')
+}
+
 const card = (id: string) => TREACHERY_CARDS.find(c => c.id === id)
 
 const num = (s: string) => Number(s.slice('sector-'.length))
@@ -152,6 +250,7 @@ export type PlanRefusal =
   | 'leader-in-the-tanks' | 'leader-fights-elsewhere' | 'two-leaders'
   | 'card-not-held' | 'not-a-weapon' | 'not-a-defence'
   | 'no-leader-no-cards' | 'one-card-twice'
+  | 'voice-demands' | 'voice-forbids'
 
 /** How many forces a faction has standing in the battle's slice. */
 export function forcesInBattle(
@@ -177,8 +276,10 @@ export function judgePlan(input: {
   deadLeaders: readonly string[]
   usedLeaders: Readonly<Record<string, string>>
   plan: BattlePlan
+  /** The Voice standing over this plan, when the Bene Gesserit spoke. */
+  voiced?: VoiceCommand | null
 }): { ok: true } | { ok: false; refusal: PlanRefusal } {
-  const { faction, battle, forces, hand, deadLeaders, usedLeaders, plan } = input
+  const { faction, battle, forces, hand, deadLeaders, usedLeaders, plan, voiced } = input
 
   const strength = forcesInBattle(forces, faction, battle.territoryId, battle.sectors)
   if (strength <= 0) return { ok: false, refusal: 'not-in-this-battle' }
@@ -211,15 +312,34 @@ export function judgePlan(input: {
   if (plan.cheapHero) played.push(CHEAP_HERO_ID)
   if (plan.weapon) {
     if (!hand.includes(plan.weapon)) return { ok: false, refusal: 'card-not-held' }
-    if (card(plan.weapon)?.kind !== 'weapon') return { ok: false, refusal: 'not-a-weapon' }
+    // A WORTHLESS CARD MAY RIDE EITHER SLOT — that is what worthless cards
+    // are for, and the Voice can command one be played.
+    const kind = card(plan.weapon)?.kind
+    if (kind !== 'weapon' && kind !== 'worthless') return { ok: false, refusal: 'not-a-weapon' }
     played.push(plan.weapon)
   }
   if (plan.defence) {
     if (!hand.includes(plan.defence)) return { ok: false, refusal: 'card-not-held' }
-    if (card(plan.defence)?.kind !== 'defense') return { ok: false, refusal: 'not-a-defence' }
+    const kind = card(plan.defence)?.kind
+    if (kind !== 'defense' && kind !== 'worthless') return { ok: false, refusal: 'not-a-defence' }
     played.push(plan.defence)
   }
   if (new Set(played).size !== played.length) return { ok: false, refusal: 'one-card-twice' }
+
+  // ── the Voice stands over the plan ──────────────────────────────────────
+  // A command that CAN be obeyed MUST be: forbidding is always obeyable, and
+  // demanding binds exactly when the hand holds the named thing and a leader
+  // or hero could carry it. Beyond compliance's reach, the plan is free.
+  if (voiced) {
+    const sheet = factionById(faction)
+    const canFieldLeader = !!plan.leader || !!plan.cheapHero
+      || (sheet?.leaders ?? []).some(l =>
+        !deadLeaders.includes(l.name)
+        && (!usedLeaders[l.name] || usedLeaders[l.name] === battle.territoryId))
+      || hand.includes(CHEAP_HERO_ID)
+    const violation = voiceViolation(plan, voiced, hand, canFieldLeader)
+    if (violation) return { ok: false, refusal: violation }
+  }
 
   return { ok: true }
 }
@@ -336,8 +456,10 @@ export function resolveBattle(input: {
 
   // ── the lasgun and the shield ───────────────────────────────────────────
   const plans = [aggressor.plan, defender.plan]
-  const lasgun = plans.some(p => p.weapon && card(p.weapon)?.subtype === 'lasgun')
-  const shield = plans.some(p => p.defence && card(p.defence)?.subtype === 'projectile')
+  const lasgun = plans.some(p => p.weapon
+    && card(p.weapon)?.kind === 'weapon' && card(p.weapon)?.subtype === 'lasgun')
+  const shield = plans.some(p => p.defence
+    && card(p.defence)?.kind === 'defense' && card(p.defence)?.subtype === 'projectile')
   if (lasgun && shield) {
     for (const [me, mine] of [[aggressor, a], [defender, d]] as const) {
       mine.losesAll = true
@@ -350,9 +472,13 @@ export function resolveBattle(input: {
   // ── weapons against defences ────────────────────────────────────────────
   const killedBy = (attacker: BattlePlan, target: BattlePlan): boolean => {
     if (!attacker.weapon) return false
+    // A worthless card in the weapon slot cuts nothing.
+    if (card(attacker.weapon)?.kind !== 'weapon') return false
     if (!target.leader && !target.cheapHero) return false
     const kind = card(attacker.weapon)?.subtype
-    const guarded = target.defence && card(target.defence)?.subtype === kind
+    const guarded = target.defence
+      && card(target.defence)?.kind === 'defense'
+      && card(target.defence)?.subtype === kind
     return !guarded
   }
   const aLeaderDead = killedBy(defender.plan, aggressor.plan)
@@ -375,9 +501,13 @@ export function resolveBattle(input: {
 
   winOut.losses = winSide.plan.dial
   winOut.leaderDies = winDead && !!winSide.plan.leader
-  // The Cheap Hero is spent by being played; weapon and defence are kept —
-  // the cards themselves say "keep if won".
-  winOut.discards = winSide.plan.cheapHero ? [CHEAP_HERO_ID] : []
+  // The Cheap Hero is spent by being played, and so is a worthless card;
+  // a real weapon or defence is kept — those cards say "keep if won".
+  winOut.discards = [
+    ...(winSide.plan.cheapHero ? [CHEAP_HERO_ID] : []),
+    ...[winSide.plan.weapon, winSide.plan.defence]
+      .filter((id): id is string => !!id && card(id)?.kind === 'worthless'),
+  ]
 
   // Killed leaders pay the winner, their own included.
   if (loseDead && loseSide.plan.leader) {

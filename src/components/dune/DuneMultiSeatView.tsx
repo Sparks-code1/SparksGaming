@@ -664,6 +664,12 @@ export default function DuneMultiSeatView() {
         onBattleAnswer={mine
           ? call => void send(mine, call ? 'BATTLE_TRAITOR' : 'BATTLE_CONTINUE')
           : undefined}
+        onBattleVoice={mine
+          ? command => void send(mine, 'BATTLE_VOICE', { command } as never)
+          : undefined}
+        onBattlePrescience={mine
+          ? ask => void send(mine, 'BATTLE_PRESCIENCE', (ask ? { ask } : {}) as never)
+          : undefined}
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused
           ? { type: refusedBy, code: refused }
           : null}

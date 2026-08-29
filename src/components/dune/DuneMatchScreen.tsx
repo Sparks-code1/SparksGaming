@@ -831,6 +831,12 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
         onBattleAnswer={seat
           ? call => void send({ type: call ? 'BATTLE_TRAITOR' : 'BATTLE_CONTINUE' })
           : undefined}
+        onBattleVoice={seat
+          ? command => void send({ type: 'BATTLE_VOICE', command })
+          : undefined}
+        onBattlePrescience={seat
+          ? ask => void send({ type: 'BATTLE_PRESCIENCE', ...(ask ? { ask } : {}) })
+          : undefined}
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused
           ? { type: refusedBy, code: refused }
           : null}

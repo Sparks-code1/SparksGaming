@@ -1258,7 +1258,7 @@ function advanceHold(state, now) {
       const c = state.battles.current;
       return {
         code: "battles-underway",
-        until: c?.revealed?.traitor.closesAt ?? c?.closesAt ?? state.battles.closesAt
+        until: c?.revealed?.traitor.closesAt ?? (c?.prescience && !c.prescience.done ? c.prescience.closesAt : void 0) ?? (c?.voice && !c.voice.done ? c.voice.closesAt : void 0) ?? c?.closesAt ?? state.battles.closesAt
       };
     }
     return null;
@@ -1418,6 +1418,28 @@ function resetDeadlines(state, now, lengths) {
         }
       };
       reset.push("traitor-beat");
+    } else if (b.current?.prescience && !b.current.prescience.done) {
+      patch.battles = {
+        ...b,
+        current: {
+          ...b.current,
+          prescience: {
+            ...b.current.prescience,
+            closesAt: now + lengths.battlePrescienceSeconds * 1e3
+          }
+        }
+      };
+      reset.push("prescience");
+    } else if (b.current?.voice && !b.current.voice.done) {
+      patch.battles = {
+        ...b,
+        current: {
+          ...b.current,
+          voice: { ...b.current.voice, closesAt: now + lengths.battleVoiceSeconds * 1e3 },
+          closesAt: now + lengths.battlePlanSeconds * 1e3
+        }
+      };
+      reset.push("voice");
     } else if (b.current) {
       patch.battles = {
         ...b,

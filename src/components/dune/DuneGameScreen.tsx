@@ -51,6 +51,7 @@ import { CHARITY_WINDOW_MS } from '@/lib/dune/charity'
 import { WORM_SECONDS, WORM_RIDE_SECONDS } from '@/lib/dune/spiceBlow'
 import {
   BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
+  BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS,
 } from '@/lib/dune/battle'
 import { BiddingPanel } from './BiddingPanel'
 import { CharityModal } from './CharityModal'
@@ -169,6 +170,8 @@ export interface DuneGameScreenProps {
     dial: number; leader?: string; cheapHero?: boolean; weapon?: string; defence?: string
   }) => void
   onBattleAnswer?: (call: boolean) => void
+  onBattleVoice?: (command: { mode: 'play' | 'not-play'; target: string } | null) => void
+  onBattlePrescience?: (ask: string | null) => void
   /** The last BATTLE action's refusal — its code AND which action, so the
    *  panel names both and a stray refusal from another surface never
    *  freezes on it. */
@@ -237,7 +240,8 @@ export interface DuneGameScreenProps {
 
 export function DuneGameScreen({
   state, seat, own, chat, onSend, talkingTo, seatNames, notices, onShipReserves, onMoveStack,
-  onShipSpecial, onRevive, onBattlePick, onBattlePlan, onBattleAnswer, battleRefusal,
+  onShipSpecial, onRevive, onBattlePick, onBattlePlan, onBattleAnswer,
+  onBattleVoice, onBattlePrescience, battleRefusal,
   worms = [], onWormRide, onPassTurn,
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
@@ -346,9 +350,13 @@ export function DuneGameScreen({
   const battleWindow = state.battles
     ? (state.battles.current?.revealed
       ? { closesAt: state.battles.current.revealed.traitor.closesAt, ms: BATTLE_TRAITOR_SECONDS * 1000 }
-      : state.battles.current
-        ? { closesAt: state.battles.current.closesAt, ms: BATTLE_PLAN_SECONDS * 1000 }
-        : { closesAt: state.battles.closesAt, ms: BATTLE_PICK_SECONDS * 1000 })
+      : state.battles.current?.prescience && !state.battles.current.prescience.done
+        ? { closesAt: state.battles.current.prescience.closesAt, ms: BATTLE_PRESCIENCE_SECONDS * 1000 }
+        : state.battles.current?.voice && !state.battles.current.voice.done
+          ? { closesAt: state.battles.current.voice.closesAt, ms: BATTLE_VOICE_SECONDS * 1000 }
+          : state.battles.current
+            ? { closesAt: state.battles.current.closesAt, ms: BATTLE_PLAN_SECONDS * 1000 }
+            : { closesAt: state.battles.closesAt, ms: BATTLE_PICK_SECONDS * 1000 })
     : null
   const rideWindow = state.wormRide && now < state.wormRide.closesAt
     ? { closesAt: state.wormRide.closesAt, ms: WORM_RIDE_SECONDS * 1000 }
@@ -1024,7 +1032,20 @@ export function DuneGameScreen({
               busy={false}
               onPick={onBattlePick}
               onPlan={onBattlePlan}
-              onAnswer={onBattleAnswer} />
+              onAnswer={onBattleAnswer}
+              onVoice={onBattleVoice}
+              onPrescience={onBattlePrescience}
+              // THE FORESEEN ELEMENT rides this seat's own secrets row — the
+              // server wrote it there and nowhere public — and is only shown
+              // against the battle it was asked in.
+              prescienceAnswer={(() => {
+                const p = (own as (typeof own & {
+                  battlePrescience?: { territoryId: string; ask: string; answer: string | number }
+                }) | null)?.battlePrescience
+                return p && state.battles?.current
+                  && p.territoryId === state.battles.current.territoryId
+                  ? { ask: p.ask, answer: p.answer } : null
+              })()} />
           )}
 
           {/* CHARITY COVERS THE BOARD rather than dimming it, unlike the

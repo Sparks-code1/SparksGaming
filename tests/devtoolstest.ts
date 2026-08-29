@@ -17,6 +17,7 @@ import { WORM_SECONDS } from '@/lib/dune/spiceBlow'
 import { SETUP_SECONDS } from '@/lib/dune/setup'
 import {
   BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
+  BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS,
 } from '@/lib/dune/battle'
 
 let pass = true
@@ -38,6 +39,8 @@ const LENGTHS = {
   battlePickSeconds: BATTLE_PICK_SECONDS,
   battlePlanSeconds: BATTLE_PLAN_SECONDS,
   battleTraitorSeconds: BATTLE_TRAITOR_SECONDS,
+  battleVoiceSeconds: BATTLE_VOICE_SECONDS,
+  battlePrescienceSeconds: BATTLE_PRESCIENCE_SECONDS,
 }
 const base = {
   phase: 'Storm', turn: 2, mode: 'basic', storm: 'sector-3',
@@ -105,6 +108,35 @@ const base = {
       current: { revealed: { traitor: { closesAt: number } } }
     }).current.revealed.traitor.closesAt, beat.reset],
     [NOW + BATTLE_TRAITOR_SECONDS * 1000, ['traitor-beat']])
+
+  // The interrogations: their windows reset at their own lengths too, each
+  // outranking the plan clock beneath it while it stands open.
+  const voice = resetDeadlines({
+    ...(base as object),
+    battles: { closesAt: 5, current: { closesAt: 5, voice: { closesAt: 5, done: false } } },
+  } as never, NOW, LENGTHS)
+  check('an open Voice at its own minute',
+    [(voice.patch.battles as {
+      current: { voice: { closesAt: number } }
+    }).current.voice.closesAt, voice.reset],
+    [NOW + BATTLE_VOICE_SECONDS * 1000, ['voice']])
+  const pres = resetDeadlines({
+    ...(base as object),
+    battles: {
+      closesAt: 5,
+      current: { closesAt: 5, prescience: { closesAt: 5, done: false } },
+    },
+  } as never, NOW, LENGTHS)
+  check('an open question at its own minute',
+    [(pres.patch.battles as {
+      current: { prescience: { closesAt: number } }
+    }).current.prescience.closesAt, pres.reset],
+    [NOW + BATTLE_PRESCIENCE_SECONDS * 1000, ['prescience']])
+  check('...but a settled Voice yields to the plan clock',
+    resetDeadlines({
+      ...(base as object),
+      battles: { closesAt: 5, current: { closesAt: 5, voice: { closesAt: 5, done: true } } },
+    } as never, NOW, LENGTHS).reset, ['battle-plan'])
 
   check('a state with no clock resets nothing',
     resetDeadlines(base, NOW, LENGTHS).reset, [])

@@ -97,7 +97,12 @@ export interface AdvanceState {
   auction?: { status?: string; closesAt?: number } | null
   battles?: {
     closesAt: number
-    current?: { closesAt: number; revealed?: { traitor: { closesAt: number } } } | null
+    current?: {
+      closesAt: number
+      revealed?: { traitor: { closesAt: number } }
+      voice?: { closesAt: number; done: boolean }
+      prescience?: { closesAt: number; done: boolean }
+    } | null
   }
   wormRide?: { closesAt: number }
   phaseClock?: PhaseClock
@@ -180,7 +185,10 @@ export function advanceHold(state: AdvanceState, now: number): AdvanceHold | nul
       const c = state.battles.current
       return {
         code: 'battles-underway',
-        until: c?.revealed?.traitor.closesAt ?? c?.closesAt ?? state.battles.closesAt,
+        until: c?.revealed?.traitor.closesAt
+          ?? (c?.prescience && !c.prescience.done ? c.prescience.closesAt : undefined)
+          ?? (c?.voice && !c.voice.done ? c.voice.closesAt : undefined)
+          ?? c?.closesAt ?? state.battles.closesAt,
       }
     }
     return null
@@ -521,6 +529,8 @@ export function resetDeadlines(
     battlePickSeconds: number
     battlePlanSeconds: number
     battleTraitorSeconds: number
+    battleVoiceSeconds: number
+    battlePrescienceSeconds: number
   },
 ): { patch: Record<string, unknown>; reset: string[] } {
   const patch: Record<string, unknown> = {}
@@ -565,6 +575,28 @@ export function resetDeadlines(
         },
       }
       reset.push('traitor-beat')
+    } else if (b.current?.prescience && !b.current.prescience.done) {
+      patch.battles = {
+        ...b,
+        current: {
+          ...b.current,
+          prescience: {
+            ...b.current.prescience,
+            closesAt: now + lengths.battlePrescienceSeconds * 1000,
+          },
+        },
+      }
+      reset.push('prescience')
+    } else if (b.current?.voice && !b.current.voice.done) {
+      patch.battles = {
+        ...b,
+        current: {
+          ...b.current,
+          voice: { ...b.current.voice, closesAt: now + lengths.battleVoiceSeconds * 1000 },
+          closesAt: now + lengths.battlePlanSeconds * 1000,
+        },
+      }
+      reset.push('voice')
     } else if (b.current) {
       patch.battles = {
         ...b,
