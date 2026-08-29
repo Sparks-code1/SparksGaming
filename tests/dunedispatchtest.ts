@@ -211,9 +211,11 @@ const code = (path: string) => readFileSync(path, 'utf8')
   // own session, and counting them says that where matching one string did
   // not: a second call added without a client would slip past a check that
   // only looks for the first.
+  // `session` is the loop's seat; `actor` is the expired-bid push's, chosen
+  // for holding a live client. Both are SeatSessions — the rule is the same.
   check('...through that seat\'s own session',
     (view.match(/dispatchDuneAction\(/g) ?? []).length > 0
-      && (view.match(/client: session\.client/g) ?? []).length
+      && (view.match(/client: (?:session|actor)\.client/g) ?? []).length
          === (view.match(/dispatchDuneAction\(/g) ?? []).length, true)
 
   const rowLib = code('src/lib/dune/publicRow.ts')
@@ -746,8 +748,11 @@ const code = (path: string) => readFileSync(path, 'utf8')
   // so it looked like a bug in one faction.
   check('the harness resolves as the seat being waited on',
     /sessions\.find\(x => x\.login\.faction === waitingOn\)/.test(view), true)
-  check('...falling back to the viewed seat only when that seat is not held',
-    /\?\? mine/.test(view), true)
+  // The fallback grew: once the deadline has passed the server answers for
+  // whoever is to act whoever asks, so ANY held session may carry the push —
+  // and a resolve with no session to ride says so instead of no-opping.
+  check('...falling back to any held session rather than going silent',
+    /\[sessions\.find\(x => x\.login\.faction === waitingOn\), mine, \.\.\.sessions\]/.test(view), true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
