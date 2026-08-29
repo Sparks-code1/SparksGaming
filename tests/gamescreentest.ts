@@ -180,6 +180,67 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     /DUNE_TANKS_AREA\.x \+ 16 \+ \(i % cols\) \* per/.test(boardSrc), true)
 }
 
+// ── the rail is the phase's ───────────────────────────────────────────────
+// Setup places, Revival raises, Shipment ships — and the phases with no rail
+// business get no rail at all. The base fixture sits at Bidding with every
+// rail prop handed in, so a rail that leaks back into the idle phases fails
+// here rather than as furniture that looks like broken controls.
+{
+  const idle = draw({ onShipReserves: () => {}, onRevive: () => {} } as never)
+  check('no rail outside its phases',
+    /data-layer="ship-rail"|data-layer="revival-rail"/.test(idle), false)
+
+  // PHASE FIVE'S RAIL: the Fremen with two dead and a Fedaykin in the tanks
+  // get the tanks counted, a bubble PER KIND — an elite back is a different
+  // purchase from a trooper — and the standing rules under them.
+  const raising = draw({
+    seat: 'fremen',
+    own: { spice: 7, cards: [], traitors: [] } as never,
+    onRevive: () => {},
+    state: {
+      ...state,
+      phase: 'Revival',
+      tanks: { forces: { fremen: { plain: 2, starred: 1 } }, leaders: {} },
+    } as never,
+  })
+  check('the revival rail rises with the phase',
+    /data-layer="revival-rail"/.test(raising), true)
+  check('...counting the tanks before staging',
+    /data-rail-dead="2"/.test(raising) && /data-rail-dead-starred="1"/.test(raising), true)
+  check('...with a bubble per kind, the elite on its own',
+    raising.includes('aria-label="Stage one force to revive"')
+      && raising.includes('aria-label="Stage one elite to revive"'), true)
+  check('...and the standing rules said under them',
+    raising.includes('spice each to the bank. One elite a turn'), true)
+
+  // WITHOUT THE HANDLER THE RAIL STAYS DOWN — the starved-embed lesson,
+  // pinned this time before it costs a report.
+  const starved = draw({
+    seat: 'fremen',
+    own: { spice: 7, cards: [], traitors: [] } as never,
+    state: {
+      ...state,
+      phase: 'Revival',
+      tanks: { forces: { fremen: { plain: 2, starred: 1 } }, leaders: {} },
+    } as never,
+  })
+  check('...and only where revivals can actually be posted',
+    /data-layer="revival-rail"/.test(starved), false)
+
+  // The claim is posted WHOLE and the stage cleared — one REVIVE per commit,
+  // not one per click.
+  const gameSrc = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
+  check('the commit posts the staged claim whole, then clears it',
+    /onRevive=\{a => \{\s*[\r\n]+\s*onRevive\(a\)\s*[\r\n]+\s*setRevStaged\(\{ plain: 0, starred: 0 \}\)/.test(gameSrc), true)
+  const railSrc = readFileSync('src/components/dune/RevivalRail.tsx', 'utf8')
+  check('...naming each kind it stages',
+    /\.\.\.\(pending\.plain > 0 \? \{ plain: pending\.plain \} : null\),\s*[\r\n]+\s*\.\.\.\(pending\.starred > 0 \? \{ starred: pending\.starred \} : null\),/.test(railSrc), true)
+  check('...the elite bubble held to one a turn',
+    /disabled=\{!starredOpen \|\| pending\.starred >= 1/.test(railSrc), true)
+  check('...and the fare is the marginal price',
+    /const cost = REVIVAL_SPICE \* Math\.max\(0, staged - freeLeft\)/.test(railSrc), true)
+}
+
 // ── the hand is face down until it is asked for ───────────────────────────
 {
   const rows = hudRows(state)

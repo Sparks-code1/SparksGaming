@@ -617,6 +617,9 @@ export default function DuneMultiSeatView() {
         onShipSpecial={mine
           ? a => void send(mine, 'SHIP', a as never)
           : undefined}
+        onRevive={mine
+          ? a => void send(mine, 'REVIVE', a as never)
+          : undefined}
         onMoveStack={mine
           ? a => void send(mine, 'MOVE', a as never)
           : undefined} />

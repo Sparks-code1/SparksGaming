@@ -221,6 +221,27 @@ const none = { forces: 0, starred: 0 }
 }
 
 // ── every sheet's free allowance is real ──────────────────────────────────
+// ── the rail is revival's one surface, everywhere the screen is ───────────
+// The panel this replaced lived on the match screen's notice board — the one
+// revival control the harness's embed could not reach, which surfaced as
+// "revival isn't letting me claim" with nothing to press. The rail lives on
+// the game screen itself, so both the real match and the harness carry it,
+// each posting through its own session.
+{
+  const code = (p: string) => readFileSync(p, 'utf8')
+  const game = code('src/components/dune/DuneGameScreen.tsx')
+  check('the game screen raises the rail at the phase',
+    /state\.phase === 'Revival' && seat && mine && onRevive && \(/.test(game), true)
+  const match = code('src/components/dune/DuneMatchScreen.tsx')
+  check('the match screen hands the rail its sender',
+    /onRevive=\{seat \? a => void revive\(a\) : undefined\}/.test(match), true)
+  check('...and its own panel is gone',
+    /Revive 1/.test(match), false)
+  const harness = code('src/components/dune/DuneMultiSeatView.tsx')
+  check('the harness posts revivals as the selected seat',
+    /onRevive=\{mine\s*[\r\n]+\s*\? a => void send\(mine, 'REVIVE', a as never\)/.test(harness), true)
+}
+
 check('every faction sheet names its free revivals',
   FACTION_IDS.filter(id => typeof factionById(id)?.freeRevivals !== 'number'), [])
 check('...all within the cap',

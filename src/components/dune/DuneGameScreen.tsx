@@ -54,6 +54,8 @@ import { CharityModal } from './CharityModal'
 import { SetupWindow, SetupBoardTargets } from './SetupWindow'
 import { ShipRail } from './ShipRail'
 import { inStorm, moveTargets } from '@/lib/dune/shipment'
+import { RevivalRail } from './RevivalRail'
+import { REVIVAL_CAP, STARRED_REVIVALS_PER_TURN, revivableLeaders } from '@/lib/dune/revival'
 import type { GuildShipKind } from '@/lib/dune/shipment'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import { FACTION_LOOK } from './SeatLayer'
@@ -150,6 +152,11 @@ export interface DuneGameScreenProps {
     count: number
   }) => void
   /**
+   * Claim revivals: forces staged on the revival rail posted whole, or one
+   * leader by name. The server judges caps, allowance and price.
+   */
+  onRevive?: (a: { plain?: number; starred?: number } | { leader: string }) => void
+  /**
    * The live auction, or null.
    *
    * Everything about it except `revealed` is public. `revealed` is the Atreides
@@ -200,7 +207,7 @@ export interface DuneGameScreenProps {
 
 export function DuneGameScreen({
   state, seat, own, chat, onSend, talkingTo, seatNames, notices, onShipReserves, onMoveStack,
-  onShipSpecial,
+  onShipSpecial, onRevive,
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
   const [chatShut, setChatShut] = useState(false)
@@ -230,6 +237,8 @@ export function DuneGameScreen({
   // THE GUILD'S SHIPMENT KIND, picked before the board is touched — with a
   // kind armed, a stack click gathers rather than starting a move. The
   // gathered pile is one cell's forces, counted up click by click.
+  /** Dead staged on the revival rail, cleared when the phase moves on. */
+  const [revStaged, setRevStaged] = useState({ plain: 0, starred: 0 })
   const [guildKind, setGuildKind] = useState<GuildShipKind>('off-planet')
   const [gather, setGather] = useState<{
     territoryId: string; sector: string; count: number
@@ -237,6 +246,9 @@ export function DuneGameScreen({
   /** A special Guild shipment underway: stack clicks gather, never move. */
   const guildArmed = seat === 'spacing-guild' && myShipWindow && guildKind !== 'off-planet'
   useEffect(() => { if (!myShipWindow) setGather(null) }, [myShipWindow])
+  useEffect(() => {
+    if (state.phase !== 'Revival') setRevStaged({ plain: 0, starred: 0 })
+  }, [state.phase])
   const myRow = rows.find(r => r.faction === seat) ?? null
 
   // Stacks are per faction so the board can colour them. Summed by cell rather
@@ -409,7 +421,13 @@ export function DuneGameScreen({
             rail below takes this slot — two bubble sets for one seat reads
             as two different controls for one action, which is the opposite
             of the shared grammar's point. */}
-        {seat && mine && onShipReserves && !(setupActive && owesFremen && seat === 'fremen') && (
+        {/* THE RAIL IS THE PHASE'S. Setup places, Revival raises, Shipment
+            ships — and the phases with no rail business get no rail at all:
+            a counter with dead bubbles was furniture, and furniture that
+            looks like controls reads as a bug. Setup sits in phase Storm,
+            so the phase gate alone keeps this rail clear of the Fremen's
+            placement. */}
+        {seat && mine && onShipReserves && state.phase === 'Shipment and Movement' && (
           <ShipRail
             faction={seat}
             reserves={mine.reserves}
@@ -453,6 +471,41 @@ export function DuneGameScreen({
               setGather(null)
             } : undefined} />
         )}
+
+        {/* PHASE FIVE'S RAIL: the tanks pay out. Rendered for a seat with
+            anything to raise — dead forces or an offered leader — with the
+            elites on their own bubble, because one Fedaykin or Sardaukar may
+            return a turn and the claim has to say which kind it stages. */}
+        {state.phase === 'Revival' && seat && mine && onRevive && (() => {
+          const held = state.tanks?.forces?.[seat] ?? { plain: 0, starred: 0 }
+          const ledger = state.revival?.turn === state.turn ? state.revival.done : {}
+          const done = ledger[seat] ?? { forces: 0, starred: 0 }
+          const sheet = factionById(seat)
+          const leaders = state.tanks ? revivableLeaders(state.tanks as never, seat) : []
+          if (held.plain + held.starred === 0 && leaders.length === 0) return null
+          return (
+            <RevivalRail
+              faction={seat}
+              dead={held}
+              spice={own?.spice ?? null}
+              pending={revStaged}
+              room={Math.max(0, REVIVAL_CAP - done.forces)}
+              freeLeft={Math.max(0, (sheet?.freeRevivals ?? 0) - done.forces)}
+              starredOpen={done.starred < STARRED_REVIVALS_PER_TURN}
+              leaders={leaders.map(l => ({
+                name: l.name,
+                strength: sheet?.leaders.find(x => x.name === l.name)?.strength ?? 0,
+              }))}
+              leaderTaken={!!done.leader}
+              onStage={kind => setRevStaged(s => ({ ...s, [kind]: s[kind] + 1 }))}
+              onReset={() => setRevStaged({ plain: 0, starred: 0 })}
+              onRevive={a => {
+                onRevive(a)
+                setRevStaged({ plain: 0, starred: 0 })
+              }}
+              onLeader={name => onRevive({ leader: name })} />
+          )
+        })()}
 
         {/* THE SAME RAIL AT SETUP: the Fremen stage their ten — Fedaykin on
             the starred bubble — and click their ringed territories to place,

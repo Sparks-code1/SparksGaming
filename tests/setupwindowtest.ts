@@ -106,12 +106,12 @@ const draw = (over: Partial<SetupWindowProps> = {}) =>
   check('the bubble is one component, shared',
     /export function ForceBubble/.test(code('src/components/dune/ShipRail.tsx')), true)
 
-  // ONE RAIL AT A TIME. The shipping rail is the seat's standing counter, so
-  // without this guard the Fremen see two bubble sets during their placement
-  // — the setup rail and the shipping rail side by side, one action wearing
-  // two controls. The guard hands the slot to the setup rail outright.
-  check('the shipping rail yields the slot during Fremen setup',
-    /!\(setupActive && owesFremen && seat === 'fremen'\) && \(/.test(game), true)
+  // ONE RAIL AT A TIME, and now BY PHASE: the shipping rail belongs to the
+  // Shipment and Movement phase alone. Setup sits in phase Storm, so the
+  // phase gate keeps this rail clear of the Fremen's placement without a
+  // second guard — the old Fremen exception would be dead code beneath it.
+  check('the shipping rail is the shipment phase\'s alone',
+    /seat && mine && onShipReserves && state\.phase === 'Shipment and Movement' && \(/.test(game), true)
   // HONEST ARITHMETIC. The rail subtracts the staged itself, so it must be
   // fed the pool BEFORE staging — pre-subtracting here counted every click
   // twice: the bubble said 1 while the pool dropped 2. The ten are one pool,
