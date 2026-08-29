@@ -58,7 +58,7 @@ import {
 } from '../_shared/duneBattle.gen.ts'
 import {
   phaseAfter, advanceHold, phaseWindowOpen, rollStorm, stormEntry, cityIncome,
-  mentatVerdict, biddingOpening, stormOrder, PHASE_SECONDS, TURN_LIMIT,
+  mentatVerdict, biddingOpening, stormOrder, resetDeadlines, PHASE_SECONDS, TURN_LIMIT,
 } from '../_shared/dunePhase.gen.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -2230,6 +2230,132 @@ Deno.serve(async req => {
       if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
       return json({
         winner: outcome.winner, explosion: outcome.explosion, traitors: outcome.traitors,
+        version: data[0].version,
+      })
+    }
+
+    // ── Dev scaffolding: re-run an expired window ───────────────────────────
+    // Playtesting outlives clocks: a battle window missed over lunch used to
+    // mean replaying a whole match to reach the phase again. Same switch as
+    // seeding — this is scaffolding, not a rule, and a production project
+    // with the flag off refuses it no matter who asks.
+    case 'RESET_CLOCK': {
+      if (Deno.env.get('DUNE_DEV_SEEDING') !== 'on') {
+        return json({
+          error: 'clock resets are disabled — this is development scaffolding',
+          code: 'dev-only',
+        }, 409)
+      }
+      const { patch: clockPatch, reset } = resetDeadlines(state as never, now, {
+        setupSeconds: SETUP_SECONDS,
+        charityMs: CHARITY_WINDOW_MS,
+        wormSeconds: WORM_SECONDS,
+        bidSeconds: BID_SECONDS,
+        shipmentSeconds: SHIPMENT_SECONDS,
+        battlePickSeconds: BATTLE_PICK_SECONDS,
+        battlePlanSeconds: BATTLE_PLAN_SECONDS,
+        battleTraitorSeconds: BATTLE_TRAITOR_SECONDS,
+      })
+      if (reset.length === 0) {
+        return json({ error: 'nothing here holds a clock', code: 'no-clock' }, 409)
+      }
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: { ...state, ...clockPatch },
+        p_secrets: {},
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ reset, version: data[0].version })
+    }
+
+    // ── Dev scaffolding: conjure a position ─────────────────────────────────
+    // Give the acting seat spice, cards, forces on the board or in reserve,
+    // and put its leaders in the tanks — so a position can be SET UP to test
+    // rather than played into. ADDITIVE on purpose: a grant that also took
+    // things away would be two tools in one button. Same switch as seeding;
+    // ids and names are the operator's to get right — the harness offers
+    // only real ones, and this is scaffolding, not a rule.
+    case 'DEV_GRANT': {
+      if (Deno.env.get('DUNE_DEV_SEEDING') !== 'on') {
+        return json({
+          error: 'grants are disabled — this is development scaffolding',
+          code: 'dev-only',
+        }, 409)
+      }
+      if (!myFaction) return json({ error: 'your seat has no faction', code: 'no-faction' }, 409)
+      const giveSpice = Math.max(0, Math.floor(Number(action.spice ?? 0)))
+      const giveCards = Array.isArray(action.cards) ? (action.cards as unknown[]).map(String) : []
+      const giveForces = Array.isArray(action.forces)
+        ? action.forces as { territoryId: string; sector: string; count: number; starred?: number }[]
+        : []
+      const giveReserves = Math.max(0, Math.floor(Number(action.reserves ?? 0)))
+      const giveStarred = Math.max(0, Math.floor(Number(action.reservesStarred ?? 0)))
+      const tankLeaders = Array.isArray(action.tankLeaders)
+        ? (action.tankLeaders as unknown[]).map(String) : []
+      if (giveSpice + giveCards.length + giveForces.length + giveReserves
+        + giveStarred + tankLeaders.length === 0) {
+        return json({ error: 'nothing asked', code: 'nothing-asked' }, 409)
+      }
+
+      const { data: mineRow } = await admin
+        .from('match_secrets').select('data')
+        .eq('match_id', matchId).eq('player_id', playerId).maybeSingle()
+      const secrets = (mineRow?.data ?? {}) as { spice?: number; cards?: string[] }
+
+      let forces = [...((state.forces ?? []) as {
+        faction: string; territoryId: string; sector: string; count: number; starred?: number
+      }[])]
+      for (const f of giveForces) {
+        const count = Math.max(0, Math.floor(Number(f.count)))
+        const starred = Math.max(0, Math.min(count, Math.floor(Number(f.starred ?? 0))))
+        if (count <= 0) continue
+        forces = landForces(
+          forces as never, myFaction as never,
+          f.territoryId, f.sector as never, count, starred) as never
+      }
+
+      let tanks = (state.tanks ?? emptyTanks()) as never
+      const revived = (state.revivedLeaders ?? []) as string[]
+      for (const name of tankLeaders) {
+        tanks = returnLeaderToTanks(
+          tanks, myFaction as never, name,
+          { wasRevived: revived.includes(name) }) as never
+      }
+
+      const players = ((state.players ?? []) as {
+        faction: string; reserves: number; reservesStarred?: number; handCount: number
+      }[]).map((p) => p.faction === myFaction
+        ? {
+          ...p,
+          reserves: p.reserves + giveReserves,
+          ...(giveStarred > 0
+            ? { reservesStarred: (p.reservesStarred ?? 0) + giveStarred }
+            : null),
+          handCount: p.handCount + giveCards.length,
+        }
+        : p)
+
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: { ...state, forces, tanks, players },
+        p_secrets: {
+          [playerId]: {
+            ...secrets,
+            spice: readSpice(secrets as never) + giveSpice,
+            cards: [...(secrets.cards ?? []), ...giveCards],
+          },
+        },
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({
+        granted: {
+          spice: giveSpice, cards: giveCards.length, forces: giveForces.length,
+          reserves: giveReserves + giveStarred, tankLeaders: tankLeaders.length,
+        },
         version: data[0].version,
       })
     }

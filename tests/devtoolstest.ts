@@ -1,0 +1,171 @@
+// Dev scaffolding: the clock reset, the grant, and the battle seed.
+//
+// WHY THIS EXISTS. Playtesting needs to reach positions and re-run windows
+// without playing whole matches, and the tools that make that possible are
+// exactly the tools that must never reach a real table: each is gated by the
+// same dev switch as seeding, wired into the harness alone, and the real
+// match screen is pinned to know nothing of them. The reset's semantics live
+// in the shared library so a reset window is indistinguishable from a fresh
+// one — each window gets its OWN full length, never a shared guess.
+import { readFileSync } from 'node:fs'
+import { resetDeadlines, PHASE_SECONDS } from '@/lib/dune/phaseAdvance'
+import { SHIPMENT_SECONDS } from '@/lib/dune/shipment'
+import { BID_SECONDS } from '@/lib/dune/bidding'
+import { CHARITY_WINDOW_MS } from '@/lib/dune/charity'
+import { WORM_SECONDS } from '@/lib/dune/spiceBlow'
+import { SETUP_SECONDS } from '@/lib/dune/setup'
+import {
+  BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
+} from '@/lib/dune/battle'
+
+let pass = true
+const check = (label: string, actual: unknown, expected: unknown) => {
+  const ok = JSON.stringify(actual) === JSON.stringify(expected)
+  if (!ok) pass = false
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}\n        got=${JSON.stringify(actual)} want=${JSON.stringify(expected)}`)
+}
+const code = (path: string) => readFileSync(path, 'utf8')
+  .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+
+const NOW = 1_000_000
+const LENGTHS = {
+  setupSeconds: SETUP_SECONDS,
+  charityMs: CHARITY_WINDOW_MS,
+  wormSeconds: WORM_SECONDS,
+  bidSeconds: BID_SECONDS,
+  shipmentSeconds: SHIPMENT_SECONDS,
+  battlePickSeconds: BATTLE_PICK_SECONDS,
+  battlePlanSeconds: BATTLE_PLAN_SECONDS,
+  battleTraitorSeconds: BATTLE_TRAITOR_SECONDS,
+}
+const base = {
+  phase: 'Storm', turn: 2, mode: 'basic', storm: 'sector-3',
+  shieldWall: 'intact', forces: [], players: [],
+} as never
+
+// ── each window gets its own full length ──────────────────────────────────
+{
+  const shipping = resetDeadlines({
+    ...(base as object),
+    shipping: { closesAt: 5 },
+    phaseClock: { turn: 2, phase: 'Shipment and Movement', closesAt: 5 },
+  } as never, NOW, LENGTHS)
+  check('an expired shipping clock is re-stamped at its own length',
+    (shipping.patch.shipping as { closesAt: number }).closesAt,
+    NOW + SHIPMENT_SECONDS * 1000)
+  check('...and the look-window with it',
+    [(shipping.patch.phaseClock as { closesAt: number }).closesAt, shipping.reset],
+    [NOW + PHASE_SECONDS * 1000, ['shipping', 'phase-clock']])
+
+  check('charity in its milliseconds',
+    (resetDeadlines({ ...(base as object), charity: { expiresAt: 5, turn: 2 } } as never,
+      NOW, LENGTHS).patch.charity as { expiresAt: number }).expiresAt,
+    NOW + CHARITY_WINDOW_MS)
+  check('the worm pause at its minute',
+    (resetDeadlines({ ...(base as object), spiceBlow: { closesAt: 5 } } as never,
+      NOW, LENGTHS).patch.spiceBlow as { closesAt: number }).closesAt,
+    NOW + WORM_SECONDS * 1000)
+  check('a live bid at the bid clock',
+    (resetDeadlines({ ...(base as object), auction: { status: 'awaiting', closesAt: 5 } } as never,
+      NOW, LENGTHS).patch.auction as { closesAt: number }).closesAt,
+    NOW + BID_SECONDS * 1000)
+  check('...but a settled auction resets nothing',
+    resetDeadlines({ ...(base as object), auction: { status: 'settled' } } as never,
+      NOW, LENGTHS).reset, [])
+  check('setup at its seven minutes',
+    (resetDeadlines({ ...(base as object), setup: { closesAt: 5 } } as never,
+      NOW, LENGTHS).patch.setup as { closesAt: number }).closesAt,
+    NOW + SETUP_SECONDS * 1000)
+
+  // THE BATTLES: whichever window is LIVE, one at a time.
+  const pick = resetDeadlines({
+    ...(base as object),
+    battles: { closesAt: 5, current: null },
+  } as never, NOW, LENGTHS)
+  check('an aggressor\'s pick at the pick clock',
+    [(pick.patch.battles as { closesAt: number }).closesAt, pick.reset],
+    [NOW + BATTLE_PICK_SECONDS * 1000, ['battle-pick']])
+  const plan = resetDeadlines({
+    ...(base as object),
+    battles: { closesAt: 5, current: { closesAt: 5 } },
+  } as never, NOW, LENGTHS)
+  check('an open battle\'s plans at their five minutes',
+    [(plan.patch.battles as { current: { closesAt: number } }).current.closesAt, plan.reset],
+    [NOW + BATTLE_PLAN_SECONDS * 1000, ['battle-plan']])
+  const beat = resetDeadlines({
+    ...(base as object),
+    battles: {
+      closesAt: 5,
+      current: { closesAt: 5, revealed: { traitor: { closesAt: 5 } } },
+    },
+  } as never, NOW, LENGTHS)
+  check('a revealed battle\'s traitor beat at its minute',
+    [(beat.patch.battles as {
+      current: { revealed: { traitor: { closesAt: number } } }
+    }).current.revealed.traitor.closesAt, beat.reset],
+    [NOW + BATTLE_TRAITOR_SECONDS * 1000, ['traitor-beat']])
+
+  check('a state with no clock resets nothing',
+    resetDeadlines(base, NOW, LENGTHS).reset, [])
+}
+
+// ── the server slice ──────────────────────────────────────────────────────
+{
+  const fn = code('supabase/functions/dune-action/index.ts')
+  const reset = fn.slice(fn.indexOf("case 'RESET_CLOCK'"), fn.indexOf("case 'DEV_GRANT'"))
+  check('the reset is dev-gated',
+    /if \(Deno\.env\.get\('DUNE_DEV_SEEDING'\) !== 'on'\) \{/.test(reset), true)
+  check('...and rides the shared semantics',
+    /resetDeadlines\(state as never, now, \{/.test(reset), true)
+  check('...refusing a state with no clock',
+    /code: 'no-clock'/.test(reset), true)
+
+  const grant = fn.slice(fn.indexOf("case 'DEV_GRANT'"), fn.indexOf("case 'SEED_SPICE'"))
+  check('the grant is dev-gated too',
+    /if \(Deno\.env\.get\('DUNE_DEV_SEEDING'\) !== 'on'\) \{/.test(grant), true)
+  check('...lands granted forces like any arrival',
+    /forces = landForces\(/.test(grant), true)
+  check('...banks granted leaders through the revival cycle',
+    /returnLeaderToTanks\(\s*[\r\n]+\s*tanks, myFaction as never, name,\s*[\r\n]+\s*\{ wasRevived: revived\.includes\(name\) \}/.test(grant), true)
+  check('...keeps the public hand count honest',
+    /handCount: p\.handCount \+ giveCards\.length,/.test(grant), true)
+  check('...and refuses an empty grant',
+    /code: 'nothing-asked'/.test(grant), true)
+}
+
+// ── harness-only, by pin ──────────────────────────────────────────────────
+{
+  const harness = code('src/components/dune/DuneMultiSeatView.tsx')
+  check('the harness offers the reset',
+    /send\(mine, 'RESET_CLOCK', \{\}, 'reset the phase clock\.'\)/.test(harness), true)
+  check('...and the grant, on the selected seat',
+    [/send\(mine, 'DEV_GRANT', \{ spice: grantSpice \}/.test(harness),
+      /send\(mine, 'DEV_GRANT', \{ tankLeaders: \[grantLeader\] \}/.test(harness),
+      /territoryId: grantTerritory, sector, count: grantCount,/.test(harness)],
+    [true, true, true])
+
+  // THE REAL SCREEN KNOWS NOTHING OF EITHER. A dev tool on the surface real
+  // players hold is a dev tool one mis-click from a real match.
+  const match = code('src/components/dune/DuneMatchScreen.tsx')
+  check('the real match screen never posts a reset',
+    /RESET_CLOCK/.test(match), false)
+  check('...nor a grant', /DEV_GRANT/.test(match), false)
+}
+
+// ── the seed script reaches the battle phase ──────────────────────────────
+{
+  const seed = readFileSync('scripts/seed-dune-match.mjs', 'utf8')
+  check('--phase=battle is a fixture now',
+    /const PHASES = \['charity', 'blow', 'bidding', 'battle'\]/.test(seed), true)
+  check('...seeding the Battles phase with the aggressor picking',
+    /phase: 'Battles', turn: 3/.test(seed) && /current: null, fought: \[\], usedLeaders: \{\},/.test(seed), true)
+  check('...hand counts derived from the dealt hands, never guessed',
+    /handCount: \(BATTLE_HANDS\[p\.faction\] \?\? \[\]\)\.length,/.test(seed), true)
+  check('...and traitors crossed so the beat is testable',
+    /traitors: BATTLE_TRAITORS\[s\.faction\] \?\? \[\],/.test(seed), true)
+}
+
+console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
+
+// Not optional: without an exit code the runner counts a failing suite green.
+process.exit(pass ? 0 : 1)

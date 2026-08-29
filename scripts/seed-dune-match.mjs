@@ -12,7 +12,9 @@
  * IT SEEDS THE CHARITY PHASE by default, because that is the round trip with
  * both halves wired — a window the server opens, an eligibility check only it
  * can make, and a claim that pays from the bank into a hidden purse.
- * --phase=blow gives the spice blow, --phase=bidding the treachery auction.
+ * --phase=blow gives the spice blow, --phase=bidding the treachery auction,
+ * --phase=battle the Battles phase — two contested territories, real hands,
+ * and traitors crossed so the beat is testable from the first reveal.
  *
  * THE SPICE IS THE POINT of the charity fixture. Seats are dealt 0, 1, 2, 3, 7
  * and 12, so some are under the threshold and some are over: a table where
@@ -67,7 +69,7 @@ const admin = createClient(URL, SERVICE, { auth: { persistSession: false } })
 const TAG = 'dune-seed'
 // RUN was the id of the campaign this script used to mint. It mints none now.
 const arg = name => process.argv.find(a => a.startsWith(`--${name}=`))?.split('=')[1]
-const PHASES = ['charity', 'blow', 'bidding']
+const PHASES = ['charity', 'blow', 'bidding', 'battle']
 const PHASE = PHASES.includes(arg('phase')) ? arg('phase') : 'charity'
 
 // ── sweeping up ─────────────────────────────────────────────────────────────
@@ -138,7 +140,27 @@ const CHARITY_SPICE = [0, 1, 2, 3, 7, 12]
  * refusal path shows without contriving anything.
  */
 const BIDDING_SPICE = [12, 8, 5, 20, 1, 15]
-const STARTING_SPICE = PHASE === 'bidding' ? BIDDING_SPICE : CHARITY_SPICE
+const STARTING_SPICE = PHASE === 'bidding' || PHASE === 'battle' ? BIDDING_SPICE : CHARITY_SPICE
+
+/**
+ * The battle fixture's hands and traitors, by faction. REAL card ids so the
+ * wheel renders real faces, and traitors CROSSED — each names an opposing
+ * leader that fixture battles can actually field, so the beat is testable
+ * from the first reveal. handCount in the public row is derived from these,
+ * never guessed.
+ */
+const BATTLE_HANDS = {
+  atreides: ['crysknife', 'shield'],
+  harkonnen: ['chaumas', 'snooper', 'cheaphero'],
+  emperor: ['lasgun'],
+  fremen: ['shield'],
+  'bene-gesserit': [],
+  'spacing-guild': ['stunner'],
+}
+const BATTLE_TRAITORS = {
+  atreides: ['Umman Kudu'],
+  harkonnen: ['Duncan Idaho'],
+}
 
 /**
  * The seats as the whole table sees them.
@@ -297,6 +319,36 @@ const state = PHASE === 'bidding'
       spiceOnBoard: { 'territory-02': 6 },
       players: publicPlayers(seats), awaiting: null, shieldWall: 'intact',
     }
+  : PHASE === 'battle'
+  ? {
+      // The Battles phase, mid-fight-ready: a plain two-sider in Arrakeen
+      // and a three-sider in Carthag, so the aggressor's choice of opponent
+      // is a real one. The battles object is what the phase entry writes —
+      // aggressor picking, nothing open.
+      phase: 'Battles', turn: 3, mode: 'advanced', storm: 'sector-18',
+      treacheryDiscard: [],
+      spiceDeck: { remaining: 21, turn: 3, discardA: [], discardB: [] },
+      forces: [
+        { faction: 'atreides', territoryId: 'territory-13', sector: 'sector-10', count: 5 },
+        { faction: 'harkonnen', territoryId: 'territory-13', sector: 'sector-10', count: 4 },
+        { faction: 'emperor', territoryId: 'territory-26', sector: 'sector-11', count: 3, starred: 1 },
+        { faction: 'fremen', territoryId: 'territory-26', sector: 'sector-11', count: 6, starred: 2 },
+        { faction: 'harkonnen', territoryId: 'territory-26', sector: 'sector-11', count: 2 },
+      ],
+      spiceOnBoard: {},
+      players: publicPlayers(seats).map(p => ({
+        ...p, handCount: (BATTLE_HANDS[p.faction] ?? []).length,
+      })),
+      battles: {
+        turn: 3,
+        order: seats.map(s => s.faction),
+        at: 0,
+        current: null, fought: [], usedLeaders: {},
+        closesAt: Date.now() + 120_000,
+      },
+      awaiting: seats[0].faction,
+      shieldWall: 'intact',
+    }
   : {
       phase: 'CHOAM Charity', turn: 1, mode: 'advanced', storm: 'sector-18',
       spiceDeck: { remaining: 21, discardA: [], discardB: [] },
@@ -319,7 +371,13 @@ await admin.from('match_players').insert(seats.map((s, i) => ({
   user_id: s.userId, name: s.email.split('@')[0], faction_id: s.faction,
 })))
 await admin.from('match_secrets').insert(seats.map(s => ({
-  match_id: match.id, player_id: s.playerId, data: { cards: [], spice: s.spice },
+  match_id: match.id, player_id: s.playerId,
+  data: PHASE === 'battle'
+    ? {
+      cards: BATTLE_HANDS[s.faction] ?? [], spice: s.spice,
+      traitors: BATTLE_TRAITORS[s.faction] ?? [],
+    }
+    : { cards: [], spice: s.spice },
 })))
 
 if (PHASE === 'bidding') {

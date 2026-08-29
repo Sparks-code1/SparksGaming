@@ -23,6 +23,8 @@ import { WormPlacementPanel } from './WormPlacementPanel'
 import { dispatchDuneAction } from '@/lib/dune/duneDispatch'
 import type { PlacedForce } from './SetupWindow'
 import { factionById } from '@/data/dune/factions'
+import { TREACHERY_CARDS } from '@/data/dune/treachery'
+import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import { FACTION_LOOK } from './SeatLayer'
 import { ShipmentPanel } from './ShipmentPanel'
 import type { BidRefusal } from '@/lib/dune/bidding'
@@ -78,6 +80,14 @@ export default function DuneMultiSeatView() {
   const [busy, setBusy] = useState(false)
   /** What the last expired-bid push actually did — said, never swallowed. */
   const [resolveNote, setResolveNote] = useState<string | null>(null)
+  /** The grant panel's fields — dev scaffolding, acting on the SELECTED seat. */
+  const [grantSpice, setGrantSpice] = useState(5)
+  const [grantCard, setGrantCard] = useState('')
+  const [grantTerritory, setGrantTerritory] = useState('')
+  const [grantSector, setGrantSector] = useState('')
+  const [grantCount, setGrantCount] = useState(3)
+  const [grantStarred, setGrantStarred] = useState(false)
+  const [grantLeader, setGrantLeader] = useState('')
   const [refused, setRefused] = useState<string | null>(null)
   /**
    * Seats that have answered charity this turn, so the modal comes down.
@@ -710,7 +720,107 @@ export default function DuneMultiSeatView() {
             <b style={{ display: 'block', marginBottom: 6 }}>The turn</b>
             <button onClick={() => void send(mine, 'ADVANCE_PHASE')} disabled={busy}>
               Advance the phase
+            </button>{' '}
+            {/* DEV SCAFFOLDING, harness-only by construction: the real match
+                screen never posts RESET_CLOCK, and the server refuses it
+                anyway unless the project's dev switch is on. Re-stamps
+                whichever window is live at its own full length, so a window
+                let expire over lunch can be re-run without replaying the
+                match to reach it. */}
+            <button onClick={() => void send(mine, 'RESET_CLOCK', {}, 'reset the phase clock.')}
+              disabled={busy}>
+              Reset the clock (dev)
             </button>
+
+            {/* THE GRANT: conjure a position to test rather than playing
+                into it. Acts on the SELECTED seat — choosing whom to give
+                to is the seat switcher's job, like every other act here.
+                Harness-only by construction, and the server refuses the
+                action anyway unless the project's dev switch is on. */}
+            <b style={{ display: 'block', margin: '10px 0 6px' }}>Grant (dev)</b>
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+              <input type="number" min={1} value={grantSpice} style={{ width: 52 }}
+                onChange={e => setGrantSpice(Math.max(1, Number(e.target.value)))} />
+              <button disabled={busy}
+                onClick={() => void send(mine, 'DEV_GRANT', { spice: grantSpice },
+                  'granted ' + grantSpice + ' spice.')}>
+                Give spice
+              </button>
+            </div>
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginTop: 3 }}>
+              <select value={grantCard} onChange={e => setGrantCard(e.target.value)}
+                style={{ flex: 1, minWidth: 0 }}>
+                <option value="">card…</option>
+                {TREACHERY_CARDS.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+              <button disabled={busy || !grantCard}
+                onClick={() => void send(mine, 'DEV_GRANT', { cards: [grantCard] },
+                  'granted a card.')}>
+                Give
+              </button>
+            </div>
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginTop: 3, flexWrap: 'wrap' }}>
+              <select value={grantTerritory}
+                onChange={e => { setGrantTerritory(e.target.value); setGrantSector('') }}
+                style={{ flex: 1, minWidth: 0 }}>
+                <option value="">territory…</option>
+                {DUNE_TERRITORIES.map(t => (
+                  <option key={t.id} value={t.id}>{t.displayName}</option>
+                ))}
+              </select>
+              {(DUNE_TERRITORIES.find(t => t.id === grantTerritory)?.sectors.length ?? 0) > 1 && (
+                <select value={grantSector} onChange={e => setGrantSector(e.target.value)}>
+                  <option value="">sector…</option>
+                  {DUNE_TERRITORIES.find(t => t.id === grantTerritory)?.sectors.map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              )}
+              <input type="number" min={1} value={grantCount} style={{ width: 44 }}
+                onChange={e => setGrantCount(Math.max(1, Number(e.target.value)))} />
+              <label style={{ fontSize: 11 }}>
+                <input type="checkbox" checked={grantStarred}
+                  onChange={e => setGrantStarred(e.target.checked)} />★
+              </label>
+              <button disabled={busy || !grantTerritory}
+                onClick={() => {
+                  const t = DUNE_TERRITORIES.find(x => x.id === grantTerritory)
+                  const sector = grantSector || t?.sectors[0]
+                  if (!sector) return
+                  void send(mine, 'DEV_GRANT', {
+                    forces: [{
+                      territoryId: grantTerritory, sector, count: grantCount,
+                      ...(grantStarred ? { starred: grantCount } : null),
+                    }],
+                  }, 'granted ' + grantCount + ' force(s) on the board.')
+                }}>
+                Place
+              </button>
+              <button disabled={busy}
+                onClick={() => void send(mine, 'DEV_GRANT',
+                  grantStarred
+                    ? { reservesStarred: grantCount }
+                    : { reserves: grantCount },
+                  'granted ' + grantCount + ' to reserves.')}>
+                To reserves
+              </button>
+            </div>
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginTop: 3 }}>
+              <select value={grantLeader} onChange={e => setGrantLeader(e.target.value)}
+                style={{ flex: 1, minWidth: 0 }}>
+                <option value="">leader…</option>
+                {(active ? factionById(active)?.leaders ?? [] : []).map(l => (
+                  <option key={l.name} value={l.name}>{l.name}</option>
+                ))}
+              </select>
+              <button disabled={busy || !grantLeader}
+                onClick={() => void send(mine, 'DEV_GRANT', { tankLeaders: [grantLeader] },
+                  grantLeader + ' to the tanks.')}>
+                To the tanks
+              </button>
+            </div>
 
             {/* THE ROTATION, driven as whichever seat is selected. The real
                 screen has the same panel; the harness had only the timer,

@@ -473,3 +473,107 @@ export function mentatVerdict(
   }
   return crown(tied, 'most-strongholds')
 }
+
+// ── dev scaffolding: re-run an expired window ─────────────────────────────
+
+/**
+ * Re-stamp every live deadline in the current state to a fresh, full window.
+ *
+ * DEV SCAFFOLDING, in the library so it is one shape per window and
+ * behaviourally testable: playtesting keeps outliving clocks — a five-minute
+ * battle window missed over lunch used to mean replaying a whole match to
+ * reach the phase again. The SERVER gates who may call it (the same switch
+ * as seeding); this only says what a reset means. Windows get their own full
+ * lengths, never a shared guess, so a reset window is indistinguishable from
+ * a fresh one.
+ *
+ * Returns only the keys it touched, and their names — a state with no clock
+ * anywhere resets nothing, which the caller reports rather than writing.
+ */
+export function resetDeadlines(
+  state: AdvanceState & {
+    setup?: { closesAt?: number }
+    charity?: { expiresAt: number; turn: number }
+    spiceBlow?: { closesAt?: number }
+    auction?: { status?: string; closesAt?: number } | null
+    shipping?: { closesAt: number }
+    battles?: {
+      closesAt: number
+      current?: {
+        closesAt: number
+        revealed?: { traitor: { closesAt: number } }
+      } | null
+    }
+  },
+  now: number,
+  lengths: {
+    setupSeconds: number
+    charityMs: number
+    wormSeconds: number
+    bidSeconds: number
+    shipmentSeconds: number
+    battlePickSeconds: number
+    battlePlanSeconds: number
+    battleTraitorSeconds: number
+  },
+): { patch: Record<string, unknown>; reset: string[] } {
+  const patch: Record<string, unknown> = {}
+  const reset: string[] = []
+
+  if (state.setup) {
+    patch.setup = { ...state.setup, closesAt: now + lengths.setupSeconds * 1000 }
+    reset.push('setup')
+  }
+  if (state.charity) {
+    patch.charity = { ...state.charity, expiresAt: now + lengths.charityMs }
+    reset.push('charity')
+  }
+  if (state.spiceBlow) {
+    patch.spiceBlow = { ...state.spiceBlow, closesAt: now + lengths.wormSeconds * 1000 }
+    reset.push('worm-pause')
+  }
+  if (state.auction && state.auction.status === 'awaiting') {
+    patch.auction = { ...state.auction, closesAt: now + lengths.bidSeconds * 1000 }
+    reset.push('bid')
+  }
+  if (state.shipping) {
+    patch.shipping = { ...state.shipping, closesAt: now + lengths.shipmentSeconds * 1000 }
+    reset.push('shipping')
+  }
+  if (state.battles) {
+    const b = state.battles
+    // Whichever window is LIVE gets the fresh stamp: the traitor beat, the
+    // plan, or the aggressor's pick — one at a time, the way they run.
+    if (b.current?.revealed) {
+      patch.battles = {
+        ...b,
+        current: {
+          ...b.current,
+          revealed: {
+            ...b.current.revealed,
+            traitor: {
+              ...b.current.revealed.traitor,
+              closesAt: now + lengths.battleTraitorSeconds * 1000,
+            },
+          },
+        },
+      }
+      reset.push('traitor-beat')
+    } else if (b.current) {
+      patch.battles = {
+        ...b,
+        current: { ...b.current, closesAt: now + lengths.battlePlanSeconds * 1000 },
+      }
+      reset.push('battle-plan')
+    } else {
+      patch.battles = { ...b, closesAt: now + lengths.battlePickSeconds * 1000 }
+      reset.push('battle-pick')
+    }
+  }
+  if (state.phaseClock) {
+    patch.phaseClock = { ...state.phaseClock, closesAt: now + PHASE_SECONDS * 1000 }
+    reset.push('phase-clock')
+  }
+
+  return { patch, reset }
+}

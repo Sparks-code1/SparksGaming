@@ -1375,6 +1375,63 @@ function mentatVerdict(state, prediction, spice) {
   }
   return crown(tied, "most-strongholds");
 }
+function resetDeadlines(state, now, lengths) {
+  const patch = {};
+  const reset = [];
+  if (state.setup) {
+    patch.setup = { ...state.setup, closesAt: now + lengths.setupSeconds * 1e3 };
+    reset.push("setup");
+  }
+  if (state.charity) {
+    patch.charity = { ...state.charity, expiresAt: now + lengths.charityMs };
+    reset.push("charity");
+  }
+  if (state.spiceBlow) {
+    patch.spiceBlow = { ...state.spiceBlow, closesAt: now + lengths.wormSeconds * 1e3 };
+    reset.push("worm-pause");
+  }
+  if (state.auction && state.auction.status === "awaiting") {
+    patch.auction = { ...state.auction, closesAt: now + lengths.bidSeconds * 1e3 };
+    reset.push("bid");
+  }
+  if (state.shipping) {
+    patch.shipping = { ...state.shipping, closesAt: now + lengths.shipmentSeconds * 1e3 };
+    reset.push("shipping");
+  }
+  if (state.battles) {
+    const b = state.battles;
+    if (b.current?.revealed) {
+      patch.battles = {
+        ...b,
+        current: {
+          ...b.current,
+          revealed: {
+            ...b.current.revealed,
+            traitor: {
+              ...b.current.revealed.traitor,
+              closesAt: now + lengths.battleTraitorSeconds * 1e3
+            }
+          }
+        }
+      };
+      reset.push("traitor-beat");
+    } else if (b.current) {
+      patch.battles = {
+        ...b,
+        current: { ...b.current, closesAt: now + lengths.battlePlanSeconds * 1e3 }
+      };
+      reset.push("battle-plan");
+    } else {
+      patch.battles = { ...b, closesAt: now + lengths.battlePickSeconds * 1e3 };
+      reset.push("battle-pick");
+    }
+  }
+  if (state.phaseClock) {
+    patch.phaseClock = { ...state.phaseClock, closesAt: now + PHASE_SECONDS * 1e3 };
+    reset.push("phase-clock");
+  }
+  return { patch, reset };
+}
 export {
   HABBANYA_SIETCH,
   PHASE_SECONDS,
@@ -1388,6 +1445,7 @@ export {
   mentatVerdict,
   phaseAfter,
   phaseWindowOpen,
+  resetDeadlines,
   rollStorm,
   stormEntry,
   stormOrder
