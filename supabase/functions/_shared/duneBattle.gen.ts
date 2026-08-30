@@ -1760,6 +1760,14 @@ function battleLosses(forces, faction, territoryId, sectors, outcome) {
   }
   return out;
 }
+function allyInterrogator(input) {
+  const { faction, aggressor, defender, players } = input;
+  if (faction === aggressor || faction === defender) return null;
+  const ally = players.find((p) => p.faction === faction)?.ally ?? null;
+  if (ally === aggressor) return { ally: aggressor, over: defender };
+  if (ally === defender) return { ally: defender, over: aggressor };
+  return null;
+}
 export {
   BATTLE_ALLOCATE_SECONDS,
   BATTLE_CAPTURE_SECONDS,
@@ -1776,6 +1784,7 @@ export {
   allOwnLeadersDead,
   allocationLosses,
   allocationsFor,
+  allyInterrogator,
   battleLosses,
   battleStrengthCap,
   battlesFor,

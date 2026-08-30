@@ -19,6 +19,7 @@ import {
   allocationsFor, judgeAllocation, firstAllocation, allocationLosses,
   BATTLE_CAPTURE_SECONDS, capturePool, leaderOwner, allOwnLeadersDead,
   KWISATZ_HADERACH, KWISATZ_STRENGTH, kwisatzHaderachAvailable,
+  allyInterrogator,
 } from '@/lib/dune/battle'
 import { reviveLeader, returnLeaderToTanks } from '@/lib/dune/revival'
 import type { BattlePlan } from '@/lib/dune/battle'
@@ -379,8 +380,9 @@ check('the three windows have their seconds',
   check('...banks the dead', /bankDead\(tanks, killed/.test(beat), true)
   check('...remembers a revived leader falls face down',
     /wasRevived: revived\.includes\(plan\.leader\)/.test(beat), true)
-  check('...pays the winner from the bank alone',
-    /moves\.push\(\{ from: BANK, to: seatId, amount: s\.amount, reason: 'battle' \}\)/.test(beat), true)
+  check('...pays the winner from the bank alone — or the proxy caller',
+    /moves\.push\(\{ from: BANK, to, amount: s\.amount, reason: 'battle' \}\)/.test(beat)
+      && /\? seatOfFaction\['harkonnen'\] : seatId/.test(beat), true)
   check('...spends a called traitor card',
     /\(row\.traitors \?\? \[\]\)\.filter\(\(n\) => n !== theirLeader\)/.test(beat), true)
   check('...and the explosion burns the territory\'s spice',
@@ -790,23 +792,27 @@ check('the three windows have their seconds',
   // ── the server slice ────────────────────────────────────────────────────
   const fn = code('supabase/functions/dune-action/index.ts')
   const pick = fn.slice(fn.indexOf("case 'BATTLE_PICK'"), fn.indexOf("case 'BATTLE_PLAN'"))
-  check('the pick opens the Voice when the Bene Gesserit fight',
-    /\(aggressor === 'bene-gesserit' \|\| opponent === 'bene-gesserit'\)/.test(pick)
-      && /by: 'bene-gesserit', done: false,/.test(pick), true)
+  check('the pick opens the Voice when the Bene Gesserit fight — or their ally does',
+    /aggressor === 'bene-gesserit' \|\| opponent === 'bene-gesserit'/.test(pick)
+      && /by: 'bene-gesserit', done: false,/.test(pick)
+      && /over: inFight/.test(pick)
+      && /: proxy!\.over,/.test(pick), true)
   const planCase = fn.slice(fn.indexOf("case 'BATTLE_PLAN'"), fn.indexOf("case 'BATTLE_VOICE'"))
-  check('the voiced seat waits for the command',
-    /if \(voiceNow && !voiceNow\.done && myFaction !== voiceNow\.by\)/.test(planCase)
+  check('the voiced seat waits for the command — the side it stands over, alone',
+    /if \(voiceNow && !voiceNow\.done && myFaction === voiceOver\)/.test(planCase)
+      && /voice\.over \?\? combatants\.find\(\(f\) => f !== voice\.by\)/.test(planCase)
       && /code: 'voiced-first',/.test(planCase), true)
   check('...silence past the window declines it',
     /voiceNow = \{ \.\.\.voice, done: true, command: null \}/.test(planCase), true)
-  check('...and the judge is handed the command, aimed away from its speaker',
-    /voiced: voiceNow\?\.done && voiceNow\.command && myFaction !== voiceNow\.by/.test(planCase), true)
+  check('...and the judge is handed the command, aimed at the side it stands over',
+    /voiced: voiceNow\?\.done && voiceNow\.command && myFaction === voiceOver/.test(planCase), true)
   check('an expired silence is written to the row the foresight reads',
     /battlePlan: \{ territoryId: c\.territoryId, dial: 0 \},/.test(planCase), true)
-  check('the question opens when the opponent commits',
-    /const presNow = hasAtreides && opponentIn && !pres/.test(planCase), true)
+  check('the question opens when the plan it reads commits — ally battles included',
+    /const presNow = \(hasAtreides \|\| presProxy\) && opponentIn && !pres/.test(planCase)
+      && /over: presOver, done: false,/.test(planCase), true)
   check('...and the reveal WAITS on it',
-    /const mayReveal = allIn && \(!hasAtreides \|\| \(presNow\?\.done \?\? false\)\)/.test(planCase), true)
+    /const mayReveal = allIn\s*[\r\n]+\s*&& \(\(!hasAtreides && !presProxy\) \|\| \(presNow\?\.done \?\? false\)\)/.test(planCase), true)
   const voiceCase = fn.slice(fn.indexOf("case 'BATTLE_VOICE'"), fn.indexOf("case 'BATTLE_PRESCIENCE'"))
   check('the Voice is its speaker\'s alone until the clock frees anyone',
     /code: 'not-your-voice'/.test(voiceCase) && /if \(!expired\) \{/.test(voiceCase), true)
@@ -1584,6 +1590,108 @@ check('the three windows have their seconds',
   const harness4 = code('src/components/dune/DuneMultiSeatView.tsx')
   check('both drivers post the choice over the prisoner',
     [/BATTLE_CAPTURE/.test(match4), /BATTLE_CAPTURE/.test(harness4)], [true, true])
+}
+
+// ── the alliance's interrogators ──────────────────────────────────────────
+// The Voice, the question and the traitor call reach into an ALLY'S battle:
+// the third seat is admitted when seated, outside the fight, and allied to
+// a combatant — and each power lands on the ally's opponent.
+{
+  const table3 = [
+    { faction: 'atreides', ally: 'harkonnen' },
+    { faction: 'harkonnen', ally: 'atreides' },
+    { faction: 'emperor', ally: null },
+    { faction: 'bene-gesserit', ally: null },
+  ] as never
+  check('an interrogator is seated, outside the battle, and allied within it',
+    [allyInterrogator({ faction: 'harkonnen', aggressor: 'atreides', defender: 'emperor', players: table3 } as never),
+      allyInterrogator({ faction: 'harkonnen', aggressor: 'emperor', defender: 'atreides', players: table3 } as never),
+      allyInterrogator({ faction: 'bene-gesserit', aggressor: 'atreides', defender: 'emperor', players: table3 } as never),
+      allyInterrogator({ faction: 'harkonnen', aggressor: 'harkonnen', defender: 'atreides', players: table3 } as never),
+      allyInterrogator({ faction: 'fremen', aggressor: 'atreides', defender: 'emperor', players: table3 } as never)],
+    [{ ally: 'atreides', over: 'emperor' }, { ally: 'atreides', over: 'emperor' },
+      null, null, null])
+
+  // ── the server's three doors ────────────────────────────────────────────
+  const fn9 = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  check('the beat seats the proxy, waits on them, and their call lands over the ally\'s opponent',
+    [/const eligible = hkProxy \? \[\.\.\.combatants, 'harkonnen'\] : combatants/.test(fn9),
+      /if \(answered\.length < eligible\.length\) \{/.test(fn9),
+      /answered = eligible as never/.test(fn9),
+      /\? hkProxy\.over/.test(fn9)],
+    [true, true, true, true])
+  check('the question reads the side its window stands over',
+    /const other = \(\(pres as \{ over\?: string \}\)\.over\s*[\r\n]+\s*\?\? combatants\.find\(\(f\) => f !== pres\.by\)\)!/.test(fn9),
+    true)
+  check('the settlement books the proxy call to the ally\'s side',
+    [/const hkCalled = !!hkProxy2 && calls\.includes\('harkonnen'\)/.test(fn9),
+      /\|\| \(hkCalled && hkProxy2!\.ally === c\.aggressor\)/.test(fn9),
+      /\|\| \(hkCalled && hkProxy2!\.ally === c\.defender\)/.test(fn9)],
+    [true, true, true])
+  check('...spends the Harkonnen card and seats their purse for the bounty',
+    [/traitors: \(hkRow0\.traitors \?\? \[\]\)\.filter\(\(n\) => n !== overLeader\)/.test(fn9),
+      /purses\[hkSeat0\] = readSpice\(hkRow0 as never\)/.test(fn9)],
+    [true, true])
+
+  // ── the beat's third chair, on the panel ────────────────────────────────
+  const revealAt = 60_000
+  const beatBattles = (over: object = {}, planOver: object = {}) => ({
+    turn: 4, at: 0, fought: [], usedLeaders: {},
+    order: ['atreides', 'emperor', 'harkonnen'],
+    closesAt: 600_000,
+    current: {
+      territoryId: 'territory-13', sectors: ['sector-10'],
+      aggressor: 'atreides', defender: 'emperor',
+      committed: ['atreides', 'emperor'],
+      closesAt: 600_000,
+      revealed: {
+        plans: {
+          atreides: { dial: 2, leader: 'Duncan Idaho' },
+          emperor: { dial: 3, leader: 'Hasimir Fenring', ...planOver },
+        },
+        traitor: {
+          answered: [], calls: [],
+          closesAt: revealAt + BATTLE_TRAITOR_SECONDS * 1000, ...over,
+        },
+      },
+    },
+  })
+  const drawBeat = (battles9: object, overProps: object = {}) =>
+    renderToStaticMarkup(createElement(BattlePanel, {
+      battles: battles9, forces: [], storm: 'sector-1', tanks: null,
+      seat: 'harkonnen' as FactionId, hand: [], traitors: ['Hasimir Fenring'],
+      now: revealAt + 10_000, busy: false,
+      onPick: () => {}, onPlan: () => {}, onAnswer: () => {},
+      ...overProps,
+    } as never))
+
+  const proxySeat = drawBeat(beatBattles(), { traitorProxy: 'emperor', beatEligible: 3 })
+  check('the proxy is offered the call, named, and the decline beside it',
+    [/data-call-traitor/.test(proxySeat), /Hasimir Fenring/.test(proxySeat),
+      /data-no-traitor/.test(proxySeat)],
+    [true, true, true])
+  check('...a mere spectator is offered neither',
+    [/data-call-traitor/.test(drawBeat(beatBattles())),
+      /data-no-traitor/.test(drawBeat(beatBattles()))],
+    [false, false])
+  check('...and the Kwisatz Haderach guards the proxy call too',
+    [/data-call-traitor/.test(drawBeat(beatBattles({}, { kwisatz: true }),
+      { traitorProxy: 'emperor', beatEligible: 3 })),
+      /data-no-traitor/.test(drawBeat(beatBattles({}, { kwisatz: true }),
+        { traitorProxy: 'emperor', beatEligible: 3 }))],
+    [false, true])
+  const twoOfThree = beatBattles({ answered: ['atreides', 'emperor'], closesAt: 61_000 })
+  check('an expired beat two-of-three answered still offers the push',
+    [/data-beat-push/.test(drawBeat(twoOfThree, { beatEligible: 3 })),
+      /data-beat-push/.test(drawBeat(twoOfThree, { beatEligible: 2 }))],
+    [true, false])
+
+  // ── the screen's wiring ─────────────────────────────────────────────────
+  const screen9 = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
+  check('the screen computes the third chair from public facts alone',
+    [/traitorProxy: seat === 'harkonnen' \? hk\?\.over \?\? null : null,/.test(screen9),
+      /beatEligible: hk \? 3 : 2,/.test(screen9)],
+    [true, true])
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

@@ -405,6 +405,10 @@ export interface DuneGameState {
        *  COMMAND is public — the opponent must hear it to obey it. */
       voice?: {
         by: FactionId
+        /** The side the command binds: the other combatant when the Bene
+         *  Gesserit fight here themselves, their ally's opponent when the
+         *  Voice reaches in from outside the battle. */
+        over?: FactionId
         closesAt: number
         done: boolean
         command?: { mode: 'play' | 'not-play'; target: string } | null
@@ -412,7 +416,14 @@ export interface DuneGameState {
       /** The Atreides' question: opened when their opponent commits, and
        *  the reveal waits on it. Which element was asked is public; the
        *  ANSWER goes to their own row alone. */
-      prescience?: { by: FactionId; closesAt: number; done: boolean; asked?: string }
+      prescience?: {
+        by: FactionId
+        /** The side the question reads — see voice.over. */
+        over?: FactionId
+        closesAt: number
+        done: boolean
+        asked?: string
+      }
       /** Both plans, published together, and the traitor beat's state. */
       revealed?: {
         plans: Record<string, {

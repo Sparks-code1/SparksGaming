@@ -879,3 +879,26 @@ export function battleLosses(
   }
   return out
 }
+
+// ── the alliance's interrogators ──────────────────────────────────────────
+
+/**
+ * The third seat a battle admits, by alliance card: the Bene Gesserit may
+ * Voice an ally's opponent, the Atreides may ask after one's plan, the
+ * Harkonnen may turn their traitor cards on one. Named when the faction is
+ * SEATED, NOT itself fighting here, and allied to a combatant — and what
+ * comes back is the side the power lands on: the ally's opponent.
+ */
+export function allyInterrogator(input: {
+  faction: FactionId
+  aggressor: FactionId
+  defender: FactionId
+  players: readonly { faction: FactionId; ally?: FactionId | null }[]
+}): { ally: FactionId; over: FactionId } | null {
+  const { faction, aggressor, defender, players } = input
+  if (faction === aggressor || faction === defender) return null
+  const ally = players.find(p => p.faction === faction)?.ally ?? null
+  if (ally === aggressor) return { ally: aggressor, over: defender }
+  if (ally === defender) return { ally: defender, over: aggressor }
+  return null
+}

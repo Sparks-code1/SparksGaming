@@ -59,6 +59,7 @@ import {
   coOccupied,
 } from '../_shared/duneShipment.gen.ts'
 import {
+  allyInterrogator,
   pendingBattles, nextAggressor, judgePlan, resolveBattle, battleLosses,
   explosionLosses, forcesInBattle, CHEAP_HERO_ID,
   BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
@@ -615,14 +616,25 @@ Deno.serve(async req => {
         weapon?: string; defence?: string
       }
 
+      // A HARKONNEN PROXY CALL is the ally's side calling, as far as the
+      // resolution cares: the ally wins the battle. The card spent and the
+      // bounty collected stay the Harkonnen's — see below.
+      const hkProxy2 = allyInterrogator({
+        faction: 'harkonnen' as never,
+        aggressor: c.aggressor as never, defender: c.defender as never,
+        players: (state.players ?? []) as never,
+      })
+      const hkCalled = !!hkProxy2 && calls.includes('harkonnen')
       const outcome = resolveBattle({
         aggressor: {
           faction: c.aggressor as never, plan: planOf(c.aggressor),
-          calledTraitor: calls.includes(c.aggressor as never),
+          calledTraitor: calls.includes(c.aggressor as never)
+            || (hkCalled && hkProxy2!.ally === c.aggressor),
         },
         defender: {
           faction: c.defender as never, plan: planOf(c.defender),
-          calledTraitor: calls.includes(c.defender as never),
+          calledTraitor: calls.includes(c.defender as never)
+            || (hkCalled && hkProxy2!.ally === c.defender),
         },
       })
 
@@ -721,13 +733,34 @@ Deno.serve(async req => {
         }
         purses[seatId] = readSpice(row as never)
         for (const s of side.spice) {
-          moves.push({ from: BANK, to: seatId, amount: s.amount, reason: 'battle' })
+          // THE WAGE OF TREACHERY IS THE CALLER'S: the law books the traitor
+          // bounty to the winning side, and when the call was the Harkonnen's
+          // proxy call from outside the battle, the spice is theirs instead.
+          const to = hkCalled && hkProxy2!.ally === f
+            && String((s as { for?: string }).for ?? '').startsWith('the traitor')
+            ? seatOfFaction['harkonnen'] : seatId
+          moves.push({ from: BANK, to, amount: s.amount, reason: 'battle' })
         }
         // ── ADVANCED: the plan's spice leaves for the bank, win or lose —
         // except a traitor-calling winner, whose spends the law zeroed.
         if (side.spends > 0) {
           moves.push({ from: seatId, to: BANK, amount: side.spends, reason: 'battle-spice' })
         }
+      }
+      // The proxy caller's row: the traitor card is spent from THEIR list —
+      // the call was theirs even though the winning side was their ally's —
+      // and their purse joins the table for the bounty to land in.
+      if (hkCalled) {
+        const hkSeat0 = seatOfFaction['harkonnen']
+        const hkRow0 = (rowOf[hkSeat0] ?? {}) as { traitors?: string[] }
+        const overLeader = planOf(hkProxy2!.over).leader
+        secretsPatch[hkSeat0] = {
+          ...hkRow0,
+          ...(overLeader
+            ? { traitors: (hkRow0.traitors ?? []).filter((n) => n !== overLeader) }
+            : null),
+        }
+        purses[hkSeat0] = readSpice(hkRow0 as never)
       }
       const paid = moves.filter((m) => m.amount > 0)
       const moved = applySpiceMoves(purses, paid as never)
@@ -2508,15 +2541,27 @@ Deno.serve(async req => {
         closesAt: now + BATTLE_PLAN_SECONDS * 1000,
         // THE VOICE SPEAKS FIRST. When the Bene Gesserit fight here, their
         // opponent may not commit until the command is given or declined —
-        // a command over a plan already made is no command at all.
-        ...((aggressor === 'bene-gesserit' || opponent === 'bene-gesserit')
-          ? {
+        // a command over a plan already made is no command at all. Their
+        // ALLIANCE CARD reaches the same Voice into an ally's battle, over
+        // the ally's opponent, from outside it.
+        ...(() => {
+          const inFight = aggressor === 'bene-gesserit' || opponent === 'bene-gesserit'
+          const proxy = allyInterrogator({
+            faction: 'bene-gesserit' as never,
+            aggressor: aggressor as never, defender: opponent as never,
+            players: (state.players ?? []) as never,
+          })
+          if (!inFight && !proxy) return null
+          return {
             voice: {
               by: 'bene-gesserit', done: false,
+              over: inFight
+                ? (aggressor === 'bene-gesserit' ? opponent : aggressor)
+                : proxy!.over,
               closesAt: now + BATTLE_VOICE_SECONDS * 1000,
             },
           }
-          : null),
+        })(),
       }
       const { data, error } = await admin.rpc('apply_match_write', {
         p_match_id: matchId,
@@ -2554,10 +2599,15 @@ Deno.serve(async req => {
       // their window has run out, their opponent's plan waits — the command
       // must be able to bind it. The speaker's own plan commits freely.
       const voice = (c as { voice?: {
-        by: string; closesAt: number; done: boolean
+        by: string; over?: string; closesAt: number; done: boolean
         command?: { mode: string; target: string } | null
       } }).voice
       let voiceNow = voice
+      // The side the Voice stands over: stamped at the door; older battles
+      // without the stamp mean the speaker's own opponent.
+      const voiceOver = voice
+        ? (voice.over ?? combatants.find((f) => f !== voice.by))
+        : null
       if (voice && !voice.done && now >= voice.closesAt) {
         // silence declines the command; the write below carries the closure
         voiceNow = { ...voice, done: true, command: null }
@@ -2569,7 +2619,7 @@ Deno.serve(async req => {
         if (c.committed.includes(myFaction as never)) {
           return json({ error: 'your plan is in', code: 'already-committed' }, 409)
         }
-        if (voiceNow && !voiceNow.done && myFaction !== voiceNow.by) {
+        if (voiceNow && !voiceNow.done && myFaction === voiceOver) {
           return json({
             error: 'the Voice has not spoken', code: 'voiced-first',
           }, 409)
@@ -2619,7 +2669,7 @@ Deno.serve(async req => {
           borrowed: ((mine as { capturedLeaders?: { name: string }[] })
             .capturedLeaders ?? []).map((x) => x.name),
           // the Voice binds only the seat it was aimed at
-          voiced: voiceNow?.done && voiceNow.command && myFaction !== voiceNow.by
+          voiced: voiceNow?.done && voiceNow.command && myFaction === voiceOver
             ? voiceNow.command as never
             : null,
         })
@@ -2651,22 +2701,35 @@ Deno.serve(async req => {
         }
       }
 
-      // THE PRESCIENCE OPENS when the Atreides' opponent has committed and
+      // THE PRESCIENCE OPENS when the plan it would read has committed and
       // the question has not yet been settled — and THE REVEAL WAITS on it:
-      // the whole point of asking is planning with the answer.
+      // the whole point of asking is planning with the answer. The Atreides
+      // ALLIANCE CARD asks the same question from outside an ally's battle,
+      // of the ally's opponent.
       const hasAtreides = combatants.includes('atreides' as never)
-      const atreidesOpponent = combatants.find((f) => f !== 'atreides')
-      const opponentIn = !!atreidesOpponent && (!!plans[atreidesOpponent]
-        || committedNow.includes(atreidesOpponent as never))
+      const presProxy = allyInterrogator({
+        faction: 'atreides' as never,
+        aggressor: c.aggressor as never, defender: c.defender as never,
+        players: (state.players ?? []) as never,
+      })
+      const presOver = hasAtreides
+        ? combatants.find((f) => f !== 'atreides')
+        : presProxy?.over
+      const opponentIn = !!presOver && (!!plans[presOver]
+        || committedNow.includes(presOver as never))
       const pres = (c as { prescience?: {
-        by: string; closesAt: number; done: boolean; asked?: string
+        by: string; over?: string; closesAt: number; done: boolean; asked?: string
       } }).prescience
-      const presNow = hasAtreides && opponentIn && !pres
-        ? { by: 'atreides', done: false, closesAt: now + BATTLE_PRESCIENCE_SECONDS * 1000 }
+      const presNow = (hasAtreides || presProxy) && opponentIn && !pres
+        ? {
+          by: 'atreides', over: presOver, done: false,
+          closesAt: now + BATTLE_PRESCIENCE_SECONDS * 1000,
+        }
         : pres
 
       const allIn = combatants.every((f) => !!plans[f])
-      const mayReveal = allIn && (!hasAtreides || (presNow?.done ?? false))
+      const mayReveal = allIn
+        && ((!hasAtreides && !presProxy) || (presNow?.done ?? false))
       const current = mayReveal
         ? {
           ...c, committed: combatants,
@@ -2764,7 +2827,8 @@ Deno.serve(async req => {
         .from('match_secrets').select('player_id, data').eq('match_id', matchId)
       const rowOf = Object.fromEntries((secretRows ?? []).map((r) => [r.player_id, r.data ?? {}]))
       const combatants = [c.aggressor, c.defender]
-      const other = combatants.find((f) => f !== pres.by)!
+      const other = ((pres as { over?: string }).over
+        ?? combatants.find((f) => f !== pres.by))!
 
       const secretsPatch: Record<string, unknown> = {}
       let asked: string | undefined
@@ -2845,13 +2909,22 @@ Deno.serve(async req => {
       }
       const beat = c.revealed.traitor
       const combatants = [c.aggressor, c.defender]
+      // THE HARKONNEN ALLIANCE CARD admits a third answer: allied to a
+      // combatant and not fighting here themselves, their traitor cards may
+      // be turned on the ally's opponent — so the beat waits on them too.
+      const hkProxy = allyInterrogator({
+        faction: 'harkonnen' as never,
+        aggressor: c.aggressor as never, defender: c.defender as never,
+        players: (state.players ?? []) as never,
+      })
+      const eligible = hkProxy ? [...combatants, 'harkonnen'] : combatants
       const expired = now >= beat.closesAt
 
       let answered = [...beat.answered]
       let calls = [...beat.calls]
 
       if (!expired) {
-        if (!combatants.includes(myFaction as never)) {
+        if (!eligible.includes(myFaction as never)) {
           return json({ error: 'you are not in this battle', code: 'not-your-battle' }, 409)
         }
         if (answered.includes(myFaction as never)) {
@@ -2861,7 +2934,9 @@ Deno.serve(async req => {
           // The call must be TRUE: the opposing plan led with a leader this
           // seat holds the traitor card for. Refused privately — a false
           // call announced would say what the caller does not hold.
-          const other = combatants.find((f) => f !== myFaction)!
+          const other = myFaction === 'harkonnen' && hkProxy
+            ? hkProxy.over
+            : combatants.find((f) => f !== myFaction)!
           const theirPlan = c.revealed.plans[other] as { leader?: string }
           const { data: mineRow } = await admin
             .from('match_secrets').select('data')
@@ -2880,10 +2955,10 @@ Deno.serve(async req => {
         answered = [...new Set([...answered, myFaction as never])]
       } else {
         // Past the beat, anyone may push: the silent decline.
-        answered = combatants
+        answered = eligible as never
       }
 
-      if (answered.length < 2) {
+      if (answered.length < eligible.length) {
         const { data, error } = await admin.rpc('apply_match_write', {
           p_match_id: matchId,
           p_expected_version: match.version,

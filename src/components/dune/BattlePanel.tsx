@@ -106,6 +106,14 @@ export interface BattlePanelProps {
   storm: DuneGameState['storm']
   tanks: DuneGameState['tanks'] | null
   seat: FactionId | null
+  /**
+   * THE PROXY CALL: when this seat is the Harkonnen, allied to a combatant
+   * and not fighting here, the side their traitor cards may be turned on —
+   * the ally's opponent. Null for everyone else and every ordinary battle.
+   */
+  traitorProxy?: FactionId | null
+  /** How many answers the beat owes — three with a proxy seated, else two. */
+  beatEligible?: number
   /** This seat's own hand and traitor names — secrets, handed in. */
   hand: readonly string[]
   traitors: readonly string[]
@@ -251,6 +259,7 @@ function PlanLine({ faction, plan }: {
 
 export function BattlePanel({
   battles, forces, storm, tanks, seat, hand, traitors, now, busy,
+  traitorProxy = null, beatEligible = 2,
   refusal = null, refusedAction = null, handCount = null,
   onPick, onPlan, onAnswer, onVoice, onPrescience, prescienceAnswer = null,
   onAllocate, mode = 'basic', purse = 0,
@@ -496,12 +505,17 @@ export function BattlePanel({
   if (c.revealed) {
     const beat = c.revealed.traitor
     const iAmIn = seat === c.aggressor || seat === c.defender
+    // THE BEAT'S THIRD CHAIR: a proxy answers like a combatant, and their
+    // call lands on the side the alliance card names.
+    const acting = iAmIn || !!traitorProxy
     const answered = !!seat && beat.answered.includes(seat)
-    const other = seat === c.aggressor ? c.defender : c.aggressor
-    const theirLeader = c.revealed.plans[other]?.leader
-    const mayCall = iAmIn && !answered && !!theirLeader
+    const other = iAmIn
+      ? (seat === c.aggressor ? c.defender : c.aggressor)
+      : traitorProxy
+    const theirLeader = other ? c.revealed.plans[other]?.leader : undefined
+    const mayCall = acting && !answered && !!theirLeader
       && traitors.includes(theirLeader)
-      && !c.revealed.plans[other]?.kwisatz
+      && !c.revealed.plans[other!]?.kwisatz
     const expired = now >= beat.closesAt
 
     const scene = battleBackdrop({
@@ -677,7 +691,7 @@ export function BattlePanel({
             fight resolve. Its controls wait for the sequence, so nobody
             answers a reveal they have not seen land. */}
         {(stage >= 4 || expired) && <div style={{ marginTop: 12 }}>
-          {iAmIn && !answered && (
+          {acting && !answered && (
             <>
               {mayCall && (
                 <button type="button" disabled={busy} data-call-traitor=""
@@ -692,11 +706,11 @@ export function BattlePanel({
               </button>
             </>
           )}
-          {iAmIn && answered && beat.answered.length < 2 && (
+          {acting && answered && beat.answered.length < beatEligible && (
             <span style={{ opacity: 0.75 }}>Waiting on the other side…</span>
           )}
-          {!iAmIn && !expired && <span style={{ opacity: 0.75 }}>The traitor beat.</span>}
-          {expired && beat.answered.length < 2 && (
+          {!acting && !expired && <span style={{ opacity: 0.75 }}>The traitor beat.</span>}
+          {expired && beat.answered.length < beatEligible && (
             <button type="button" disabled={busy} data-beat-push=""
               onClick={() => onAnswer(false)} style={{ ...btn, width: 'auto', display: 'inline-block' }}>
               The clock has run out — resolve
@@ -789,9 +803,13 @@ export function BattlePanel({
             Prescience — {territoryName(c.territoryId)}
           </b>
           <p style={{ opacity: 0.8, fontSize: 13 }}>
-            Ask ONE element of the committed plan against you. A "none is
-            played" answer is the answer — there is no second question.
-            {mineIn ? '' : ' Your own plan can still be written with what you learn.'}
+            Ask ONE element of the committed plan against
+            {seat === c.aggressor || seat === c.defender ? ' you' : ' your ally'}.
+            A "none is played" answer is the answer — there is no second
+            question.
+            {mineIn ? '' : seat === c.aggressor || seat === c.defender
+              ? ' Your own plan can still be written with what you learn.'
+              : ' What you learn is yours to pass on, or not.'}
           </p>
           {PRESCIENCE_ASKS.map(a => (
             <button key={a} type="button" data-prescience-ask={a}

@@ -52,7 +52,7 @@ import { WORM_SECONDS, WORM_RIDE_SECONDS, NEXUS_SECONDS } from '@/lib/dune/spice
 import {
   BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
   BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS, BATTLE_ALLOCATE_SECONDS,
-  BATTLE_CAPTURE_SECONDS,
+  BATTLE_CAPTURE_SECONDS, allyInterrogator,
 } from '@/lib/dune/battle'
 import { MENTAT_READY_SECONDS } from '@/lib/dune/phaseAdvance'
 import { kwisatzHaderachAvailable, KWISATZ_HADERACH } from '@/types/Dune/Game'
@@ -1098,6 +1098,22 @@ export function DuneGameScreen({
                 usedTerritory: state.battles?.kwisatzUsed ?? null,
               } : null}
               captured={own?.capturedLeaders ?? []}
+              // THE BEAT'S THIRD CHAIR, computed from public facts alone:
+              // whether a Harkonnen proxy sits at THIS battle (the count of
+              // answers owed), and — for the Harkonnen seat itself — the
+              // side its call lands on.
+              {...(() => {
+                const cur = state.battles?.current
+                const hk = cur ? allyInterrogator({
+                  faction: 'harkonnen',
+                  aggressor: cur.aggressor, defender: cur.defender,
+                  players: state.players,
+                }) : null
+                return {
+                  traitorProxy: seat === 'harkonnen' ? hk?.over ?? null : null,
+                  beatEligible: hk ? 3 : 2,
+                }
+              })()}
               // ADVANCED wiring: the mode turns on spice dials; the purse
               // caps the stepper. Both are this seat's own to know.
               mode={state.mode === 'advanced' ? 'advanced' : 'basic'}
