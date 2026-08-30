@@ -38,6 +38,7 @@ import type {
   VoiceCommand, VoiceTarget, PrescienceAsk, LossAllocation,
 } from '@/lib/dune/battle'
 import { KWISATZ_STRENGTH } from '@/types/Dune/Game'
+import { battleBackdrop } from '@/data/dune/battleArt'
 import type { DuneGameState } from '@/types/Dune/Game'
 import type { FactionId, Leader } from '@/types/Dune/Faction'
 import type { TreacheryCard } from '@/types/Dune/Treachery'
@@ -291,16 +292,25 @@ export function BattlePanel({
     )
   }
 
-  const frame = (children: React.ReactNode) => (
+  const frame = (children: React.ReactNode, backdrop?: string | null) => (
     <div data-layer="battle" style={{
       position: 'absolute', inset: 0, background: '#000000a8',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       overflow: 'auto', padding: 8,
     }}>
-      <div role="dialog" aria-label="battle" style={{
+      {/* THE SCENE BEHIND THE REVEAL, dimmed until the words win. The INK
+          ground stays underneath, so a backdrop that fails to load is the
+          plain frame it always was. */}
+      <div role="dialog" aria-label="battle"
+        {...(backdrop ? { 'data-backdrop': backdrop } : null)}
+        style={{
         background: INK, color: SAND, border: `1px solid ${SAND}44`, borderRadius: 10,
         padding: 16, width: 'min(560px, 100%)', maxHeight: '100%', overflowY: 'auto',
         font: `14px ${SERIF}`, boxShadow: '0 18px 60px #000000cc',
+        ...(backdrop ? {
+          backgroundImage: `linear-gradient(rgba(13, 18, 32, 0.88), rgba(13, 18, 32, 0.93)), url(/dune-battle/${backdrop})`,
+          backgroundSize: 'cover', backgroundPosition: 'center',
+        } : null),
       }}>
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
           <button type="button" onClick={() => setShut(true)}
@@ -411,6 +421,11 @@ export function BattlePanel({
   // dial, so an illegal choice cannot be posted from here at all.
   if (c.revealed?.allocate) {
     const al = c.revealed.allocate
+    const sceneA = battleBackdrop({
+      territoryId: c.territoryId,
+      factions: [c.aggressor, c.defender],
+      foughtHere: battles.fought.filter(x => x.territoryId === c.territoryId).length,
+    })
     const alExpired = now >= al.closesAt
     const winPlan = c.revealed.plans[al.by]
     const alOpp = [c.aggressor, c.defender].find(f => f !== al.by)!
@@ -466,6 +481,7 @@ export function BattlePanel({
           </button>
         )}
       </>,
+      sceneA,
     )
   }
 
@@ -488,6 +504,11 @@ export function BattlePanel({
       && !c.revealed.plans[other]?.kwisatz
     const expired = now >= beat.closesAt
 
+    const scene = battleBackdrop({
+      territoryId: c.territoryId,
+      factions: [c.aggressor, c.defender],
+      foughtHere: battles.fought.filter(x => x.territoryId === c.territoryId).length,
+    })
     const sinceReveal = now - (beat.closesAt - BATTLE_TRAITOR_SECONDS * 1000)
     const stage = sinceReveal >= 6200 ? 4
       : sinceReveal >= 4400 ? 3
@@ -683,6 +704,7 @@ export function BattlePanel({
           )}
         </div>}
       </>,
+      scene,
     )
   }
 

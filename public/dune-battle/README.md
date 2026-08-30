@@ -1,9 +1,13 @@
 # Battle backgrounds
 
-Backdrops for the Battle Phase, which **is not built yet**. Nothing in the app
-points at these files. They are committed rather than kept on somebody's disk
-because artwork that lives outside the repo is artwork that gets lost, and
-because the folder is easier to fill in a few sittings than in one.
+Backdrops for the Battle Phase — the reveal draws them now, behind the staged
+sequence and the winner's loss-allocation window. The hierarchy, most
+specific first: the fighters' own scene (`<Territory>-<Faction>`), the
+territory's own art (`<Territory>`, numbered variants `<Territory>-2` and up
+ALTERNATING between battles fought there), then the ground itself
+(`Dune-Stronghold`, `Dune-Sand`, `Dune-Rock`). A place nothing covers keeps the plain
+frame. The manifest the app resolves against is src/data/dune/battleArt.ts
+— add a new file there (and battlearttest holds the two in sync).
 
 ## What is here
 
@@ -15,6 +19,7 @@ because the folder is easier to fill in a few sittings than in one.
 | `Carthag-Harkonnen.jpg` | Carthag | the Harkonnen, who start there |
 | `Dune-Rock.png` | any rock territory | nobody in particular |
 | `Dune-Sand.png` | any sand territory | nobody in particular |
+| `Dune-Stronghold.png` | any stronghold without its own art | nobody in particular |
 | `Arrakeen-Battle.png` | *unplaced* — an Arrakeen assault scene awaiting a slot | — |
 
 ## The naming

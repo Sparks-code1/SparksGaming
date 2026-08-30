@@ -11,6 +11,7 @@
 // So the folder is enumerated one by one. Adding a file fails this suite until
 // somebody says what it is, which is the point rather than an inconvenience.
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
+import { BATTLE_BACKDROPS, battleBackdrop } from '@/data/dune/battleArt'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import { FACTION_IDS } from '@/data/dune/factions'
 import { FACTION_LOOK } from '@/components/dune/SeatLayer'
@@ -32,18 +33,10 @@ const DIR = 'public/dune-battle'
  * mistake this suite exists to catch, where a picture sits in a folder and
  * nothing says whether anybody meant it to be there.
  */
-const BACKDROPS = [
-  'Arrakeen.jpg',
-  'Arrakeen-Atreides.jpg',
-  'Carthag.jpg',
-  'Carthag-Harkonnen.jpg',
-  // The terrain backdrops: an open-desert battle beneath rock
-  // outcroppings — ground for battles in any rock territory, rather than
-  // one named place — and the promised sand, arrived and named into
-  // the grammar the same way.
-  'Dune-Rock.png',
-  'Dune-Sand.png',
-]
+// THE MANIFEST LIVES WITH THE APP NOW — src/data/dune/battleArt.ts — because
+// the reveal resolves backdrops through it. This suite goes on holding the
+// list and the folder to each other; it simply reads the one the app reads.
+const BACKDROPS: readonly string[] = BATTLE_BACKDROPS
 
 /**
  * Art that has ARRIVED but is not yet named into the grammar above — looked
@@ -106,7 +99,19 @@ const files = readdirSync(DIR).filter(f => !f.endsWith('.md'))
       return t !== null && !TERRAINS.has(t as never)
     }), [])
 
-  const placed = BACKDROPS.filter(f => !isTerrainFile(f))
+  // NUMBERED VARIANTS — Arrakeen-2.jpg — are the territory's own art in
+  // rotation, not a faction form; they parse apart before the faction check.
+  const variantOf = (file: string) => {
+    const m = /^(.+)-(\d+)\.(?:jpg|png)$/.exec(file)
+    return m ? { place: m[1], n: Number(m[2]) } : null
+  }
+  const variants = BACKDROPS.filter(f => variantOf(f) !== null)
+  check('every variant rotates a territory the board has',
+    variants.filter(f => !territories.has(variantOf(f)!.place)), [])
+  check('...and none stands without the plain scene it rotates with',
+    variants.filter(f => !BACKDROPS.includes(`${variantOf(f)!.place}.jpg`)), [])
+
+  const placed = BACKDROPS.filter(f => !isTerrainFile(f) && !variantOf(f))
 
   const parse = (file: string) => {
     const stem = file.replace(/\.jpg$/, '')
@@ -181,8 +186,45 @@ const files = readdirSync(DIR).filter(f => !f.endsWith('.md'))
   }
   walk('src')
   const referenced = src.some(text => text.includes('dune-battle'))
-  check('nothing in the app points at these yet — see the README when it does',
-    referenced, false)
+  check('the reveal points at these now, and the README says so',
+    referenced
+      && readFileSync('public/dune-battle/README.md', 'utf8').includes('the reveal draws'),
+    true)
+}
+
+// ── which scene a battle gets ─────────────────────────────────────────────
+// The hierarchy, most specific first: the fighters' own art, the place's own
+// (variants alternating between battles there), then the ground itself.
+{
+  check('a fighting faction gets its own scene',
+    battleBackdrop({ territoryId: 'territory-13', factions: ['atreides', 'harkonnen'] }),
+    'Arrakeen-Atreides.jpg')
+  check('...the aggressor\'s before the defender\'s',
+    battleBackdrop({
+      territoryId: 'territory-13', factions: ['harkonnen', 'atreides'],
+      from: ['Arrakeen-Atreides.jpg', 'Arrakeen-Harkonnen.jpg', 'Arrakeen.jpg'],
+    }), 'Arrakeen-Harkonnen.jpg')
+  check('...a bystander pair gets the place itself',
+    battleBackdrop({ territoryId: 'territory-13', factions: ['emperor', 'fremen'] }),
+    'Arrakeen.jpg')
+  check('two plain scenes alternate between battles there',
+    [0, 1, 2].map(n => battleBackdrop({
+      territoryId: 'territory-13', factions: ['emperor', 'fremen'], foughtHere: n,
+      from: ['Arrakeen.jpg', 'Arrakeen-2.jpg'],
+    })), ['Arrakeen.jpg', 'Arrakeen-2.jpg', 'Arrakeen.jpg'])
+  check('a stronghold with no art of its own falls to the generic stronghold',
+    battleBackdrop({
+      territoryId: 'territory-26', factions: ['emperor', 'fremen'],
+      from: ['Dune-Stronghold.png', 'Dune-Sand.png'],
+    }), 'Dune-Stronghold.png')
+  check('...and open ground falls to its terrain',
+    [battleBackdrop({ territoryId: 'territory-22', factions: ['emperor', 'fremen'] }),
+      battleBackdrop({ territoryId: 'territory-01', factions: ['emperor', 'fremen'] })],
+    ['Dune-Sand.png', 'Dune-Rock.png'])
+  check('...and a place nothing covers gets the plain frame',
+    battleBackdrop({
+      territoryId: 'territory-22', factions: ['emperor', 'fremen'], from: [],
+    }), null)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

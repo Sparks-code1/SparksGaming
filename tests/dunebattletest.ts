@@ -1191,6 +1191,8 @@ check('the three windows have their seconds',
   const choosing = drawAdv({ battles: { ...battles2, current: advRevealed } })
   check('the reveal prints the spice and the half-dial',
     [/data-plan-spice-shown/.test(choosing), choosing.includes('2½')], [true, true])
+  check('...and the winner\'s window keeps the same scene',
+    /data-backdrop="Arrakeen\.jpg"/.test(choosing), true)
   check('the winner is offered every legal way to pay, and only those',
     [(choosing.match(/data-allocate-option="/g) ?? []).length,
       choosing.includes('1 Sardaukar at full + 2 ordinary at half'),
@@ -1508,6 +1510,27 @@ check('the three windows have their seconds',
       traitor: { answered: [], calls: [], closesAt: 59_001 },
     },
   }
+  check('the reveal stands before the scene its battle resolves to',
+    [/data-backdrop="Arrakeen-Atreides\.jpg"/.test(
+      draw4({ battles: { ...battles4, current: kwReveal } })),
+    /data-backdrop="Dune-Sand\.png"/.test(draw4({
+      battles: {
+        ...battles4,
+        current: {
+          ...kwReveal, territoryId: 'territory-22', sectors: ['sector-15'],
+          aggressor: 'emperor', defender: 'fremen',
+          revealed: {
+            plans: { emperor: { dial: 1 }, fremen: { dial: 0 } },
+            traitor: { answered: [], calls: [], closesAt: 50_000 },
+          },
+        },
+      },
+      forces: [
+        f('emperor', 'territory-22', 'sector-15', 3),
+        f('fremen', 'territory-22', 'sector-15', 4),
+      ],
+    }))], [true, true])
+
   check('the reveal names the rider and counts its two',
     (() => {
       const s = draw4({ battles: { ...battles4, current: kwReveal } })
