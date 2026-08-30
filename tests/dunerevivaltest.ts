@@ -301,10 +301,17 @@ check('...all within the cap',
     [/const freeGrant = reviveAlly === 'fremen' && grants\.fremen\?\.revivals === true/.test(fn),
       /patron: patronRow \? \{ spice: readSpice\(patronRow as never\) \} : null/.test(fn)],
     [true, true])
-  check('...bills the Emperor to the bank and writes their purse',
-    [/from: patronSeat, to: BANK, amount: patronCost/.test(fn),
-      /\{ \[patronSeat\]: \{ \.\.\.patronRow, spice: moved\.purses\[patronSeat\] \} \}/.test(fn)],
-    [true, true])
+  // SLICED TO THE CASE, not the file: this pin was once satisfied by the
+  // patron write landing in CLAIM_CHARITY — a case with no patron in scope,
+  // which would have thrown on every live claim. The slice makes the pin
+  // name the case it means, and the charity case is pinned CLEAN of it.
+  const reviveCut = fn.slice(fn.indexOf("case 'REVIVE'"), fn.indexOf("case 'BATTLE_PICK'"))
+  const charityCut = fn.slice(fn.indexOf("case 'CLAIM_CHARITY'"), fn.indexOf("case 'CLOSE_CHARITY'"))
+  check('...bills the Emperor to the bank and writes their purse, in REVIVE alone',
+    [/from: patronSeat, to: BANK, amount: patronCost/.test(reviveCut),
+      /\{ \[patronSeat\]: \{ \.\.\.patronRow, spice: moved\.purses\[patronSeat\] \} \}/.test(reviveCut),
+      /patron/.test(charityCut)],
+    [true, true, false])
   check('the standing toggle is owned: Fremen shield and revivals, Emperor revivals',
     [/\? \['shield', 'revivals'\]/.test(fn),
       /: myFaction === 'emperor' \? \['revivals'\] : \[\]/.test(fn),

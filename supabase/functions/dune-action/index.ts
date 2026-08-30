@@ -603,16 +603,16 @@ Deno.serve(async req => {
       plainFull: number; plainHalf: number; eliteFull: number; eliteHalf: number
     } | null,
   ): Promise<Response> => {
-    // Everything the reveal decided lands in ONE write: forces to the
-    // tanks, leaders down, spice moved, cards discarded, the rotation
-    // stepped. `allocation` is the ADVANCED winner's named dead — null
+    // Everything the reveal decided lands in ONE write: forces to the
+    // tanks, leaders down, spice moved, cards discarded, the rotation
+    // stepped. `allocation` is the ADVANCED winner's named dead — null
     // settles by the basic dial-count rule.
       const { data: secretRows } = await admin
         .from('match_secrets').select('player_id, data').eq('match_id', matchId)
       const rowOf = Object.fromEntries((secretRows ?? []).map((r) => [r.player_id, r.data ?? {}]))
-      const planOf = (f: string) => c.revealed!.plans[f] as {
-        dial: number; spice?: number; leader?: string; cheapHero?: boolean
-        weapon?: string; defence?: string
+      const planOf = (f: string) => c.revealed!.plans[f] as {
+        dial: number; spice?: number; leader?: string; cheapHero?: boolean
+        weapon?: string; defence?: string
       }
 
       const outcome = resolveBattle({
@@ -659,13 +659,13 @@ Deno.serve(async req => {
         const plan = planOf(f)
         // forces to the tanks, cell by cell — already lifted whole by the
         // explosion when there was one
-        // The ADVANCED winner's dead are the pieces they NAMED; everyone
-        // else — and every basic battle — falls by the dial-count rule.
-        const lifts = outcome.explosion ? []
-          : allocation && f === outcome.winner
-            ? allocationLosses(
-              forces as never, f as never, c.territoryId, c.sectors, allocation)
-            : battleLosses(
+        // The ADVANCED winner's dead are the pieces they NAMED; everyone
+        // else — and every basic battle — falls by the dial-count rule.
+        const lifts = outcome.explosion ? []
+          : allocation && f === outcome.winner
+            ? allocationLosses(
+              forces as never, f as never, c.territoryId, c.sectors, allocation)
+            : battleLosses(
               forces as never, f as never, c.territoryId, c.sectors, side)
         for (const lift of lifts) {
           forces = liftForces(
@@ -720,13 +720,13 @@ Deno.serve(async req => {
             { wasRevived: revived.includes(KWISATZ_HADERACH) }) as never
         }
         purses[seatId] = readSpice(row as never)
-        for (const s of side.spice) {
-          moves.push({ from: BANK, to: seatId, amount: s.amount, reason: 'battle' })
-        }
-        // ── ADVANCED: the plan's spice leaves for the bank, win or lose —
-        // except a traitor-calling winner, whose spends the law zeroed.
-        if (side.spends > 0) {
-          moves.push({ from: seatId, to: BANK, amount: side.spends, reason: 'battle-spice' })
+        for (const s of side.spice) {
+          moves.push({ from: BANK, to: seatId, amount: s.amount, reason: 'battle' })
+        }
+        // ── ADVANCED: the plan's spice leaves for the bank, win or lose —
+        // except a traitor-calling winner, whose spends the law zeroed.
+        if (side.spends > 0) {
+          moves.push({ from: seatId, to: BANK, amount: side.spends, reason: 'battle-spice' })
         }
       }
       const paid = moves.filter((m) => m.amount > 0)
@@ -1235,12 +1235,7 @@ Deno.serve(async req => {
         p_match_id: matchId,
         p_expected_version: match.version,
         p_state: { ...state, charity: next },
-        p_secrets: {
-          [playerId]: { ...secrets, spice: moved.purses[playerId] },
-          ...(patronSeat && patronRow && patronCost > 0
-            ? { [patronSeat]: { ...patronRow, spice: moved.purses[patronSeat] } }
-            : null),
-        },
+        p_secrets: { [playerId]: { ...secrets, spice: moved.purses[playerId] } },
       })
       if (error) return json({ error: error.message }, 500)
       if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
@@ -2454,7 +2449,14 @@ Deno.serve(async req => {
             }
             : null),
         },
-        p_secrets: { [playerId]: { ...secrets, spice: moved.purses[playerId] } },
+        p_secrets: {
+          [playerId]: { ...secrets, spice: moved.purses[playerId] },
+          // THE PATRON'S PURSE moves in the same transaction as the
+          // reviver's — the Emperor's bill is not a second write.
+          ...(patronSeat && patronRow && patronCost > 0
+            ? { [patronSeat]: { ...patronRow, spice: moved.purses[patronSeat] } }
+            : null),
+        },
       })
       if (error) return json({ error: error.message }, 500)
       if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
