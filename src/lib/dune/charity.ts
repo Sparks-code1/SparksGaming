@@ -57,6 +57,13 @@ export interface DuneSecrets extends Secrets {
   /** The Atreides' movement glimpse: the top of the spice deck, written by
    *  the phase entry into their row alone, stamped with its turn. */
   spiceReveal?: { turn: number; card: { kind: string; name?: string } }
+  /**
+   * ADVANCED, Harkonnen: leaders seized from lost battles, each usable in
+   * ONE battle before it goes home. The identity is this seat's secret —
+   * the table sees a battle won and nothing more — until the plan that
+   * fields it is revealed.
+   */
+  capturedLeaders?: { name: string; from: FactionId }[]
 }
 
 /** Claiming brings a player UP TO this, it does not add it. */

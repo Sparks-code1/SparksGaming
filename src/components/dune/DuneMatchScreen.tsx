@@ -840,6 +840,9 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
         onBattleAllocate={seat
           ? choice => void send({ type: 'BATTLE_ALLOCATE', ...(choice ?? {}) })
           : undefined}
+        onBattleCapture={seat
+          ? choice => void send({ type: 'BATTLE_CAPTURE', choice })
+          : undefined}
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused
           ? { type: refusedBy, code: refused }
           : null}

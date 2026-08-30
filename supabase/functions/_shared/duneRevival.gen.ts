@@ -259,6 +259,10 @@ var FACTIONS = {
 };
 var factionById = (id) => FACTIONS[id] ?? null;
 
+// src/types/Dune/Game.ts
+var KWISATZ_HADERACH = "Kwisatz Haderach";
+var KWISATZ_STRENGTH = 2;
+
 // src/lib/dune/revival.ts
 var REVIVAL_CAP = 3;
 var REVIVAL_SPICE = 2;
@@ -321,12 +325,12 @@ function reviveLeader(input) {
   const found = dead.find((l) => l.name === leader);
   if (!found) return { ok: false, refusal: "not-in-tanks" };
   if (found.faceDown) return { ok: false, refusal: "face-down" };
-  const sheet = factionById(faction)?.leaders.find((l) => l.name === leader);
-  if (!sheet) return { ok: false, refusal: "no-such-leader" };
-  if (sheet.strength > spice) return { ok: false, refusal: "cannot-pay" };
+  const strength = faction === "atreides" && leader === KWISATZ_HADERACH ? KWISATZ_STRENGTH : factionById(faction)?.leaders.find((l) => l.name === leader)?.strength;
+  if (strength == null) return { ok: false, refusal: "no-such-leader" };
+  if (strength > spice) return { ok: false, refusal: "cannot-pay" };
   return {
     ok: true,
-    cost: sheet.strength,
+    cost: strength,
     tanks: {
       ...tanks,
       leaders: { ...tanks.leaders, [faction]: dead.filter((l) => l.name !== leader) }
@@ -339,10 +343,12 @@ function returnLeaderToTanks(tanks, faction, leader, opts = {}) {
   const dead = [...tanks.leaders[faction] ?? []];
   if (dead.some((l) => l.name === leader)) return tanks;
   dead.push({ name: leader, ...opts.wasRevived ? { faceDown: true } : null });
+  const sheetNames = new Set((factionById(faction)?.leaders ?? []).map((l) => l.name));
+  const own = dead.filter((l) => sheetNames.has(l.name));
   const five = factionById(faction)?.leaders.length ?? 5;
   const open = new Set(tanks.leaderRevivalOpen ?? []);
-  if (dead.length >= five) open.add(faction);
-  const everyoneFaceDown = dead.length >= five && dead.every((l) => l.faceDown);
+  if (own.length >= five) open.add(faction);
+  const everyoneFaceDown = own.length >= five && own.every((l) => l.faceDown);
   return {
     ...tanks,
     leaders: {

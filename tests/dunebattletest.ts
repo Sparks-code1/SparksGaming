@@ -17,7 +17,10 @@ import {
   prescienceAnswer,
   piecesInBattle, eliteWorth, fullWithoutSpice, battleStrengthCap,
   allocationsFor, judgeAllocation, firstAllocation, allocationLosses,
+  BATTLE_CAPTURE_SECONDS, capturePool, leaderOwner, allOwnLeadersDead,
+  KWISATZ_HADERACH, KWISATZ_STRENGTH, kwisatzHaderachAvailable,
 } from '@/lib/dune/battle'
+import { reviveLeader, returnLeaderToTanks } from '@/lib/dune/revival'
 import type { BattlePlan } from '@/lib/dune/battle'
 import { factionById } from '@/data/dune/factions'
 import { createElement } from 'react'
@@ -182,7 +185,7 @@ const side = (faction: FactionId, plan: BattlePlan, calledTraitor = false) => {
   check('...the loser loses every force there',
     plain.sides[1], {
       faction: 'harkonnen', losesAll: true, losses: 0, leaderDies: false,
-      discards: [], spice: [], spends: 0,
+      discards: [], spice: [], spends: 0, kwisatzDies: false,
     })
   check('...the winner pays the dial and keeps the field',
     [plain.sides[0].losesAll, plain.sides[0].losses], [false, 3])
@@ -387,7 +390,7 @@ check('the three windows have their seconds',
   check('...and never lifting the sides twice',
     /const lifts = outcome\.explosion \? \[\]/.test(beat), true)
   check('the fought-out phase clears itself',
-    /: undefined[\s\S]{0,700}battles: battlesAfter \} : \{ battles: undefined \}/.test(beat), true)
+    /: undefined[\s\S]{0,900}battles: battlesOut \} : \{ battles: undefined \}/.test(beat), true)
 
   check('...and the resolution moves the public count with the hand',
     /handCounts\[f\] = hand\.length/.test(beat)
@@ -1237,6 +1240,320 @@ check('the three windows have their seconds',
   const harness2 = code('src/components/dune/DuneMultiSeatView.tsx')
   check('both drivers post the choice',
     [/BATTLE_ALLOCATE/.test(match2), /BATTLE_ALLOCATE/.test(harness2)], [true, true])
+}
+
+// ── the Kwisatz Haderach and the Harkonnen's prisoners ────────────────────
+// Pass four. The sleeper wakes at seven losses and rides ONE territory a
+// turn for +2 — powerless when its carrier dies, traitor-proof, killed only
+// by the explosion, revived like a leader while counting for nothing. The
+// Harkonnen take a prisoner from every battle they win: kill it for two
+// spice, or field it once and send it home.
+{
+  check('the sleeper wakes at seven',
+    [kwisatzHaderachAvailable(6), kwisatzHaderachAvailable(7),
+      kwisatzHaderachAvailable(undefined)], [false, true, false])
+  check('...worth two, for a minute of the clock',
+    [KWISATZ_STRENGTH, BATTLE_CAPTURE_SECONDS], [2, 60])
+  check('a leader\'s owner is found by name',
+    [leaderOwner(JESSICA), leaderOwner(FEYD), leaderOwner('nobody')],
+    ['atreides', 'harkonnen', null])
+
+  // the judge
+  const battle = { territoryId: 'territory-13', sectors: ['sector-10'] }
+  const board = [
+    f('atreides', 'territory-13', 'sector-10', 4),
+    f('harkonnen', 'territory-13', 'sector-10', 3),
+  ]
+  const kw = (plan: BattlePlan, over: Record<string, unknown> = {}) => judgePlan({
+    faction: 'atreides', battle, forces: board, hand: [],
+    deadLeaders: [], usedLeaders: {}, plan,
+    mode: 'advanced', opponent: 'harkonnen', purse: 5,
+    kwisatz: { available: true, dead: false, usedTerritory: null },
+    ...over,
+  } as never)
+  check('an awakened sleeper rides a leader',
+    kw({ dial: 1, leader: JESSICA, kwisatz: true }), { ok: true })
+  check('...and may ride the same territory again',
+    kw({ dial: 1, leader: JESSICA, kwisatz: true },
+      { kwisatz: { available: true, dead: false, usedTerritory: 'territory-13' } }),
+    { ok: true })
+  check('...but never alone',
+    (kw({ dial: 1, kwisatz: true }) as { refusal: string }).refusal, 'kwisatz-alone')
+  check('...never asleep',
+    (kw({ dial: 1, leader: JESSICA, kwisatz: true },
+      { kwisatz: { available: false, dead: false } }) as { refusal: string }).refusal,
+    'kwisatz-asleep')
+  check('...never from the tanks',
+    (kw({ dial: 1, leader: JESSICA, kwisatz: true },
+      { kwisatz: { available: true, dead: true } }) as { refusal: string }).refusal,
+    'kwisatz-in-the-tanks')
+  check('...never a second territory in a turn',
+    (kw({ dial: 1, leader: JESSICA, kwisatz: true },
+      { kwisatz: { available: true, dead: false, usedTerritory: 'territory-26' } }) as { refusal: string }).refusal,
+    'kwisatz-elsewhere')
+  check('...never in the basic game',
+    (kw({ dial: 1, leader: JESSICA, kwisatz: true },
+      { mode: 'basic', kwisatz: { available: true, dead: false } }) as { refusal: string }).refusal,
+    'kwisatz-is-advanced')
+  check('...and never another faction\'s',
+    (judgePlan({
+      faction: 'harkonnen', battle, forces: board, hand: [],
+      deadLeaders: [], usedLeaders: {},
+      plan: { dial: 1, leader: FEYD, kwisatz: true },
+      mode: 'advanced', opponent: 'atreides', purse: 5,
+      kwisatz: { available: true, dead: false },
+    } as never) as { refusal: string }).refusal, 'kwisatz-not-yours')
+
+  check('a borrowed leader is a legal leader, for its captor alone',
+    [judgePlan({
+      faction: 'harkonnen', battle, forces: board, hand: [],
+      deadLeaders: [], usedLeaders: {}, plan: { dial: 1, leader: JESSICA },
+      mode: 'advanced', opponent: 'atreides', purse: 5, borrowed: [JESSICA],
+    } as never), (judgePlan({
+      faction: 'harkonnen', battle, forces: board, hand: [],
+      deadLeaders: [], usedLeaders: {}, plan: { dial: 1, leader: JESSICA },
+      mode: 'advanced', opponent: 'atreides', purse: 5,
+    } as never) as { refusal: string }).refusal],
+    [{ ok: true }, 'no-such-leader'])
+
+  // the resolution
+  const YUEH = A[4].name  // Dr. Wellington Yueh, strength 1
+  check('the +2 turns a losing total into a winning one',
+    [resolveBattle({
+      aggressor: side('atreides', { dial: 1, leader: YUEH, kwisatz: true }),
+      defender: side('harkonnen', { dial: 3, leader: KUDU }),
+    }).winner, resolveBattle({
+      aggressor: side('atreides', { dial: 1, leader: YUEH }),
+      defender: side('harkonnen', { dial: 3, leader: KUDU }),
+    }).winner], ['atreides', 'harkonnen'])
+  check('...and dies with its carrier\'s effect, not its life',
+    (() => {
+      // Jessica falls to the unanswered Chaumas: her 5 AND the token's 2 go
+      // with her, 2 against 3 — a +2 that outlived its carrier would win.
+      const out = resolveBattle({
+        aggressor: side('atreides', { dial: 2, leader: JESSICA, kwisatz: true }),
+        defender: side('harkonnen', { dial: 3, cheapHero: true, weapon: 'chaumas' }),
+      })
+      return [out.winner, out.sides[0].kwisatzDies]
+    })(), ['harkonnen', false])
+  check('only the explosion kills the Kwisatz Haderach',
+    resolveBattle({
+      aggressor: side('atreides', { dial: 1, leader: JESSICA, weapon: 'lasgun', kwisatz: true }),
+      defender: side('harkonnen', { dial: 2, leader: FEYD, defence: 'shield' }),
+    }).sides.map(s => s.kwisatzDies), [true, false])
+  check('a guarded leader cannot turn traitor',
+    (() => {
+      const out = resolveBattle({
+        aggressor: side('atreides', { dial: 3, leader: JESSICA, kwisatz: true }),
+        defender: side('harkonnen', { dial: 1, leader: KUDU }, true),
+      })
+      return [out.traitors, out.winner]
+    })(), [[], 'atreides'])
+  check('a borrowed leader fights at its own strength',
+    resolveBattle({
+      aggressor: side('atreides', { dial: 2, leader: YUEH }),
+      defender: side('harkonnen', { dial: 0, leader: JESSICA }),
+    }).winner, 'harkonnen')
+
+  // the pool
+  check('the pool spares the dead, the elsewhere-used, and the already-taken',
+    capturePool({
+      loser: 'atreides',
+      tanks: [{ name: JESSICA }],
+      usedLeaders: { 'Thufir Hawat': 'territory-26', 'Gurney Halleck': 'territory-13' },
+      territoryId: 'territory-13',
+      alreadyCaptured: ['Duncan Idaho'],
+    }), ['Gurney Halleck', 'Dr. Wellington Yueh'])
+  check('all own leaders dead means every prisoner goes home',
+    [allOwnLeadersDead('harkonnen',
+      factionById('harkonnen')!.leaders.map(l => ({ name: l.name }))),
+    allOwnLeadersDead('harkonnen',
+      factionById('harkonnen')!.leaders.slice(1).map(l => ({ name: l.name })))],
+    [true, false])
+
+  // revival: like any other leader, counting for nothing
+  let fourDead = { forces: {}, leaders: {} } as Parameters<typeof returnLeaderToTanks>[0]
+  for (const l of factionById('atreides')!.leaders.slice(0, 4)) {
+    fourDead = returnLeaderToTanks(fourDead, 'atreides', l.name)
+  }
+  const withToken = returnLeaderToTanks(fourDead, 'atreides', KWISATZ_HADERACH)
+  check('the token in the tanks does not open the leaders\' gate',
+    (withToken.leaderRevivalOpen ?? []).includes('atreides'), false)
+  const fifthToo = returnLeaderToTanks(
+    withToken, 'atreides', factionById('atreides')!.leaders[4].name)
+  check('...the fifth sheet leader still does',
+    (fifthToo.leaderRevivalOpen ?? []).includes('atreides'), true)
+  check('...and the token revives at its own two',
+    (() => {
+      const out = reviveLeader({
+        faction: 'atreides', tanks: fifthToo, leader: KWISATZ_HADERACH,
+        soFar: { forces: 0, starred: 0 }, spice: 5,
+      } as never)
+      return 'ok' in out && out.ok ? out.cost : out
+    })(), 2)
+
+  // ── the server slice ────────────────────────────────────────────────────
+  const fn = code('supabase/functions/dune-action/index.ts')
+  const planCase = fn.slice(fn.indexOf("case 'BATTLE_PLAN'"), fn.indexOf("case 'BATTLE_VOICE'"))
+  check('the plan carries the sleeper, and the judge is told everything',
+    [/\.\.\.\(action\.kwisatz \? \{ kwisatz: true \} : null\),/.test(planCase),
+      /available: kwisatzHaderachAvailable\(/.test(planCase),
+      /borrowed: \(\(mine as \{ capturedLeaders/.test(planCase)],
+    [true, true, true])
+  const beatAll = fn.slice(fn.indexOf("case 'BATTLE_TRAITOR'"), fn.indexOf("case 'SEED_SPICE'"))
+    + fn.slice(fn.indexOf('const settleBattle'), fn.indexOf('switch (action.type)'))
+  check('the guarded leader cannot be called at the door either',
+    /code: 'kwisatz-guards',/.test(beatAll), true)
+  check('a dead leader is banked under its OWNER\'S name',
+    /tanks, \(leaderOwner\(plan\.leader\) \?\? f\) as never, plan\.leader,/.test(beatAll), true)
+  check('a fielded prisoner goes home, alive or dead',
+    /capturedLeaders: kept!\.filter\(\(x\) => x\.name !== plan\.leader\)/.test(beatAll), true)
+  check('the explosion reaches the token',
+    /if \(side\.kwisatzDies\) \{/.test(beatAll)
+      && /KWISATZ_HADERACH,/.test(beatAll), true)
+  check('a wiped-out Harkonnen returns every prisoner',
+    /if \(hkSeat && allOwnLeadersDead\(/.test(beatAll)
+      && /capturedLeaders: \[\] \}/.test(beatAll), true)
+  check('the losses counter moves with every settle',
+    /lostNow\[k\.faction\] = \(lostNow\[k\.faction\] \?\? 0\) \+ k\.count/.test(beatAll)
+      && /battleLosses: \(p\.battleLosses \?\? 0\) \+ lostNow\[p\.faction\]/.test(beatAll),
+    true)
+  check('the ridden territory is stamped for the turn',
+    /const khRode = \[c\.aggressor, c\.defender\]\.some\(\(x\) => !!planOf\(x\)\.kwisatz\)/.test(beatAll)
+      && /kwisatzUsed: c\.territoryId/.test(beatAll), true)
+  check('a Harkonnen win opens the prisoner window',
+    [/const captiveFrom = state\.mode === 'advanced' && outcome\.winner === 'harkonnen'/.test(beatAll),
+      /capturePool\(\{/.test(beatAll),
+      /capture, spent: true,/.test(beatAll)], [true, true, true])
+  const pickCase = fn.slice(fn.indexOf("case 'BATTLE_PICK'"), fn.indexOf("case 'BATTLE_PLAN'"))
+  check('...and the next pick waits on it',
+    /code: 'capture-first',/.test(pickCase), true)
+  const capCase = fn.slice(fn.indexOf("case 'BATTLE_CAPTURE'"), fn.indexOf('// ── The Fremen ride'))
+  check('the choice is the Harkonnen\'s until the clock frees anyone',
+    [/code: 'not-your-prisoner',/.test(capCase),
+      /shuffleWithSeed\(Number\(match\.rng_seed\) \+ match\.action_seq, pool\)\[0\]/.test(capCase),
+      /amount: 2, reason: 'captured-leader'/.test(capCase),
+      /\(b as \{ spent\?: boolean \}\)\.spent/.test(capCase)],
+    [true, true, true, true])
+  const hold2 = code('src/lib/dune/phaseAdvance.ts')
+  check('the phase holds for the prisoner window',
+    /state\.battles\.capture\?\.closesAt/.test(hold2), true)
+
+  // ── the panel ───────────────────────────────────────────────────────────
+  const battles4 = {
+    turn: 3, order: ['atreides', 'harkonnen'] as FactionId[], at: 0,
+    current: null, fought: [], usedLeaders: {}, closesAt: 9_999_999_999_999,
+  }
+  const kwBoard = [
+    f('atreides', 'territory-13', 'sector-10', 4),
+    f('harkonnen', 'territory-13', 'sector-10', 3),
+  ]
+  const draw4 = (over: Record<string, unknown> = {}) =>
+    renderToStaticMarkup(createElement(BattlePanel, {
+      battles: battles4, forces: kwBoard, storm: CALM, tanks: null,
+      seat: 'atreides' as FactionId,
+      hand: [], traitors: [], now: 1, busy: false,
+      onPick: () => {}, onPlan: () => {}, onAnswer: () => {},
+      onVoice: () => {}, onPrescience: () => {}, onAllocate: () => {},
+      onCapture: () => {},
+      mode: 'advanced', purse: 5,
+      ...over,
+    } as never))
+
+  const kwCurrent = {
+    territoryId: 'territory-13', sectors: ['sector-10'],
+    aggressor: 'atreides', defender: 'harkonnen',
+    committed: [], closesAt: 9_999_999_999_999,
+  }
+  check('an awakened sleeper appears on the form, waiting for a leader',
+    /data-plan-kwisatz="" aria-pressed="false" disabled=""/.test(draw4({
+      battles: { ...battles4, current: kwCurrent },
+      kwisatz: { available: true, dead: false, usedTerritory: null },
+    })), true)
+  check('...says when it lies in the tanks',
+    /data-kwisatz-dead=""/.test(draw4({
+      battles: { ...battles4, current: kwCurrent },
+      kwisatz: { available: true, dead: true, usedTerritory: null },
+    })), true)
+  check('...and when it has ridden elsewhere',
+    /data-kwisatz-elsewhere=""/.test(draw4({
+      battles: { ...battles4, current: kwCurrent },
+      kwisatz: { available: true, dead: false, usedTerritory: 'territory-26' },
+    })), true)
+  check('...and an asleep one shows nothing at all',
+    /data-plan-kwisatz/.test(draw4({
+      battles: { ...battles4, current: kwCurrent }, kwisatz: null,
+    })), false)
+  check('a prisoner is offered as the disc it is',
+    draw4({
+      battles: { ...battles4, current: { ...kwCurrent, aggressor: 'harkonnen', defender: 'atreides' } },
+      seat: 'harkonnen',
+      captured: [{ name: JESSICA, from: 'atreides' }],
+    }).includes(`data-plan-borrowed="${JESSICA}"`), true)
+
+  const kwReveal = {
+    ...kwCurrent, committed: ['atreides', 'harkonnen'],
+    revealed: {
+      plans: {
+        atreides: { dial: 2, leader: JESSICA, kwisatz: true },
+        harkonnen: { dial: 3, leader: FEYD },
+      },
+      traitor: { answered: [], calls: [], closesAt: 59_001 },
+    },
+  }
+  check('the reveal names the rider and counts its two',
+    (() => {
+      const s = draw4({ battles: { ...battles4, current: kwReveal } })
+      return [/data-reveal-kwisatz="atreides"/.test(s),
+        s.includes('data-strength-count="atreides">7<')]
+    })(), [true, true])
+  check('...and the guarded leader offers no traitor call',
+    /data-call-traitor/.test(draw4({
+      battles: {
+        ...battles4,
+        current: {
+          ...kwReveal,
+          revealed: { ...kwReveal.revealed, traitor: { answered: [], calls: [], closesAt: 50_000 } },
+        },
+      },
+      seat: 'harkonnen', traitors: [JESSICA],
+    })), false)
+
+  const capBattles = {
+    ...battles4,
+    capture: { from: 'atreides' as FactionId, closesAt: 9_999_999_999_999 },
+  }
+  check('the Harkonnen are asked about their prisoner',
+    (() => {
+      const s = draw4({ battles: capBattles, seat: 'harkonnen' })
+      return [/data-capture-kill/.test(s), /data-capture-keep/.test(s),
+        /data-capture-decline/.test(s)]
+    })(), [true, true, true])
+  check('...everyone else waits on the cell door',
+    (() => {
+      const s = draw4({ battles: capBattles, seat: 'atreides' })
+      return [/data-capture-waits/.test(s), /data-capture-kill/.test(s)]
+    })(), [true, false])
+  check('...and an expired window can be pushed shut',
+    /data-capture-push/.test(draw4({
+      battles: { ...capBattles, capture: { from: 'atreides' as FactionId, closesAt: 0 } },
+      seat: 'atreides',
+    })), true)
+
+  const strip = code('src/components/dune/OwnStrip.tsx')
+  check('a Harkonnen seat lists its prisoners, from its own row',
+    /data-captured-leaders=""/.test(strip)
+      && /own\?\.capturedLeaders/.test(strip), true)
+  const game4 = code('src/components/dune/DuneGameScreen.tsx')
+  check('the screen feeds the sleeper, the prisoners, and the clock',
+    [/onCapture=\{onBattleCapture\}/.test(game4),
+      /captured=\{own\?\.capturedLeaders \?\? \[\]\}/.test(game4),
+      /kwisatzHaderachAvailable\(/.test(game4),
+      /BATTLE_CAPTURE_SECONDS \* 1000/.test(game4)], [true, true, true, true])
+  const match4 = code('src/components/dune/DuneMatchScreen.tsx')
+  const harness4 = code('src/components/dune/DuneMultiSeatView.tsx')
+  check('both drivers post the choice over the prisoner',
+    [/BATTLE_CAPTURE/.test(match4), /BATTLE_CAPTURE/.test(harness4)], [true, true])
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

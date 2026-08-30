@@ -27,6 +27,7 @@
 import type { Force } from '@/types/Dune/Game'
 import type { FactionId } from '@/types/Dune/Faction'
 import { factionById } from '@/data/dune/factions'
+import { KWISATZ_HADERACH, KWISATZ_STRENGTH } from '@/types/Dune/Game'
 
 /** The most forces one faction may revive in one turn. */
 export const REVIVAL_CAP = 3
@@ -182,13 +183,17 @@ export function reviveLeader(input: {
   const found = dead.find(l => l.name === leader)
   if (!found) return { ok: false, refusal: 'not-in-tanks' }
   if (found.faceDown) return { ok: false, refusal: 'face-down' }
-  const sheet = factionById(faction)?.leaders.find(l => l.name === leader)
-  if (!sheet) return { ok: false, refusal: 'no-such-leader' }
-  if (sheet.strength > spice) return { ok: false, refusal: 'cannot-pay' }
+  // THE KWISATZ HADERACH "must be revived like any other leader": the same
+  // gate, the same one-a-turn, at its own +2 — it is simply not on the sheet.
+  const strength = faction === 'atreides' && leader === KWISATZ_HADERACH
+    ? KWISATZ_STRENGTH
+    : factionById(faction)?.leaders.find(l => l.name === leader)?.strength
+  if (strength == null) return { ok: false, refusal: 'no-such-leader' }
+  if (strength > spice) return { ok: false, refusal: 'cannot-pay' }
 
   return {
     ok: true,
-    cost: sheet.strength,
+    cost: strength,
     tanks: {
       ...tanks,
       leaders: { ...tanks.leaders, [faction]: dead.filter(l => l.name !== leader) },
@@ -222,11 +227,17 @@ export function returnLeaderToTanks(
   if (dead.some(l => l.name === leader)) return tanks     // already there; a double report changes nothing
   dead.push({ name: leader, ...(opts.wasRevived ? { faceDown: true } : null) })
 
+  // THE GATE COUNTS THE SHEET, nothing else. "Alive or dead, the Kwisatz
+  // Haderach has no effect on the rule governing revival of Atreides
+  // leaders" — so the token in the tanks neither opens the gate early nor
+  // holds the rotation's flip hostage.
+  const sheetNames = new Set((factionById(faction)?.leaders ?? []).map(l => l.name))
+  const own = dead.filter(l => sheetNames.has(l.name))
   const five = factionById(faction)?.leaders.length ?? 5
   const open = new Set(tanks.leaderRevivalOpen ?? [])
-  if (dead.length >= five) open.add(faction)
+  if (own.length >= five) open.add(faction)
 
-  const everyoneFaceDown = dead.length >= five && dead.every(l => l.faceDown)
+  const everyoneFaceDown = own.length >= five && own.every(l => l.faceDown)
   return {
     ...tanks,
     leaders: {

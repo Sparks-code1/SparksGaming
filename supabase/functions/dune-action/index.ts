@@ -63,6 +63,8 @@ import {
   judgeVoiceCommand, prescienceAnswer, PRESCIENCE_ASKS,
   piecesInBattle, eliteWorth, fullWithoutSpice,
   judgeAllocation, firstAllocation, allocationLosses,
+  BATTLE_CAPTURE_SECONDS, capturePool, leaderOwner, allOwnLeadersDead,
+  KWISATZ_HADERACH, kwisatzHaderachAvailable,
 } from '../_shared/duneBattle.gen.ts'
 import {
   phaseAfter, advanceHold, phaseWindowOpen, rollStorm, stormEntry, cityIncome,
@@ -639,11 +641,13 @@ Deno.serve(async req => {
             count: lift.count, ...(lift.starred > 0 ? { starred: lift.starred } : null),
           })
         }
-        // the leader: dead to the tanks, or standing where it fought
+        // the leader: dead to the tanks — UNDER ITS OWNER'S NAME, which for
+        // a captured leader is not the banner it fought beneath — or
+        // standing where it fought
         if (plan.leader) {
           if (side.leaderDies) {
             tanks = returnLeaderToTanks(
-              tanks, f as never, plan.leader,
+              tanks, (leaderOwner(plan.leader) ?? f) as never, plan.leader,
               { wasRevived: revived.includes(plan.leader) }) as never
             delete usedLeaders[plan.leader]
           } else {
@@ -663,10 +667,24 @@ Deno.serve(async req => {
         const traitors = calls.includes(f as never) && theirLeader
           ? (row.traitors ?? []).filter((n) => n !== theirLeader)
           : row.traitors
+        // A BORROWED leader has fought its one battle: home it goes, alive
+        // or dead — off the Harkonnen's list either way.
+        const kept = (row as { capturedLeaders?: { name: string; from: string }[] })
+          .capturedLeaders
+        const fielded = !!plan.leader && !!kept?.some((x) => x.name === plan.leader)
         secretsPatch[seatId] = {
           ...row, cards: hand, ...(traitors ? { traitors } : null), battlePlan: null,
+          ...(fielded
+            ? { capturedLeaders: kept!.filter((x) => x.name !== plan.leader) }
+            : null),
         }
         handCounts[f] = hand.length
+        // The explosion is the ONE thing that kills the Kwisatz Haderach.
+        if (side.kwisatzDies) {
+          tanks = returnLeaderToTanks(
+            tanks, f as never, KWISATZ_HADERACH,
+            { wasRevived: revived.includes(KWISATZ_HADERACH) }) as never
+        }
         purses[seatId] = readSpice(row as never)
         for (const s of side.spice) {
           moves.push({ from: BANK, to: seatId, amount: s.amount, reason: 'battle' })
@@ -688,6 +706,26 @@ Deno.serve(async req => {
 
       tanks = bankDead(tanks, killed as never) as never
 
+      // "When all of your own leaders have been killed, you must return all
+      // captured leaders immediately."
+      const hkSeat = seatOfFaction['harkonnen']
+      if (hkSeat && allOwnLeadersDead(
+        'harkonnen' as never, (tanks.leaders['harkonnen'] ?? []) as never)) {
+        const hkRow = (secretsPatch[hkSeat] ?? rowOf[hkSeat] ?? {}) as {
+          capturedLeaders?: unknown[]
+        }
+        if ((hkRow.capturedLeaders ?? []).length > 0) {
+          secretsPatch[hkSeat] = { ...hkRow, capturedLeaders: [] }
+        }
+      }
+
+      // THE LOSSES COUNT — the Kwisatz Haderach wakes at seven. Everyone's
+      // counter moves; only the Atreides' means anything yet.
+      const lostNow: Record<string, number> = {}
+      for (const k of killed) {
+        lostNow[k.faction] = (lostNow[k.faction] ?? 0) + k.count
+      }
+
       // the explosion burns the spice lying there too
       const spiceOnBoard = { ...((state.spiceOnBoard ?? {}) as Record<string, number>) }
       if (outcome.clearSpice) delete spiceOnBoard[c.territoryId]
@@ -702,12 +740,53 @@ Deno.serve(async req => {
       // the rotation walks on over the board as it now stands
       const pendingAfter = pendingBattles(forces as never, state.storm as never)
       const next = nextAggressor(b.order as never, pendingAfter, b.at)
+      // The one territory the Kwisatz Haderach has ridden into this turn.
+      const khRode = [c.aggressor, c.defender].some((x) => !!planOf(x).kwisatz)
       const battlesAfter = next
         ? {
           ...b, at: next.at, current: null, fought, usedLeaders,
           closesAt: now + BATTLE_PICK_SECONDS * 1000,
+          ...(khRode ? { kwisatzUsed: c.territoryId } : null),
         }
         : undefined
+
+      // ── THE HARKONNEN TAKE A PRISONER from every battle they win ────────
+      // The window opens when the pool is not empty; a fought-out rotation
+      // is held open by `spent` until the window answers.
+      const captiveFrom = state.mode === 'advanced' && outcome.winner === 'harkonnen'
+        ? [c.aggressor, c.defender].find((x) => x !== 'harkonnen')
+        : undefined
+      const hkKeeps = hkSeat
+        ? (((secretsPatch[hkSeat] ?? rowOf[hkSeat] ?? {}) as {
+          capturedLeaders?: { name: string }[]
+        }).capturedLeaders ?? [])
+        : []
+      const pool = captiveFrom
+        ? capturePool({
+          loser: captiveFrom as never,
+          tanks: (tanks.leaders[captiveFrom] ?? []) as never,
+          usedLeaders,
+          territoryId: c.territoryId,
+          alreadyCaptured: hkKeeps.map((x) => x.name),
+        })
+        : []
+      const capture = pool.length > 0
+        ? {
+          from: captiveFrom,
+          territoryId: c.territoryId,
+          closesAt: now + BATTLE_CAPTURE_SECONDS * 1000,
+        }
+        : undefined
+      const battlesOut = capture
+        ? battlesAfter
+          ? { ...battlesAfter, capture }
+          : {
+            ...b, current: null, fought, usedLeaders,
+            closesAt: now + BATTLE_CAPTURE_SECONDS * 1000,
+            capture, spent: true,
+            ...(khRode ? { kwisatzUsed: c.territoryId } : null),
+          }
+        : battlesAfter
 
       const { data, error } = await admin.rpc('apply_match_write', {
         p_match_id: matchId,
@@ -716,12 +795,20 @@ Deno.serve(async req => {
           ...state, forces, tanks, spiceOnBoard,
           // THE PUBLIC COUNT MOVES WITH THE HAND — a discard that shrank a
           // hand while the count stood still held a whole hand back as stale.
-          players: ((state.players ?? []) as { faction: string; handCount?: number }[])
-            .map((p) => handCounts[p.faction] != null
-              ? { ...p, handCount: handCounts[p.faction] }
-              : p),
+          players: ((state.players ?? []) as {
+            faction: string; handCount?: number; battleLosses?: number
+          }[])
+            .map((p) => ({
+              ...p,
+              ...(handCounts[p.faction] != null
+                ? { handCount: handCounts[p.faction] } : null),
+              // the losses counter moves with every settle
+              ...(lostNow[p.faction]
+                ? { battleLosses: (p.battleLosses ?? 0) + lostNow[p.faction] }
+                : null),
+            })),
           treacheryDiscard: discard,
-          ...(battlesAfter ? { battles: battlesAfter } : { battles: undefined }),
+          ...(battlesOut ? { battles: battlesOut } : { battles: undefined }),
           awaiting: next ? next.faction : null,
           lastBattle: {
             turn: state.turn ?? 0, at: now,
@@ -2180,6 +2267,11 @@ Deno.serve(async req => {
         return json({ error: 'the turn is not at battles', code: 'wrong-phase' }, 409)
       }
       if (b.current) return json({ error: 'a battle is already open', code: 'battle-open' }, 409)
+      if ((b as { capture?: unknown }).capture) {
+        return json({
+          error: 'the Harkonnen hold a prisoner first', code: 'capture-first',
+        }, 409)
+      }
       const aggressor = b.order[b.at]
       const expired = now >= b.closesAt
       if (!expired && myFaction !== aggressor) {
@@ -2285,6 +2377,7 @@ Deno.serve(async req => {
         const plan = {
           dial: Number(action.dial ?? 0),
           ...(action.spice != null ? { spice: Number(action.spice) } : null),
+          ...(action.kwisatz ? { kwisatz: true } : null),
           ...(action.leader ? { leader: String(action.leader) } : null),
           ...(action.cheapHero ? { cheapHero: true } : null),
           ...(action.weapon ? { weapon: String(action.weapon) } : null),
@@ -2301,6 +2394,17 @@ Deno.serve(async req => {
           mode: (state.mode === 'advanced' ? 'advanced' : 'basic') as never,
           opponent: combatants.find((f) => f !== myFaction) as never,
           purse: readSpice(mine as never),
+          // ...the sleeper's state, and any prisoner this seat may field
+          kwisatz: {
+            available: kwisatzHaderachAvailable(
+              ((state.players ?? []) as { faction: string; battleLosses?: number }[])
+                .find((p) => p.faction === myFaction)?.battleLosses),
+            dead: (tanks.leaders[myFaction] ?? [])
+              .some((l) => l.name === KWISATZ_HADERACH),
+            usedTerritory: (b as { kwisatzUsed?: string }).kwisatzUsed ?? null,
+          },
+          borrowed: ((mine as { capturedLeaders?: { name: string }[] })
+            .capturedLeaders ?? []).map((x) => x.name),
           // the Voice binds only the seat it was aimed at
           voiced: voiceNow?.done && voiceNow.command && myFaction !== voiceNow.by
             ? voiceNow.command as never
@@ -2550,6 +2654,11 @@ Deno.serve(async req => {
             .from('match_secrets').select('data')
             .eq('match_id', matchId).eq('player_id', playerId).maybeSingle()
           const held = ((mineRow?.data ?? {}) as { traitors?: string[] }).traitors ?? []
+          if ((theirPlan as { kwisatz?: boolean }).kwisatz) {
+            return json({
+              error: 'the Kwisatz Haderach guards that leader', code: 'kwisatz-guards',
+            }, 409)
+          }
           if (!theirPlan.leader || !held.includes(theirPlan.leader)) {
             return json({ error: 'that call is not yours to make', code: 'no-traitor' }, 409)
           }
@@ -2690,6 +2799,105 @@ Deno.serve(async req => {
         b as never, c as never, [...c.revealed.traitor.calls] as never, choice)
     }
 
+    // ── ADVANCED: the Harkonnen deal with their prisoner ────────────────────
+    // Kill for two spice from the bank, keep to field once, or decline. The
+    // prisoner is drawn by the SEED at the moment of choosing — random, and
+    // the same for every retry of this action_seq. Past the deadline anyone
+    // may decline for them.
+    case 'BATTLE_CAPTURE': {
+      const b = state.battles
+      const capture = (b as {
+        capture?: { from: string; territoryId?: string; closesAt: number }
+      } | undefined)?.capture
+      if (state.phase !== 'Battles' || !b || !capture) {
+        return json({ error: 'no prisoner to deal with', code: 'no-capture' }, 409)
+      }
+      const expired = now >= capture.closesAt
+      let choice = String(action.choice ?? '')
+      if (!expired) {
+        if (myFaction !== 'harkonnen') {
+          return json({
+            error: 'the Harkonnen hold the prisoner', code: 'not-your-prisoner',
+          }, 403)
+        }
+        if (!['kill', 'keep', 'decline'].includes(choice)) {
+          return json({ error: 'kill, keep, or decline', code: 'bad-choice' }, 409)
+        }
+      } else {
+        choice = 'decline'
+      }
+
+      const { data: secretRows } = await admin
+        .from('match_secrets').select('player_id, data').eq('match_id', matchId)
+      const rowOf = Object.fromEntries((secretRows ?? []).map((r) => [r.player_id, r.data ?? {}]))
+      const hkSeat = seatOfFaction['harkonnen']
+      const hkRow = (rowOf[hkSeat] ?? {}) as {
+        capturedLeaders?: { name: string; from: string }[]
+      }
+      let tanks = (state.tanks ?? { forces: {}, leaders: {} }) as {
+        forces: Record<string, unknown>
+        leaders: Record<string, { name: string }[]>
+      }
+      const pool = capturePool({
+        loser: capture.from as never,
+        tanks: (tanks.leaders[capture.from] ?? []) as never,
+        usedLeaders: (b as { usedLeaders?: Record<string, string> }).usedLeaders ?? {},
+        territoryId: capture.territoryId ?? '',
+        alreadyCaptured: (hkRow.capturedLeaders ?? []).map((x) => x.name),
+      })
+      const drawn = choice !== 'decline' && pool.length > 0
+        ? shuffleWithSeed(Number(match.rng_seed) + match.action_seq, pool)[0]
+        : null
+
+      const secretsPatch: Record<string, unknown> = {}
+      if (drawn && choice === 'kill') {
+        // face down at the table; here the tanks are public and the body is
+        // simply the owner's to revive
+        tanks = returnLeaderToTanks(tanks as never, capture.from as never, drawn) as never
+        const moved = applySpiceMoves(
+          { [hkSeat]: readSpice(hkRow as never) },
+          [{ from: BANK, to: hkSeat, amount: 2, reason: 'captured-leader' }],
+        )
+        if (!moved.ok) {
+          return json({ error: 'the spice could not move', code: moved.refusal }, 500)
+        }
+        secretsPatch[hkSeat] = { ...hkRow, spice: moved.purses[hkSeat] }
+      }
+      if (drawn && choice === 'keep') {
+        secretsPatch[hkSeat] = {
+          ...hkRow,
+          capturedLeaders: [
+            ...(hkRow.capturedLeaders ?? []),
+            { name: drawn, from: capture.from },
+          ],
+        }
+      }
+
+      // The window answered: the rotation goes on, or — if it was already
+      // fought out — the battles object clears and the phase may advance.
+      const battlesOut = (b as { spent?: boolean }).spent
+        ? undefined
+        : { ...b, capture: undefined, spent: undefined }
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state,
+          tanks,
+          ...(battlesOut ? { battles: battlesOut } : { battles: undefined }),
+        },
+        p_secrets: secretsPatch,
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({
+        choice,
+        ...(drawn && choice === 'keep' ? { prisoner: drawn } : null),
+        ...(drawn && choice === 'kill' ? { killed: drawn } : null),
+        version: data[0].version,
+      })
+    }
+
     // ── The Fremen ride Shai-Hulud ──────────────────────────────────────────
     // Some or all of a struck territory's forces, to anywhere: no range and
     // no path — the worm carries them. The storm and the stronghold gate
@@ -2774,6 +2982,7 @@ Deno.serve(async req => {
         battleVoiceSeconds: BATTLE_VOICE_SECONDS,
         battlePrescienceSeconds: BATTLE_PRESCIENCE_SECONDS,
         battleAllocateSeconds: BATTLE_ALLOCATE_SECONDS,
+        battleCaptureSeconds: BATTLE_CAPTURE_SECONDS,
       })
       if (reset.length === 0) {
         return json({ error: 'nothing here holds a clock', code: 'no-clock' }, 409)

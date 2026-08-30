@@ -30,9 +30,11 @@
  */
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
-import { factionById } from '@/data/dune/factions'
+import { factionById, FACTION_IDS } from '@/data/dune/factions'
 import type { FactionId } from '@/types/Dune/Faction'
 import type { Force, SectorId } from '@/types/Dune/Game'
+import { KWISATZ_STRENGTH } from '@/types/Dune/Game'
+export { KWISATZ_HADERACH, KWISATZ_STRENGTH, kwisatzHaderachAvailable } from '@/types/Dune/Game'
 
 /** How long the aggressor has to pick a battle before anyone may push one. */
 export const BATTLE_PICK_SECONDS = 120
@@ -57,6 +59,8 @@ export const BATTLE_VOICE_SECONDS = 60
 export const BATTLE_PRESCIENCE_SECONDS = 60
 /** ADVANCED: the winner's window to choose which pieces die. */
 export const BATTLE_ALLOCATE_SECONDS = 120
+/** ADVANCED: the Harkonnen's window to deal with their prisoner. */
+export const BATTLE_CAPTURE_SECONDS = 60
 
 // ── the Voice ─────────────────────────────────────────────────────────────
 
@@ -251,6 +255,12 @@ export interface BattlePlan {
   /** Card ids out of the hand. */
   weapon?: string
   defence?: string
+  /**
+   * ADVANCED, Atreides: the Kwisatz Haderach rides this plan's leader or
+   * Cheap Hero for +2 — one territory per turn, powerless if its carrier
+   * dies, killable only by the lasgun-shield explosion.
+   */
+  kwisatz?: boolean
 }
 
 export type PlanRefusal =
@@ -261,6 +271,8 @@ export type PlanRefusal =
   | 'voice-demands' | 'voice-forbids'
   | 'spice-out-of-range' | 'more-spice-than-you-hold' | 'spice-is-advanced'
   | 'fremen-need-no-spice' | 'dial-spice-mismatch'
+  | 'kwisatz-not-yours' | 'kwisatz-is-advanced' | 'kwisatz-asleep'
+  | 'kwisatz-in-the-tanks' | 'kwisatz-elsewhere' | 'kwisatz-alone'
 
 /** How many forces a faction has standing in the battle's slice. */
 export function forcesInBattle(
@@ -294,6 +306,12 @@ export function judgePlan(input: {
   opponent?: FactionId
   /** The planner's purse, when the caller can see it: spice is capped by it. */
   purse?: number
+  /** ADVANCED, Atreides: the Kwisatz Haderach's state, as the caller knows
+   *  it — awake at seven losses, dead in the tanks, or already ridden into
+   *  one territory this turn. */
+  kwisatz?: { available: boolean; dead: boolean; usedTerritory?: string | null }
+  /** ADVANCED, Harkonnen: captured leaders this seat may field once. */
+  borrowed?: readonly string[]
 }): { ok: true } | { ok: false; refusal: PlanRefusal } {
   const { faction, battle, forces, hand, deadLeaders, usedLeaders, plan, voiced, purse } = input
 
@@ -333,10 +351,28 @@ export function judgePlan(input: {
     }
   }
 
+  // ── THE KWISATZ HADERACH: never alone, one territory a turn ─────────────
+  if (plan.kwisatz) {
+    if (faction !== 'atreides') return { ok: false, refusal: 'kwisatz-not-yours' }
+    if ((input.mode ?? 'basic') !== 'advanced') {
+      return { ok: false, refusal: 'kwisatz-is-advanced' }
+    }
+    if (!input.kwisatz?.available) return { ok: false, refusal: 'kwisatz-asleep' }
+    if (input.kwisatz.dead) return { ok: false, refusal: 'kwisatz-in-the-tanks' }
+    if (input.kwisatz.usedTerritory
+      && input.kwisatz.usedTerritory !== battle.territoryId) {
+      return { ok: false, refusal: 'kwisatz-elsewhere' }
+    }
+    if (!plan.leader && !plan.cheapHero) return { ok: false, refusal: 'kwisatz-alone' }
+  }
+
   if (plan.leader && plan.cheapHero) return { ok: false, refusal: 'two-leaders' }
   if (plan.leader) {
     const sheet = factionById(faction)
-    if (!sheet?.leaders.some(l => l.name === plan.leader)) {
+    // A CAPTURED leader fights for the Harkonnen once — the borrowed list
+    // is the caller's word that this seat holds the prisoner.
+    if (!sheet?.leaders.some(l => l.name === plan.leader)
+      && !(input.borrowed ?? []).includes(plan.leader)) {
       return { ok: false, refusal: 'no-such-leader' }
     }
     if (deadLeaders.includes(plan.leader)) return { ok: false, refusal: 'leader-in-the-tanks' }
@@ -382,6 +418,7 @@ export function judgePlan(input: {
       || (sheet?.leaders ?? []).some(l =>
         !deadLeaders.includes(l.name)
         && (!usedLeaders[l.name] || usedLeaders[l.name] === battle.territoryId))
+      || (input.borrowed ?? []).length > 0
       || hand.includes(CHEAP_HERO_ID)
     const violation = voiceViolation(plan, voiced, hand, canFieldLeader)
     if (violation) return { ok: false, refusal: violation }
@@ -414,6 +451,9 @@ export interface SideOutcome {
   /** ADVANCED: the plan's spent spice, leaving for the bank — win or lose,
    *  except a traitor-calling winner, who spends nothing. */
   spends: number
+  /** ADVANCED: the Kwisatz Haderach dies here — the lasgun-shield explosion
+   *  is the ONLY thing that kills it. */
+  kwisatzDies: boolean
 }
 
 export interface BattleOutcome {
@@ -426,8 +466,29 @@ export interface BattleOutcome {
   clearSpice: boolean
 }
 
+// A CAPTURED leader fights under the Harkonnen banner at its own strength.
+// Names are unique across the sheets, so a miss on the fielding faction's
+// sheet falls back to the owner's — a lookup, never a guess.
 const leaderStrength = (faction: FactionId, name: string) =>
-  factionById(faction)?.leaders.find(l => l.name === name)?.strength ?? 0
+  factionById(faction)?.leaders.find(l => l.name === name)?.strength
+  ?? leaderOwnerStrength(name)
+
+const leaderOwnerStrength = (name: string): number => {
+  for (const id of FACTION_IDS) {
+    const hit = factionById(id)?.leaders.find(l => l.name === name)
+    if (hit) return hit.strength
+  }
+  return 0
+}
+
+/** Which faction's sheet a leader belongs to — where a captured leader's
+ *  body goes when it dies fighting for somebody else. */
+export function leaderOwner(name: string): FactionId | null {
+  for (const id of FACTION_IDS) {
+    if (factionById(id)?.leaders.some(l => l.name === name)) return id
+  }
+  return null
+}
 
 const playedCards = (p: BattlePlan): string[] => [
   ...(p.cheapHero ? [CHEAP_HERO_ID] : []),
@@ -464,7 +525,7 @@ export function resolveBattle(input: {
 
   const side = (me: SideInput): SideOutcome => ({
     faction: me.faction, losesAll: false, losses: 0, leaderDies: false,
-    discards: [], spice: [], spends: me.plan.spice ?? 0,
+    discards: [], spice: [], spends: me.plan.spice ?? 0, kwisatzDies: false,
   })
   const a = side(aggressor)
   const d = side(defender)
@@ -474,9 +535,11 @@ export function resolveBattle(input: {
     ({ winner, explosion, traitors, sides: [a, d], clearSpice })
 
   // ── traitors cut before everything ──────────────────────────────────────
+  // "A leader accompanied by Kwisatz Haderach cannot turn traitor": a call
+  // against the guarded plan is VOID here as well as refused at the door.
   const traitors: FactionId[] = [
-    ...(aggressor.calledTraitor ? [aggressor.faction] : []),
-    ...(defender.calledTraitor ? [defender.faction] : []),
+    ...(aggressor.calledTraitor && !defender.plan.kwisatz ? [aggressor.faction] : []),
+    ...(defender.calledTraitor && !aggressor.plan.kwisatz ? [defender.faction] : []),
   ]
   if (traitors.length === 2) {
     for (const [me, mine] of [[aggressor, a], [defender, d]] as const) {
@@ -516,6 +579,7 @@ export function resolveBattle(input: {
       mine.losesAll = true
       mine.leaderDies = !!me.plan.leader
       mine.discards = playedCards(me.plan)
+      mine.kwisatzDies = !!me.plan.kwisatz
     }
     return finish(null, true, [], true)
   }
@@ -537,6 +601,9 @@ export function resolveBattle(input: {
 
   const total = (me: SideInput, dead: boolean) => me.plan.dial
     + (!dead && me.plan.leader ? leaderStrength(me.faction, me.plan.leader) : 0)
+    // The Kwisatz Haderach's +2, powerless the moment its carrier dies.
+    + (!dead && me.plan.kwisatz && (me.plan.leader || me.plan.cheapHero)
+      ? KWISATZ_STRENGTH : 0)
   const aTotal = total(aggressor, aLeaderDead)
   const dTotal = total(defender, dLeaderDead)
 
@@ -713,6 +780,42 @@ export function allocationLosses(
     }
   }
   return lifts
+}
+
+// ── the Harkonnen's prisoners ─────────────────────────────────────────────
+
+/**
+ * Who the Harkonnen may seize from the loser: every sheet leader still
+ * alive, INCLUDING the one that just fought here if it survived, EXCLUDING
+ * any used elsewhere this turn and any already in Harkonnen hands. The
+ * Kwisatz Haderach is a token, not a leader, and never appears — the pool
+ * is drawn from the sheet.
+ */
+/** "When all of your own leaders have been killed, you must return all
+ *  captured leaders immediately": the whole sheet, in the tanks. */
+export function allOwnLeadersDead(
+  faction: FactionId, tanksLeaders: readonly { name: string }[],
+): boolean {
+  const dead = new Set(tanksLeaders.map(l => l.name))
+  const sheet = factionById(faction)?.leaders ?? []
+  return sheet.length > 0 && sheet.every(l => dead.has(l.name))
+}
+
+export function capturePool(input: {
+  loser: FactionId
+  /** The loser's tanks entries — the dead are beyond capture. */
+  tanks: readonly { name: string }[]
+  usedLeaders: Readonly<Record<string, string>>
+  /** The battle just fought — its own survivor is still fair game. */
+  territoryId: string
+  alreadyCaptured: readonly string[]
+}): string[] {
+  const dead = new Set(input.tanks.map(l => l.name))
+  return (factionById(input.loser)?.leaders ?? [])
+    .map(l => l.name)
+    .filter(n => !dead.has(n)
+      && !input.alreadyCaptured.includes(n)
+      && (!input.usedLeaders[n] || input.usedLeaders[n] === input.territoryId))
 }
 
 /**

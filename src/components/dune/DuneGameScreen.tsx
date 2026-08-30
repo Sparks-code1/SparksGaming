@@ -52,7 +52,9 @@ import { WORM_SECONDS, WORM_RIDE_SECONDS } from '@/lib/dune/spiceBlow'
 import {
   BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
   BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS, BATTLE_ALLOCATE_SECONDS,
+  BATTLE_CAPTURE_SECONDS,
 } from '@/lib/dune/battle'
+import { kwisatzHaderachAvailable, KWISATZ_HADERACH } from '@/types/Dune/Game'
 import { BiddingPanel } from './BiddingPanel'
 import { CharityModal } from './CharityModal'
 import { SetupWindow, SetupBoardTargets } from './SetupWindow'
@@ -175,6 +177,7 @@ export interface DuneGameScreenProps {
   onBattleAllocate?: (choice: {
     plainFull: number; plainHalf: number; eliteFull: number; eliteHalf: number
   } | null) => void
+  onBattleCapture?: (choice: 'kill' | 'keep' | 'decline') => void
   /** The last BATTLE action's refusal — its code AND which action, so the
    *  panel names both and a stray refusal from another surface never
    *  freezes on it. */
@@ -244,7 +247,8 @@ export interface DuneGameScreenProps {
 export function DuneGameScreen({
   state, seat, own, chat, onSend, talkingTo, seatNames, notices, onShipReserves, onMoveStack,
   onShipSpecial, onRevive, onBattlePick, onBattlePlan, onBattleAnswer,
-  onBattleVoice, onBattlePrescience, onBattleAllocate, battleRefusal,
+  onBattleVoice, onBattlePrescience, onBattleAllocate, onBattleCapture,
+  battleRefusal,
   worms = [], onWormRide, onPassTurn,
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
@@ -361,7 +365,9 @@ export function DuneGameScreen({
           ? { closesAt: state.battles.current.voice.closesAt, ms: BATTLE_VOICE_SECONDS * 1000 }
           : state.battles.current
             ? { closesAt: state.battles.current.closesAt, ms: BATTLE_PLAN_SECONDS * 1000 }
-            : { closesAt: state.battles.closesAt, ms: BATTLE_PICK_SECONDS * 1000 })
+            : state.battles.capture
+              ? { closesAt: state.battles.capture.closesAt, ms: BATTLE_CAPTURE_SECONDS * 1000 }
+              : { closesAt: state.battles.closesAt, ms: BATTLE_PICK_SECONDS * 1000 })
     : null
   const rideWindow = state.wormRide && now < state.wormRide.closesAt
     ? { closesAt: state.wormRide.closesAt, ms: WORM_RIDE_SECONDS * 1000 }
@@ -1041,6 +1047,17 @@ export function DuneGameScreen({
               onVoice={onBattleVoice}
               onPrescience={onBattlePrescience}
               onAllocate={onBattleAllocate}
+              onCapture={onBattleCapture}
+              // THE SLEEPER'S STATE is public arithmetic; the prisoners are
+              // this seat's own secret and no other's.
+              kwisatz={seat === 'atreides' && state.mode === 'advanced' ? {
+                available: kwisatzHaderachAvailable(
+                  state.players.find(p => p.faction === 'atreides')?.battleLosses),
+                dead: (state.tanks?.leaders?.atreides ?? [])
+                  .some(l => l.name === KWISATZ_HADERACH),
+                usedTerritory: state.battles?.kwisatzUsed ?? null,
+              } : null}
+              captured={own?.capturedLeaders ?? []}
               // ADVANCED wiring: the mode turns on spice dials; the purse
               // caps the stepper. Both are this seat's own to know.
               mode={state.mode === 'advanced' ? 'advanced' : 'basic'}

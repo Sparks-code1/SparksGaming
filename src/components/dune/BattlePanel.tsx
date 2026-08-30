@@ -37,6 +37,7 @@ import {
 import type {
   VoiceCommand, VoiceTarget, PrescienceAsk, LossAllocation,
 } from '@/lib/dune/battle'
+import { KWISATZ_STRENGTH } from '@/types/Dune/Game'
 import type { DuneGameState } from '@/types/Dune/Game'
 import type { FactionId, Leader } from '@/types/Dune/Faction'
 import type { TreacheryCard } from '@/types/Dune/Treachery'
@@ -78,6 +79,17 @@ export const PLAN_REFUSAL_TEXT: Record<string, string> = {
   'allocation-open': 'The winner is choosing their losses.',
   'not-your-choice': 'The winner chooses which pieces die.',
   'no-allocation': 'There are no losses to choose.',
+  'kwisatz-not-yours': 'Only the Atreides carry the Kwisatz Haderach.',
+  'kwisatz-is-advanced': 'The Kwisatz Haderach wakes only in the advanced game.',
+  'kwisatz-asleep': 'The Kwisatz Haderach sleeps until seven forces are lost.',
+  'kwisatz-in-the-tanks': 'The Kwisatz Haderach lies in the tanks.',
+  'kwisatz-elsewhere': 'The Kwisatz Haderach has ridden into another territory this turn.',
+  'kwisatz-alone': 'The Kwisatz Haderach never fights alone — it rides a leader.',
+  'kwisatz-guards': 'The Kwisatz Haderach guards that leader — no traitor call stands.',
+  'capture-first': 'The Harkonnen deal with their prisoner first.',
+  'no-capture': 'There is no prisoner to deal with.',
+  'not-your-prisoner': 'The Harkonnen hold the prisoner.',
+  'bad-choice': 'Kill, keep, or decline.',
   'already-committed': 'Your plan is already in.',
   'already-revealed': 'Plans are on the table.',
   'no-battle': 'No battle is open.',
@@ -125,6 +137,14 @@ export interface BattlePanelProps {
   mode?: 'basic' | 'advanced'
   /** This seat's purse — the spice stepper's ceiling. */
   purse?: number
+  /** ADVANCED, Atreides: the sleeper's public state — awake, dead, or
+   *  already ridden into one territory this turn. */
+  kwisatz?: { available: boolean; dead: boolean; usedTerritory?: string | null } | null
+  /** ADVANCED, Harkonnen: prisoners this seat may field once, from its own
+   *  secrets row. */
+  captured?: readonly { name: string; from: FactionId }[]
+  /** ADVANCED: the Harkonnen's answer over their prisoner. */
+  onCapture?: (choice: 'kill' | 'keep' | 'decline') => void
 }
 
 /**
@@ -233,7 +253,9 @@ export function BattlePanel({
   refusal = null, refusedAction = null, handCount = null,
   onPick, onPlan, onAnswer, onVoice, onPrescience, prescienceAnswer = null,
   onAllocate, mode = 'basic', purse = 0,
+  kwisatz = null, captured = [], onCapture,
 }: BattlePanelProps) {
+  const [kh, setKh] = useState(false)
   const [voiceMode, setVoiceMode] = useState<'play' | 'not-play'>('play')
   const [voiceTarget, setVoiceTarget] = useState<VoiceTarget | null>(null)
   const [dial, setDial] = useState(0)
@@ -299,6 +321,54 @@ export function BattlePanel({
       </div>
     </div>
   )
+
+  // ── ADVANCED: the Harkonnen deal with their prisoner ────────────────────
+  // The next battle waits on the choice; the prisoner is drawn at random by
+  // the SERVER when the choice lands, so there is nothing to show but the
+  // question itself.
+  if (!c && battles.capture) {
+    const cap = battles.capture
+    const capExpired = now >= cap.closesAt
+    return frame(
+      <>
+        <b style={{ display: 'block', fontSize: 16 }}>
+          A prisoner from the {FACTION_LOOK[cap.from].name}
+        </b>
+        {seat === 'harkonnen' && onCapture && !capExpired ? (
+          <>
+            <p style={{ opacity: 0.8, fontSize: 13 }}>
+              One of their leaders, drawn at random when you choose: kill it
+              for 2 spice from the bank, or keep it to fight ONE battle under
+              your banner before it goes home.
+            </p>
+            <button type="button" disabled={busy} data-capture-kill=""
+              onClick={() => onCapture('kill')} style={btn}>
+              Kill the prisoner — 2 spice from the bank
+            </button>
+            <button type="button" disabled={busy} data-capture-keep=""
+              onClick={() => onCapture('keep')} style={btn}>
+              Keep the prisoner — it fights once for you
+            </button>
+            <button type="button" disabled={busy} data-capture-decline=""
+              onClick={() => onCapture('decline')} style={btn}>
+              Take nobody
+            </button>
+          </>
+        ) : (
+          <p style={{ opacity: 0.8 }} data-capture-waits="">
+            The Harkonnen consider their prisoner.
+          </p>
+        )}
+        {capExpired && onCapture && (
+          <button type="button" disabled={busy} data-capture-push=""
+            onClick={() => onCapture('decline')}
+            style={{ ...btn, width: 'auto', display: 'inline-block' }}>
+            The clock has run out — no one is taken
+          </button>
+        )}
+      </>,
+    )
+  }
 
   // ── the pick ────────────────────────────────────────────────────────────
   if (!c) {
@@ -413,7 +483,9 @@ export function BattlePanel({
     const answered = !!seat && beat.answered.includes(seat)
     const other = seat === c.aggressor ? c.defender : c.aggressor
     const theirLeader = c.revealed.plans[other]?.leader
-    const mayCall = iAmIn && !answered && !!theirLeader && traitors.includes(theirLeader)
+    const mayCall = iAmIn && !answered && !!theirLeader
+      && traitors.includes(theirLeader)
+      && !c.revealed.plans[other]?.kwisatz
     const expired = now >= beat.closesAt
 
     const sinceReveal = now - (beat.closesAt - BATTLE_TRAITOR_SECONDS * 1000)
@@ -435,8 +507,10 @@ export function BattlePanel({
     const strengthOf = (fa: FactionId, name?: string) =>
       name ? factionById(fa)?.leaders.find(l => l.name === name)?.strength ?? 0 : 0
     const countText = (fa: FactionId, idx: 0 | 1) => {
-      const plan = planFor(fa)
+      const plan = planFor(fa) as { dial: number; leader?: string; cheapHero?: boolean; kwisatz?: boolean }
+      // The Kwisatz Haderach's +2 rides the leader and dies with it.
       const lStr = strengthOf(fa, plan.leader)
+        + (plan.kwisatz && (plan.leader || plan.cheapHero) ? KWISATZ_STRENGTH : 0)
       if (stage < 1) return '—'
       if (stage < 3) return dialText(lStr)
       if (stage < 4) return dialText(plainOut.sides[idx].leaderDies ? 0 : lStr)
@@ -480,6 +554,13 @@ export function BattlePanel({
                 <span>
                   {plan.leader ?? (plan.cheapHero ? 'Cheap Hero' : '')}
                   {plan.leader ? ` — strength ${lStr}` : ''}
+                  {(plan as { kwisatz?: boolean }).kwisatz && (
+                    <span data-reveal-kwisatz={fa} style={{ color: '#9fd0e8' }}>
+                      {' '}+ Kwisatz Haderach (+2)
+                      {stage >= 3 && plainOut.sides[idx].kwisatzDies
+                        ? <span style={{ color: '#e8a0a0' }}> ☠</span> : null}
+                    </span>
+                  )}
                   {dead && (
                     <span data-reveal-slain={fa} style={{ color: '#e8a0a0' }}> ☠ slain</span>
                   )}
@@ -817,7 +898,16 @@ export function BattlePanel({
   const defences = handSynced
     ? hand.filter(id => kindOf(id) === 'defense' || kindOf(id) === 'worthless') : []
   const mayPlayCards = !!leader || hero
-  const leaderObj = usable.find(l => l.name === leader) ?? null
+  // A PRISONER fights under this banner once — offered as the disc it is,
+  // in its own faction's colours.
+  const borrowedObjs = (captured ?? [])
+    .map(x => ({
+      from: x.from,
+      leader: factionById(x.from)?.leaders.find(l => l.name === x.name),
+    }))
+    .filter((x): x is { from: FactionId; leader: NonNullable<typeof x.leader> } => !!x.leader)
+  const leaderObj = usable.find(l => l.name === leader)
+    ?? borrowedObjs.find(x => x.leader.name === leader)?.leader ?? null
   const heroCard = TREACHERY_CARDS.find(x => x.id === CHEAP_HERO_ID)!
 
   // ── THE VOICE STANDS OVER THIS FORM ─────────────────────────────────────
@@ -955,6 +1045,21 @@ export function BattlePanel({
             </svg>
           </button>
         ))}
+        {borrowedObjs.map(x => (
+          <button key={x.leader.name} type="button" data-plan-borrowed={x.leader.name}
+            aria-pressed={leader === x.leader.name}
+            title={`${x.leader.name} — captured from the ${FACTION_LOOK[x.from].name}, fights once`}
+            onClick={() => { setLeader(leader === x.leader.name ? null : x.leader.name); setHero(false) }}
+            style={{
+              background: 'none', padding: 2, lineHeight: 0, cursor: 'pointer',
+              border: leader === x.leader.name ? '2px solid #c9542a' : '2px solid transparent',
+              borderRadius: '50%',
+            }}>
+            <svg viewBox="-34 -34 68 68" width="64" height="64">
+              <LeaderDisc leader={x.leader} faction={x.from} r={32} />
+            </svg>
+          </button>
+        ))}
         {heroHeld && (
           <button type="button" data-plan-hero=""
             aria-pressed={hero}
@@ -970,7 +1075,35 @@ export function BattlePanel({
           </button>
         )}
       </div>
-      {usable.length === 0 && !heroHeld && (
+      {advanced && seat === 'atreides' && kwisatz && (kwisatz.available || kwisatz.dead) && (
+        <div style={{ marginTop: 8 }}>
+          <button type="button" data-plan-kwisatz="" aria-pressed={kh}
+            disabled={busy || kwisatz.dead
+              || (!!kwisatz.usedTerritory && kwisatz.usedTerritory !== c.territoryId)
+              || (!leader && !hero)}
+            onClick={() => setKh(!kh)}
+            style={{ ...(kh ? chosen : btn), width: 'auto', display: 'inline-block' }}>
+            Kwisatz Haderach — +2 with the leader
+          </button>
+          {kwisatz.dead && (
+            <span data-kwisatz-dead="" style={{ fontSize: 12, opacity: 0.75, marginLeft: 8 }}>
+              in the tanks
+            </span>
+          )}
+          {!kwisatz.dead && !!kwisatz.usedTerritory
+            && kwisatz.usedTerritory !== c.territoryId && (
+            <span data-kwisatz-elsewhere="" style={{ fontSize: 12, opacity: 0.75, marginLeft: 8 }}>
+              already ridden elsewhere this turn
+            </span>
+          )}
+          {!kwisatz.dead && !leader && !hero && (
+            <span style={{ fontSize: 12, opacity: 0.75, marginLeft: 8 }}>
+              never alone — pick a leader first
+            </span>
+          )}
+        </div>
+      )}
+      {usable.length === 0 && borrowedObjs.length === 0 && !heroHeld && (
         <p style={{ fontSize: 12, opacity: 0.75 }}>
           No leader and no Cheap Hero: you fight with forces alone and may
           play no treachery cards.
@@ -984,7 +1117,8 @@ export function BattlePanel({
         </p>
       )}
 
-      {(usable.length > 0 || heroHeld) && (weapons.length > 0 || defences.length > 0) && (
+      {(usable.length > 0 || borrowedObjs.length > 0 || heroHeld)
+        && (weapons.length > 0 || defences.length > 0) && (
         <>
           <div style={{ marginTop: 10, fontSize: 12, opacity: 0.8 }}>
             Weapon{mayPlayCards ? '' : ' — pick a leader first'}
@@ -1009,6 +1143,7 @@ export function BattlePanel({
           territoryId: c.territoryId,
           dial,
           ...(advanced && !freeFull && spiceSpent > 0 ? { spice: spiceSpent } : null),
+          ...(advanced && kh && (leader || hero) ? { kwisatz: true } : null),
           ...(leader ? { leader } : null),
           ...(hero ? { cheapHero: true } : null),
           ...(mayPlayCards && weapon ? { weapon } : null),

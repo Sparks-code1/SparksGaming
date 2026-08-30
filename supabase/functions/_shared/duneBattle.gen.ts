@@ -1069,6 +1069,14 @@ var TREACHERY_CARDS = [
 ];
 
 // src/data/dune/factions.ts
+var FACTION_IDS = [
+  "atreides",
+  "emperor",
+  "spacing-guild",
+  "fremen",
+  "harkonnen",
+  "bene-gesserit"
+];
 var ATREIDES = {
   id: "atreides",
   name: "Atreides",
@@ -1320,6 +1328,14 @@ var FACTIONS = {
 };
 var factionById = (id) => FACTIONS[id] ?? null;
 
+// src/types/Dune/Game.ts
+var KWISATZ_HADERACH_AT = 7;
+var KWISATZ_HADERACH = "Kwisatz Haderach";
+var KWISATZ_STRENGTH = 2;
+function kwisatzHaderachAvailable(battleLosses2) {
+  return (battleLosses2 ?? 0) >= KWISATZ_HADERACH_AT;
+}
+
 // src/lib/dune/battle.ts
 var BATTLE_PICK_SECONDS = 120;
 var BATTLE_PLAN_SECONDS = 300;
@@ -1328,6 +1344,7 @@ var CHEAP_HERO_ID = "cheaphero";
 var BATTLE_VOICE_SECONDS = 60;
 var BATTLE_PRESCIENCE_SECONDS = 60;
 var BATTLE_ALLOCATE_SECONDS = 120;
+var BATTLE_CAPTURE_SECONDS = 60;
 var VOICE_TARGETS = [
   "projectile",
   "poison",
@@ -1467,10 +1484,22 @@ function judgePlan(input) {
       return { ok: false, refusal: "dial-out-of-range" };
     }
   }
+  if (plan.kwisatz) {
+    if (faction !== "atreides") return { ok: false, refusal: "kwisatz-not-yours" };
+    if ((input.mode ?? "basic") !== "advanced") {
+      return { ok: false, refusal: "kwisatz-is-advanced" };
+    }
+    if (!input.kwisatz?.available) return { ok: false, refusal: "kwisatz-asleep" };
+    if (input.kwisatz.dead) return { ok: false, refusal: "kwisatz-in-the-tanks" };
+    if (input.kwisatz.usedTerritory && input.kwisatz.usedTerritory !== battle.territoryId) {
+      return { ok: false, refusal: "kwisatz-elsewhere" };
+    }
+    if (!plan.leader && !plan.cheapHero) return { ok: false, refusal: "kwisatz-alone" };
+  }
   if (plan.leader && plan.cheapHero) return { ok: false, refusal: "two-leaders" };
   if (plan.leader) {
     const sheet = factionById(faction);
-    if (!sheet?.leaders.some((l) => l.name === plan.leader)) {
+    if (!sheet?.leaders.some((l) => l.name === plan.leader) && !(input.borrowed ?? []).includes(plan.leader)) {
       return { ok: false, refusal: "no-such-leader" };
     }
     if (deadLeaders.includes(plan.leader)) return { ok: false, refusal: "leader-in-the-tanks" };
@@ -1502,13 +1531,26 @@ function judgePlan(input) {
   if (new Set(played).size !== played.length) return { ok: false, refusal: "one-card-twice" };
   if (voiced) {
     const sheet = factionById(faction);
-    const canFieldLeader = !!plan.leader || !!plan.cheapHero || (sheet?.leaders ?? []).some((l) => !deadLeaders.includes(l.name) && (!usedLeaders[l.name] || usedLeaders[l.name] === battle.territoryId)) || hand.includes(CHEAP_HERO_ID);
+    const canFieldLeader = !!plan.leader || !!plan.cheapHero || (sheet?.leaders ?? []).some((l) => !deadLeaders.includes(l.name) && (!usedLeaders[l.name] || usedLeaders[l.name] === battle.territoryId)) || (input.borrowed ?? []).length > 0 || hand.includes(CHEAP_HERO_ID);
     const violation = voiceViolation(plan, voiced, hand, canFieldLeader);
     if (violation) return { ok: false, refusal: violation };
   }
   return { ok: true };
 }
-var leaderStrength = (faction, name) => factionById(faction)?.leaders.find((l) => l.name === name)?.strength ?? 0;
+var leaderStrength = (faction, name) => factionById(faction)?.leaders.find((l) => l.name === name)?.strength ?? leaderOwnerStrength(name);
+var leaderOwnerStrength = (name) => {
+  for (const id of FACTION_IDS) {
+    const hit = factionById(id)?.leaders.find((l) => l.name === name);
+    if (hit) return hit.strength;
+  }
+  return 0;
+};
+function leaderOwner(name) {
+  for (const id of FACTION_IDS) {
+    if (factionById(id)?.leaders.some((l) => l.name === name)) return id;
+  }
+  return null;
+}
 var playedCards = (p) => [
   ...p.cheapHero ? [CHEAP_HERO_ID] : [],
   ...p.weapon ? [p.weapon] : [],
@@ -1523,14 +1565,15 @@ function resolveBattle(input) {
     leaderDies: false,
     discards: [],
     spice: [],
-    spends: me.plan.spice ?? 0
+    spends: me.plan.spice ?? 0,
+    kwisatzDies: false
   });
   const a = side(aggressor);
   const d = side(defender);
   const finish = (winner, explosion, traitors2, clearSpice = false) => ({ winner, explosion, traitors: traitors2, sides: [a, d], clearSpice });
   const traitors = [
-    ...aggressor.calledTraitor ? [aggressor.faction] : [],
-    ...defender.calledTraitor ? [defender.faction] : []
+    ...aggressor.calledTraitor && !defender.plan.kwisatz ? [aggressor.faction] : [],
+    ...defender.calledTraitor && !aggressor.plan.kwisatz ? [defender.faction] : []
   ];
   if (traitors.length === 2) {
     for (const [me, mine] of [[aggressor, a], [defender, d]]) {
@@ -1562,6 +1605,7 @@ function resolveBattle(input) {
       mine.losesAll = true;
       mine.leaderDies = !!me.plan.leader;
       mine.discards = playedCards(me.plan);
+      mine.kwisatzDies = !!me.plan.kwisatz;
     }
     return finish(null, true, [], true);
   }
@@ -1575,7 +1619,7 @@ function resolveBattle(input) {
   };
   const aLeaderDead = killedBy(defender.plan, aggressor.plan);
   const dLeaderDead = killedBy(aggressor.plan, defender.plan);
-  const total = (me, dead) => me.plan.dial + (!dead && me.plan.leader ? leaderStrength(me.faction, me.plan.leader) : 0);
+  const total = (me, dead) => me.plan.dial + (!dead && me.plan.leader ? leaderStrength(me.faction, me.plan.leader) : 0) + (!dead && me.plan.kwisatz && (me.plan.leader || me.plan.cheapHero) ? KWISATZ_STRENGTH : 0);
   const aTotal = total(aggressor, aLeaderDead);
   const dTotal = total(defender, dLeaderDead);
   const aggressorWins = aTotal >= dTotal;
@@ -1669,6 +1713,15 @@ function allocationLosses(forces, faction, territoryId, sectors, choice) {
   }
   return lifts;
 }
+function allOwnLeadersDead(faction, tanksLeaders) {
+  const dead = new Set(tanksLeaders.map((l) => l.name));
+  const sheet = factionById(faction)?.leaders ?? [];
+  return sheet.length > 0 && sheet.every((l) => dead.has(l.name));
+}
+function capturePool(input) {
+  const dead = new Set(input.tanks.map((l) => l.name));
+  return (factionById(input.loser)?.leaders ?? []).map((l) => l.name).filter((n) => !dead.has(n) && !input.alreadyCaptured.includes(n) && (!input.usedLeaders[n] || input.usedLeaders[n] === input.territoryId));
+}
 function explosionLosses(forces, territoryId) {
   return forces.filter((f) => f.territoryId === territoryId && f.count > 0).sort((x, y) => x.faction.localeCompare(y.faction) || num(x.sector) - num(y.sector)).map((f) => ({
     faction: f.faction,
@@ -1709,20 +1762,25 @@ function battleLosses(forces, faction, territoryId, sectors, outcome) {
 }
 export {
   BATTLE_ALLOCATE_SECONDS,
+  BATTLE_CAPTURE_SECONDS,
   BATTLE_PICK_SECONDS,
   BATTLE_PLAN_SECONDS,
   BATTLE_PRESCIENCE_SECONDS,
   BATTLE_TRAITOR_SECONDS,
   BATTLE_VOICE_SECONDS,
   CHEAP_HERO_ID,
+  KWISATZ_HADERACH,
+  KWISATZ_STRENGTH,
   PRESCIENCE_ASKS,
   VOICE_TARGETS,
+  allOwnLeadersDead,
   allocationLosses,
   allocationsFor,
   battleLosses,
   battleStrengthCap,
   battlesFor,
   canComplyWithVoice,
+  capturePool,
   eliteWorth,
   explosionLosses,
   firstAllocation,
@@ -1731,6 +1789,8 @@ export {
   judgeAllocation,
   judgePlan,
   judgeVoiceCommand,
+  kwisatzHaderachAvailable,
+  leaderOwner,
   nextAggressor,
   pendingBattles,
   piecesInBattle,

@@ -245,6 +245,11 @@ export interface DunePlayerPublic {
 /** Battle losses that unlock the Kwisatz Haderach. */
 export const KWISATZ_HADERACH_AT = 7
 
+/** The token's name where a leader's would stand — in the tanks, in a plan. */
+export const KWISATZ_HADERACH = 'Kwisatz Haderach'
+/** What it adds to the leader it accompanies, and its revival price. */
+export const KWISATZ_STRENGTH = 2
+
 /** Derived, never stored beside the count it comes from. */
 export function kwisatzHaderachAvailable(battleLosses: number | undefined): boolean {
   return (battleLosses ?? 0) >= KWISATZ_HADERACH_AT
@@ -416,6 +421,8 @@ export interface DuneGameState {
           cheapHero?: boolean
           /** ADVANCED: spice the plan spent — public from the reveal on. */
           spice?: number
+          /** ADVANCED: the Kwisatz Haderach rode this plan's leader. */
+          kwisatz?: boolean
           weapon?: string
           defence?: string
         }>
@@ -425,6 +432,15 @@ export interface DuneGameState {
         allocate?: { by: FactionId; closesAt: number }
       }
     } | null
+    /** ADVANCED, Atreides: the one territory the Kwisatz Haderach has
+     *  ridden into this turn. */
+    kwisatzUsed?: string
+    /** ADVANCED: the Harkonnen's open window over a prisoner from the
+     *  battle they just won. The prisoner is drawn when they choose. */
+    capture?: { from: FactionId; closesAt: number }
+    /** Set when the rotation is finished but the capture still holds the
+     *  phase: the window's answer clears the battles object itself. */
+    spent?: boolean
     /** The public record of what this phase settled. */
     fought: {
       territoryId: string

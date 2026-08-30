@@ -106,6 +106,7 @@ export interface AdvanceState {
       voice?: { closesAt: number; done: boolean }
       prescience?: { closesAt: number; done: boolean }
     } | null
+    capture?: { closesAt: number }
   }
   wormRide?: { closesAt: number }
   phaseClock?: PhaseClock
@@ -192,7 +193,8 @@ export function advanceHold(state: AdvanceState, now: number): AdvanceHold | nul
           ?? c?.revealed?.traitor.closesAt
           ?? (c?.prescience && !c.prescience.done ? c.prescience.closesAt : undefined)
           ?? (c?.voice && !c.voice.done ? c.voice.closesAt : undefined)
-          ?? c?.closesAt ?? state.battles.closesAt,
+          ?? c?.closesAt ?? state.battles.capture?.closesAt
+          ?? state.battles.closesAt,
       }
     }
     return null
@@ -524,6 +526,7 @@ export function resetDeadlines(
           allocate?: { closesAt: number }
         }
       } | null
+      capture?: { closesAt: number }
     }
   },
   now: number,
@@ -539,6 +542,7 @@ export function resetDeadlines(
     battleVoiceSeconds: number
     battlePrescienceSeconds: number
     battleAllocateSeconds: number
+    battleCaptureSeconds: number
   },
 ): { patch: Record<string, unknown>; reset: string[] } {
   const patch: Record<string, unknown> = {}
@@ -627,6 +631,12 @@ export function resetDeadlines(
         current: { ...b.current, closesAt: now + lengths.battlePlanSeconds * 1000 },
       }
       reset.push('battle-plan')
+    } else if (b.capture) {
+      patch.battles = {
+        ...b,
+        capture: { ...b.capture, closesAt: now + lengths.battleCaptureSeconds * 1000 },
+      }
+      reset.push('capture')
     } else {
       patch.battles = { ...b, closesAt: now + lengths.battlePickSeconds * 1000 }
       reset.push('battle-pick')

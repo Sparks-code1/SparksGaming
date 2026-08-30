@@ -501,6 +501,17 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
             <KwisatzTracker battleLosses={player.battleLosses ?? 0} />
           </Panel>
         )}
+        {mode === 'advanced' && seat === 'harkonnen'
+          && (own?.capturedLeaders ?? []).length > 0 && (
+          <Panel label="PRISONERS">
+            <div data-captured-leaders="" style={{ fontSize: 12, lineHeight: 1.5 }}>
+              {(own?.capturedLeaders ?? []).map(x => (
+                <div key={x.name}>{x.name} <span style={{ opacity: 0.6 }}>
+                  ({x.from})</span></div>
+              ))}
+            </div>
+          </Panel>
+        )}
         </div>
       </div>
 

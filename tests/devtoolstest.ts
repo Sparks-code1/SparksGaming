@@ -18,6 +18,7 @@ import { SETUP_SECONDS } from '@/lib/dune/setup'
 import {
   BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
   BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS, BATTLE_ALLOCATE_SECONDS,
+  BATTLE_CAPTURE_SECONDS,
 } from '@/lib/dune/battle'
 
 let pass = true
@@ -42,6 +43,7 @@ const LENGTHS = {
   battleVoiceSeconds: BATTLE_VOICE_SECONDS,
   battlePrescienceSeconds: BATTLE_PRESCIENCE_SECONDS,
   battleAllocateSeconds: BATTLE_ALLOCATE_SECONDS,
+  battleCaptureSeconds: BATTLE_CAPTURE_SECONDS,
 }
 const base = {
   phase: 'Storm', turn: 2, mode: 'basic', storm: 'sector-3',
@@ -148,6 +150,15 @@ const base = {
       current: { revealed: { allocate: { closesAt: number } } }
     }).current.revealed.allocate.closesAt, alloc.reset],
     [NOW + BATTLE_ALLOCATE_SECONDS * 1000, ['allocate']])
+  const cap = resetDeadlines({
+    ...(base as object),
+    battles: { closesAt: 5, current: null, capture: { closesAt: 5 } },
+  } as never, NOW, LENGTHS)
+  check('an open prisoner window at its own minute',
+    [(cap.patch.battles as {
+      capture: { closesAt: number }
+    }).capture.closesAt, cap.reset],
+    [NOW + BATTLE_CAPTURE_SECONDS * 1000, ['capture']])
   check('...but a settled Voice yields to the plan clock',
     resetDeadlines({
       ...(base as object),
@@ -170,6 +181,8 @@ const base = {
     /code: 'no-clock'/.test(reset), true)
   check('...and passing the winner\'s window its length',
     /battleAllocateSeconds: BATTLE_ALLOCATE_SECONDS,/.test(reset), true)
+  check('...and the prisoner window its minute',
+    /battleCaptureSeconds: BATTLE_CAPTURE_SECONDS,/.test(reset), true)
 
   const grant = fn.slice(fn.indexOf("case 'DEV_GRANT'"), fn.indexOf("case 'SEED_SPICE'"))
   check('the grant is dev-gated too',
