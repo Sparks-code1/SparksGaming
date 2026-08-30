@@ -234,17 +234,23 @@ export default function DuneGameScreenPreview() {
   // Mid-window, every kind of line at once: a standing alliance on the
   // table, this seat's own proposal out and private, an offer waiting on
   // Accept, and the ready count climbing. The fixture's atreides–fremen
-  // pair is broken for this view so the seat is free to talk; at
-  // ?dune-game&nexus=last every other seat is ready and the button carries
-  // its warning — the press that ends the Nexus for everyone.
+  // pair is broken for this view so the seat is free to talk. Two variants:
+  // at ?dune-game&nexus=last every other seat is ready and the button
+  // carries its warning — the press that ends the Nexus for everyone — and
+  // at ?dune-game&nexus=allied the pair STANDS, so the strip's CARDS panel
+  // holds the exchanged alliance card and the bar offers the break instead,
+  // with an incoming offer whose Accept waits on breaking first.
   const nexusing = q.has('nexus')
+  const nexusAllied = q.get('nexus') === 'allied'
   const [nexusAt] = useState(() => Date.now())
   const nexusState = {
     ...STATE, phase: 'Spice Blow and Nexus', awaiting: null,
     players: STATE.players.map(p =>
-      p.faction === 'atreides' || p.faction === 'fremen' ? { ...p, ally: null }
-        : p.faction === 'harkonnen' ? { ...p, ally: 'emperor' }
-        : p.faction === 'emperor' ? { ...p, ally: 'harkonnen' } : p),
+      p.faction === 'harkonnen' ? { ...p, ally: 'emperor' }
+        : p.faction === 'emperor' ? { ...p, ally: 'harkonnen' }
+        : !nexusAllied && (p.faction === 'atreides' || p.faction === 'fremen')
+          ? { ...p, ally: null }
+          : p),
     nexus: {
       turn: 4, closesAt: nexusAt + 224_000,
       ready: q.get('nexus') === 'last'
@@ -253,11 +259,13 @@ export default function DuneGameScreenPreview() {
     },
     nexusTurn: 4,
   } as unknown as DuneGameState
-  const nexusOwn: DuneSecrets = {
-    ...OWN,
-    nexusProposal: { to: 'fremen', turn: 4 },
-    nexusOffers: [{ from: 'bene-gesserit', turn: 4 }],
-  }
+  const nexusOwn: DuneSecrets = nexusAllied
+    ? { ...OWN, nexusOffers: [{ from: 'bene-gesserit', turn: 4 }] }
+    : {
+      ...OWN,
+      nexusProposal: { to: 'fremen', turn: 4 },
+      nexusOffers: [{ from: 'bene-gesserit', turn: 4 }],
+    }
 
   const setupState: DuneGameState & { setup?: SetupWindow } = dealt
     ? { ...dealt.state, mode: 'advanced',
@@ -354,8 +362,11 @@ export default function DuneGameScreenPreview() {
         basic game (one discard pile)
       </label>
 
-      {/* A way back in, since the fixture has no phase that would reopen one. */}
-      {!running && (
+      {/* A way back in, since the fixture has no phase that would reopen one.
+          THE PREVIEW'S OWN CONTROL, not the game's — a real match never draws
+          it — and the staged views stand down too: a battle or a Nexus is not
+          a place to restart the auction demo from. */}
+      {!running && !battling && !nexusing && !settling && (
         <button type="button" onClick={() => setCard(0)}
           style={{
             // Bottom centre, over the board: the right-hand column is the tray now
