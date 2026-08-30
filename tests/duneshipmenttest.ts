@@ -729,6 +729,52 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
     /onShipSpecial=\{mine\s*[\r\n]+\s*\? a => void send\(mine, 'SHIP', a as never\)/.test(harness), true)
 }
 
+// ── a lift spans duplicate rows instead of annihilating them ──────────────
+// Setup can seat two rows on one key. Lifting two from rows of [2, 1] used
+// to subtract two from EACH — both rows dropped, three removed for a landing
+// of two, and the third force simply ceased. The lift now charges each row
+// no more than it holds and no more than is still owed.
+{
+  const twin = [
+    { faction: 'bene-gesserit', territoryId: 'territory-03', sector: 'sector-1', count: 2 },
+    { faction: 'bene-gesserit', territoryId: 'territory-03', sector: 'sector-1', count: 1 },
+  ] as never[]
+  check('lifting two from rows of [2,1] leaves exactly one standing',
+    liftForces(twin as never, 'bene-gesserit' as never, 'territory-03', 'sector-1', 2, 0)
+      .map(f => f.count), [1])
+  check('...lifting three empties the cell without inventing a fourth',
+    liftForces(twin as never, 'bene-gesserit' as never, 'territory-03', 'sector-1', 3, 0)
+      .map(f => f.count), [])
+  check('...and the starred owed are drawn where they stand',
+    liftForces([
+      { faction: 'emperor', territoryId: 'territory-22', sector: 'sector-15', count: 3, starred: 2 },
+      { faction: 'emperor', territoryId: 'territory-22', sector: 'sector-15', count: 2 },
+    ] as never, 'emperor' as never, 'territory-22', 'sector-15', 2, 2)
+      .map(f => ({ count: f.count, starred: f.starred ?? 0 })),
+    [{ count: 1, starred: 0 }, { count: 2, starred: 0 }])
+}
+
+// ── setup placements land through the merge ───────────────────────────────
+{
+  const { landPlacement } = await import('@/lib/dune/setup')
+  const board = [
+    { faction: 'bene-gesserit', territoryId: 'territory-03', sector: 'sector-1', count: 1 },
+  ] as never[]
+  check('a fighter placement merges with the row already standing',
+    landPlacement(board as never, [
+      { faction: 'bene-gesserit', territoryId: 'territory-03', sector: 'sector-1',
+        count: 1, posture: 'fighter' },
+    ] as never).map(f => f.count), [2])
+  check('...an advisor keeps its own row, posture and all',
+    landPlacement(board as never, [
+      { faction: 'bene-gesserit', territoryId: 'territory-20', sector: 'sector-16',
+        count: 1, posture: 'advisor' },
+    ] as never).length, 2)
+  const fn3 = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  check('...and both setup landings go through it',
+    (fn3.match(/landPlacement\(/g) ?? []).length >= 2, true)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.

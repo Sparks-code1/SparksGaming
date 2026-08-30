@@ -43,6 +43,7 @@ import { prescienceFor, withReveal, PRESCIENT_FACTION } from '../_shared/dunePre
 import {
   openingPosition, answerFremenPlacement, answerPrediction, answerTraitor,
   answerAdvisorPlacement, shipAdvisor, defaultFremenPlacement, defaultTraitor,
+  landPlacement,
   defaultAdvisorPlacement, defaultOrder, settle, answerable, allReady,
   starredOf, SETUP_SECONDS,
 } from '../_shared/duneSetup.gen.ts'
@@ -1025,7 +1026,7 @@ Deno.serve(async req => {
             // THE SAME TOKEN, WHOEVER PUT IT THERE. A default that skipped the
             // reserve would make running out of time worth a spare force.
             const silent = defaultAdvisorPlacement(decision.faction, forces)
-            forces = [...forces, ...silent]
+            forces = landPlacement(forces as never, silent) as never[]
             players = shipAdvisor(players, decision.faction, silent)
           } else if (decision.kind === 'traitor') {
             const seatId = seatOfFaction[decision.faction]
@@ -1091,7 +1092,7 @@ Deno.serve(async req => {
           // is how a faction ends up playing a token up on the table.
           nextState = {
             ...state,
-            forces: [...((state.forces ?? []) as unknown[]), ...placed.value],
+            forces: landPlacement((state.forces ?? []) as never, placed.value) as never,
             players: shipAdvisor(
               (state.players ?? []) as { faction: string; reserves: number }[],
               myFaction, placed.value),
@@ -2061,7 +2062,8 @@ Deno.serve(async req => {
           // ships one Bene Gesserit force free into the Polar Sink, in the
           // SAME write — automatic, because the basic game leaves them no
           // decision to make. See bgFollowsShip for who triggers it.
-          ...(bgFollowsShip(myFaction as never, kind)
+          ...(bgFollowsShip(myFaction as never, kind,
+            state.mode === 'advanced' ? 'advanced' : 'basic')
             && players.some((p) => p?.faction === 'bene-gesserit' && p.reserves > 0)
             ? {
               forces: landForces(

@@ -794,8 +794,8 @@ var GUILD_RETURN_PER = 2;
 var GREAT_FLAT = "territory-22";
 var POLAR_SINK = "territory-03";
 var POLAR_SINK_SECTOR = "sector-1";
-function bgFollowsShip(shipper, kind) {
-  return kind === "off-planet" && shipper !== "bene-gesserit" && shipper !== "fremen";
+function bgFollowsShip(shipper, kind, mode) {
+  return mode === "basic" && kind === "off-planet" && shipper !== "bene-gesserit" && shipper !== "fremen";
 }
 var FREMEN_SHIP_RADIUS = 2;
 var ARRAKEEN = "territory-13";
@@ -1019,12 +1019,24 @@ function landForces(forces, faction, territoryId, sector, count, starred) {
   }];
 }
 function liftForces(forces, faction, territoryId, sector, count, starred) {
-  return forces.flatMap((f) => {
-    if (f.faction !== faction || f.territoryId !== territoryId || f.sector !== sector) return [f];
-    const left = f.count - count;
-    if (left <= 0) return [];
-    return [{ ...f, count: left, starred: Math.max(0, (f.starred ?? 0) - starred) }];
-  });
+  let owed = count;
+  let starsOwed = starred;
+  const out = [];
+  for (const f of forces) {
+    if (f.faction !== faction || f.territoryId !== territoryId || f.sector !== sector || owed <= 0) {
+      out.push(f);
+      continue;
+    }
+    const take = Math.min(f.count, owed);
+    const stars = Math.min(Math.min(f.count, f.starred ?? 0), starsOwed, take);
+    owed -= take;
+    starsOwed -= stars;
+    const left = f.count - take;
+    if (left > 0) {
+      out.push({ ...f, count: left, starred: Math.max(0, (f.starred ?? 0) - stars) });
+    }
+  }
+  return out;
 }
 function nextSeat(w, closesAt) {
   const at = w.at + 1;

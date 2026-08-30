@@ -14,6 +14,7 @@ because the folder is easier to fill in a few sittings than in one.
 | `Carthag.jpg` | Carthag (`territory-26`) | nobody in particular |
 | `Carthag-Harkonnen.jpg` | Carthag | the Harkonnen, who start there |
 | `Dune-Rock.png` | any rock territory | nobody in particular |
+| `Dune-Sand.png` | any sand territory | nobody in particular |
 | `Arrakeen-Battle.png` | *unplaced* — an Arrakeen assault scene awaiting a slot | — |
 
 ## The naming

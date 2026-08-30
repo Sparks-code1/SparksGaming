@@ -1229,6 +1229,13 @@ check('the three windows have their seconds',
       return /data-dial-unsupported/.test(s)
     })(), false)
   const panelSrc2 = code('src/components/dune/BattlePanel.tsx')
+  // A PURSE THAT ARRIVES LATE cannot leave staged spice above it: the form
+  // clamps at use, so the commit can never post more spice than the ceiling
+  // the same render showed.
+  check('the staged spice is clamped to the purse at use',
+    [/const spiceStaged = Math\.min\(spiceSpent, spiceMax\)/.test(panelSrc2),
+      /data-plan-spice=\{spiceStaged\}/.test(panelSrc2),
+      /\? \{ spice: spiceStaged \} : null\),/.test(panelSrc2)], [true, true, true])
   check('...the commit is gated on the same law the server judges by',
     /disabled=\{busy \|\| !!violation \|\| !supported\} data-plan-commit=""/.test(panelSrc2)
       && /const supported = !advanced \|\| allocationsFor\(\{/.test(panelSrc2), true)

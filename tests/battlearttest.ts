@@ -37,10 +37,12 @@ const BACKDROPS = [
   'Arrakeen-Atreides.jpg',
   'Carthag.jpg',
   'Carthag-Harkonnen.jpg',
-  // The first terrain backdrop: an open-desert battle beneath rock
+  // The terrain backdrops: an open-desert battle beneath rock
   // outcroppings — ground for battles in any rock territory, rather than
-  // one named place. Sand is promised to follow.
+  // one named place — and the promised sand, arrived and named into
+  // the grammar the same way.
   'Dune-Rock.png',
+  'Dune-Sand.png',
 ]
 
 /**

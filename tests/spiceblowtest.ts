@@ -786,21 +786,35 @@ function awaitingAgain(carry: Parameters<typeof placeFremenWorms>[0]) {
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
   const { bgFollowsShip } = await import('@/lib/dune/shipment')
   check('another faction\'s off-planet shipment brings the watcher',
-    [bgFollowsShip('atreides' as never, 'off-planet'),
-      bgFollowsShip('spacing-guild' as never, 'off-planet')], [true, true])
-  check('...their own does not', bgFollowsShip('bene-gesserit' as never, 'off-planet'), false)
+    [bgFollowsShip('atreides' as never, 'off-planet', 'basic'),
+      bgFollowsShip('spacing-guild' as never, 'off-planet', 'basic')], [true, true])
+  check('...their own does not', bgFollowsShip('bene-gesserit' as never, 'off-planet', 'basic'), false)
   check('...nor the Fremen\'s, whose reserves never left the planet',
-    bgFollowsShip('fremen' as never, 'off-planet'), false)
+    bgFollowsShip('fremen' as never, 'off-planet', 'basic'), false)
   check('...nor a cross-shipment or a retreat to reserves',
-    [bgFollowsShip('atreides' as never, 'cross'),
-      bgFollowsShip('spacing-guild' as never, 'to-reserves')], [false, false])
+    [bgFollowsShip('atreides' as never, 'cross', 'basic'),
+      bgFollowsShip('spacing-guild' as never, 'to-reserves', 'basic')], [false, false])
 
   const fn = strip(readFileSync('supabase/functions/dune-action/index.ts', 'utf8'))
   check('the follow rides in the shipment\'s own write',
-    /bgFollowsShip\(myFaction as never, kind\)/.test(fn)
+    /bgFollowsShip\(myFaction as never, kind,/.test(fn)
       && /POLAR_SINK, POLAR_SINK_SECTOR as never, 1, 0\)/.test(fn), true)
   check('...and never overdraws an empty reserve',
     /p\?\.faction === 'bene-gesserit' && p\.reserves > 0/.test(fn), true)
+}
+
+// ── the follow-ship is the BASIC rule and no other ────────────────────────
+// "Advanced will work differently since it goes to the shipper's territory
+// as an advisor, so leave that unbuilt" — so in an advanced match NOTHING
+// follows, rather than the basic rule handing out free Polar Sink forces.
+{
+  const { bgFollowsShip } = await import('@/lib/dune/shipment')
+  check('the free follow-ship never fires in the advanced game',
+    bgFollowsShip('atreides' as never, 'off-planet', 'advanced'), false)
+  const fn2 = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  check('...and the endpoint names the mode from the row',
+    /bgFollowsShip\(myFaction as never, kind,\s*[\r\n]+\s*state\.mode === 'advanced' \? 'advanced' : 'basic'\)/.test(fn2),
+    true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

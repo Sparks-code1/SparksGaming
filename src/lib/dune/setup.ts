@@ -92,6 +92,7 @@
  *   one territory the storm never touches. Its posture is worked out the same
  *   way a chosen one is.
  */
+import { landForces } from '@/lib/dune/shipment'
 import { factionById } from '@/data/dune/factions'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
@@ -610,6 +611,28 @@ export function answerAdvisorPlacement(
       posture: postureFor(forces, choice.territoryId, faction),
     }],
   }
+}
+
+/**
+ * Land setup placements onto the board THROUGH THE MERGE, not beside it.
+ *
+ * A raw push can seat a second row on a key the deal already holds — the
+ * advisor defaulting to the Polar Sink lands on the Bene Gesserit's own
+ * fixed force — and duplicate rows are how a lift came to annihilate a
+ * token. An 'advisor' keeps its own row: its posture is real state and the
+ * merge would erase it.
+ */
+export function landPlacement(
+  forces: readonly Force[], placed: readonly Force[],
+): Force[] {
+  let out: readonly Force[] = forces
+  for (const p of placed) {
+    out = p.posture === 'advisor'
+      ? [...out, p]
+      : landForces(out, p.faction, p.territoryId, p.sector as never,
+        p.count, Math.min(p.count, p.starred ?? 0))
+  }
+  return [...out]
 }
 
 /**

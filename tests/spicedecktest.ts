@@ -359,5 +359,16 @@ const draw = (over: Partial<SpiceDeckAreaProps> = {}) =>
   }
 }
 
+// ── the basic discard sits on the deck's own line ─────────────────────────
+{
+  const { SPICE_DECK_LAYOUT } = await import('@/data/dune/spiceDeckLayout')
+  const basicY = draw({ mode: 'basic' })
+  check('the basic pile shares the deck\'s y axis',
+    basicY.includes(`y="${SPICE_DECK_LAYOUT.deck.y}"`)
+      && !basicY.includes(`y="${SPICE_DECK_LAYOUT.discardA.y}"`), true)
+  check('...while the advanced pair keeps its stack',
+    draw({ mode: 'advanced' }).includes(`y="${SPICE_DECK_LAYOUT.discardA.y}"`), true)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 process.exit(pass ? 0 : 1)

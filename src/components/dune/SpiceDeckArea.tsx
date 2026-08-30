@@ -266,7 +266,11 @@ export function SpiceDeckArea({ deck, mode }: SpiceDeckAreaProps) {
           label what the arrangement already says, and cost width the cards
           could have. The single pile keeps its word, because one pile beside a
           deck is not self-evidently a discard. */}
-      <Pile cards={deck.discardA} x={L.discardA.x} y={L.discardA.y}
+      {/* IN THE BASIC GAME the single pile sits ON THE DECK'S OWN LINE —
+          one deck, one discard, one row. The advanced pair keeps its
+          stacked arrangement either side of that line. */}
+      <Pile cards={deck.discardA}
+        x={L.discardA.x} y={advanced ? L.discardA.y : L.deck.y}
         w={L.discardA.w} h={L.discardA.h}
         name={advanced ? 'Discard pile A' : 'Discard pile'}
         caption={advanced ? '' : 'DISCARD'} />

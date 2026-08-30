@@ -865,6 +865,11 @@ export function BattlePanel({
   const worth = seat ? eliteWorth(seat, oppFaction) : 2
   const freeFull = !!seat && fullWithoutSpice(seat)
   const spiceMax = Math.min(purse, pieces.plain + pieces.elite)
+  // CLAMPED AT USE, not trusted from state: the purse can arrive late (the
+  // auction's spending reaching this row after the form drew), and a stepper
+  // left above the new ceiling posts a more-spice-than-you-hold the player
+  // cannot see coming.
+  const spiceStaged = Math.min(spiceSpent, spiceMax)
   const maxDial = advanced
     ? battleStrengthCap(pieces, worth)
     : seat
@@ -873,7 +878,7 @@ export function BattlePanel({
   // The SAME enumeration the server admits plans by: a dial-and-spice pair
   // no set of pieces can pay is stopped at the form, with its reason.
   const supported = !advanced || allocationsFor({
-    pieces, dial, spice: freeFull ? 0 : spiceSpent, worth, freeFull,
+    pieces, dial, spice: freeFull ? 0 : spiceStaged, worth, freeFull,
   }).length > 0
   const toggleHalf = () => {
     const nextHalf = !half
@@ -1009,12 +1014,12 @@ export function BattlePanel({
             Spice in support — one per full-strength piece; the rest count half
           </span>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
-            <button type="button" data-plan-spice-down="" disabled={busy || spiceSpent <= 0}
-              onClick={() => setSpiceSpent(spiceSpent - 1)}
+            <button type="button" data-plan-spice-down="" disabled={busy || spiceStaged <= 0}
+              onClick={() => setSpiceSpent(spiceStaged - 1)}
               style={{ ...btn, width: 'auto', display: 'inline-block', margin: 0 }}>−</button>
-            <b data-plan-spice={spiceSpent}>{spiceSpent}</b>
-            <button type="button" data-plan-spice-up="" disabled={busy || spiceSpent >= spiceMax}
-              onClick={() => setSpiceSpent(spiceSpent + 1)}
+            <b data-plan-spice={spiceStaged}>{spiceStaged}</b>
+            <button type="button" data-plan-spice-up="" disabled={busy || spiceStaged >= spiceMax}
+              onClick={() => setSpiceSpent(spiceStaged + 1)}
               style={{ ...btn, width: 'auto', display: 'inline-block', margin: 0 }}>+</button>
             <span style={{ fontSize: 12, opacity: 0.7 }}>of {spiceMax} you can spend</span>
           </div>
@@ -1135,14 +1140,14 @@ export function BattlePanel({
       )}
       {!supported && (
         <p data-dial-unsupported="" style={{ fontSize: 12, color: '#e8a0a0' }}>
-          No set of your pieces can pay {dialText(dial)} with {spiceSpent} spice.
+          No set of your pieces can pay {dialText(dial)} with {spiceStaged} spice.
         </p>
       )}
       <button type="button" disabled={busy || !!violation || !supported} data-plan-commit=""
         onClick={() => onPlan({
           territoryId: c.territoryId,
           dial,
-          ...(advanced && !freeFull && spiceSpent > 0 ? { spice: spiceSpent } : null),
+          ...(advanced && !freeFull && spiceStaged > 0 ? { spice: spiceStaged } : null),
           ...(advanced && kh && (leader || hero) ? { kwisatz: true } : null),
           ...(leader ? { leader } : null),
           ...(hero ? { cheapHero: true } : null),

@@ -59,10 +59,15 @@ export const POLAR_SINK_SECTOR = 'sector-1'
  * their shipping is not "from off-planet" — the sheet's "any other faction
  * ships... from off-planet" excludes them by construction. The Guild's own
  * off-planet shipments trigger it like anyone's. Advanced sends an advisor
- * to the shipper's territory instead and is NOT built.
+ * to the shipper's territory instead and is NOT built — so in an advanced
+ * match NOTHING follows: firing the basic rule there hands the Bene
+ * Gesserit free Polar Sink forces the advanced game never grants.
  */
-export function bgFollowsShip(shipper: FactionId, kind: GuildShipKind): boolean {
-  return kind === 'off-planet' && shipper !== 'bene-gesserit' && shipper !== 'fremen'
+export function bgFollowsShip(
+  shipper: FactionId, kind: GuildShipKind, mode: 'basic' | 'advanced',
+): boolean {
+  return mode === 'basic' && kind === 'off-planet'
+    && shipper !== 'bene-gesserit' && shipper !== 'fremen'
 }
 /** How far from the Great Flat the desert's own shipment reaches. */
 export const FREMEN_SHIP_RADIUS = 2
@@ -458,17 +463,39 @@ export function landForces(
   } as Force]
 }
 
-/** Take a detachment off a cell, dropping the stack when it empties. */
+/**
+ * Take a detachment off a cell, dropping a stack when it empties.
+ *
+ * ACROSS EVERY MATCHING ROW, until the asked-for lift is satisfied. Two rows
+ * CAN share one key — setup pushes placements raw beside the deal's rows —
+ * and the old form subtracted the whole count from EACH match: lifting two
+ * from rows of [2, 1] dropped both, and the Bene Gesserit's third Polar Sink
+ * force was annihilated exactly that way. A row is never charged more than
+ * it holds, and never more than is still owed.
+ */
 export function liftForces(
   forces: readonly Force[], faction: FactionId,
   territoryId: string, sector: string, count: number, starred: number,
 ): Force[] {
-  return forces.flatMap(f => {
-    if (f.faction !== faction || f.territoryId !== territoryId || f.sector !== sector) return [f]
-    const left = f.count - count
-    if (left <= 0) return []
-    return [{ ...f, count: left, starred: Math.max(0, (f.starred ?? 0) - starred) }]
-  })
+  let owed = count
+  let starsOwed = starred
+  const out: Force[] = []
+  for (const f of forces) {
+    if (f.faction !== faction || f.territoryId !== territoryId
+      || f.sector !== sector || owed <= 0) {
+      out.push(f)
+      continue
+    }
+    const take = Math.min(f.count, owed)
+    const stars = Math.min(Math.min(f.count, f.starred ?? 0), starsOwed, take)
+    owed -= take
+    starsOwed -= stars
+    const left = f.count - take
+    if (left > 0) {
+      out.push({ ...f, count: left, starred: Math.max(0, (f.starred ?? 0) - stars) })
+    }
+  }
+  return out
 }
 
 /** The rotation moved along: the seat's move made, a pass, or the clock.
