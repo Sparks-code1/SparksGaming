@@ -1414,15 +1414,24 @@ function mentatVerdict(state, prediction, spice) {
     return crown(["fremen"], "fremen-default");
   }
   if (seated.includes("spacing-guild")) return crown(["spacing-guild"], "guild-default");
-  const counts = seated.map((f) => ({ f, n: strongholdsHeld(forces, f) }));
-  const best = Math.max(0, ...counts.map((c) => c.n));
-  const tied = counts.filter((c) => c.n === best).map((c) => c.f);
+  const units = [
+    ...solo.map((f) => ({ factions: [f], n: strongholdsHeld(forces, f) })),
+    ...pairs.map(([x, y]) => ({
+      factions: [x, y],
+      n: strongholdIds.filter((t) => occupies(forces, x, t) || occupies(forces, y, t)).length
+    }))
+  ];
+  const best = Math.max(0, ...units.map((u) => u.n));
+  const tied = units.filter((u) => u.n === best);
   if (tied.length > 1 && spice) {
-    const richest = Math.max(...tied.map((f) => spice[f] ?? 0));
-    const byPurse = tied.filter((f) => (spice[f] ?? 0) === richest);
-    if (byPurse.length < tied.length) return crown(byPurse, "most-spice");
+    const purseOf = (u) => u.factions.reduce((n, f) => n + (spice[f] ?? 0), 0);
+    const richest = Math.max(...tied.map(purseOf));
+    const byPurse = tied.filter((u) => purseOf(u) === richest);
+    if (byPurse.length < tied.length) {
+      return crown(byPurse.flatMap((u) => u.factions), "most-spice");
+    }
   }
-  return crown(tied, "most-strongholds");
+  return crown(tied.flatMap((u) => u.factions), "most-strongholds");
 }
 function resetDeadlines(state, now, lengths) {
   const patch = {};

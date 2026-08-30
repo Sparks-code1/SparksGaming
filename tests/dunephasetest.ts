@@ -662,6 +662,44 @@ check('a game is ten turns', TURN_LIMIT, 10)
     } as never, { faction: 'atreides', turn: 3 }),
     { factions: ['bene-gesserit'], reason: 'prediction', turn: 3 })
 
+  // ── turn ten ties score the pair together ───────────────────────────────
+  // Harkonnen stand in both sietches so the Fremen default cannot fire, no
+  // Guild is seated, and nobody is at a winning threshold: the tie is real.
+  const tenBase = (forces: unknown[], spice?: Record<string, number>) =>
+    verdict({ turn: 10, players: allies, forces: forces as never } as never,
+      null, spice ?? null)
+  check('at ten, an alliance tallies its strongholds as one pair',
+    tenBase([
+      S('atreides', 'territory-13'), S('atreides', 'territory-26'),
+      S('fremen', 'territory-33'),
+      S('harkonnen', 'territory-40'), S('harkonnen', 'territory-38'),
+    ]),
+    { factions: ['atreides', 'fremen'], reason: 'most-strongholds', turn: 10 })
+  check('...a full tie of pair and solo shares the crown',
+    tenBase([
+      S('atreides', 'territory-13'), S('fremen', 'territory-26'),
+      S('harkonnen', 'territory-40'), S('harkonnen', 'territory-38'),
+    ]),
+    { factions: ['harkonnen', 'atreides', 'fremen'], reason: 'most-strongholds', turn: 10 })
+  check('...an allied seat never doubles as its own solo unit',
+    tenBase([
+      S('atreides', 'territory-13'), S('atreides', 'territory-26'),
+      S('harkonnen', 'territory-40'), S('harkonnen', 'territory-38'),
+    ]),
+    { factions: ['harkonnen', 'atreides', 'fremen'], reason: 'most-strongholds', turn: 10 })
+  check('...and the spice tiebreak counts the two purses combined',
+    tenBase([
+      S('atreides', 'territory-13'), S('fremen', 'territory-26'),
+      S('harkonnen', 'territory-40'), S('harkonnen', 'territory-38'),
+    ], { atreides: 3, fremen: 3, harkonnen: 5 }),
+    { factions: ['atreides', 'fremen'], reason: 'most-spice', turn: 10 })
+  check('...which a richer solo purse still beats',
+    tenBase([
+      S('atreides', 'territory-13'), S('fremen', 'territory-26'),
+      S('harkonnen', 'territory-40'), S('harkonnen', 'territory-38'),
+    ], { atreides: 1, fremen: 1, harkonnen: 5 }),
+    { factions: ['harkonnen'], reason: 'most-spice', turn: 10 })
+
   const held = (mentat: unknown) => hold2({
     phase: 'Mentat Pause', turn: 3, mode: 'basic', storm: 'sector-1',
     shieldWall: 'intact', forces: [], players: allies, mentat,

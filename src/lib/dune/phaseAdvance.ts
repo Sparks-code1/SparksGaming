@@ -573,20 +573,36 @@ export function mentatVerdict(
   }
   if (seated.includes('spacing-guild')) return crown(['spacing-guild'], 'guild-default')
 
-  const counts = seated.map(f => ({ f, n: strongholdsHeld(forces, f) }))
-  const best = Math.max(0, ...counts.map(c => c.n))
-  const tied = counts.filter(c => c.n === best).map(c => c.f)
+  // ── THE UNITS OF THE TIE: solo players, and alliances AS PAIRS ──────────
+  // Allies who would win together at four tie together at ten: a pair's
+  // tally is its SEPARATELY-occupied strongholds, each counted once, and
+  // its purse is the two purses combined.
+  const units = [
+    ...solo.map(f => ({ factions: [f], n: strongholdsHeld(forces, f) })),
+    ...pairs.map(([x, y]) => ({
+      factions: [x, y],
+      n: strongholdIds
+        .filter(t => occupies(forces, x, t) || occupies(forces, y, t)).length,
+    })),
+  ]
+  const best = Math.max(0, ...units.map(u => u.n))
+  const tied = units.filter(u => u.n === best)
   if (tied.length > 1 && spice) {
-    // MOST SPICE AMONG THE TIED — the tied only. A faction outside the tie
-    // with the fullest purse on the planet is not in this question.
-    const richest = Math.max(...tied.map(f => spice[f] ?? 0))
-    const byPurse = tied.filter(f => (spice[f] ?? 0) === richest)
+    // MOST SPICE AMONG THE TIED — the tied only, a pair counting both
+    // purses together. A faction outside the tie with the fullest purse on
+    // the planet is not in this question.
+    const purseOf = (u: { factions: FactionId[] }) =>
+      u.factions.reduce((n, f) => n + (spice[f] ?? 0), 0)
+    const richest = Math.max(...tied.map(purseOf))
+    const byPurse = tied.filter(u => purseOf(u) === richest)
     // Named as the spice's win ONLY when spice narrowed it: a full tie shares,
     // and calling that 'most-spice' would announce equal purses — a fact about
     // holdings the shared verdict does not otherwise reveal.
-    if (byPurse.length < tied.length) return crown(byPurse, 'most-spice')
+    if (byPurse.length < tied.length) {
+      return crown(byPurse.flatMap(u => u.factions), 'most-spice')
+    }
   }
-  return crown(tied, 'most-strongholds')
+  return crown(tied.flatMap(u => u.factions), 'most-strongholds')
 }
 
 // ── dev scaffolding: re-run an expired window ─────────────────────────────
