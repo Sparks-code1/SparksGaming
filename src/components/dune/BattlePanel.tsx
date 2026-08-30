@@ -492,20 +492,45 @@ export function BattlePanel({
               }} />
             )}
           </div>
-          <div style={{ minHeight: 20 }}>
-            {stage >= 2 && (
-              <span data-reveal-weapon={fa}>
-                Weapon: {plan.weapon ? cardName(plan.weapon) : 'none'}
-                {weaponVerdict ? <span style={{ opacity: 0.8 }}> — {weaponVerdict}</span> : null}
-              </span>
-            )}
-          </div>
-          <div style={{ minHeight: 20 }}>
-            {stage >= 3 && (
-              <span data-reveal-defence={fa}>
-                Defence: {plan.defence ? cardName(plan.defence) : 'none'}
-              </span>
-            )}
+          {/* THE CARDS THEMSELVES, side by side — the weapon lands a stage
+              before the defence that answers it, and the verdict prints
+              under the blade that earned it. */}
+          <div style={{ display: 'flex', gap: 10, marginTop: 8, alignItems: 'flex-start', minHeight: 24 }}>
+            <div>
+              {stage >= 2 && (
+                <div data-reveal-weapon={fa}>
+                  <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Weapon</div>
+                  {plan.weapon ? (
+                    <TreacheryCardFace
+                      card={TREACHERY_CARDS.find(x => x.id === plan.weapon)!} width={112} />
+                  ) : (
+                    <span style={{ opacity: 0.6 }}>none</span>
+                  )}
+                  {weaponVerdict ? (
+                    <div style={{
+                      fontSize: 12, maxWidth: 112, marginTop: 2,
+                      color: weaponVerdict.startsWith('slays') ? '#e8a0a0' : undefined,
+                      opacity: weaponVerdict.startsWith('slays') ? 1 : 0.85,
+                    }}>
+                      {weaponVerdict}
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
+            <div>
+              {stage >= 3 && (
+                <div data-reveal-defence={fa}>
+                  <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>Defence</div>
+                  {plan.defence ? (
+                    <TreacheryCardFace
+                      card={TREACHERY_CARDS.find(x => x.id === plan.defence)!} width={112} />
+                  ) : (
+                    <span style={{ opacity: 0.6 }}>none</span>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
           <div style={{ minHeight: 20 }}>
             {stage >= 4 && (

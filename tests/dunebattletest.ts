@@ -626,6 +626,9 @@ check('the three windows have their seconds',
   check('then the weapons, defences still down',
     [/data-reveal-weapon="atreides"/.test(s2), /data-reveal-defence/.test(s2)],
     [true, false])
+  check('...drawn as the CARDS they are, faces not names',
+    [s2.includes('CRYSKNIFE'),
+      atStage(55_001).includes('SHIELD')], [true, true])
   const s3 = atStage(55_001)
   check('then the defences: a blocked weapon does nothing',
     [/data-reveal-defence="harkonnen"/.test(s3), s3.includes('blocked'),
