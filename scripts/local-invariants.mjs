@@ -32,6 +32,7 @@
  */
 import { createClient } from '@supabase/supabase-js'
 import { spawn, execSync } from 'node:child_process'
+import { classifyDispatch } from './lib/dispatchVerdict.ts'
 import { stormOrder } from '../supabase/functions/_shared/dunePhase.gen.ts'
 import {
   pendingBattles, battlesFor, nextAggressor, allocationsFor, piecesInBattle,
@@ -231,16 +232,20 @@ let matchId = null
 let lastVersion = null
 const act = async (faction, action, expect = 'ok') => {
   const before = lastVersion
-  // ONE retry on a response that is not the endpoint's — the local edge
+  // RETRIES on a response that is not the endpoint's — the local edge
   // runtime occasionally 502s through the gateway WHILE THE WRITE LANDS
   // (at-least-once delivery; the app's own dispatch treats a network
   // failure the same way, as "may or may not have applied"). A blip is not
-  // a refusal; a second blip is — and a blip whose version bump arrived is
-  // an accepted write whose answer got lost.
+  // a refusal, HOWEVER MANY IN A ROW: the verdict below asks the database
+  // whether the write landed, and an answer that never carried the
+  // endpoint's own shape can prove acceptance (the version moved) but
+  // never refusal. What it cannot prove it reports as unreachable — a
+  // violation nobody can trust is worse than no check.
   let res
   let body
+  let spoke = false
   let blipped = false
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
     res = await fetch(`${API}/functions/v1/dune-action`, {
       method: 'POST',
       headers: {
@@ -258,41 +263,41 @@ const act = async (faction, action, expect = 'ok') => {
       if (!res.ok && body.error === undefined && body.code === undefined) {
         blipped = true
         console.log(`  (blip, ${res.status}: ${text.slice(0, 100)} — retrying)`)
-        await new Promise(r => setTimeout(r, 700))
+        await new Promise(r => setTimeout(r, 700 * (attempt + 1)))
         continue
       }
+      spoke = true
       break
     } catch {
       body = {}
       blipped = true
       console.log(`  (non-JSON response, ${res.status}: ${text.slice(0, 100)} — retrying)`)
-      await new Promise(r => setTimeout(r, 700))
+      await new Promise(r => setTimeout(r, 700 * (attempt + 1)))
     }
   }
   const label = `${action.type} by ${faction}`
   const snap = await snapshot(matchId)
   lastVersion = snap.version
-  if (expect === 'ok') {
-    // the blip's write may have landed while its answer died in the gateway
-    if (!res.ok && blipped && snap.version === before + 1) {
-      console.log(`  ok (through a blip)  ${label}  (v${snap.version})`)
-      checkInvariants(snap, label)
-      return { body, snap }
-    }
-    if (!res.ok) {
-      fail(label, `expected ok, refused: ${body.error ?? '?'} (${body.code ?? '?'})`)
-    } else if (snap.version !== before + 1) {
-      fail(label, `accepted write moved the version ${before} → ${snap.version}, not by one`)
-    }
-  } else {
-    if (res.ok) fail(label, `expected refusal '${expect}', the server accepted it`)
-    else if (body.code !== expect) fail(label, `expected refusal '${expect}', got '${body.code}'`)
-    if (snap.version !== before) {
-      fail(label, `a refusal moved the version ${before} → ${snap.version}`)
-    }
+  const ruled = classifyDispatch({
+    expect, spoke, ok: !!res.ok, code: body.code, error: body.error,
+    blipped, before, after: snap.version,
+  })
+  if (ruled.verdict === 'unreachable') {
+    // INFRASTRUCTURE, NOT A RULES VIOLATION — and not silently a pass
+    // either: the steps after this one assume this one happened, so the
+    // only honest move is to stop and say so, on the same exit the
+    // stack-not-up check uses.
+    console.error(`\n  UNREACHABLE  ${label} — the endpoint never answered in its own`
+      + ` voice and no write landed (last status ${res.status}, v${snap.version}).`
+      + ` This is the gateway or the runtime, not the rules. Rerun when the stack settles.`)
+    process.exit(2)
   }
+  if (ruled.verdict === 'violation') fail(label, ruled.detail)
   checkInvariants(snap, label)
-  console.log(`  ${res.ok ? 'ok      ' : `refused ${body.code ?? '?'}`}  ${label}  (v${snap.version})`)
+  const said = ruled.verdict === 'ok-through-blip' ? 'ok (through a blip)'
+    : ruled.verdict === 'refused' ? `refused ${body.code}`
+    : res.ok ? 'ok      ' : `refused ${body.code ?? '?'}`
+  console.log(`  ${said}  ${label}  (v${snap.version})`)
   return { body, snap }
 }
 

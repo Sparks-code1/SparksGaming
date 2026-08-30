@@ -320,6 +320,59 @@ const base = {
     (fixtureTraitors.harkonnen ?? []).length, 4)
 }
 
+// ── the harness's word is only as good as this function ───────────────────
+// The invariant harness's gateway sometimes fails WHILE THE WRITE LANDS, so
+// what a dispatch proved is ruled here: the endpoint's own voice or the
+// database's version column, never the gateway's status line. A 502 counted
+// as a refusal once produced a violation nobody could trust — the matrix
+// below is that lesson, row by row.
+{
+  const { classifyDispatch } = await import('../scripts/lib/dispatchVerdict')
+  const D = (over: object) => classifyDispatch({
+    expect: 'ok', spoke: true, ok: true, code: undefined, error: undefined,
+    blipped: false, before: 4, after: 5, ...over,
+  } as never)
+
+  check('a clean accept is ok, and only a one-step version is clean',
+    [D({}).verdict, D({ after: 6 }).verdict],
+    ['ok', 'violation'])
+  check('a genuine refusal against an expected ok is a violation, code named',
+    D({ ok: false, code: 'cannot-pay', error: 'no' }),
+    { verdict: 'violation', detail: "expected ok, refused: no (cannot-pay)" })
+  check('a blip whose write landed is accepted — answer lost, version moved',
+    [D({ spoke: false, ok: false, blipped: true }).verdict,
+      D({ ok: false, code: 'not-your-turn', error: 'x', blipped: true }).verdict],
+    ['ok-through-blip', 'ok-through-blip'])
+  check('THE GATEWAY IS NEVER A REFUSAL: unreadable and unlanded is unreachable',
+    D({ spoke: false, ok: false, blipped: true, after: 4 }).verdict,
+    'unreachable')
+  check('...but unreadable while the version strode two is a real violation',
+    D({ spoke: false, ok: false, blipped: true, after: 6 }).verdict,
+    'violation')
+
+  const R = (over: object) => D({ expect: 'cannot-pay', ok: false,
+    code: 'cannot-pay', error: 'no', after: 4, ...over })
+  check('an expected refusal, delivered in the endpoint\'s voice, passes',
+    R({}).verdict, 'refused')
+  check('...the wrong code is a violation, and so is an acceptance',
+    [R({ code: 'stale' }).verdict, R({ ok: true, code: undefined }).verdict],
+    ['violation', 'violation'])
+  check('...a refusal that moved the version is a violation whatever was said',
+    R({ after: 5 }).verdict, 'violation')
+  check('...and an unreadable answer with the version still is unreachable here too',
+    R({ spoke: false, code: undefined, blipped: true }).verdict, 'unreachable')
+
+  // ── the harness actually rules by it ────────────────────────────────────
+  const harness = readFileSync('scripts/local-invariants.mjs', 'utf8')
+  check('the harness imports the verdict and stops, loudly, on unreachable',
+    [/import \{ classifyDispatch \} from '\.\/lib\/dispatchVerdict\.ts'/.test(harness),
+      /const ruled = classifyDispatch\(\{/.test(harness),
+      /if \(ruled\.verdict === 'unreachable'\) \{/.test(harness),
+      /process\.exit\(2\)/.test(harness),
+      /if \(ruled\.verdict === 'violation'\) fail\(label, ruled\.detail\)/.test(harness)],
+    [true, true, true, true, true])
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.
