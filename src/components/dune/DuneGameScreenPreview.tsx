@@ -203,6 +203,9 @@ export default function DuneGameScreenPreview() {
   const battleState = {
     ...STATE, mode: 'advanced', phase: 'Battles', awaiting: null, auction: undefined,
     forces: [...STATE.forces, f('harkonnen', 'territory-13', 'sector-10', 4)],
+    // the sleeper is awake for this fixture: the tracker reads seven-plus
+    players: STATE.players.map(p =>
+      p.faction === 'atreides' ? { ...p, battleLosses: 8 } : p),
     battles: {
       turn: 4, at: 0, fought: [], usedLeaders: {},
       order: ['atreides', 'harkonnen', 'emperor', 'fremen', 'spacing-guild', 'bene-gesserit'],
@@ -214,7 +217,10 @@ export default function DuneGameScreenPreview() {
         closesAt: battleAt + 600_000,
         revealed: {
           plans: {
-            atreides: { dial: 2.5, spice: 1, leader: 'Lady Jessica', weapon: 'crysknife' },
+            atreides: {
+              dial: 2.5, spice: 1, leader: 'Lady Jessica',
+              weapon: 'crysknife', defence: 'snooper', kwisatz: true,
+            },
             harkonnen: { dial: 3, leader: 'Feyd-Rautha', weapon: 'chaumas', defence: 'shield' },
           },
           traitor: { answered: [], calls: [], closesAt: battleAt + 60_000 },
