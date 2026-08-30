@@ -166,7 +166,8 @@ export default function DuneGameScreenPreview() {
   // the panel came up and stayed up: Bid and Pass did nothing, and the only way
   // out was to know about ?auction=off. A preview you cannot get out of is a
   // preview of one frame.
-  const [card, setCard] = useState(q.get('auction') === 'off' ? -1 : BIDDING.ask.index)
+  const [card, setCard] = useState(
+    q.get('auction') === 'off' || q.has('battle') ? -1 : BIDDING.ask.index)
   const running = card >= 0 && card < BIDDING.ask.cardCount
 
   // ── setting up, at ?dune-game&setup ──────────────────────────────────────
@@ -191,6 +192,37 @@ export default function DuneGameScreenPreview() {
     setOutstanding(o => settle(o, kind, seat))
   }
 
+  // ── the staged reveal, at ?dune-game&battle ──────────────────────────────
+  // A battle already revealed, its beat stamped AT MOUNT, so the sequence
+  // plays from page load: leaders, weapons, defences, forces — reload to
+  // watch it land again. One pairing blocks (crysknife on shield) and one
+  // kills (chaumas through no defence), because both faces of the rule are
+  // what the sequence exists to show.
+  const battling = q.has('battle')
+  const [battleAt] = useState(() => Date.now())
+  const battleState = {
+    ...STATE, mode: 'advanced', phase: 'Battles', awaiting: null, auction: undefined,
+    forces: [...STATE.forces, f('harkonnen', 'territory-13', 'sector-10', 4)],
+    battles: {
+      turn: 4, at: 0, fought: [], usedLeaders: {},
+      order: ['atreides', 'harkonnen', 'emperor', 'fremen', 'spacing-guild', 'bene-gesserit'],
+      closesAt: battleAt + 600_000,
+      current: {
+        territoryId: 'territory-13', sectors: ['sector-10'],
+        aggressor: 'atreides', defender: 'harkonnen',
+        committed: ['atreides', 'harkonnen'],
+        closesAt: battleAt + 600_000,
+        revealed: {
+          plans: {
+            atreides: { dial: 2.5, spice: 1, leader: 'Lady Jessica', weapon: 'crysknife' },
+            harkonnen: { dial: 3, leader: 'Feyd-Rautha', weapon: 'chaumas', defence: 'shield' },
+          },
+          traitor: { answered: [], calls: [], closesAt: battleAt + 60_000 },
+        },
+      },
+    },
+  } as unknown as DuneGameState
+
   const setupState: DuneGameState & { setup?: SetupWindow } = dealt
     ? { ...dealt.state, mode: 'advanced',
         forces: [...dealt.state.forces, ...placedForces],
@@ -200,13 +232,16 @@ export default function DuneGameScreenPreview() {
   return (
     <>
       <DuneGameScreen
-        state={settling ? setupState : { ...STATE, mode }}
+        state={settling ? setupState : battling ? battleState : { ...STATE, mode }}
         seat={seat}
         own={settling && seat
           ? (dealt.secrets[`p${mySeatId}`] as DuneSecrets)
           : seat ? OWN : null}
         chat={CHAT}
         onSend={seat ? () => {} : undefined}
+        onBattlePick={seat ? () => {} : undefined}
+        onBattlePlan={seat ? () => {} : undefined}
+        onBattleAnswer={seat ? () => {} : undefined}
         setup={settling && seat ? {
           onFremenPlacement: at => answer('fremen-placement',
             at.map(a => ({

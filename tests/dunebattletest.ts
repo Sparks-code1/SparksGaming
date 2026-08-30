@@ -561,7 +561,7 @@ check('the three windows have their seconds',
         atreides: { dial: 2, leader: JESSICA },
         harkonnen: { dial: 3, leader: FEYD, weapon: 'crysknife' },
       },
-      traitor: { answered: [], calls: [], closesAt: 9_999_999_999_999 },
+      traitor: { answered: [], calls: [], closesAt: 50_000 },
     },
   }
   const beat = draw({ battles: { ...battles, current: revealed } })
@@ -578,6 +578,89 @@ check('the three windows have their seconds',
     /data-no-traitor/.test(draw({
       battles: { ...battles, current: revealed }, traitors: [],
     })), true)
+
+  // ── THE REVEAL LANDS IN STAGES ──────────────────────────────────────────
+  // Leaders face up and counted; then weapons; then defences, each pairing
+  // resolved — blocked does nothing, unblocked slays and zeroes the count;
+  // then the forces committed bring both counts to the judged totals, and
+  // only then do the beat's controls light. The clock is the SERVER'S
+  // reveal stamp, so a given closesAt IS a stage: with now=1 and a
+  // 60-second beat, closesAt 60_000 is the instant of reveal and closesAt
+  // 53_001 is seven seconds in.
+  const stagePlans = {
+    atreides: { dial: 2, leader: JESSICA, weapon: 'crysknife' },
+    harkonnen: { dial: 3, leader: FEYD, defence: 'shield' },
+  }
+  const killPlans = {
+    atreides: { dial: 2, leader: JESSICA, weapon: 'crysknife' },
+    harkonnen: { dial: 3, leader: FEYD },
+  }
+  const boomPlans = {
+    atreides: { dial: 2, leader: JESSICA, weapon: 'lasgun' },
+    harkonnen: { dial: 3, leader: FEYD, defence: 'shield' },
+  }
+  const atStage = (closesAt: number, plans: Record<string, unknown> = stagePlans) =>
+    draw({
+      battles: {
+        ...battles,
+        current: {
+          ...current, committed: ['atreides', 'harkonnen'],
+          revealed: { plans, traitor: { answered: [], calls: [], closesAt } },
+        },
+      },
+    })
+
+  const s0 = atStage(60_000)
+  check('at the reveal the counts are blank and nothing has landed',
+    [s0.includes('data-strength-count="atreides">—<'),
+      /data-reveal-leader/.test(s0), /data-no-traitor/.test(s0)],
+    [true, false, false])
+  const s1 = atStage(59_001)
+  check('the leaders land first, face up and counted',
+    [/data-reveal-leader="atreides"/.test(s1),
+      s1.includes('data-strength-count="atreides">5<'),
+      s1.includes('data-strength-count="harkonnen">6<'),
+      /data-reveal-weapon/.test(s1)],
+    [true, true, true, false])
+  const s2 = atStage(57_001)
+  check('then the weapons, defences still down',
+    [/data-reveal-weapon="atreides"/.test(s2), /data-reveal-defence/.test(s2)],
+    [true, false])
+  const s3 = atStage(55_001)
+  check('then the defences: a blocked weapon does nothing',
+    [/data-reveal-defence="harkonnen"/.test(s3), s3.includes('blocked'),
+      /data-reveal-slain/.test(s3),
+      s3.includes('data-strength-count="atreides">5<'),
+      /data-reveal-forces/.test(s3)],
+    [true, true, false, true, false])
+  const s3kill = atStage(55_001, killPlans)
+  check('...and an unblocked one slays the leader and zeroes the count',
+    [/data-reveal-slain="harkonnen"/.test(s3kill),
+      s3kill.includes(`slays ${FEYD}`),
+      s3kill.includes('data-strength-count="harkonnen">0<'),
+      s3kill.includes('data-strength-count="atreides">5<')],
+    [true, true, true, true])
+  check('...lasgun on shield burns the whole board of it',
+    [/data-reveal-explosion/.test(atStage(55_001, boomPlans)),
+      atStage(55_001, boomPlans).includes('data-strength-count="atreides">0<')],
+    [true, true])
+  const s4 = atStage(53_001)
+  check('last the forces committed bring the judged totals',
+    [/data-reveal-forces="atreides"/.test(s4),
+      s4.includes('data-strength-count="atreides">7<'),
+      s4.includes('data-strength-count="harkonnen">9<'),
+      /data-no-traitor/.test(s4)],
+    [true, true, true, true])
+  check('...totals that remember the slain',
+    [atStage(53_001, killPlans).includes('data-strength-count="harkonnen">3<'),
+      atStage(53_001, killPlans).includes('data-strength-count="atreides">7<')],
+    [true, true])
+
+  const preview = code('src/components/dune/DuneGameScreenPreview.tsx')
+  check('the preview can stage a revealed battle, at ?dune-game&battle',
+    [/q\.has\('battle'\)/.test(preview),
+      /traitor: \{ answered: \[\], calls: \[\], closesAt: battleAt \+ 60_000 \}/.test(preview)],
+    [true, true])
 
   // the game screen carries the panel, and every driver feeds it
   const game = code('src/components/dune/DuneGameScreen.tsx')

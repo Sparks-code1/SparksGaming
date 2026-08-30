@@ -29,6 +29,7 @@ import { factionById } from '@/data/dune/factions'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import {
   pendingBattles, battlesFor, forcesInBattle, CHEAP_HERO_ID,
+  resolveBattle, BATTLE_TRAITOR_SECONDS,
   VOICE_TARGETS, voiceViolation, voiceCardMatches, canComplyWithVoice,
   PRESCIENCE_ASKS,
   piecesInBattle, eliteWorth, fullWithoutSpice, battleStrengthCap, allocationsFor,
@@ -398,7 +399,14 @@ export function BattlePanel({
     )
   }
 
-  // ── the reveal and the traitor beat ─────────────────────────────────────
+  // ── the reveal, STAGED, then the traitor beat ───────────────────────────
+  // The plans land the way the physical reveal does: LEADERS first, face up,
+  // their strengths on the counts; then WEAPONS; then DEFENCES, each pairing
+  // resolved — a blocked weapon does nothing, an unblocked one slays the
+  // leader and that count falls to zero; last the FORCES committed, bringing
+  // both counts to the totals the result is judged on. The clock is the
+  // SERVER'S reveal stamp (the beat's deadline minus its length), so every
+  // client sees the same beat land and a late joiner sees it finished.
   if (c.revealed) {
     const beat = c.revealed.traitor
     const iAmIn = seat === c.aggressor || seat === c.defender
@@ -407,19 +415,141 @@ export function BattlePanel({
     const theirLeader = c.revealed.plans[other]?.leader
     const mayCall = iAmIn && !answered && !!theirLeader && traitors.includes(theirLeader)
     const expired = now >= beat.closesAt
+
+    const sinceReveal = now - (beat.closesAt - BATTLE_TRAITOR_SECONDS * 1000)
+    const stage = sinceReveal >= 6200 ? 4
+      : sinceReveal >= 4400 ? 3
+      : sinceReveal >= 2600 ? 2
+      : sinceReveal >= 800 ? 1 : 0
+
+    const planFor = (fa: FactionId) =>
+      (c.revealed!.plans[fa] ?? { dial: 0 }) as {
+        dial: number; spice?: number; leader?: string; cheapHero?: boolean
+        weapon?: string; defence?: string
+      }
+    // The PLAIN pairing — no traitor has been called while the beat stands.
+    const plainOut = resolveBattle({
+      aggressor: { faction: c.aggressor, plan: planFor(c.aggressor), calledTraitor: false },
+      defender: { faction: c.defender, plan: planFor(c.defender), calledTraitor: false },
+    })
+    const strengthOf = (fa: FactionId, name?: string) =>
+      name ? factionById(fa)?.leaders.find(l => l.name === name)?.strength ?? 0 : 0
+    const countText = (fa: FactionId, idx: 0 | 1) => {
+      const plan = planFor(fa)
+      const lStr = strengthOf(fa, plan.leader)
+      if (stage < 1) return '—'
+      if (stage < 3) return dialText(lStr)
+      if (stage < 4) return dialText(plainOut.sides[idx].leaderDies ? 0 : lStr)
+      return dialText(plan.dial + (plainOut.sides[idx].leaderDies ? 0 : lStr))
+    }
+    const column = (fa: FactionId, idx: 0 | 1) => {
+      const plan = planFor(fa)
+      const lStr = strengthOf(fa, plan.leader)
+      const dead = stage >= 3 && plainOut.sides[idx].leaderDies
+      const kindOf2 = (id?: string) => TREACHERY_CARDS.find(x => x.id === id)?.kind
+      const weaponVerdict = (() => {
+        if (stage < 3 || !plan.weapon) return null
+        if (plainOut.explosion) return 'the territory burns'
+        if (kindOf2(plan.weapon) !== 'weapon') return 'no effect'
+        const target = planFor(idx === 0 ? c.defender : c.aggressor)
+        if (!target.leader && !target.cheapHero) return 'no target'
+        return plainOut.sides[idx === 0 ? 1 : 0].leaderDies
+          ? `slays ${target.leader ?? 'the Cheap Hero'}`
+          : 'blocked'
+      })()
+      const disc = factionById(fa)?.leaders.find(l => l.name === plan.leader) ?? null
+      return (
+        <div key={fa} data-revealed-plan={fa} style={{ flex: 1, minWidth: 180 }}>
+          <b style={{ color: FACTION_LOOK[fa].colour }}>{FACTION_LOOK[fa].name}</b>
+          <div style={{ marginTop: 6, minHeight: 72 }}>
+            {stage >= 1 ? (
+              <div data-reveal-leader={fa} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                opacity: dead ? 0.4 : 1, transition: 'opacity 600ms',
+              }}>
+                {disc ? (
+                  <svg viewBox="-34 -34 68 68" width="64" height="64">
+                    <LeaderDisc leader={disc} faction={fa} r={32} />
+                  </svg>
+                ) : plan.cheapHero ? (
+                  <TreacheryCardFace
+                    card={TREACHERY_CARDS.find(x => x.id === CHEAP_HERO_ID)!} width={48} />
+                ) : (
+                  <span style={{ opacity: 0.6 }}>no leader</span>
+                )}
+                <span>
+                  {plan.leader ?? (plan.cheapHero ? 'Cheap Hero' : '')}
+                  {plan.leader ? ` — strength ${lStr}` : ''}
+                  {dead && (
+                    <span data-reveal-slain={fa} style={{ color: '#e8a0a0' }}> ☠ slain</span>
+                  )}
+                </span>
+              </div>
+            ) : (
+              <div aria-hidden style={{
+                width: 64, height: 64, borderRadius: '50%',
+                border: `2px dashed ${SAND}33`,
+              }} />
+            )}
+          </div>
+          <div style={{ minHeight: 20 }}>
+            {stage >= 2 && (
+              <span data-reveal-weapon={fa}>
+                Weapon: {plan.weapon ? cardName(plan.weapon) : 'none'}
+                {weaponVerdict ? <span style={{ opacity: 0.8 }}> — {weaponVerdict}</span> : null}
+              </span>
+            )}
+          </div>
+          <div style={{ minHeight: 20 }}>
+            {stage >= 3 && (
+              <span data-reveal-defence={fa}>
+                Defence: {plan.defence ? cardName(plan.defence) : 'none'}
+              </span>
+            )}
+          </div>
+          <div style={{ minHeight: 20 }}>
+            {stage >= 4 && (
+              <span data-reveal-forces={fa}>
+                Forces committed: <b>{dialText(plan.dial)}</b>
+                {plan.spice
+                  ? <span data-plan-spice-shown=""> · {plan.spice} spice in support</span>
+                  : null}
+              </span>
+            )}
+          </div>
+        </div>
+      )
+    }
+
     return frame(
       <>
         <b style={{ display: 'block', fontSize: 16 }}>
           Plans on the table — {territoryName(c.territoryId)}
         </b>
+        {/* THE COUNTS, updating as each element lands */}
+        <div data-reveal-stage={stage} style={{
+          display: 'flex', justifyContent: 'center', alignItems: 'baseline',
+          gap: 14, margin: '10px 0 2px', fontSize: 26,
+        }}>
+          <span style={{ color: FACTION_LOOK[c.aggressor].colour }}
+            data-strength-count={c.aggressor}>{countText(c.aggressor, 0)}</span>
+          <span style={{ fontSize: 15, opacity: 0.6 }}>vs</span>
+          <span style={{ color: FACTION_LOOK[c.defender].colour }}
+            data-strength-count={c.defender}>{countText(c.defender, 1)}</span>
+        </div>
+        {plainOut.explosion && stage >= 3 && (
+          <p data-reveal-explosion="" style={{ textAlign: 'center', color: '#e8a0a0' }}>
+            Lasgun meets shield — everything in the territory burns.
+          </p>
+        )}
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 8 }}>
-          <PlanLine faction={c.aggressor} plan={c.revealed.plans[c.aggressor] as never} />
-          <PlanLine faction={c.defender} plan={c.revealed.plans[c.defender] as never} />
+          {column(c.aggressor, 0)}
+          {column(c.defender, 1)}
         </div>
         {/* THE BEAT: both sides answer, every battle — and only then does the
-            fight resolve, so a battle that resolves at once says nothing
-            about who holds what. */}
-        <div style={{ marginTop: 12 }}>
+            fight resolve. Its controls wait for the sequence, so nobody
+            answers a reveal they have not seen land. */}
+        {(stage >= 4 || expired) && <div style={{ marginTop: 12 }}>
           {iAmIn && !answered && (
             <>
               {mayCall && (
@@ -445,7 +575,7 @@ export function BattlePanel({
               The clock has run out — resolve
             </button>
           )}
-        </div>
+        </div>}
       </>,
     )
   }
