@@ -269,7 +269,7 @@ const base = {
   check('...hand counts derived from the dealt hands, never guessed',
     /handCount: \(BATTLE_HANDS\[p\.faction\] \?\? \[\]\)\.length,/.test(seed), true)
   check('...and traitors crossed so the beat is testable',
-    /traitors: BATTLE_TRAITORS\[s\.faction\] \?\? \[\],/.test(seed), true)
+    /traitors: BATTLE_TRAITORS\[s\.faction\] \?\? \[\] \} : null\)/.test(seed), true)
 
   // THE FIXTURE OBEYS THE STRONGHOLD CAP. A stronghold holds at most two
   // factions — the shipping and movement gates enforce it in play — so a
@@ -297,7 +297,7 @@ const base = {
   // and deadlocked the turn.
   check('the battle seed stocks the deck it dealt from',
     /const pile = \[\.\.\.treacheryIds\(\)\]/.test(seed)
-      && /for \(const id of Object\.values\(BATTLE_HANDS\)\.flat\(\)\)/.test(seed)
+      && /for \(const id of Object\.values\(dealtHands\)\.flat\(\)\)/.test(seed)
       && /deck: 'treachery', cards: pile,/.test(seed), true)
   check('...the three-sider standing on open sand instead',
     [...new Set(fixtureForces

@@ -289,6 +289,29 @@ const userIdFor = async email => {
   return found.id
 }
 
+/**
+ * REAL HANDS behind every public count. The fixtures used to claim varied
+ * handCounts over empty secrets rows so the HUD had something to show — and
+ * the invariant harness rightly called that a lie the moment it audited a
+ * seeded match: the public count IS the hand's length, in fixtures as in
+ * play. Cards are dealt off the top of the printed set in seat order.
+ */
+const dealtHands = {}
+{
+  const pile = treacheryIds()
+  let cursor = 0
+  for (const [i] of emails.entries()) {
+    const faction = FACTIONS[i]
+    const n = PHASE === 'battle'
+      ? (BATTLE_HANDS[faction] ?? []).length
+      : handCountFor(faction, i)
+    dealtHands[faction] = PHASE === 'battle'
+      ? (BATTLE_HANDS[faction] ?? [])
+      : pile.slice(cursor, cursor + n)
+    if (PHASE !== 'battle') cursor += n
+  }
+}
+
 const seats = []
 for (const [i, email] of emails.entries()) {
   seats.push({
@@ -403,43 +426,28 @@ await admin.from('match_players').insert(seats.map((s, i) => ({
 })))
 await admin.from('match_secrets').insert(seats.map(s => ({
   match_id: match.id, player_id: s.playerId,
-  data: PHASE === 'battle'
-    ? {
-      cards: BATTLE_HANDS[s.faction] ?? [], spice: s.spice,
-      traitors: BATTLE_TRAITORS[s.faction] ?? [],
-    }
-    : { cards: [], spice: s.spice },
+  data: {
+    cards: dealtHands[s.faction] ?? [], spice: s.spice,
+    ...(PHASE === 'battle' ? { traitors: BATTLE_TRAITORS[s.faction] ?? [] } : null),
+  },
 })))
 
-if (PHASE === 'bidding') {
-  /**
-   * Real card ids, so the cards dealt are cards the client can render.
-   *
-   * DRAWN BY THE SERVER, not here. OPEN_BIDDING takes them off this pile and
-   * parks them under 'auction-lot' where nobody may read them; seeding a lot
-   * directly would skip the one step that proves the order is fixed before a
-   * bid is made.
-   *
-   * Enough for several auctions — a pile that runs out mid-run turns a phase
-   * into a reshuffle, which is a different thing to be watching.
-   */
-  await admin.from('match_decks').insert({
-    match_id: match.id, deck: 'treachery', cards: treacheryIds(),
-  })
-} else if (PHASE === 'battle') {
-  // THE ECONOMY STAYS CLOSED: the battle fixture deals hands, so the deck
-  // holds the printed set MINUS exactly those cards. Dealt without stocking,
-  // a later Bidding phase asked the store for cards that did not exist and
-  // deadlocked the turn on deck-exhausted.
+// THE ECONOMY STAYS CLOSED in every fixture: whatever the hands hold, the
+// treachery deck holds exactly the rest of the printed set. Dealt without
+// stocking was how a seeded match deadlocked bidding on cards that did not
+// exist — and it is what the invariant harness audits first.
+{
   const pile = [...treacheryIds()]
-  for (const id of Object.values(BATTLE_HANDS).flat()) {
+  for (const id of Object.values(dealtHands).flat()) {
     const i = pile.indexOf(id)
     if (i >= 0) pile.splice(i, 1)
   }
   await admin.from('match_decks').insert({
     match_id: match.id, deck: 'treachery', cards: pile,
   })
-} else if (PHASE === 'blow') {
+}
+
+if (PHASE === 'blow') {
   // Two worms then two territories: pile A turns a worm that eats the showing
   // card, a second that is the Fremen's, and then a territory to land on.
   const worm = { kind: 'shai-hulud' }
