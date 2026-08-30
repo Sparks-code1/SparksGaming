@@ -303,6 +303,35 @@ const at = (phase: GamePhase, over: Partial<AdvanceState> = {}): AdvanceState =>
     mentatVerdict(tenth([...fremenHold, f('spacing-guild', TUEKS_SIETCH, 'sector-4')],
       fremenTable), null)?.reason, 'fremen-default')
 
+  // A DEFAULT CARRIES THE ALLY. Both cards say the allies win too — the
+  // faction named first — and an ally the table no longer seats does not.
+  const pairUp = (factions: string[], a: string, b: string) =>
+    factions.map((x, i) => ({
+      ...player(x, `player-position-${i + 1}`),
+      ally: x === a ? b : x === b ? a : null,
+    }))
+  check('the Fremen default crowns the ally with them',
+    mentatVerdict(at('Mentat Pause', {
+      turn: TURN_LIMIT, forces: fremenHold,
+      players: pairUp(fremenTable, 'fremen', 'atreides') as never,
+    }), null),
+    { factions: ['fremen', 'atreides'], reason: 'fremen-default', turn: TURN_LIMIT })
+  check('...and the Guild default theirs',
+    mentatVerdict(at('Mentat Pause', {
+      turn: TURN_LIMIT, forces: [f('harkonnen', SIETCH_TABR, 'sector-13')],
+      players: pairUp(fremenTable, 'spacing-guild', 'harkonnen') as never,
+    }), null),
+    { factions: ['spacing-guild', 'harkonnen'], reason: 'guild-default', turn: TURN_LIMIT })
+  check('...never an ally who is not seated',
+    mentatVerdict(at('Mentat Pause', {
+      turn: TURN_LIMIT, forces: [],
+      players: [
+        { ...player('spacing-guild', 'player-position-1'), ally: 'emperor' },
+        { ...player('atreides', 'player-position-2'), ally: null },
+      ] as never,
+    }), null)?.factions,
+    ['spacing-guild'])
+
   // PINNED TO THE CARD. The wording this code implements is in factions.ts,
   // and if that text changes the code must follow — so the phrases the two
   // corrections came from are asserted, not assumed.

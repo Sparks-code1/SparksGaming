@@ -568,6 +568,14 @@ export function mentatVerdict(
     !forces.some(f =>
       f.faction !== 'fremen' && f.territoryId === territoryId
       && f.count > 0 && f.posture !== 'advisor')
+  // A DEFAULT VICTORY CARRIES THE ALLY. Both cards say so — "your allies
+  // win with you if you win with the special victory condition" — so the
+  // crown that lands on the faction lands on its seated ally in the same
+  // breath, the faction named first.
+  const withAlly = (f: FactionId): FactionId[] => {
+    const a = allyOf(f)
+    return a && seated.includes(a as FactionId) ? [f, a as FactionId] : [f]
+  }
   if (
     seated.includes('fremen')
     && fremenOrEmpty(SIETCH_TABR)
@@ -577,9 +585,11 @@ export function mentatVerdict(
     && !(['harkonnen', 'atreides', 'emperor'] as FactionId[])
       .some(rival => occupies(forces, rival, TUEKS_SIETCH))
   ) {
-    return crown(['fremen'], 'fremen-default')
+    return crown(withAlly('fremen'), 'fremen-default')
   }
-  if (seated.includes('spacing-guild')) return crown(['spacing-guild'], 'guild-default')
+  if (seated.includes('spacing-guild')) {
+    return crown(withAlly('spacing-guild'), 'guild-default')
+  }
 
   // ── THE UNITS OF THE TIE: solo players, and alliances AS PAIRS ──────────
   // Allies who would win together at four tie together at ten: a pair's

@@ -1413,10 +1413,16 @@ function mentatVerdict(state, prediction, spice) {
   }
   if (state.turn < TURN_LIMIT) return null;
   const fremenOrEmpty = (territoryId) => !forces.some((f) => f.faction !== "fremen" && f.territoryId === territoryId && f.count > 0 && f.posture !== "advisor");
+  const withAlly = (f) => {
+    const a = allyOf(f);
+    return a && seated.includes(a) ? [f, a] : [f];
+  };
   if (seated.includes("fremen") && fremenOrEmpty(SIETCH_TABR) && fremenOrEmpty(HABBANYA_SIETCH) && !["harkonnen", "atreides", "emperor"].some((rival) => occupies(forces, rival, TUEKS_SIETCH))) {
-    return crown(["fremen"], "fremen-default");
+    return crown(withAlly("fremen"), "fremen-default");
   }
-  if (seated.includes("spacing-guild")) return crown(["spacing-guild"], "guild-default");
+  if (seated.includes("spacing-guild")) {
+    return crown(withAlly("spacing-guild"), "guild-default");
+  }
   const units = [
     ...solo.map((f) => ({ factions: [f], n: strongholdsHeld(forces, f) })),
     ...pairs.map(([x, y]) => ({
