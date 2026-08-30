@@ -1242,6 +1242,9 @@ function advanceHold(state, now) {
     if (state.wormRide && now < state.wormRide.closesAt) {
       return { code: "worm-ride", until: state.wormRide.closesAt };
     }
+    if (state.nexus && now < state.nexus.closesAt) {
+      return { code: "nexus-open", until: state.nexus.closesAt };
+    }
     return null;
   }
   if (state.phase === "CHOAM Charity") {
@@ -1447,6 +1450,10 @@ function resetDeadlines(state, now, lengths) {
   if (state.mentat) {
     patch.mentat = { ...state.mentat, closesAt: now + lengths.mentatSeconds * 1e3 };
     reset.push("mentat");
+  }
+  if (state.nexus) {
+    patch.nexus = { ...state.nexus, closesAt: now + lengths.nexusSeconds * 1e3 };
+    reset.push("nexus");
   }
   if (state.spiceBlow) {
     patch.spiceBlow = { ...state.spiceBlow, closesAt: now + lengths.wormSeconds * 1e3 };

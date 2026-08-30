@@ -758,7 +758,7 @@ function awaitingAgain(carry: Parameters<typeof placeFremenWorms>[0]) {
     /const rides = seatOfFaction\['fremen'\]/.test(fn)
       && /wormRide: \{ turn, territories: rides, closesAt: now \+ WORM_RIDE_SECONDS \* 1000 \}/.test(fn), true)
   check('...and the advance clears an unridden window',
-    /if \(state\.phase === 'Spice Blow and Nexus'\) delete base\.wormRide/.test(fn), true)
+    /if \(state\.phase === 'Spice Blow and Nexus'\) \{\s*delete base\.wormRide\s*delete base\.nexus\s*\}/.test(fn), true)
   check('the ride is judged by the shared law', /judgeWormRide\(\{/.test(fn), true)
   check('...and only the Fremen ride',
     /if \(myFaction !== 'fremen'\) \{\s*[\r\n]+\s*return json\(\{ error: 'only the Fremen ride'/.test(fn), true)
@@ -815,6 +815,82 @@ function awaitingAgain(carry: Parameters<typeof placeFremenWorms>[0]) {
   check('...and the endpoint names the mode from the row',
     /bgFollowsShip\(myFaction as never, kind,\s*[\r\n]+\s*state\.mode === 'advanced' \? 'advanced' : 'basic'\)/.test(fn2),
     true)
+}
+
+// ── the Nexus ─────────────────────────────────────────────────────────────
+// A worm from turn two on calls the table together for five minutes — at
+// most once a turn — and the alliance law is: someone else, both seated,
+// both free, break before proposing again.
+{
+  const { NEXUS_SECONDS, countWorms, nexusDue, judgeProposal, nexusAllReady } =
+    await import('@/lib/dune/spiceBlow')
+  const worm = { kind: 'shai-hulud' }
+  const spice = { kind: 'spice' }
+
+  check('the window is five minutes', NEXUS_SECONDS, 300)
+  check('the trigger counts worms across BOTH discards',
+    [countWorms(undefined), countWorms({ discardA: [spice], discardB: [] } as never),
+      countWorms({ discardA: [worm, spice], discardB: [worm] } as never)],
+    [0, 0, 2])
+  check('a worm on turn one calls no Nexus',
+    nexusDue({ turn: 1, wormsBefore: 0, wormsAfter: 1 }), false)
+  check('...on turn two it does',
+    nexusDue({ turn: 2, wormsBefore: 0, wormsAfter: 1, heldTurn: null }), true)
+  check('...but only a NEW worm, not one already showing',
+    nexusDue({ turn: 2, wormsBefore: 1, wormsAfter: 1, heldTurn: null }), false)
+  check('...and at most once a turn, however many worms follow',
+    [nexusDue({ turn: 2, wormsBefore: 1, wormsAfter: 2, heldTurn: 2 }),
+      nexusDue({ turn: 3, wormsBefore: 2, wormsAfter: 3, heldTurn: 2 })],
+    [false, true])
+
+  const P = (faction: string, ally: string | null = null) => ({ faction, ally })
+  const table = [P('atreides'), P('harkonnen'), P('emperor', 'fremen'), P('fremen', 'emperor')]
+  check('a proposal needs someone else',
+    judgeProposal({ proposer: 'atreides', to: 'atreides', players: table } as never),
+    'yourself')
+  check('...who is seated',
+    judgeProposal({ proposer: 'atreides', to: 'bene-gesserit', players: table } as never),
+    'not-seated')
+  check('...while the proposer is free',
+    judgeProposal({ proposer: 'emperor', to: 'atreides', players: table } as never),
+    'you-are-allied')
+  check('...and the target is free',
+    judgeProposal({ proposer: 'atreides', to: 'fremen', players: table } as never),
+    'they-are-allied')
+  check('...and two free seats may',
+    judgeProposal({ proposer: 'atreides', to: 'harkonnen', players: table } as never),
+    null)
+  check('all ready means ALL, and an empty table never is',
+    [nexusAllReady(['atreides', 'harkonnen'], [P('atreides'), P('harkonnen')] as never),
+      nexusAllReady(['atreides'], [P('atreides'), P('harkonnen')] as never),
+      nexusAllReady([], [] as never)],
+    [true, false, false])
+
+  // ── the server slice ────────────────────────────────────────────────────
+  const fn = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  check('the blow commit itself asks whether a Nexus is due',
+    [/nexusDue\(\{/.test(fn),
+      /nexus: \{ turn: done\.turn, closesAt: now \+ NEXUS_SECONDS \* 1000, ready: \[\] \}/.test(fn),
+      /nexusTurn: done\.turn,/.test(fn)],
+    [true, true, true])
+  check('the five moves stand as cases',
+    ['NEXUS_PROPOSE', 'NEXUS_ACCEPT', 'NEXUS_BREAK', 'NEXUS_READY', 'NEXUS_UNREADY']
+      .map(t => fn.includes(`case '${t}':`)),
+    [true, true, true, true, true])
+  check('the last ready DELETES the window in its own write',
+    /\? \{ \.\.\.state, nexus: undefined \}/.test(fn), true)
+  check('...and the advance out of the phase clears what outlived the clock',
+    /delete base\.nexus/.test(fn), true)
+  check('a proposal is stamped with its Nexus\'s turn',
+    /nexusProposal: \{ to, turn: nx\.turn \}/.test(fn), true)
+  check('an acceptance writes BOTH ally fields — the public exchange of cards',
+    [/p\.faction === myFaction \? \{ \.\.\.p, ally: from \}/.test(fn),
+      /p\.faction === from \? \{ \.\.\.p, ally: myFaction \}/.test(fn)],
+    [true, true])
+  check('a break frees BOTH seats, publicly',
+    /p\.faction === myFaction \|\| p\.faction === former/.test(fn), true)
+  check('...and RESET_CLOCK passes the five minutes along',
+    /nexusSeconds: NEXUS_SECONDS,/.test(fn), true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

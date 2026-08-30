@@ -473,6 +473,11 @@ export interface DuneGameState {
   /** The Mentat Pause: a winnerless pause gives the table one minute to
    *  ready up, and the turn marker waits on it. */
   mentat?: { closesAt: number; ready?: FactionId[] }
+  /** The Nexus: a worm from turn two on calls the table together for five
+   *  minutes of alliance talk. Cleared by the last ready or the advance. */
+  nexus?: { turn: number; closesAt: number; ready: FactionId[] }
+  /** The last turn a Nexus was called — at most one a turn. */
+  nexusTurn?: number
   /**
    * The current phase's look-at-it window — see PHASE_SECONDS in
    * lib/dune/phaseAdvance. Before it shuts only the host advances; after it,

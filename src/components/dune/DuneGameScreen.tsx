@@ -48,7 +48,7 @@ import { PlayerHud } from './PlayerHud'
 import { OwnStrip } from './OwnStrip'
 import { DuneBoard } from './DuneBoard'
 import { CHARITY_WINDOW_MS } from '@/lib/dune/charity'
-import { WORM_SECONDS, WORM_RIDE_SECONDS } from '@/lib/dune/spiceBlow'
+import { WORM_SECONDS, WORM_RIDE_SECONDS, NEXUS_SECONDS } from '@/lib/dune/spiceBlow'
 import {
   BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
   BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS, BATTLE_ALLOCATE_SECONDS,
@@ -64,6 +64,8 @@ import { inStorm, moveTargets, strongholdClosed } from '@/lib/dune/shipment'
 import { RideRail } from './RideRail'
 import { RevivalRail } from './RevivalRail'
 import { BattlePanel } from './BattlePanel'
+import { NexusPanel } from './NexusPanel'
+import type { NexusMove } from './NexusPanel'
 import { REVIVAL_CAP, STARRED_REVIVALS_PER_TURN, revivableLeaders } from '@/lib/dune/revival'
 import type { GuildShipKind } from '@/lib/dune/shipment'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
@@ -181,6 +183,12 @@ export interface DuneGameScreenProps {
   onBattleCapture?: (choice: 'kill' | 'keep' | 'decline') => void
   /** Ready up at the Mentat Pause — once per seat, per pause. */
   onMentatReady?: () => void
+  /** The Nexus's five moves: propose, accept, break, ready, un-ready. The
+   *  server judges every one; the panel only offers what looks pressable. */
+  onNexus?: (m: NexusMove) => void
+  /** The last NEXUS action's refusal — code and which action, the same
+   *  discipline as battleRefusal. */
+  nexusRefusal?: { type: string; code: string } | null
   /** The last BATTLE action's refusal — its code AND which action, so the
    *  panel names both and a stray refusal from another surface never
    *  freezes on it. */
@@ -251,7 +259,7 @@ export function DuneGameScreen({
   state, seat, own, chat, onSend, talkingTo, seatNames, notices, onShipReserves, onMoveStack,
   onShipSpecial, onRevive, onBattlePick, onBattlePlan, onBattleAnswer,
   onBattleVoice, onBattlePrescience, onBattleAllocate, onBattleCapture,
-  onMentatReady, battleRefusal,
+  onMentatReady, onNexus, nexusRefusal = null, battleRefusal,
   worms = [], onWormRide, onPassTurn,
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
@@ -375,8 +383,15 @@ export function DuneGameScreen({
   const rideWindow = state.wormRide && now < state.wormRide.closesAt
     ? { closesAt: state.wormRide.closesAt, ms: WORM_RIDE_SECONDS * 1000 }
     : null
+  // The ride's minute sits INSIDE the Nexus's five: while both run, the
+  // ride is the nearer clock and the one the header counts.
+  const nexusWindow = state.phase === 'Spice Blow and Nexus'
+    && state.nexus && now < state.nexus.closesAt
+    ? { closesAt: state.nexus.closesAt, ms: NEXUS_SECONDS * 1000 }
+    : null
   const closesAt = timed.charity?.expiresAt ?? timed.spiceBlow?.closesAt
     ?? rideWindow?.closesAt
+    ?? nexusWindow?.closesAt
     ?? timed.shipping?.closesAt
     ?? battleWindow?.closesAt
     ?? timed.setup?.closesAt ?? state.mentat?.closesAt
@@ -384,6 +399,7 @@ export function DuneGameScreen({
   const windowMs = timed.charity ? CHARITY_WINDOW_MS
     : timed.spiceBlow ? WORM_SECONDS * 1000
     : rideWindow ? rideWindow.ms
+    : nexusWindow ? nexusWindow.ms
     : timed.shipping ? undefined
     : battleWindow ? battleWindow.ms
     : timed.setup ? SETUP_SECONDS * 1000
@@ -1118,6 +1134,19 @@ export function DuneGameScreen({
                 </button>
               )}
             </div>
+          )}
+          {/* THE NEXUS BAR: private halves filtered to THIS Nexus's turn
+              here, so a stale record from a past Nexus never renders — the
+              turn stamp is the cleanup. */}
+          {state.phase === 'Spice Blow and Nexus' && state.nexus
+            && now < state.nexus.closesAt && seat && onNexus && (
+            <NexusPanel
+              nexus={state.nexus} players={state.players} seat={seat}
+              proposal={own?.nexusProposal?.turn === state.nexus.turn
+                ? own.nexusProposal.to : null}
+              offers={(own?.nexusOffers ?? [])
+                .filter(o => o.turn === state.nexus!.turn).map(o => o.from)}
+              onMove={onNexus} refusal={nexusRefusal} now={now} />
           )}
           {charity && seat && timed.charity && (
             <CharityModal

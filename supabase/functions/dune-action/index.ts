@@ -32,6 +32,7 @@ import {
 } from '../_shared/duneBidding.gen.ts'
 import { drawTreachery, discardUnsold, shuffleWithSeed, seededRng } from '../_shared/duneDeck.gen.ts'
 import {
+  NEXUS_SECONDS, countWorms, nexusDue, judgeProposal, nexusAllReady,
   buildSpiceDeck, resolveSpiceBlow, beginDoubleSpiceBlow, placeFremenWorms,
   applyBlowToBoard, publicSpiceDeck, WORM_SECONDS,
 } from '../_shared/duneSpiceBlow.gen.ts'
@@ -245,6 +246,22 @@ Deno.serve(async req => {
         // from the board — split across two, a crash between cremates them.
         tanks: bankDead(
           (baseState.tanks ?? emptyTanks()) as never, (done.dead ?? []) as never),
+        // ── THE NEXUS ─────────────────────────────────────────────────────
+        // From turn two on, the FIRST worm shown this turn calls the table
+        // together for five minutes — at most once a turn however many
+        // worms follow, and a blow that pauses and commits twice calls it
+        // exactly once.
+        ...(nexusDue({
+          turn: done.turn,
+          wormsBefore: countWorms(baseState.spiceDeck as never),
+          wormsAfter: countWorms(done.spiceDeck as never),
+          heldTurn: (baseState.nexusTurn as number | undefined) ?? null,
+        })
+          ? {
+            nexus: { turn: done.turn, closesAt: now + NEXUS_SECONDS * 1000, ready: [] },
+            nexusTurn: done.turn,
+          }
+          : null),
         awaiting: null,
       },
       p_secrets: {},
@@ -1753,8 +1770,13 @@ Deno.serve(async req => {
       // way CLOSE_CHARITY would have. The claims stand; the window is over.
       if (state.phase === 'CHOAM Charity') delete base.charity
       // An unridden worm is a ride declined: the advance past the deadline
-      // clears it, the same shape as charity's window.
-      if (state.phase === 'Spice Blow and Nexus') delete base.wormRide
+      // clears it, the same shape as charity's window — and an outlived
+      // Nexus goes with it, its private proposals inert by their turn
+      // stamps without a cleanup write.
+      if (state.phase === 'Spice Blow and Nexus') {
+        delete base.wormRide
+        delete base.nexus
+      }
       // The pause's ready-up window ends with the pause: the advance that
       // moves the turn marker is what it was counting down to.
       if (state.phase === 'Mentat Pause') delete base.mentat
@@ -2830,6 +2852,165 @@ Deno.serve(async req => {
         b as never, c as never, [...c.revealed.traitor.calls] as never, choice)
     }
 
+    // ── the Nexus: propose, accept, break, ready, un-ready ──────────────────
+    // Proposals are PRIVATE — a row-to-row matter between two seats — and
+    // an alliance or its breaking is PUBLIC the moment it happens. The last
+    // seat to ready ends the window for everyone, irreversibly: the write
+    // that learns it deletes the window itself.
+    case 'NEXUS_PROPOSE':
+    case 'NEXUS_ACCEPT':
+    case 'NEXUS_BREAK':
+    case 'NEXUS_READY':
+    case 'NEXUS_UNREADY': {
+      const nx = state.nexus as { turn: number; closesAt: number; ready: string[] } | undefined
+      if (state.phase !== 'Spice Blow and Nexus' || !nx || now >= nx.closesAt) {
+        return json({ error: 'no Nexus is open', code: 'no-nexus' }, 409)
+      }
+      if (!myFaction) return json({ error: 'your seat has no faction', code: 'no-faction' }, 409)
+      const players = (state.players ?? []) as {
+        faction: string; ally?: string | null
+      }[]
+
+      if (action.type === 'NEXUS_READY' || action.type === 'NEXUS_UNREADY') {
+        const ready = nx.ready ?? []
+        if (action.type === 'NEXUS_READY') {
+          if (ready.includes(myFaction)) {
+            return json({ error: 'you are ready', code: 'already-ready' }, 409)
+          }
+          const readyNow = [...ready, myFaction]
+          const ends = nexusAllReady(readyNow, players as never)
+          const { data, error } = await admin.rpc('apply_match_write', {
+            p_match_id: matchId,
+            p_expected_version: match.version,
+            // THE LAST READY ENDS IT, in its own write — which is why it
+            // cannot be taken back, and why the panel warns before it.
+            p_state: ends
+              ? { ...state, nexus: undefined }
+              : { ...state, nexus: { ...nx, ready: readyNow } },
+            p_secrets: {},
+          })
+          if (error) return json({ error: error.message }, 500)
+          if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+          return json({ ready: readyNow, ...(ends ? { ended: true } : null), version: data[0].version })
+        }
+        if (!ready.includes(myFaction)) {
+          return json({ error: 'you are not ready', code: 'not-ready' }, 409)
+        }
+        const { data, error } = await admin.rpc('apply_match_write', {
+          p_match_id: matchId,
+          p_expected_version: match.version,
+          p_state: { ...state, nexus: { ...nx, ready: ready.filter((f) => f !== myFaction) } },
+          p_secrets: {},
+        })
+        if (error) return json({ error: error.message }, 500)
+        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+        return json({ ready: ready.filter((f) => f !== myFaction), version: data[0].version })
+      }
+
+      if (action.type === 'NEXUS_BREAK') {
+        const mine = players.find((p) => p.faction === myFaction)
+        if (!mine?.ally) return json({ error: 'you have no alliance to break', code: 'not-allied' }, 409)
+        const former = mine.ally
+        const { data, error } = await admin.rpc('apply_match_write', {
+          p_match_id: matchId,
+          p_expected_version: match.version,
+          // BREAKING IS PUBLIC: the ally fields are the table's own record,
+          // and both seats are free to re-ally within this same Nexus.
+          p_state: {
+            ...state,
+            players: players.map((p) =>
+              p.faction === myFaction || p.faction === former
+                ? { ...p, ally: null } : p),
+          },
+          p_secrets: {},
+        })
+        if (error) return json({ error: error.message }, 500)
+        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+        return json({ broke: former, version: data[0].version })
+      }
+
+      const { data: secretRows } = await admin
+        .from('match_secrets').select('player_id, data').eq('match_id', matchId)
+      const rowOf = Object.fromEntries((secretRows ?? []).map((r) => [r.player_id, r.data ?? {}]))
+      const secretsPatch: Record<string, unknown> = {}
+
+      if (action.type === 'NEXUS_PROPOSE') {
+        const to = String(action.to ?? '')
+        const bad = judgeProposal({
+          proposer: myFaction as never, to: to as never, players: players as never,
+        })
+        if (bad) return json({ error: 'that proposal is not legal', code: bad }, 409)
+        const toSeat = seatOfFaction[to]
+        const mine = (rowOf[playerId] ?? {}) as { nexusProposal?: { to: string; turn: number } }
+        // A NEW PROPOSAL REPLACES THE OLD: retargeting is one move, and the
+        // old target's offer list loses this seat in the same write.
+        const old = mine.nexusProposal
+        if (old && old.turn === nx.turn && old.to !== to) {
+          const oldSeat = seatOfFaction[old.to]
+          if (oldSeat) {
+            const theirs = (rowOf[oldSeat] ?? {}) as { nexusOffers?: { from: string; turn: number }[] }
+            secretsPatch[oldSeat] = {
+              ...theirs,
+              nexusOffers: (theirs.nexusOffers ?? [])
+                .filter((o) => !(o.from === myFaction && o.turn === nx.turn)),
+            }
+          }
+        }
+        secretsPatch[playerId] = { ...(rowOf[playerId] ?? {}), nexusProposal: { to, turn: nx.turn } }
+        const target = (rowOf[toSeat] ?? {}) as { nexusOffers?: { from: string; turn: number }[] }
+        secretsPatch[toSeat] = {
+          ...target,
+          nexusOffers: [
+            ...(target.nexusOffers ?? [])
+              .filter((o) => !(o.from === myFaction) && o.turn === nx.turn),
+            { from: myFaction, turn: nx.turn },
+          ],
+        }
+        const { data, error } = await admin.rpc('apply_match_write', {
+          p_match_id: matchId,
+          p_expected_version: match.version,
+          p_state: { ...state },
+          p_secrets: secretsPatch,
+        })
+        if (error) return json({ error: error.message }, 500)
+        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+        return json({ proposed: to, version: data[0].version })
+      }
+
+      // NEXUS_ACCEPT
+      const from = String(action.from ?? '')
+      const fromSeat = seatOfFaction[from]
+      const theirs = (rowOf[fromSeat] ?? {}) as { nexusProposal?: { to: string; turn: number } }
+      if (theirs.nexusProposal?.to !== myFaction || theirs.nexusProposal?.turn !== nx.turn) {
+        return json({ error: 'no such offer stands', code: 'no-offer' }, 409)
+      }
+      const bad = judgeProposal({
+        proposer: from as never, to: myFaction as never, players: players as never,
+      })
+      if (bad) return json({ error: 'that alliance is not legal', code: bad }, 409)
+      // THE ALLIANCE IS PUBLIC the moment it forms — the ally fields are
+      // the exchanged cards. The pair's own outgoing proposals are spent.
+      const mine = (rowOf[playerId] ?? {}) as { nexusProposal?: { to: string; turn: number } }
+      secretsPatch[fromSeat] = { ...(rowOf[fromSeat] ?? {}), nexusProposal: undefined }
+      secretsPatch[playerId] = { ...(rowOf[playerId] ?? {}), nexusProposal: undefined }
+      void mine
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state,
+          players: players.map((p) =>
+            p.faction === myFaction ? { ...p, ally: from }
+              : p.faction === from ? { ...p, ally: myFaction }
+              : p),
+        },
+        p_secrets: secretsPatch,
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ allied: from, version: data[0].version })
+    }
+
     // ── the table readies for the next turn ─────────────────────────────────
     // Once per seat, once per pause. All six in — or the minute out — and
     // the hold on the turn marker clears; the ADVANCE itself stays the same
@@ -3041,6 +3222,7 @@ Deno.serve(async req => {
         battleAllocateSeconds: BATTLE_ALLOCATE_SECONDS,
         battleCaptureSeconds: BATTLE_CAPTURE_SECONDS,
         mentatSeconds: MENTAT_READY_SECONDS,
+        nexusSeconds: NEXUS_SECONDS,
       })
       if (reset.length === 0) {
         return json({ error: 'nothing here holds a clock', code: 'no-clock' }, 409)

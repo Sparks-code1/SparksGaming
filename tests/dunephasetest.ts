@@ -722,6 +722,7 @@ check('a game is ten turns', TURN_LIMIT, 10)
         battleTraitorSeconds: 1, battleVoiceSeconds: 1,
         battlePrescienceSeconds: 1, battleAllocateSeconds: 1,
         battleCaptureSeconds: 1, mentatSeconds: MENTAT_READY_SECONDS,
+        nexusSeconds: 1,
       })
       return [(out.patch.mentat as { closesAt: number }).closesAt, out.reset]
     })(),
@@ -753,6 +754,43 @@ check('a game is ten turns', TURN_LIMIT, 10)
   check('both drivers post the ready, and the hold has its sentence',
     [/MENTAT_READY/.test(match), /MENTAT_READY/.test(harness),
       /'mentat-pause': /.test(match)], [true, true, true])
+}
+
+// ── the Nexus holds the blow phase ────────────────────────────────────────
+{
+  const { advanceHold: hold3, resetDeadlines: reset3 } =
+    await import('@/lib/dune/phaseAdvance')
+  const { NEXUS_SECONDS } = await import('@/lib/dune/spiceBlow')
+  const blowState = (over: object) => ({
+    phase: 'Spice Blow and Nexus', turn: 3, mode: 'basic', storm: 'sector-1',
+    shieldWall: 'intact', forces: [], players: [],
+    spiceDeck: { turn: 3 }, ...over,
+  } as never)
+  check('an open Nexus holds the phase for its five minutes',
+    hold3(blowState({ nexus: { turn: 3, closesAt: 400_000, ready: [] } }), 1000),
+    { code: 'nexus-open', until: 400_000 })
+  check('...the worm ride is the nearer clock while both run',
+    hold3(blowState({
+      wormRide: { turn: 3, territories: [], closesAt: 100_000 },
+      nexus: { turn: 3, closesAt: 400_000, ready: [] },
+    }), 1000),
+    { code: 'worm-ride', until: 100_000 })
+  check('...and past its clock the Nexus holds nothing',
+    hold3(blowState({ nexus: { turn: 3, closesAt: 400_000, ready: [] } }), 500_000),
+    null)
+  check('the reset restamps the five minutes',
+    (() => {
+      const out = reset3(blowState({ nexus: { turn: 3, closesAt: 5, ready: [] } }),
+        1_000_000, {
+          setupSeconds: 1, charityMs: 1, wormSeconds: 1, bidSeconds: 1,
+          shipmentSeconds: 1, battlePickSeconds: 1, battlePlanSeconds: 1,
+          battleTraitorSeconds: 1, battleVoiceSeconds: 1,
+          battlePrescienceSeconds: 1, battleAllocateSeconds: 1,
+          battleCaptureSeconds: 1, mentatSeconds: 1, nexusSeconds: NEXUS_SECONDS,
+        })
+      return [(out.patch.nexus as { closesAt: number }).closesAt, out.reset]
+    })(),
+    [1_000_000 + NEXUS_SECONDS * 1000, ['nexus']])
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

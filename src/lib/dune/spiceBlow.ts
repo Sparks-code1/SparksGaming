@@ -19,6 +19,7 @@
  * the faction data, not under `advanced` — so it holds in both games.
  */
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
+import type { FactionId } from '@/types/Dune/Faction'
 import type {
   Force, GameMode, SectorId, SpiceCard, SpiceDeckPublic, TerritoryId,
 } from '@/types/Dune/Game'
@@ -776,4 +777,69 @@ export function resolveDoubleSpiceBlow(input: DoubleBlowInput): DoubleBlowOutcom
     beginDoubleSpiceBlow(input),
     carry => placeFremenWorms(carry, [], input.rng),
   )
+}
+
+// ── the Nexus ─────────────────────────────────────────────────────────────
+// A worm shown from turn two on calls the table together: five minutes to
+// propose, accept and break alliances — at most once a turn however many
+// worms follow. Everyone readying ends it early; the clock is the backstop.
+
+export const NEXUS_SECONDS = 300
+
+/** Shai-Hulud cards showing across both discards — the trigger's counter. */
+export function countWorms(deck: {
+  discardA?: readonly { kind: string }[]
+  discardB?: readonly { kind: string }[]
+} | undefined | null): number {
+  return [...(deck?.discardA ?? []), ...(deck?.discardB ?? [])]
+    .filter(c => c.kind === 'shai-hulud').length
+}
+
+/**
+ * Whether THIS blow commit owes a Nexus: turn two onward, a worm NEWLY
+ * shown, and none held yet this turn — a blow that pauses and commits
+ * twice must not call the table twice.
+ */
+export function nexusDue(input: {
+  turn: number
+  wormsBefore: number
+  wormsAfter: number
+  heldTurn?: number | null
+}): boolean {
+  return input.turn >= 2
+    && input.wormsAfter > input.wormsBefore
+    && input.heldTurn !== input.turn
+}
+
+export type NexusRefusal =
+  | 'no-nexus' | 'not-seated' | 'yourself' | 'you-are-allied'
+  | 'they-are-allied' | 'not-allied' | 'no-offer'
+  | 'already-ready' | 'not-ready'
+
+/**
+ * A proposal's legality — and an acceptance's, with the roles swapped in:
+ * someone else, both seated, and BOTH FREE. "You must break your current
+ * one before proposing again."
+ */
+export function judgeProposal(input: {
+  proposer: FactionId
+  to: FactionId
+  players: readonly { faction: FactionId; ally?: FactionId | null }[]
+}): NexusRefusal | null {
+  const { proposer, to, players } = input
+  if (proposer === to) return 'yourself'
+  const mine = players.find(p => p.faction === proposer)
+  const theirs = players.find(p => p.faction === to)
+  if (!mine || !theirs) return 'not-seated'
+  if (mine.ally) return 'you-are-allied'
+  if (theirs.ally) return 'they-are-allied'
+  return null
+}
+
+/** Everyone seated has readied: the write that learns this ends the Nexus. */
+export function nexusAllReady(
+  ready: readonly string[],
+  players: readonly { faction: string }[],
+): boolean {
+  return players.length > 0 && players.every(p => ready.includes(p.faction))
 }

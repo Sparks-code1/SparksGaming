@@ -1098,7 +1098,28 @@ function resolveDoubleSpiceBlow(input) {
     (carry) => placeFremenWorms(carry, [], input.rng)
   );
 }
+var NEXUS_SECONDS = 300;
+function countWorms(deck) {
+  return [...deck?.discardA ?? [], ...deck?.discardB ?? []].filter((c) => c.kind === "shai-hulud").length;
+}
+function nexusDue(input) {
+  return input.turn >= 2 && input.wormsAfter > input.wormsBefore && input.heldTurn !== input.turn;
+}
+function judgeProposal(input) {
+  const { proposer, to, players } = input;
+  if (proposer === to) return "yourself";
+  const mine = players.find((p) => p.faction === proposer);
+  const theirs = players.find((p) => p.faction === to);
+  if (!mine || !theirs) return "not-seated";
+  if (mine.ally) return "you-are-allied";
+  if (theirs.ally) return "they-are-allied";
+  return null;
+}
+function nexusAllReady(ready, players) {
+  return players.length > 0 && players.every((p) => ready.includes(p.faction));
+}
 export {
+  NEXUS_SECONDS,
   SHAI_HULUD_COUNT,
   WORM_RIDE_SECONDS,
   WORM_SECONDS,
@@ -1106,8 +1127,12 @@ export {
   applySpicePlacement,
   beginDoubleSpiceBlow,
   buildSpiceDeck,
+  countWorms,
   devourTerritory,
+  judgeProposal,
   judgeWormRide,
+  nexusAllReady,
+  nexusDue,
   placeFremenWorms,
   publicSpiceDeck,
   resolveDoubleSpiceBlow,

@@ -710,6 +710,7 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
                 'shipping-underway': 'Seats are shipping and moving, in storm order.',
                 'battles-underway': 'Battles are being fought, in storm order.',
                 'worm-ride': 'Shai-Hulud waits — the Fremen may ride.',
+                'nexus-open': 'A Nexus — the table is talking alliances.',
                 'mentat-pause': 'the table is readying for the next turn',
                 'game-over': 'The game is over.',
                 'setup-not-finished': 'Setting up.',
@@ -845,6 +846,15 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
           ? choice => void send({ type: 'BATTLE_CAPTURE', choice })
           : undefined}
         onMentatReady={seat ? () => void send({ type: 'MENTAT_READY' }) : undefined}
+        onNexus={seat ? m => void send(
+          m.kind === 'propose' ? { type: 'NEXUS_PROPOSE', to: m.to }
+            : m.kind === 'accept' ? { type: 'NEXUS_ACCEPT', from: m.from }
+            : m.kind === 'break' ? { type: 'NEXUS_BREAK' }
+            : m.kind === 'ready' ? { type: 'NEXUS_READY' }
+            : { type: 'NEXUS_UNREADY' }) : undefined}
+        nexusRefusal={refusedBy?.startsWith('NEXUS') && refused
+          ? { type: refusedBy, code: refused }
+          : null}
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused
           ? { type: refusedBy, code: refused }
           : null}

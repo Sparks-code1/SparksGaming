@@ -1320,5 +1320,99 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     /Omit<BiddingPanelProps, 'seat' \| 'spice' \| 'hand' \| 'revealed' \| 'now'>/.test(screen), true)
 }
 
+// ── the Nexus bar ─────────────────────────────────────────────────────────
+// The private halves render only for THIS Nexus's turn — the turn stamp is
+// the cleanup — and the last seat to ready is warned before the press.
+{
+  const onNexus = () => {}
+  const nexusState = {
+    ...state, phase: 'Spice Blow and Nexus',
+    nexus: { turn: 3, closesAt: 300_000, ready: ['harkonnen'] },
+  } as never
+  const html = draw({
+    state: nexusState,
+    own: {
+      ...own,
+      nexusProposal: { to: 'emperor', turn: 3 },
+      nexusOffers: [{ from: 'harkonnen', turn: 3 }, { from: 'fremen', turn: 2 }],
+    },
+    onNexus,
+  } as never)
+  check('the bar opens with the Nexus and counts its ready',
+    [/data-layer="nexus-bar"/.test(html), /1 of 4 ready/.test(html)], [true, true])
+  check('...a free seat may propose to the free, never to itself',
+    [/data-nexus-propose="harkonnen"/.test(html), /data-nexus-propose="atreides"/.test(html)],
+    [true, false])
+  check('...the outgoing proposal is named as private until accepted',
+    /data-nexus-proposed="emperor"/.test(html), true)
+  check('...an offer from THIS Nexus offers Accept and a stale one is invisible',
+    [/data-nexus-accept="harkonnen"/.test(html),
+      /data-nexus-offer="fremen"/.test(html)],
+    [true, false])
+  check('...and with seats still out, Ready carries no last-warning',
+    [/data-nexus-ready=""/.test(html), /data-nexus-ready-last/.test(html)], [true, false])
+
+  const last = draw({
+    state: {
+      ...(nexusState as object),
+      nexus: { turn: 3, closesAt: 300_000, ready: ['harkonnen', 'emperor', 'fremen'] },
+    } as never,
+    onNexus,
+  } as never)
+  check('the LAST seat to ready is told it ends the Nexus for everyone',
+    [/data-nexus-ready-last/.test(last), /cannot[\s\S]{0,30}be taken back/.test(last)],
+    [true, true])
+
+  const alliedPlayers = (state.players as { faction: string }[]).map(p =>
+    p.faction === 'atreides' ? { ...p, ally: 'emperor' }
+      : p.faction === 'emperor' ? { ...p, ally: 'atreides' } : p)
+  const allied = draw({
+    state: { ...(nexusState as object), players: alliedPlayers } as never,
+    onNexus,
+  } as never)
+  check('an allied seat gets Break — no propose buttons, the pair named publicly',
+    [/data-nexus-break/.test(allied), /data-nexus-propose=/.test(allied),
+      /data-nexus-alliances/.test(allied)],
+    [true, false, true])
+
+  const mineReady = draw({
+    state: {
+      ...(nexusState as object),
+      nexus: { turn: 3, closesAt: 300_000, ready: ['atreides'] },
+    } as never,
+    onNexus,
+  } as never)
+  check('a readied seat may un-ready while others are still deciding',
+    [/data-nexus-unready/.test(mineReady), /data-nexus-ready=""/.test(mineReady)],
+    [true, false])
+
+  const outlived = draw({
+    state: {
+      ...(nexusState as object), nexus: { turn: 3, closesAt: 500, ready: [] },
+    } as never,
+    onNexus,
+  } as never)
+  const spectator = draw({ state: nexusState } as never)
+  check('an outlived Nexus draws nothing, and neither does a handlerless view',
+    [/data-layer="nexus-bar"/.test(outlived), /data-layer="nexus-bar"/.test(spectator)],
+    [false, false])
+
+  // ── the drivers ─────────────────────────────────────────────────────────
+  const screen = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
+  check('the screen filters both private halves by the Nexus\'s turn',
+    [/own\?\.nexusProposal\?\.turn === state\.nexus\.turn/.test(screen),
+      /\.filter\(o => o\.turn === state\.nexus!\.turn\)/.test(screen)],
+    [true, true])
+  const match = readFileSync('src/components/dune/DuneMatchScreen.tsx', 'utf8')
+  const harness = readFileSync('src/components/dune/DuneMultiSeatView.tsx', 'utf8')
+  check('both drivers post all five moves, and the hold has its sentence',
+    [/NEXUS_PROPOSE/.test(match) && /NEXUS_ACCEPT/.test(match)
+      && /NEXUS_BREAK/.test(match) && /NEXUS_READY/.test(match)
+      && /NEXUS_UNREADY/.test(match),
+      /NEXUS_PROPOSE/.test(harness) && /NEXUS_UNREADY/.test(harness),
+      /'nexus-open': /.test(match)],
+    [true, true, true])
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 process.exit(pass ? 0 : 1)

@@ -13,7 +13,7 @@ import { resetDeadlines, PHASE_SECONDS } from '@/lib/dune/phaseAdvance'
 import { SHIPMENT_SECONDS } from '@/lib/dune/shipment'
 import { BID_SECONDS } from '@/lib/dune/bidding'
 import { CHARITY_WINDOW_MS } from '@/lib/dune/charity'
-import { WORM_SECONDS } from '@/lib/dune/spiceBlow'
+import { WORM_SECONDS, NEXUS_SECONDS } from '@/lib/dune/spiceBlow'
 import { SETUP_SECONDS } from '@/lib/dune/setup'
 import {
   BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
@@ -46,6 +46,7 @@ const LENGTHS = {
   battleAllocateSeconds: BATTLE_ALLOCATE_SECONDS,
   battleCaptureSeconds: BATTLE_CAPTURE_SECONDS,
   mentatSeconds: MENTAT_READY_SECONDS,
+  nexusSeconds: NEXUS_SECONDS,
 }
 const base = {
   phase: 'Storm', turn: 2, mode: 'basic', storm: 'sector-3',

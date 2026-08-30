@@ -677,6 +677,15 @@ export default function DuneMultiSeatView() {
           ? choice => void send(mine, 'BATTLE_CAPTURE', { choice } as never)
           : undefined}
         onMentatReady={mine ? () => void send(mine, 'MENTAT_READY') : undefined}
+        onNexus={mine ? m => void (
+          m.kind === 'propose' ? send(mine, 'NEXUS_PROPOSE', { to: m.to } as never)
+            : m.kind === 'accept' ? send(mine, 'NEXUS_ACCEPT', { from: m.from } as never)
+            : m.kind === 'break' ? send(mine, 'NEXUS_BREAK')
+            : m.kind === 'ready' ? send(mine, 'NEXUS_READY')
+            : send(mine, 'NEXUS_UNREADY')) : undefined}
+        nexusRefusal={refusedBy?.startsWith('NEXUS') && refused
+          ? { type: refusedBy, code: refused }
+          : null}
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused
           ? { type: refusedBy, code: refused }
           : null}

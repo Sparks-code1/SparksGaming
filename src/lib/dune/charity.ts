@@ -64,6 +64,14 @@ export interface DuneSecrets extends Secrets {
    * fields it is revealed.
    */
   capturedLeaders?: { name: string; from: FactionId }[]
+  /**
+   * The Nexus's PRIVATE half. An outgoing proposal, and the offers aimed at
+   * this seat — each stamped with its Nexus's turn, so a record from a past
+   * Nexus is inert without any cleanup write. Nothing here reaches the
+   * table until an acceptance makes the alliance public.
+   */
+  nexusProposal?: { to: FactionId; turn: number }
+  nexusOffers?: { from: FactionId; turn: number }[]
 }
 
 /** Claiming brings a player UP TO this, it does not add it. */

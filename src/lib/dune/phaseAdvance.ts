@@ -115,6 +115,8 @@ export interface AdvanceState {
   wormRide?: { closesAt: number }
   /** The pause's ready-up window: everyone ready, or the minute runs out. */
   mentat?: { closesAt: number; ready?: string[] }
+  /** The Nexus's window: cleared by the last ready, outlived by the clock. */
+  nexus?: { closesAt: number; ready?: string[] }
   phaseClock?: PhaseClock
 }
 
@@ -141,7 +143,7 @@ export function phaseAfter(phase: GamePhase): { phase: GamePhase; newTurn: boole
 export interface AdvanceHold {
   code: 'setup-not-finished' | 'game-over' | 'blow-not-turned'
     | 'worms-pending' | 'charity-open' | 'auction-running' | 'shipping-underway'
-    | 'battles-underway' | 'worm-ride' | 'mentat-pause'
+    | 'battles-underway' | 'worm-ride' | 'mentat-pause' | 'nexus-open'
   until?: number
 }
 
@@ -164,6 +166,12 @@ export function advanceHold(state: AdvanceState, now: number): AdvanceHold | nul
     // moment; past it, the advance clears what was not ridden.
     if (state.wormRide && now < state.wormRide.closesAt) {
       return { code: 'worm-ride', until: state.wormRide.closesAt }
+    }
+    // THE NEXUS HOLDS the phase for its five minutes. The write that adds
+    // the LAST ready deletes the field, so its very presence means the
+    // table is still talking; past the clock the advance clears the rest.
+    if (state.nexus && now < state.nexus.closesAt) {
+      return { code: 'nexus-open', until: state.nexus.closesAt }
     }
     return null
   }
@@ -655,6 +663,7 @@ export function resetDeadlines(
     battleAllocateSeconds: number
     battleCaptureSeconds: number
     mentatSeconds: number
+    nexusSeconds: number
   },
 ): { patch: Record<string, unknown>; reset: string[] } {
   const patch: Record<string, unknown> = {}
@@ -671,6 +680,10 @@ export function resetDeadlines(
   if (state.mentat) {
     patch.mentat = { ...state.mentat, closesAt: now + lengths.mentatSeconds * 1000 }
     reset.push('mentat')
+  }
+  if (state.nexus) {
+    patch.nexus = { ...state.nexus, closesAt: now + lengths.nexusSeconds * 1000 }
+    reset.push('nexus')
   }
   if (state.spiceBlow) {
     patch.spiceBlow = { ...state.spiceBlow, closesAt: now + lengths.wormSeconds * 1000 }
