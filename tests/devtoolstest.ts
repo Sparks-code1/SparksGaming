@@ -20,6 +20,7 @@ import {
   BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS, BATTLE_ALLOCATE_SECONDS,
   BATTLE_CAPTURE_SECONDS,
 } from '@/lib/dune/battle'
+import { MENTAT_READY_SECONDS } from '@/lib/dune/phaseAdvance'
 
 let pass = true
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -44,6 +45,7 @@ const LENGTHS = {
   battlePrescienceSeconds: BATTLE_PRESCIENCE_SECONDS,
   battleAllocateSeconds: BATTLE_ALLOCATE_SECONDS,
   battleCaptureSeconds: BATTLE_CAPTURE_SECONDS,
+  mentatSeconds: MENTAT_READY_SECONDS,
 }
 const base = {
   phase: 'Storm', turn: 2, mode: 'basic', storm: 'sector-3',

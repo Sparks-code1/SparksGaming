@@ -70,7 +70,7 @@ import {
 import {
   phaseAfter, advanceHold, phaseWindowOpen, rollStorm, stormEntry, cityIncome,
   mentatVerdict, biddingOpening, stormOrder, resetDeadlines, PHASE_SECONDS, TURN_LIMIT,
-  spiceHarvest,
+  spiceHarvest, MENTAT_READY_SECONDS,
 } from '../_shared/dunePhase.gen.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -1755,6 +1755,9 @@ Deno.serve(async req => {
       // An unridden worm is a ride declined: the advance past the deadline
       // clears it, the same shape as charity's window.
       if (state.phase === 'Spice Blow and Nexus') delete base.wormRide
+      // The pause's ready-up window ends with the pause: the advance that
+      // moves the turn marker is what it was counting down to.
+      if (state.phase === 'Mentat Pause') delete base.mentat
 
       /** The plain write most entries need: the pointer, and nothing else. */
       const plainly = async (
@@ -1914,7 +1917,12 @@ Deno.serve(async req => {
         // ── the pause that counts strongholds ──────────────────────────────
         case 'Mentat Pause': {
           const ended = await finish(base)
-          return ended ?? await plainly()
+          // NO WINNER: one minute for the table to think about its next
+          // move. Everyone ready — or the clock — frees the advance that
+          // moves the turn marker.
+          return ended ?? await plainly({
+            mentat: { turn, closesAt: now + MENTAT_READY_SECONDS * 1000, ready: [] },
+          })
         }
 
         // ── the rotation opens with the phase ──────────────────────────────
@@ -2822,6 +2830,32 @@ Deno.serve(async req => {
         b as never, c as never, [...c.revealed.traitor.calls] as never, choice)
     }
 
+    // ── the table readies for the next turn ─────────────────────────────────
+    // Once per seat, once per pause. All six in — or the minute out — and
+    // the hold on the turn marker clears; the ADVANCE itself stays the same
+    // press it always was.
+    case 'MENTAT_READY': {
+      if (state.phase !== 'Mentat Pause') {
+        return json({ error: 'the turn is not at the pause', code: 'wrong-phase' }, 409)
+      }
+      const m = state.mentat as { closesAt: number; ready?: string[] } | undefined
+      if (!m) return json({ error: 'no pause is open', code: 'no-pause' }, 409)
+      if (!myFaction) return json({ error: 'your seat has no faction', code: 'no-faction' }, 409)
+      const ready = m.ready ?? []
+      if (ready.includes(myFaction)) {
+        return json({ error: 'you are ready', code: 'already-ready' }, 409)
+      }
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: { ...state, mentat: { ...m, ready: [...ready, myFaction] } },
+        p_secrets: {},
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ ready: [...ready, myFaction], version: data[0].version })
+    }
+
     // ── ADVANCED: the Harkonnen deal with their prisoner ────────────────────
     // Kill for two spice from the bank, keep to field once, or decline. The
     // prisoner is drawn by the SEED at the moment of choosing — random, and
@@ -3006,6 +3040,7 @@ Deno.serve(async req => {
         battlePrescienceSeconds: BATTLE_PRESCIENCE_SECONDS,
         battleAllocateSeconds: BATTLE_ALLOCATE_SECONDS,
         battleCaptureSeconds: BATTLE_CAPTURE_SECONDS,
+        mentatSeconds: MENTAT_READY_SECONDS,
       })
       if (reset.length === 0) {
         return json({ error: 'nothing here holds a clock', code: 'no-clock' }, 409)

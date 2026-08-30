@@ -470,6 +470,9 @@ export interface DuneGameState {
    * clears what was not ridden. See lib/dune/spiceBlow.
    */
   wormRide?: { turn: number; territories: string[]; closesAt: number }
+  /** The Mentat Pause: a winnerless pause gives the table one minute to
+   *  ready up, and the turn marker waits on it. */
+  mentat?: { closesAt: number; ready?: FactionId[] }
   /**
    * The current phase's look-at-it window — see PHASE_SECONDS in
    * lib/dune/phaseAdvance. Before it shuts only the host advances; after it,

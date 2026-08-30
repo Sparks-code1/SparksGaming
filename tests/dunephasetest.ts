@@ -613,6 +613,110 @@ check('a game is ten turns', TURN_LIMIT, 10)
     true)
 }
 
+// ── the Mentat Pause ──────────────────────────────────────────────────────
+// Three strongholds win alone. An ALLIANCE is judged together at four —
+// each stronghold counted once however many allies stand in it — and an
+// allied player at three alone wins nothing. A winnerless pause holds the
+// turn marker for one minute while the table readies.
+{
+  const { mentatVerdict: verdict, advanceHold: hold2, resetDeadlines: reset2,
+    ALLIANCE_WIN_STRONGHOLDS, MENTAT_READY_SECONDS } =
+    await import('@/lib/dune/phaseAdvance')
+  const P = (faction: string, ally: string | null = null) =>
+    ({ faction, seat: 's', reserves: 0, handCount: 0, ally })
+  const S = (faction: string, territoryId: string) =>
+    ({ faction, territoryId, sector: 'sector-10', count: 1 })
+  const allies = [P('atreides', 'fremen'), P('fremen', 'atreides'), P('harkonnen')] as never
+
+  check('the thresholds and the minute',
+    [ALLIANCE_WIN_STRONGHOLDS, MENTAT_READY_SECONDS], [4, 60])
+  check('an alliance wins at four strongholds between them',
+    verdict({ turn: 3, players: allies, forces: [
+      S('atreides', 'territory-13'), S('atreides', 'territory-26'),
+      S('fremen', 'territory-38'), S('fremen', 'territory-40'),
+    ] as never } as never, null),
+    { factions: ['atreides', 'fremen'], reason: 'strongholds', turn: 3 })
+  check('...an allied player at three alone wins nothing',
+    verdict({ turn: 3, players: allies, forces: [
+      S('atreides', 'territory-13'), S('atreides', 'territory-26'),
+      S('atreides', 'territory-38'),
+    ] as never } as never, null), null)
+  check('...and a stronghold both allies stand in counts once',
+    verdict({ turn: 3, players: allies, forces: [
+      S('atreides', 'territory-13'), S('fremen', 'territory-13'),
+      S('atreides', 'territory-26'), S('fremen', 'territory-38'),
+    ] as never } as never, null), null)
+  check('a solo player keeps the three-stronghold win beside them',
+    verdict({ turn: 3, players: allies, forces: [
+      S('harkonnen', 'territory-13'), S('harkonnen', 'territory-26'),
+      S('harkonnen', 'territory-38'),
+    ] as never } as never, null),
+    { factions: ['harkonnen'], reason: 'strongholds', turn: 3 })
+  check('...and the prediction steals an alliance win too',
+    verdict({
+      turn: 3, players: [...(allies as never[]), P('bene-gesserit')] as never,
+      forces: [
+        S('atreides', 'territory-13'), S('atreides', 'territory-26'),
+        S('fremen', 'territory-38'), S('fremen', 'territory-40'),
+      ] as never,
+    } as never, { faction: 'atreides', turn: 3 }),
+    { factions: ['bene-gesserit'], reason: 'prediction', turn: 3 })
+
+  const held = (mentat: unknown) => hold2({
+    phase: 'Mentat Pause', turn: 3, mode: 'basic', storm: 'sector-1',
+    shieldWall: 'intact', forces: [], players: allies, mentat,
+  } as never, 1000)
+  check('a winnerless pause holds the turn marker for its minute',
+    held({ closesAt: 61_000, ready: [] }),
+    { code: 'mentat-pause', until: 61_000 })
+  check('...everyone ready clears it',
+    held({ closesAt: 61_000, ready: ['atreides', 'fremen', 'harkonnen'] }), null)
+  check('...and so does the clock', held({ closesAt: 999 }), null)
+  check('...and the reset restamps its minute',
+    (() => {
+      const out = reset2({
+        phase: 'Mentat Pause', turn: 3, mode: 'basic', storm: 'sector-1',
+        shieldWall: 'intact', forces: [], players: allies,
+        mentat: { closesAt: 5, ready: [] },
+      } as never, 1_000_000, {
+        setupSeconds: 1, charityMs: 1, wormSeconds: 1, bidSeconds: 1,
+        shipmentSeconds: 1, battlePickSeconds: 1, battlePlanSeconds: 1,
+        battleTraitorSeconds: 1, battleVoiceSeconds: 1,
+        battlePrescienceSeconds: 1, battleAllocateSeconds: 1,
+        battleCaptureSeconds: 1, mentatSeconds: MENTAT_READY_SECONDS,
+      })
+      return [(out.patch.mentat as { closesAt: number }).closesAt, out.reset]
+    })(),
+    [1_000_000 + MENTAT_READY_SECONDS * 1000, ['mentat']])
+
+  // ── the server slice ────────────────────────────────────────────────────
+  const fn = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  const pauseCut = fn.slice(fn.indexOf("case 'Mentat Pause'"), fn.indexOf("case 'Shipment and Movement'"))
+  check('a winnerless pause opens the minute',
+    /mentat: \{ turn, closesAt: now \+ MENTAT_READY_SECONDS \* 1000, ready: \[\] \}/.test(pauseCut),
+    true)
+  check('...cleared by the advance that moves the marker',
+    /if \(state\.phase === 'Mentat Pause'\) delete base\.mentat/.test(fn), true)
+  const readyCase = fn.slice(fn.indexOf("case 'MENTAT_READY'"), fn.indexOf("case 'BATTLE_CAPTURE'"))
+  check('a seat readies once, and it is written',
+    [/code: 'already-ready' \}, 409\)/.test(readyCase),
+      /mentat: \{ \.\.\.m, ready: \[\.\.\.ready, myFaction\] \}/.test(readyCase)],
+    [true, true])
+  check('...and RESET_CLOCK passes the minute along',
+    /mentatSeconds: MENTAT_READY_SECONDS,/.test(fn), true)
+
+  // ── the table's bar ─────────────────────────────────────────────────────
+  const game = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
+  check('the screen offers Ready, says when a seat is, and counts the minute',
+    [/data-mentat-ready=""/.test(game), /data-mentat-waiting=""/.test(game),
+      /state\.mentat\?\.closesAt/.test(game)], [true, true, true])
+  const match = readFileSync('src/components/dune/DuneMatchScreen.tsx', 'utf8')
+  const harness = readFileSync('src/components/dune/DuneMultiSeatView.tsx', 'utf8')
+  check('both drivers post the ready, and the hold has its sentence',
+    [/MENTAT_READY/.test(match), /MENTAT_READY/.test(harness),
+      /'mentat-pause': /.test(match)], [true, true, true])
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.

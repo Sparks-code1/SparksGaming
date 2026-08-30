@@ -1224,6 +1224,8 @@ function bankDead(tanks, killed) {
 // src/lib/dune/phaseAdvance.ts
 var TURN_LIMIT = 10;
 var WIN_STRONGHOLDS = 3;
+var ALLIANCE_WIN_STRONGHOLDS = 4;
+var MENTAT_READY_SECONDS = 60;
 var PHASE_SECONDS = 30;
 function phaseAfter(phase) {
   const i = DUNE_PHASES.indexOf(phase);
@@ -1266,6 +1268,14 @@ function advanceHold(state, now) {
   if (state.phase === "Bidding") {
     if (state.auction && state.auction.status === "awaiting") {
       return { code: "auction-running", until: state.auction.closesAt };
+    }
+    return null;
+  }
+  if (state.phase === "Mentat Pause" && state.mentat) {
+    const everyone = (state.players ?? []).map((p) => p.faction);
+    const ready = state.mentat.ready ?? [];
+    if (now < state.mentat.closesAt && !everyone.every((f) => ready.includes(f))) {
+      return { code: "mentat-pause", until: state.mentat.closesAt };
     }
     return null;
   }
@@ -1377,14 +1387,27 @@ var occupies = (forces, faction, territoryId) => forces.some((f) => f.faction ==
 function mentatVerdict(state, prediction, spice) {
   const forces = state.forces ?? [];
   const seated = (state.players ?? []).map((p) => p.faction);
-  const byStrongholds = seated.filter((f) => strongholdsHeld(forces, f) >= WIN_STRONGHOLDS);
+  const allyOf = (f) => (state.players ?? []).find((p) => p.faction === f)?.ally ?? null;
+  const solo = seated.filter((f) => {
+    const a = allyOf(f);
+    return !a || !seated.includes(a);
+  });
+  const byStrongholds = solo.filter((f) => strongholdsHeld(forces, f) >= WIN_STRONGHOLDS);
+  const strongholdIds = DUNE_TERRITORIES.filter((t) => t.stronghold).map((t) => t.id);
+  const pairs = seated.flatMap((f) => {
+    const a = allyOf(f);
+    return a && seated.includes(a) && String(f) < String(a) ? [[f, a]] : [];
+  });
+  const byAlliance = pairs.filter(([x, y]) => strongholdIds.filter((t) => occupies(forces, x, t) || occupies(forces, y, t)).length >= ALLIANCE_WIN_STRONGHOLDS);
   const crown = (factions, reason) => {
     if (prediction?.faction && prediction.turn === state.turn && factions.includes(prediction.faction) && seated.includes("bene-gesserit")) {
       return { factions: ["bene-gesserit"], reason: "prediction", turn: state.turn };
     }
     return { factions, reason, turn: state.turn };
   };
-  if (byStrongholds.length > 0) return crown(byStrongholds, "strongholds");
+  if (byStrongholds.length > 0 || byAlliance.length > 0) {
+    return crown([...byStrongholds, ...byAlliance.flat()], "strongholds");
+  }
   if (state.turn < TURN_LIMIT) return null;
   const fremenOrEmpty = (territoryId) => !forces.some((f) => f.faction !== "fremen" && f.territoryId === territoryId && f.count > 0 && f.posture !== "advisor");
   if (seated.includes("fremen") && fremenOrEmpty(SIETCH_TABR) && fremenOrEmpty(HABBANYA_SIETCH) && !["harkonnen", "atreides", "emperor"].some((rival) => occupies(forces, rival, TUEKS_SIETCH))) {
@@ -1411,6 +1434,10 @@ function resetDeadlines(state, now, lengths) {
   if (state.charity) {
     patch.charity = { ...state.charity, expiresAt: now + lengths.charityMs };
     reset.push("charity");
+  }
+  if (state.mentat) {
+    patch.mentat = { ...state.mentat, closesAt: now + lengths.mentatSeconds * 1e3 };
+    reset.push("mentat");
   }
   if (state.spiceBlow) {
     patch.spiceBlow = { ...state.spiceBlow, closesAt: now + lengths.wormSeconds * 1e3 };
@@ -1502,7 +1529,9 @@ function resetDeadlines(state, now, lengths) {
   return { patch, reset };
 }
 export {
+  ALLIANCE_WIN_STRONGHOLDS,
   HABBANYA_SIETCH,
+  MENTAT_READY_SECONDS,
   PHASE_SECONDS,
   SIETCH_TABR,
   TUEKS_SIETCH,

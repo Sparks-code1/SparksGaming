@@ -710,6 +710,7 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
                 'shipping-underway': 'Seats are shipping and moving, in storm order.',
                 'battles-underway': 'Battles are being fought, in storm order.',
                 'worm-ride': 'Shai-Hulud waits — the Fremen may ride.',
+                'mentat-pause': 'the table is readying for the next turn',
                 'game-over': 'The game is over.',
                 'setup-not-finished': 'Setting up.',
               }[hold.code] ?? hold.code}
@@ -843,6 +844,7 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
         onBattleCapture={seat
           ? choice => void send({ type: 'BATTLE_CAPTURE', choice })
           : undefined}
+        onMentatReady={seat ? () => void send({ type: 'MENTAT_READY' }) : undefined}
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused
           ? { type: refusedBy, code: refused }
           : null}

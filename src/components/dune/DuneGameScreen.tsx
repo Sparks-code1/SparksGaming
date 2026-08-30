@@ -54,6 +54,7 @@ import {
   BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS, BATTLE_ALLOCATE_SECONDS,
   BATTLE_CAPTURE_SECONDS,
 } from '@/lib/dune/battle'
+import { MENTAT_READY_SECONDS } from '@/lib/dune/phaseAdvance'
 import { kwisatzHaderachAvailable, KWISATZ_HADERACH } from '@/types/Dune/Game'
 import { BiddingPanel } from './BiddingPanel'
 import { CharityModal } from './CharityModal'
@@ -178,6 +179,8 @@ export interface DuneGameScreenProps {
     plainFull: number; plainHalf: number; eliteFull: number; eliteHalf: number
   } | null) => void
   onBattleCapture?: (choice: 'kill' | 'keep' | 'decline') => void
+  /** Ready up at the Mentat Pause — once per seat, per pause. */
+  onMentatReady?: () => void
   /** The last BATTLE action's refusal — its code AND which action, so the
    *  panel names both and a stray refusal from another surface never
    *  freezes on it. */
@@ -248,7 +251,7 @@ export function DuneGameScreen({
   state, seat, own, chat, onSend, talkingTo, seatNames, notices, onShipReserves, onMoveStack,
   onShipSpecial, onRevive, onBattlePick, onBattlePlan, onBattleAnswer,
   onBattleVoice, onBattlePrescience, onBattleAllocate, onBattleCapture,
-  battleRefusal,
+  onMentatReady, battleRefusal,
   worms = [], onWormRide, onPassTurn,
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
@@ -376,13 +379,15 @@ export function DuneGameScreen({
     ?? rideWindow?.closesAt
     ?? timed.shipping?.closesAt
     ?? battleWindow?.closesAt
-    ?? timed.setup?.closesAt ?? timed.phaseClock?.closesAt ?? null
+    ?? timed.setup?.closesAt ?? state.mentat?.closesAt
+    ?? timed.phaseClock?.closesAt ?? null
   const windowMs = timed.charity ? CHARITY_WINDOW_MS
     : timed.spiceBlow ? WORM_SECONDS * 1000
     : rideWindow ? rideWindow.ms
     : timed.shipping ? undefined
     : battleWindow ? battleWindow.ms
     : timed.setup ? SETUP_SECONDS * 1000
+    : state.mentat ? MENTAT_READY_SECONDS * 1000
     : undefined
 
   // ── setup, answered on the board ──────────────────────────────────────────
@@ -1083,6 +1088,37 @@ export function DuneGameScreen({
               Only while the window is actually open, and only for a seat that
               has not already answered — `charity` is withdrawn by the caller
               once this seat has claimed or passed. */}
+          {/* THE PAUSE'S BAR: no winner, one minute, the table readies.
+              A bar rather than a modal — there is nothing to decide, only
+              a moment to take, and the board is what to think about. */}
+          {state.phase === 'Mentat Pause' && state.mentat && seat && onMentatReady && (
+            <div data-layer="mentat-bar" style={{
+              position: 'absolute', left: 0, right: 0, bottom: 0,
+              display: 'flex', alignItems: 'center', gap: 12,
+              padding: '8px 12px', background: '#0d1220', color: '#f0e2bb',
+              borderTop: '1px solid #f0e2bb44', font: '14px Georgia, serif',
+            }}>
+              <span>
+                Mentat Pause — no winner; the table readies for the next turn
+                {' '}({(state.mentat.ready ?? []).length} of {state.players.length} ready)
+              </span>
+              <span style={{ flex: 1 }} />
+              {(state.mentat.ready ?? []).includes(seat) ? (
+                <span data-mentat-waiting="" style={{ opacity: 0.75 }}>
+                  ready — waiting on the table
+                </span>
+              ) : (
+                <button type="button" data-mentat-ready=""
+                  onClick={onMentatReady}
+                  style={{
+                    padding: '5px 14px', borderRadius: 4, border: 'none',
+                    cursor: 'pointer',
+                  }}>
+                  Ready
+                </button>
+              )}
+            </div>
+          )}
           {charity && seat && timed.charity && (
             <CharityModal
               faction={seat} own={own}

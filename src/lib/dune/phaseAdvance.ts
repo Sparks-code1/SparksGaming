@@ -57,6 +57,10 @@ export const TURN_LIMIT = 10
 
 /** Strongholds that win the game, checked at every Mentat Pause. */
 export const WIN_STRONGHOLDS = 3
+/** An ALLIANCE needs four between the two of them, each counted once. */
+export const ALLIANCE_WIN_STRONGHOLDS = 4
+/** The ready-up minute a winnerless pause gives the table. */
+export const MENTAT_READY_SECONDS = 60
 
 /**
  * How long a phase with nothing else to wait for stays put.
@@ -109,6 +113,8 @@ export interface AdvanceState {
     capture?: { closesAt: number }
   }
   wormRide?: { closesAt: number }
+  /** The pause's ready-up window: everyone ready, or the minute runs out. */
+  mentat?: { closesAt: number; ready?: string[] }
   phaseClock?: PhaseClock
 }
 
@@ -135,7 +141,7 @@ export function phaseAfter(phase: GamePhase): { phase: GamePhase; newTurn: boole
 export interface AdvanceHold {
   code: 'setup-not-finished' | 'game-over' | 'blow-not-turned'
     | 'worms-pending' | 'charity-open' | 'auction-running' | 'shipping-underway'
-    | 'battles-underway' | 'worm-ride'
+    | 'battles-underway' | 'worm-ride' | 'mentat-pause'
   until?: number
 }
 
@@ -208,6 +214,18 @@ export function advanceHold(state: AdvanceState, now: number): AdvanceHold | nul
     // deadline may already be running on the next card.
     if (state.auction && state.auction.status === 'awaiting') {
       return { code: 'auction-running', until: state.auction.closesAt }
+    }
+    return null
+  }
+
+  if (state.phase === 'Mentat Pause' && state.mentat) {
+    // A WINNERLESS PAUSE gives the table its minute to think. Everyone
+    // ready — or the clock — clears it, and the advance past it is the
+    // turn marker moving.
+    const everyone = (state.players ?? []).map(p => p.faction)
+    const ready = state.mentat.ready ?? []
+    if (now < state.mentat.closesAt && !everyone.every(f => ready.includes(f))) {
+      return { code: 'mentat-pause', until: state.mentat.closesAt }
     }
     return null
   }
@@ -494,7 +512,27 @@ export function mentatVerdict(
   const forces = state.forces ?? []
   const seated = (state.players ?? []).map(p => p.faction)
 
-  const byStrongholds = seated.filter(f => strongholdsHeld(forces, f) >= WIN_STRONGHOLDS)
+  // ── THE ALLIANCE THRESHOLD ──────────────────────────────────────────────
+  // "The required number of strongholds for that alliance is 4, that the
+  // two players in an Alliance can SEPARATELY occupy": an allied player is
+  // not judged alone at three — the pair is judged together at four, and a
+  // stronghold both allies stand in counts ONCE.
+  const allyOf = (f: FactionId) =>
+    (state.players ?? []).find(p => p.faction === f)?.ally ?? null
+  const solo = seated.filter(f => {
+    const a = allyOf(f)
+    return !a || !seated.includes(a as FactionId)
+  })
+  const byStrongholds = solo.filter(f => strongholdsHeld(forces, f) >= WIN_STRONGHOLDS)
+  const strongholdIds = DUNE_TERRITORIES.filter(t => t.stronghold).map(t => t.id)
+  const pairs = seated.flatMap(f => {
+    const a = allyOf(f)
+    return a && seated.includes(a as FactionId) && String(f) < String(a)
+      ? [[f, a as FactionId] as const] : []
+  })
+  const byAlliance = pairs.filter(([x, y]) =>
+    strongholdIds.filter(t => occupies(forces, x, t) || occupies(forces, y, t))
+      .length >= ALLIANCE_WIN_STRONGHOLDS)
   const crown = (factions: FactionId[], reason: Winner['reason']): Winner => {
     // THE PREDICTION OUTRANKS THE BOARD. It applies to however the predicted
     // faction comes to win — a stronghold count or a default — because the
@@ -509,7 +547,9 @@ export function mentatVerdict(
     return { factions, reason, turn: state.turn }
   }
 
-  if (byStrongholds.length > 0) return crown(byStrongholds, 'strongholds')
+  if (byStrongholds.length > 0 || byAlliance.length > 0) {
+    return crown([...byStrongholds, ...byAlliance.flat()], 'strongholds')
+  }
   if (state.turn < TURN_LIMIT) return null
 
   // ── turn ten, and nobody took three ─────────────────────────────────────
@@ -598,6 +638,7 @@ export function resetDeadlines(
     battlePrescienceSeconds: number
     battleAllocateSeconds: number
     battleCaptureSeconds: number
+    mentatSeconds: number
   },
 ): { patch: Record<string, unknown>; reset: string[] } {
   const patch: Record<string, unknown> = {}
@@ -610,6 +651,10 @@ export function resetDeadlines(
   if (state.charity) {
     patch.charity = { ...state.charity, expiresAt: now + lengths.charityMs }
     reset.push('charity')
+  }
+  if (state.mentat) {
+    patch.mentat = { ...state.mentat, closesAt: now + lengths.mentatSeconds * 1000 }
+    reset.push('mentat')
   }
   if (state.spiceBlow) {
     patch.spiceBlow = { ...state.spiceBlow, closesAt: now + lengths.wormSeconds * 1000 }
