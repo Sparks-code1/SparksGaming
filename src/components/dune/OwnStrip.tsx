@@ -93,6 +93,13 @@ export interface OwnStripProps {
   player: HudRow
   /** Resolved ally, or null. Both seats must agree — see allyOf. */
   ally: FactionId | null
+  /**
+   * This faction's STANDING GRANTS, when it owns any: set once and held
+   * until changed. Only the Fremen (shield, free revivals) and the Emperor
+   * (funded extras) ever have these to offer.
+   */
+  grants?: { shield?: boolean; revivals?: boolean } | null
+  onGrant?: (grant: 'shield' | 'revivals', on: boolean) => void
 }
 
 /** A titled block along the strip. */
@@ -365,7 +372,7 @@ export function PrivateView(
   )
 }
 
-export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
+export function OwnStrip({ seat, mode, own, player, ally, grants, onGrant }: OwnStripProps) {
   const [open, setOpen] = useState<'treachery' | 'traitors' | null>(null)
   // The two floating panels, and the one card blown up to be readable. All
   // three are the player's own view of their own things; none of them changes
@@ -499,6 +506,31 @@ export function OwnStrip({ seat, mode, own, player, ally }: OwnStripProps) {
         {mode === 'advanced' && seat === KWISATZ_FACTION && (
           <Panel label="KWISATZ HADERACH">
             <KwisatzTracker battleLosses={player.battleLosses ?? 0} />
+          </Panel>
+        )}
+        {/* THE STANDING GRANTS: a policy, not a prompt — flipped here once
+            and read wherever the rule bites, only while the pair stands.
+            The shield reads ON when unset; the revival grants read OFF. */}
+        {ally && onGrant && (seat === 'fremen' || seat === 'emperor') && (
+          <Panel label="ALLIANCE GRANTS">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
+              {seat === 'fremen' && (
+                <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+                  <input type="checkbox" data-grant-shield=""
+                    checked={grants?.shield !== false}
+                    onChange={e => onGrant('shield', e.target.checked)} />
+                  Shield ally from Shai-Hulud
+                </label>
+              )}
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+                <input type="checkbox" data-grant-revivals=""
+                  checked={grants?.revivals === true}
+                  onChange={e => onGrant('revivals', e.target.checked)} />
+                {seat === 'fremen'
+                  ? 'Their three revivals free'
+                  : 'Fund three extra revivals'}
+              </label>
+            </div>
           </Panel>
         )}
         {mode === 'advanced' && seat === 'harkonnen'

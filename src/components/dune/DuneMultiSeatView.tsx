@@ -686,6 +686,9 @@ export default function DuneMultiSeatView() {
         nexusRefusal={refusedBy?.startsWith('NEXUS') && refused
           ? { type: refusedBy, code: refused }
           : null}
+        onAllyGrant={mine
+          ? (grant, on) => void send(mine, 'ALLY_GRANT', { grant, on } as never)
+          : undefined}
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused
           ? { type: refusedBy, code: refused }
           : null}

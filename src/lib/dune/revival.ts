@@ -86,12 +86,19 @@ export interface RevivedSoFar { forces: number; starred: number; leader?: string
 export type RevivalRefusal =
   | 'nothing-there' | 'over-the-cap' | 'starred-limit' | 'cannot-pay'
   | 'not-open' | 'leader-already-this-turn' | 'not-in-tanks' | 'face-down'
-  | 'no-such-leader' | 'nothing-asked'
+  | 'no-such-leader' | 'nothing-asked' | 'patron-cannot-pay'
+
+/** The Emperor's alliance grant: three EXTRA forces a turn, at their expense. */
+export const PATRON_EXTRA_REVIVALS = 3
+/** The Fremen's alliance grant: the turn's standard three, free outright. */
+export const GRANTED_FREE_REVIVALS = 3
 
 export interface ForceRevival {
   ok: true
-  /** Spice owed, to the BANK. Zero while the sheet's free ones last. */
+  /** Spice owed by the reviver, to the BANK. Zero while the free last. */
   cost: number
+  /** Spice owed by the Emperor patron, to the BANK — the extras' price. */
+  patronCost: number
   /** The Tanks with the revived removed. */
   tanks: Tanks
   /** What returns to reserves — never to the board. */
@@ -113,26 +120,45 @@ export function reviveForces(input: {
   starred: number
   soFar: RevivedSoFar
   spice: number
+  /** The Fremen ally's standing grant: the standard three are free. */
+  freeGrant?: boolean
+  /** The Emperor ally's standing grant, with the Emperor's purse: three
+   *  extra forces a turn, full rate, at the Emperor's expense — never free. */
+  patron?: { spice: number } | null
 }): ForceRevival | { ok: false; refusal: RevivalRefusal } {
   const { faction, tanks, plain, starred, soFar, spice } = input
   const want = plain + starred
   if (want <= 0 || plain < 0 || starred < 0) return { ok: false, refusal: 'nothing-asked' }
-  if (soFar.forces + want > REVIVAL_CAP) return { ok: false, refusal: 'over-the-cap' }
+  const cap = input.patron ? REVIVAL_CAP + PATRON_EXTRA_REVIVALS : REVIVAL_CAP
+  if (soFar.forces + want > cap) return { ok: false, refusal: 'over-the-cap' }
   if (soFar.starred + starred > STARRED_REVIVALS_PER_TURN) {
     return { ok: false, refusal: 'starred-limit' }
   }
   const held = tanks.forces[faction] ?? { plain: 0, starred: 0 }
   if (held.plain < plain || held.starred < starred) return { ok: false, refusal: 'nothing-there' }
 
-  const free = factionById(faction)?.freeRevivals ?? 0
-  const paidBefore = Math.max(0, soFar.forces - free)
-  const paidAfter = Math.max(0, soFar.forces + want - free)
+  // THE STANDARD THREE by the reviver's own rules — the Fremen grant makes
+  // them free outright, the sheet's allowance still applying when larger —
+  // and THE EXTRAS at the patron's expense, full rate, wherever the turn's
+  // count crosses three.
+  const free = Math.max(
+    factionById(faction)?.freeRevivals ?? 0,
+    input.freeGrant ? GRANTED_FREE_REVIVALS : 0)
+  const ownEnd = Math.min(soFar.forces + want, REVIVAL_CAP)
+  const paidBefore = Math.max(0, Math.min(soFar.forces, REVIVAL_CAP) - free)
+  const paidAfter = Math.max(0, ownEnd - free)
   const cost = REVIVAL_SPICE * (paidAfter - paidBefore)
+  const patronCost = REVIVAL_SPICE
+    * (soFar.forces + want - Math.max(ownEnd, soFar.forces))
   if (cost > spice) return { ok: false, refusal: 'cannot-pay' }
+  if (patronCost > (input.patron?.spice ?? 0)) {
+    return { ok: false, refusal: 'patron-cannot-pay' }
+  }
 
   return {
     ok: true,
     cost,
+    patronCost,
     tanks: {
       ...tanks,
       forces: {

@@ -184,6 +184,8 @@ export function shipCost(input: {
   territoryId: string
   count: number
   guildSeated: boolean
+  /** Allied to the Guild: their half rate, off-planet and cross alike. */
+  guildAllied?: boolean
 }): { cost: number; payee: 'bank' | 'guild' } {
   const { faction, kind, territoryId, count, guildSeated } = input
   if (kind === 'to-reserves') {
@@ -192,10 +194,16 @@ export function shipCost(input: {
   const rate = territory(territoryId)?.stronghold ? SHIP_STRONGHOLD_SPICE : SHIP_OPEN_SPICE
   const full = rate * count
   if (faction === 'fremen') {
-    return { cost: fremenShipTargets().has(territoryId) ? 0 : full, payee: 'bank' }
+    // The Guild's ally pays half of whatever their OWN rate would be — a
+    // Fremen walk-in within their radius stays free, halved or not.
+    const base = fremenShipTargets().has(territoryId) ? 0 : full
+    return { cost: input.guildAllied ? Math.ceil(base / 2) : base, payee: 'bank' }
   }
   if (faction === 'spacing-guild') return { cost: Math.ceil(full / 2), payee: 'bank' }
-  return { cost: full, payee: guildSeated ? 'guild' : 'bank' }
+  return {
+    cost: input.guildAllied ? Math.ceil(full / 2) : full,
+    payee: guildSeated ? 'guild' : 'bank',
+  }
 }
 
 /**
@@ -229,7 +237,12 @@ export function judgeShipment(input: {
   const { faction, kind, count, forces, storm } = input
   const starred = input.starred ?? 0
   if (count <= 0 || starred < 0 || starred > count) return { ok: false, refusal: 'nothing-asked' }
-  if (kind !== 'off-planet' && faction !== 'spacing-guild') {
+  // THE GUILD'S WAYS OPEN TO THEIR ALLY: cross-shipping like the Guild, at
+  // the Guild's rates. Returning to reserves stays the Guild's own trick.
+  if (kind === 'to-reserves' && faction !== 'spacing-guild') {
+    return { ok: false, refusal: 'guild-only' }
+  }
+  if (kind === 'cross' && faction !== 'spacing-guild' && input.ally !== 'spacing-guild') {
     return { ok: false, refusal: 'guild-only' }
   }
 
@@ -282,6 +295,7 @@ export function judgeShipment(input: {
 
   const { cost, payee } = shipCost({
     faction, kind, territoryId: input.to.territoryId, count, guildSeated: input.guildSeated,
+    guildAllied: input.ally === 'spacing-guild',
   })
   if (cost > input.spice + (input.allySpice ?? 0)) return { ok: false, refusal: 'cannot-pay' }
   return { ok: true, cost, payee, sector: settled.sector }

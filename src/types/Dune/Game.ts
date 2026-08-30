@@ -479,6 +479,18 @@ export interface DuneGameState {
   /** The last turn a Nexus was called — at most one a turn. */
   nexusTurn?: number
   /**
+   * STANDING ALLIANCE GRANTS, each faction's own policy: set once and held
+   * until changed, never asked per event — a decision window on every worm
+   * would stall the blow for what is usually a yes. Public, like the
+   * alliance itself, and read only while the pair actually stands. The
+   * shield defaults ON (absent means protecting); the revival grants
+   * default OFF (they spend the granter's leverage or spice).
+   */
+  allyGrants?: {
+    fremen?: { shield?: boolean; revivals?: boolean }
+    emperor?: { revivals?: boolean }
+  }
+  /**
    * The current phase's look-at-it window — see PHASE_SECONDS in
    * lib/dune/phaseAdvance. Before it shuts only the host advances; after it,
    * anyone. Carries its own (turn, phase) so a clock outliving its phase

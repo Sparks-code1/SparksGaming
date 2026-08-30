@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs'
 import {
   bankDead, emptyTanks, reviveForces, reviveLeader, returnLeaderToTanks,
   revivableLeaders, REVIVAL_CAP, REVIVAL_SPICE, STARRED_REVIVALS_PER_TURN,
+  PATRON_EXTRA_REVIVALS, GRANTED_FREE_REVIVALS,
 } from '@/lib/dune/revival'
 import { stormEntry } from '@/lib/dune/phaseAdvance'
 import type { AdvanceState } from '@/lib/dune/phaseAdvance'
@@ -246,6 +247,70 @@ check('every faction sheet names its free revivals',
   FACTION_IDS.filter(id => typeof factionById(id)?.freeRevivals !== 'number'), [])
 check('...all within the cap',
   FACTION_IDS.filter(id => (factionById(id)?.freeRevivals ?? 0) > REVIVAL_CAP), [])
+
+// ── the alliance grants ───────────────────────────────────────────────────
+// The Fremen ally's standard three are free outright; the Emperor's ally
+// reaches three past the cap at the Emperor's expense — full rate, never
+// free, and refused as the PATRON's shortfall when their purse cannot.
+{
+  const T = { ...emptyTanks(), forces: { atreides: { plain: 9, starred: 0 } } }
+  const Z = { forces: 0, starred: 0 }
+  check('both grants are worth three', [PATRON_EXTRA_REVIVALS, GRANTED_FREE_REVIVALS], [3, 3])
+  const granted = reviveForces({
+    faction: 'atreides', tanks: T as never, plain: 3, starred: 0, soFar: Z,
+    spice: 0, freeGrant: true,
+  })
+  check('the Fremen grant makes the standard three free outright',
+    granted.ok && [granted.cost, granted.patronCost], [0, 0])
+  const six = reviveForces({
+    faction: 'atreides', tanks: T as never, plain: 6, starred: 0, soFar: Z,
+    spice: 10, patron: { spice: 10 },
+  })
+  check('the Emperor grant stretches the three to six, the extras on their bill',
+    six.ok && [six.cost, six.patronCost], [REVIVAL_SPICE, REVIVAL_SPICE * 3])
+  const both = reviveForces({
+    faction: 'atreides', tanks: T as never, plain: 6, starred: 0, soFar: Z,
+    spice: 0, freeGrant: true, patron: { spice: 10 },
+  })
+  check('...the extras never free, even under both grants',
+    both.ok && [both.cost, both.patronCost], [0, REVIVAL_SPICE * 3])
+  check('...without the patron, four is over the cap',
+    (reviveForces({
+      faction: 'atreides', tanks: T as never, plain: 4, starred: 0, soFar: Z, spice: 20,
+    }) as { refusal: string }).refusal, 'over-the-cap')
+  check('...and seven is over even the patron cap',
+    (reviveForces({
+      faction: 'atreides', tanks: T as never, plain: 7, starred: 0, soFar: Z,
+      spice: 20, patron: { spice: 20 },
+    }) as { refusal: string }).refusal, 'over-the-cap')
+  check('a patron who cannot pay refuses as the patron, not the reviver',
+    (reviveForces({
+      faction: 'atreides', tanks: T as never, plain: 6, starred: 0, soFar: Z,
+      spice: 10, patron: { spice: 1 },
+    }) as { refusal: string }).refusal, 'patron-cannot-pay')
+  const span = reviveForces({
+    faction: 'atreides', tanks: T as never, plain: 3, starred: 0,
+    soFar: { forces: 2, starred: 0 }, spice: 5, patron: { spice: 5 },
+  })
+  check('a press across the boundary splits at three',
+    span.ok && [span.cost, span.patronCost], [REVIVAL_SPICE, REVIVAL_SPICE * 2])
+
+  // ── the server slice ────────────────────────────────────────────────────
+  const fn = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  check('REVIVE reads the grants only while the pair stands',
+    [/const freeGrant = reviveAlly === 'fremen' && grants\.fremen\?\.revivals === true/.test(fn),
+      /patron: patronRow \? \{ spice: readSpice\(patronRow as never\) \} : null/.test(fn)],
+    [true, true])
+  check('...bills the Emperor to the bank and writes their purse',
+    [/from: patronSeat, to: BANK, amount: patronCost/.test(fn),
+      /\{ \[patronSeat\]: \{ \.\.\.patronRow, spice: moved\.purses\[patronSeat\] \} \}/.test(fn)],
+    [true, true])
+  check('the standing toggle is owned: Fremen shield and revivals, Emperor revivals',
+    [/\? \['shield', 'revivals'\]/.test(fn),
+      /: myFaction === 'emperor' \? \['revivals'\] : \[\]/.test(fn),
+      /code: 'not-your-grant'/.test(fn)],
+    [true, true, true])
+}
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 

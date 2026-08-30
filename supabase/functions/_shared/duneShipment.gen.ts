@@ -848,16 +848,23 @@ function shipCost(input) {
   const rate = territory(territoryId)?.stronghold ? SHIP_STRONGHOLD_SPICE : SHIP_OPEN_SPICE;
   const full = rate * count;
   if (faction === "fremen") {
-    return { cost: fremenShipTargets().has(territoryId) ? 0 : full, payee: "bank" };
+    const base = fremenShipTargets().has(territoryId) ? 0 : full;
+    return { cost: input.guildAllied ? Math.ceil(base / 2) : base, payee: "bank" };
   }
   if (faction === "spacing-guild") return { cost: Math.ceil(full / 2), payee: "bank" };
-  return { cost: full, payee: guildSeated ? "guild" : "bank" };
+  return {
+    cost: input.guildAllied ? Math.ceil(full / 2) : full,
+    payee: guildSeated ? "guild" : "bank"
+  };
 }
 function judgeShipment(input) {
   const { faction, kind, count, forces, storm } = input;
   const starred = input.starred ?? 0;
   if (count <= 0 || starred < 0 || starred > count) return { ok: false, refusal: "nothing-asked" };
-  if (kind !== "off-planet" && faction !== "spacing-guild") {
+  if (kind === "to-reserves" && faction !== "spacing-guild") {
+    return { ok: false, refusal: "guild-only" };
+  }
+  if (kind === "cross" && faction !== "spacing-guild" && input.ally !== "spacing-guild") {
     return { ok: false, refusal: "guild-only" };
   }
   if (kind === "to-reserves") {
@@ -908,7 +915,8 @@ function judgeShipment(input) {
     kind,
     territoryId: input.to.territoryId,
     count,
-    guildSeated: input.guildSeated
+    guildSeated: input.guildSeated,
+    guildAllied: input.ally === "spacing-guild"
   });
   if (cost > input.spice + (input.allySpice ?? 0)) return { ok: false, refusal: "cannot-pay" };
   return { ok: true, cost, payee, sector: settled.sector };

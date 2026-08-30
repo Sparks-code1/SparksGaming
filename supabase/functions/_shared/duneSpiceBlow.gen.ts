@@ -893,13 +893,13 @@ function judgeWormRide(input) {
   }
   return { ok: true, sector: settled2.sector, moving };
 }
-function devourTerritory(territoryId, forces, spiceOnBoard) {
+function devourTerritory(territoryId, forces, spiceOnBoard, spared) {
   const inTerritory = forces.filter((f) => f.territoryId === territoryId);
+  const safe = (f) => f.faction === "fremen" || spared != null && f.faction === spared;
   return {
     territoryId,
-    // Shai-Hulud does not devour the Fremen. Both games.
-    forcesKilled: inTerritory.filter((f) => f.faction !== "fremen"),
-    forcesSpared: inTerritory.filter((f) => f.faction === "fremen"),
+    forcesKilled: inTerritory.filter((f) => !safe(f)),
+    forcesSpared: inTerritory.filter(safe),
     spiceRemoved: spiceOnBoard[territoryId] ?? 0
   };
 }
@@ -961,7 +961,12 @@ function resolveSpiceBlow(input) {
       continue;
     }
     if (top.kind === "territory") {
-      devoured.push(devourTerritory(top.territoryId, input.forces, input.spiceOnBoard));
+      devoured.push(devourTerritory(
+        top.territoryId,
+        input.forces,
+        input.spiceOnBoard,
+        input.spared
+      ));
     }
     discard.push(card);
   }
@@ -996,6 +1001,7 @@ function revealPileB(carry, rng, closesAt) {
     deck: carry.deck,
     discard: carry.discardB,
     forces: carry.forces,
+    spared: carry.spared,
     mode: "advanced",
     fremenInPlay: carry.fremenInPlay,
     spiceOnBoard: carry.spiceOnBoard,
@@ -1046,6 +1052,7 @@ function beginDoubleSpiceBlow(input) {
     deck: input.deck,
     discard: input.discardA,
     forces: input.forces,
+    spared: input.spared,
     mode: "advanced",
     fremenInPlay: input.fremenInPlay,
     spiceOnBoard: input.spiceOnBoard,
@@ -1063,6 +1070,9 @@ function beginDoubleSpiceBlow(input) {
     spiceOnBoard: applyBlowToBoard(input.spiceOnBoard, a),
     firstTurn: input.firstTurn,
     fremenInPlay: input.fremenInPlay ?? false,
+    // NULL, NEVER UNDEFINED: the carry is stored and replayed as JSON, and
+    // an explicitly-undefined key is exactly what a database would lose.
+    spared: input.spared ?? null,
     storm: input.storm,
     a,
     b: null,
@@ -1080,7 +1090,7 @@ function placeFremenWorms(carry, at, rng, closesAt) {
       throw new Error(`no such territory to place a worm in: ${id}`);
     }
   }
-  const devoured = at.map((id) => devourTerritory(id, carry.forces, carry.spiceOnBoard));
+  const devoured = at.map((id) => devourTerritory(id, carry.forces, carry.spiceOnBoard, carry.spared));
   const killed = devoured.flatMap((d) => d.forcesKilled);
   const spiceOnBoard = { ...carry.spiceOnBoard };
   for (const d of devoured) delete spiceOnBoard[d.territoryId];

@@ -1441,5 +1441,44 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     [false, false])
 }
 
+// ── the standing grant toggles ────────────────────────────────────────────
+// A policy, not a prompt: the Fremen flip a shield (default ON) and a free-
+// revivals grant; the Emperor a funding grant. Nobody else gets the panel.
+{
+  const rows2 = hudRows(state)
+  const mine2 = rows2.find(r => r.faction === 'atreides')!
+  const stripFor = (seat2: string, ally2: string | null, grants2: object | null) =>
+    renderToStaticMarkup(createElement(OwnStrip, {
+      seat: seat2 as never, mode: 'basic' as const, own, player: mine2,
+      ally: ally2 as never, grants: grants2 as never, onGrant: () => {},
+    }))
+  const fremen = stripFor('fremen', 'atreides', null)
+  check('the Fremen strip offers shield and revivals, shield ON by default',
+    [/data-grant-shield="" checked=""/.test(fremen),
+      /data-grant-revivals="" checked=""/.test(fremen)],
+    [true, false])
+  check('...the shield reads its OFF when set so',
+    /data-grant-shield="" checked=""/.test(stripFor('fremen', 'atreides', { shield: false })),
+    false)
+  const emperor = stripFor('emperor', 'atreides', { revivals: true })
+  check('the Emperor strip offers funding alone, read from the toggle',
+    [/data-grant-shield/.test(emperor), /data-grant-revivals="" checked=""/.test(emperor)],
+    [false, true])
+  check('...and no panel without an ally, nor for anyone else',
+    [/data-grant-/.test(stripFor('fremen', null, null)),
+      /data-grant-/.test(stripFor('atreides', 'fremen', null))],
+    [false, false])
+
+  const screen2 = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
+  check('the rail\'s room and frees widen only while the pair stands',
+    [/REVIVAL_CAP \+ PATRON_EXTRA_REVIVALS : REVIVAL_CAP/.test(screen2),
+      /\? GRANTED_FREE_REVIVALS : 0/.test(screen2)],
+    [true, true])
+  const match2 = readFileSync('src/components/dune/DuneMatchScreen.tsx', 'utf8')
+  const harness2 = readFileSync('src/components/dune/DuneMultiSeatView.tsx', 'utf8')
+  check('both drivers post the flip',
+    [/ALLY_GRANT/.test(match2), /ALLY_GRANT/.test(harness2)], [true, true])
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 process.exit(pass ? 0 : 1)

@@ -890,6 +890,42 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
     [true, true, true])
 }
 
+// ── the Guild ally's rates and ways ───────────────────────────────────────
+// "Allies may ship from their off-planet reserves onto Dune or cross-ship
+// ... at the half-price rate": half of the shipper's OWN rate, the fee
+// still the Guild's; cross-shipping opens to the ally, returning to
+// reserves does not.
+{
+  const { shipCost: sc, judgeShipment: js3, fremenShipTargets } =
+    await import('@/lib/dune/shipment')
+  const allied = { kind: 'off-planet', guildSeated: true, guildAllied: true }
+  check('the Guild ally ships at the half rate, fees still to the Guild',
+    [sc({ ...allied, faction: 'atreides', territoryId: 'territory-13', count: 3 } as never),
+      sc({ ...allied, faction: 'atreides', territoryId: 'territory-22', count: 3 } as never)],
+    [{ cost: 2, payee: 'guild' }, { cost: 3, payee: 'guild' }])
+  const outR = DUNE_TERRITORIES.find(t => t.stronghold && !fremenShipTargets().has(t.id))!.id
+  const inR = [...fremenShipTargets()][0]
+  check('...a Fremen walk-in stays free, their outside rate halves',
+    [sc({ ...allied, faction: 'fremen', territoryId: inR, count: 4 } as never).cost,
+      sc({ ...allied, faction: 'fremen', territoryId: outR, count: 2 } as never).cost],
+    [0, 1])
+  const bare3 = {
+    faction: 'atreides', count: 1, forces: [], reserves: 5, reservesStarred: 0,
+    spice: 9, storm: 'sector-18', guildSeated: true,
+  }
+  check('cross-shipping opens to the Guild ally and to no one else',
+    [(js3({ ...bare3, kind: 'cross' } as never) as { refusal: string }).refusal,
+      (js3({ ...bare3, kind: 'cross', ally: 'spacing-guild' } as never) as { refusal: string }).refusal,
+      (js3({ ...bare3, kind: 'to-reserves', ally: 'spacing-guild' } as never) as { refusal: string }).refusal],
+    ['guild-only', 'no-such-territory', 'guild-only'])
+  check('...and the judge prices the ally at the half rate',
+    (js3({
+      ...bare3, kind: 'off-planet', count: 2, spice: 1,
+      to: { territoryId: 'territory-13', sector: 'sector-10' },
+      ally: 'spacing-guild',
+    } as never) as { cost: number }).cost, 1)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.

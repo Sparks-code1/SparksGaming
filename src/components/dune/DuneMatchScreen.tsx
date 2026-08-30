@@ -855,6 +855,9 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
         nexusRefusal={refusedBy?.startsWith('NEXUS') && refused
           ? { type: refusedBy, code: refused }
           : null}
+        onAllyGrant={seat
+          ? (grant, on) => void send({ type: 'ALLY_GRANT', grant, on })
+          : undefined}
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused
           ? { type: refusedBy, code: refused }
           : null}

@@ -413,6 +413,18 @@ Deno.serve(async req => {
       const forces = (baseState.forces ?? []) as ForceRow[]
       const spiceOnBoard = (baseState.spiceOnBoard ?? {}) as Record<string, number>
       const fremenInPlay = Object.prototype.hasOwnProperty.call(seatOfFaction, 'fremen')
+      // THE STANDING SHIELD: the Fremen's ally is spared the worm unless the
+      // Fremen turned the grant off — absent means protecting, per the
+      // toggle's own contract. Read only while the pair actually stands.
+      const shieldedAlly = (() => {
+        const ps = (baseState.players ?? []) as { faction: string; ally?: string | null }[]
+        const a = ps.find((p) => p.faction === 'fremen')?.ally ?? null
+        if (!a || !ps.some((p) => p.faction === a)) return null
+        const g = ((baseState.allyGrants ?? {}) as {
+          fremen?: { shield?: boolean }
+        }).fremen ?? {}
+        return g.shield === false ? null : a
+      })()
 
       // ── the advanced game: two piles, and a stop between them ────────────
       if (baseState.mode === 'advanced') {
@@ -422,6 +434,7 @@ Deno.serve(async req => {
             deck, discardA: shown.discardA ?? [], discardB: shown.discardB ?? [],
             forces, spiceOnBoard, storm: baseState.storm as number,
             firstTurn: turn <= 1, fremenInPlay, rng: seededRng(seed),
+            spared: shieldedAlly as never,
             closesAt: now + WORM_SECONDS * 1000,
           })
         } catch (e) {
@@ -439,6 +452,7 @@ Deno.serve(async req => {
         out = resolveSpiceBlow({
           deck, discard: shown.discardA ?? [], forces,
           mode: 'basic', fremenInPlay, spiceOnBoard,
+          spared: shieldedAlly as never,
           storm: baseState.storm as number, firstTurn: turn <= 1, rng: seededRng(seed),
         })
       } catch (e) {
@@ -1221,7 +1235,12 @@ Deno.serve(async req => {
         p_match_id: matchId,
         p_expected_version: match.version,
         p_state: { ...state, charity: next },
-        p_secrets: { [playerId]: { ...secrets, spice: moved.purses[playerId] } },
+        p_secrets: {
+          [playerId]: { ...secrets, spice: moved.purses[playerId] },
+          ...(patronSeat && patronRow && patronCost > 0
+            ? { [patronSeat]: { ...patronRow, spice: moved.purses[patronSeat] } }
+            : null),
+        },
       })
       if (error) return json({ error: error.message }, 500)
       if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
@@ -2345,6 +2364,27 @@ Deno.serve(async req => {
       const spice = readSpice(secrets)
 
       // ── which revival this is ──────────────────────────────────────────
+      // THE STANDING REVIVAL GRANTS, read only while the pair stands: a
+      // Fremen ally's standard three are free; an Emperor ally may reach
+      // for three extras at the Emperor's expense — whose purse is read
+      // here to be spent, exactly like the reviver's own.
+      const reviveAlly = ((state.players ?? []) as { faction: string; ally?: string | null }[])
+        .find((p) => p.faction === myFaction)?.ally ?? null
+      const grants = (state.allyGrants ?? {}) as {
+        fremen?: { revivals?: boolean }
+        emperor?: { revivals?: boolean }
+      }
+      const freeGrant = reviveAlly === 'fremen' && grants.fremen?.revivals === true
+      const patronSeat = reviveAlly === 'emperor' && grants.emperor?.revivals === true
+        ? seatOfFaction['emperor'] : undefined
+      let patronRow: Record<string, unknown> | null = null
+      if (patronSeat) {
+        const { data: e } = await admin
+          .from('match_secrets').select('data')
+          .eq('match_id', matchId).eq('player_id', patronSeat).maybeSingle()
+        patronRow = (e?.data ?? {}) as Record<string, unknown>
+      }
+
       const asked = action.leader
         ? reviveLeader({
             faction: myFaction as never, tanks, leader: String(action.leader), soFar, spice,
@@ -2353,18 +2393,31 @@ Deno.serve(async req => {
             faction: myFaction as never, tanks,
             plain: Number(action.plain ?? 0), starred: Number(action.starred ?? 0),
             soFar, spice,
+            freeGrant,
+            patron: patronRow ? { spice: readSpice(patronRow as never) } : null,
           })
       if (!asked.ok) {
         return json({ error: 'that revival is not legal', code: asked.refusal }, 409)
       }
+      const patronCost = 'patronCost' in asked ? asked.patronCost : 0
 
       // TO THE BANK. Not the Emperor: their redirect is written on the
       // treachery rules and nowhere else.
       const moved = applySpiceMoves(
-        { [playerId]: spice },
-        asked.cost > 0
-          ? [{ from: playerId, to: BANK, amount: asked.cost, reason: 'revival' }]
-          : [],
+        {
+          [playerId]: spice,
+          ...(patronSeat && patronRow ? { [patronSeat]: readSpice(patronRow as never) } : null),
+        },
+        [
+          ...(asked.cost > 0
+            ? [{ from: playerId, to: BANK, amount: asked.cost, reason: 'revival' as const }]
+            : []),
+          // THE EXTRAS ARE THE EMPEROR'S BILL, to the bank like every
+          // revival — "paying spice (directly to the bank)", the card says.
+          ...(patronCost > 0 && patronSeat
+            ? [{ from: patronSeat, to: BANK, amount: patronCost, reason: 'revival' as const }]
+            : []),
+        ],
       )
       if (!moved.ok) return json({ error: 'the spice could not move', code: moved.refusal }, 500)
 
@@ -2955,6 +3008,36 @@ Deno.serve(async req => {
       }
       return await settleBattle(
         b as never, c as never, [...c.revealed.traitor.calls] as never, choice)
+    }
+
+    // ── a standing alliance grant flips ─────────────────────────────────────
+    // Set once and held until changed — never asked per event. The Fremen
+    // own the worm shield and the free-revivals grant; the Emperor owns the
+    // funded extras. Public, like the alliance itself; whether any of it
+    // BITES is decided where it is read, by whether the pair stands.
+    case 'ALLY_GRANT': {
+      if (!myFaction) return json({ error: 'your seat has no faction', code: 'no-faction' }, 409)
+      const grant = String(action.grant ?? '')
+      const on = action.on === true
+      const owns = myFaction === 'fremen'
+        ? ['shield', 'revivals']
+        : myFaction === 'emperor' ? ['revivals'] : []
+      if (!owns.includes(grant)) {
+        return json({ error: 'that grant is not yours to set', code: 'not-your-grant' }, 409)
+      }
+      const all = (state.allyGrants ?? {}) as Record<string, Record<string, boolean>>
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state,
+          allyGrants: { ...all, [myFaction]: { ...(all[myFaction] ?? {}), [grant]: on } },
+        },
+        p_secrets: {},
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ grant, on, version: data[0].version })
     }
 
     // ── the Nexus: propose, accept, break, ready, un-ready ──────────────────

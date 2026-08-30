@@ -66,7 +66,10 @@ import { RevivalRail } from './RevivalRail'
 import { BattlePanel } from './BattlePanel'
 import { NexusPanel } from './NexusPanel'
 import type { NexusMove } from './NexusPanel'
-import { REVIVAL_CAP, STARRED_REVIVALS_PER_TURN, revivableLeaders } from '@/lib/dune/revival'
+import {
+  REVIVAL_CAP, STARRED_REVIVALS_PER_TURN, PATRON_EXTRA_REVIVALS,
+  GRANTED_FREE_REVIVALS, revivableLeaders,
+} from '@/lib/dune/revival'
 import type { GuildShipKind } from '@/lib/dune/shipment'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import { FACTION_LOOK } from './SeatLayer'
@@ -186,6 +189,8 @@ export interface DuneGameScreenProps {
   /** The Nexus's five moves: propose, accept, break, ready, un-ready. The
    *  server judges every one; the panel only offers what looks pressable. */
   onNexus?: (m: NexusMove) => void
+  /** Flip one standing alliance grant — the Fremen's or the Emperor's. */
+  onAllyGrant?: (grant: 'shield' | 'revivals', on: boolean) => void
   /** The last NEXUS action's refusal — code and which action, the same
    *  discipline as battleRefusal. */
   nexusRefusal?: { type: string; code: string } | null
@@ -259,7 +264,7 @@ export function DuneGameScreen({
   state, seat, own, chat, onSend, talkingTo, seatNames, notices, onShipReserves, onMoveStack,
   onShipSpecial, onRevive, onBattlePick, onBattlePlan, onBattleAnswer,
   onBattleVoice, onBattlePrescience, onBattleAllocate, onBattleCapture,
-  onMentatReady, onNexus, nexusRefusal = null, battleRefusal,
+  onMentatReady, onNexus, nexusRefusal = null, onAllyGrant, battleRefusal,
   worms = [], onWormRide, onPassTurn,
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
@@ -602,8 +607,16 @@ export function DuneGameScreen({
               dead={held}
               spice={own?.spice ?? null}
               pending={revStaged}
-              room={Math.max(0, REVIVAL_CAP - done.forces)}
-              freeLeft={Math.max(0, (sheet?.freeRevivals ?? 0) - done.forces)}
+              // THE PATRON'S ROOM: an Emperor ally under the funding grant
+              // reaches three past the cap; the Fremen grant makes the
+              // standard three free. Both read only while the pair stands.
+              room={Math.max(0, (myAlly === 'emperor'
+                && state.allyGrants?.emperor?.revivals === true
+                ? REVIVAL_CAP + PATRON_EXTRA_REVIVALS : REVIVAL_CAP) - done.forces)}
+              freeLeft={Math.max(0, Math.max(
+                sheet?.freeRevivals ?? 0,
+                myAlly === 'fremen' && state.allyGrants?.fremen?.revivals === true
+                  ? GRANTED_FREE_REVIVALS : 0) - done.forces)}
               starredOpen={done.starred < STARRED_REVIVALS_PER_TURN}
               leaders={leaders.map(l => ({
                 name: l.name,
@@ -1210,7 +1223,10 @@ export function DuneGameScreen({
               an empty one implies a hand they might be holding. */}
           {seat && mine && myRow && (
             <OwnStrip seat={seat} mode={state.mode} own={own} player={myRow}
-              ally={allyOf(state.players, mine)} />
+              ally={allyOf(state.players, mine)}
+              grants={seat === 'fremen' || seat === 'emperor'
+                ? state.allyGrants?.[seat] ?? null : null}
+              onGrant={onAllyGrant} />
           )}
         </div>
       </div>

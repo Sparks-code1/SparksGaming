@@ -284,24 +284,36 @@ function bankDead(tanks, killed) {
   }
   return next;
 }
+var PATRON_EXTRA_REVIVALS = 3;
+var GRANTED_FREE_REVIVALS = 3;
 function reviveForces(input) {
   const { faction, tanks, plain, starred, soFar, spice } = input;
   const want = plain + starred;
   if (want <= 0 || plain < 0 || starred < 0) return { ok: false, refusal: "nothing-asked" };
-  if (soFar.forces + want > REVIVAL_CAP) return { ok: false, refusal: "over-the-cap" };
+  const cap = input.patron ? REVIVAL_CAP + PATRON_EXTRA_REVIVALS : REVIVAL_CAP;
+  if (soFar.forces + want > cap) return { ok: false, refusal: "over-the-cap" };
   if (soFar.starred + starred > STARRED_REVIVALS_PER_TURN) {
     return { ok: false, refusal: "starred-limit" };
   }
   const held = tanks.forces[faction] ?? { plain: 0, starred: 0 };
   if (held.plain < plain || held.starred < starred) return { ok: false, refusal: "nothing-there" };
-  const free = factionById(faction)?.freeRevivals ?? 0;
-  const paidBefore = Math.max(0, soFar.forces - free);
-  const paidAfter = Math.max(0, soFar.forces + want - free);
+  const free = Math.max(
+    factionById(faction)?.freeRevivals ?? 0,
+    input.freeGrant ? GRANTED_FREE_REVIVALS : 0
+  );
+  const ownEnd = Math.min(soFar.forces + want, REVIVAL_CAP);
+  const paidBefore = Math.max(0, Math.min(soFar.forces, REVIVAL_CAP) - free);
+  const paidAfter = Math.max(0, ownEnd - free);
   const cost = REVIVAL_SPICE * (paidAfter - paidBefore);
+  const patronCost = REVIVAL_SPICE * (soFar.forces + want - Math.max(ownEnd, soFar.forces));
   if (cost > spice) return { ok: false, refusal: "cannot-pay" };
+  if (patronCost > (input.patron?.spice ?? 0)) {
+    return { ok: false, refusal: "patron-cannot-pay" };
+  }
   return {
     ok: true,
     cost,
+    patronCost,
     tanks: {
       ...tanks,
       forces: {
@@ -359,6 +371,8 @@ function returnLeaderToTanks(tanks, faction, leader, opts = {}) {
   };
 }
 export {
+  GRANTED_FREE_REVIVALS,
+  PATRON_EXTRA_REVIVALS,
   REVIVAL_CAP,
   REVIVAL_SPICE,
   STARRED_REVIVALS_PER_TURN,

@@ -893,6 +893,33 @@ function awaitingAgain(carry: Parameters<typeof placeFremenWorms>[0]) {
     /nexusSeconds: NEXUS_SECONDS,/.test(fn), true)
 }
 
+// ── the shielded ally ─────────────────────────────────────────────────────
+// The Fremen's standing grant spares their ally the worm — like the Fremen
+// themselves — and its default is ON: absent means protecting.
+{
+  const rows = [
+    { faction: 'fremen', territoryId: 'territory-30', sector: 'sector-1', count: 2 },
+    { faction: 'atreides', territoryId: 'territory-30', sector: 'sector-1', count: 3 },
+    { faction: 'harkonnen', territoryId: 'territory-30', sector: 'sector-2', count: 4 },
+  ]
+  const shielded = devourTerritory('territory-30' as never, rows as never, {}, 'atreides' as never)
+  check('the shielded ally is spared like the Fremen',
+    [shielded.forcesKilled.map(f => f.faction), shielded.forcesSpared.map(f => f.faction)],
+    [['harkonnen'], ['fremen', 'atreides']])
+  const bare = devourTerritory('territory-30' as never, rows as never, {})
+  check('...and without the shield they burn like anyone',
+    bare.forcesKilled.map(f => f.faction), ['atreides', 'harkonnen'])
+
+  const fn3 = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  check('the server reads the shield as ON unless turned off, both blow paths',
+    [/return g\.shield === false \? null : a/.test(fn3),
+      (fn3.match(/spared: shieldedAlly as never,/g) ?? []).length],
+    [true, 2])
+  const law = readFileSync('src/lib/dune/spiceBlow.ts', 'utf8')
+  check('...and the carry stores it as JSON-safe null',
+    /spared: input\.spared \?\? null,/.test(law), true)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.

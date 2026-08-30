@@ -203,13 +203,18 @@ export function devourTerritory(
   territoryId: TerritoryId,
   forces: readonly Force[],
   spiceOnBoard: Readonly<Record<string, number>>,
+  /** The Fremen's ally under the standing shield grant — spared like them. */
+  spared?: FactionId | null,
 ): Devoured {
   const inTerritory = forces.filter(f => f.territoryId === territoryId)
+  // Shai-Hulud does not devour the Fremen — both games — and does not
+  // devour the ally the Fremen choose to protect.
+  const safe = (f: Force) =>
+    f.faction === 'fremen' || (spared != null && f.faction === spared)
   return {
     territoryId,
-    // Shai-Hulud does not devour the Fremen. Both games.
-    forcesKilled: inTerritory.filter(f => f.faction !== 'fremen'),
-    forcesSpared: inTerritory.filter(f => f.faction === 'fremen'),
+    forcesKilled: inTerritory.filter(f => !safe(f)),
+    forcesSpared: inTerritory.filter(safe),
     spiceRemoved: spiceOnBoard[territoryId] ?? 0,
   }
 }
@@ -218,6 +223,8 @@ export interface SpiceBlowInput {
   deck: readonly SpiceCard[]
   discard: readonly SpiceCard[]
   forces: readonly Force[]
+  /** The Fremen's shielded ally, if the grant stands — see devourTerritory. */
+  spared?: FactionId | null
   mode: GameMode
   /** Whether the Fremen are in this game at all. Their worm rules are theirs
    *  alone, so with no Fremen seated the phase behaves as it always did. */
@@ -431,7 +438,8 @@ export function resolveSpiceBlow(input: SpiceBlowInput): SpiceBlowOutcome {
     }
 
     if (top.kind === 'territory') {
-      devoured.push(devourTerritory(top.territoryId, input.forces, input.spiceOnBoard))
+      devoured.push(devourTerritory(
+        top.territoryId, input.forces, input.spiceOnBoard, input.spared))
     }
     // A worm with a worm showing eats nothing, and is still discarded.
     discard.push(card)
@@ -476,6 +484,8 @@ export function resolveSpiceBlow(input: SpiceBlowInput): SpiceBlowOutcome {
  * same way and should not each invent it.
  */
 export interface DoubleBlowInput {
+  /** The Fremen's shielded ally, if the grant stands. */
+  spared?: FactionId | null
   deck: readonly SpiceCard[]
   discardA: readonly SpiceCard[]
   discardB: readonly SpiceCard[]
@@ -582,6 +592,9 @@ export interface SpiceBlowCarry {
   a: SpiceBlowOutcome
   b: SpiceBlowOutcome | null
   devouredByFremen: Devoured[]
+  /** The shielded ally rides the carry: a worm the Fremen place after the
+   *  pause spares the same seat the turned ones did. */
+  spared?: FactionId | null
 }
 
 export type SpiceBlowStep = Step<SpiceBlowAsk, SpiceBlowCarry, DoubleBlowOutcome>
@@ -630,6 +643,7 @@ function revealPileB(
     deck: carry.deck,
     discard: carry.discardB,
     forces: carry.forces,
+    spared: carry.spared,
     mode: 'advanced',
     fremenInPlay: carry.fremenInPlay,
     spiceOnBoard: carry.spiceOnBoard,
@@ -689,6 +703,7 @@ export function beginDoubleSpiceBlow(input: DoubleBlowInput): SpiceBlowStep {
     deck: input.deck,
     discard: input.discardA,
     forces: input.forces,
+    spared: input.spared,
     mode: 'advanced',
     fremenInPlay: input.fremenInPlay,
     spiceOnBoard: input.spiceOnBoard,
@@ -706,6 +721,9 @@ export function beginDoubleSpiceBlow(input: DoubleBlowInput): SpiceBlowStep {
     spiceOnBoard: applyBlowToBoard(input.spiceOnBoard, a),
     firstTurn: input.firstTurn,
     fremenInPlay: input.fremenInPlay ?? false,
+    // NULL, NEVER UNDEFINED: the carry is stored and replayed as JSON, and
+    // an explicitly-undefined key is exactly what a database would lose.
+    spared: input.spared ?? null,
     storm: input.storm,
     a,
     b: null,
@@ -747,7 +765,8 @@ export function placeFremenWorms(
     }
   }
 
-  const devoured = at.map(id => devourTerritory(id, carry.forces, carry.spiceOnBoard))
+  const devoured = at.map(id =>
+    devourTerritory(id, carry.forces, carry.spiceOnBoard, carry.spared))
   const killed = devoured.flatMap(d => d.forcesKilled)
   const spiceOnBoard = { ...carry.spiceOnBoard }
   for (const d of devoured) delete spiceOnBoard[d.territoryId]
