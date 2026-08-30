@@ -167,7 +167,8 @@ export default function DuneGameScreenPreview() {
   // out was to know about ?auction=off. A preview you cannot get out of is a
   // preview of one frame.
   const [card, setCard] = useState(
-    q.get('auction') === 'off' || q.has('battle') ? -1 : BIDDING.ask.index)
+    q.get('auction') === 'off' || q.has('battle') || q.has('nexus')
+      ? -1 : BIDDING.ask.index)
   const running = card >= 0 && card < BIDDING.ask.cardCount
 
   // ── setting up, at ?dune-game&setup ──────────────────────────────────────
@@ -229,6 +230,35 @@ export default function DuneGameScreenPreview() {
     },
   } as unknown as DuneGameState
 
+  // ── the Nexus, at ?dune-game&nexus ────────────────────────────────────────
+  // Mid-window, every kind of line at once: a standing alliance on the
+  // table, this seat's own proposal out and private, an offer waiting on
+  // Accept, and the ready count climbing. The fixture's atreides–fremen
+  // pair is broken for this view so the seat is free to talk; at
+  // ?dune-game&nexus=last every other seat is ready and the button carries
+  // its warning — the press that ends the Nexus for everyone.
+  const nexusing = q.has('nexus')
+  const [nexusAt] = useState(() => Date.now())
+  const nexusState = {
+    ...STATE, phase: 'Spice Blow and Nexus', awaiting: null,
+    players: STATE.players.map(p =>
+      p.faction === 'atreides' || p.faction === 'fremen' ? { ...p, ally: null }
+        : p.faction === 'harkonnen' ? { ...p, ally: 'emperor' }
+        : p.faction === 'emperor' ? { ...p, ally: 'harkonnen' } : p),
+    nexus: {
+      turn: 4, closesAt: nexusAt + 224_000,
+      ready: q.get('nexus') === 'last'
+        ? ['harkonnen', 'emperor', 'fremen', 'spacing-guild', 'bene-gesserit']
+        : ['spacing-guild', 'bene-gesserit'],
+    },
+    nexusTurn: 4,
+  } as unknown as DuneGameState
+  const nexusOwn: DuneSecrets = {
+    ...OWN,
+    nexusProposal: { to: 'fremen', turn: 4 },
+    nexusOffers: [{ from: 'bene-gesserit', turn: 4 }],
+  }
+
   const setupState: DuneGameState & { setup?: SetupWindow } = dealt
     ? { ...dealt.state, mode: 'advanced',
         forces: [...dealt.state.forces, ...placedForces],
@@ -238,13 +268,18 @@ export default function DuneGameScreenPreview() {
   return (
     <>
       <DuneGameScreen
-        state={settling ? setupState : battling ? battleState : { ...STATE, mode }}
+        state={settling ? setupState
+          : battling ? battleState
+          : nexusing ? nexusState
+          : { ...STATE, mode }}
         seat={seat}
         own={settling && seat
           ? (dealt.secrets[`p${mySeatId}`] as DuneSecrets)
+          : nexusing && seat ? nexusOwn
           : seat ? OWN : null}
         chat={CHAT}
         onSend={seat ? () => {} : undefined}
+        onNexus={nexusing && seat ? () => {} : undefined}
         onBattlePick={seat ? () => {} : undefined}
         onBattlePlan={seat ? () => {} : undefined}
         onBattleAnswer={seat ? () => {} : undefined}
