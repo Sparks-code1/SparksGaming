@@ -1330,6 +1330,29 @@ function biddingOpening(input) {
   }
   return { order, hands, limits };
 }
+function spiceHarvest(state) {
+  const board = { ...state.spiceOnBoard ?? {} };
+  const collected = [];
+  const occupies2 = (faction, territoryId) => (state.forces ?? []).some((f) => f.faction === faction && f.territoryId === territoryId && f.count > 0 && f.posture !== "advisor");
+  const CITY_RATE_HOLDS = ["territory-13", "territory-26"];
+  const order = stormOrder(state.storm, state.players);
+  for (const t of DUNE_TERRITORIES) {
+    let pile = board[t.id] ?? 0;
+    if (pile <= 0 || !t.spiceSector) continue;
+    for (const faction of order) {
+      if (pile <= 0) break;
+      const standing = (state.forces ?? []).filter((f) => f.faction === faction && f.territoryId === t.id && f.sector === t.spiceSector && f.posture !== "advisor").reduce((n, f) => n + f.count, 0);
+      if (standing <= 0) continue;
+      const rate = CITY_RATE_HOLDS.some((c) => occupies2(faction, c)) ? 3 : 2;
+      const take = Math.min(pile, rate * standing);
+      pile -= take;
+      collected.push({ faction, territoryId: t.id, amount: take });
+    }
+    if (pile > 0) board[t.id] = pile;
+    else delete board[t.id];
+  }
+  return { collected, spiceOnBoard: board };
+}
 function cityIncome(state) {
   if (state.mode !== "advanced") return [];
   const paid = [];
@@ -1493,6 +1516,7 @@ export {
   phaseWindowOpen,
   resetDeadlines,
   rollStorm,
+  spiceHarvest,
   stormEntry,
   stormOrder
 };

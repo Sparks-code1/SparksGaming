@@ -70,6 +70,7 @@ import {
 import {
   phaseAfter, advanceHold, phaseWindowOpen, rollStorm, stormEntry, cityIncome,
   mentatVerdict, biddingOpening, stormOrder, resetDeadlines, PHASE_SECONDS, TURN_LIMIT,
+  spiceHarvest,
 } from '../_shared/dunePhase.gen.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -1863,31 +1864,51 @@ Deno.serve(async req => {
 
         // ── the documented half of collection pays out ─────────────────────
         case 'Spice Collection': {
+          // THE HARVEST FIRST — the basic game's whole phase: stacks on the
+          // blows' markers lift spice off the board. Then the advanced
+          // cities' printed income. Both land in ONE write, and the same
+          // write shrinks the piles the harvest emptied.
+          const harvest = spiceHarvest(base as never)
           const paid = cityIncome(base as never)
-          if (paid.length === 0) return await plainly()
+          if (harvest.collected.length === 0 && paid.length === 0) return await plainly()
           const { data: rows } = await admin
             .from('match_secrets').select('player_id, data').eq('match_id', matchId)
           const byId = Object.fromEntries(
             (rows ?? []).map(r => [r.player_id as string, (r.data ?? {}) as DuneSecrets]))
           const purses = Object.fromEntries(
             Object.entries(byId).map(([id, d]) => [id, readSpice(d)]))
-          // Through the ledger, like charity: spice ENTERING the game from the
-          // bank, one mover, auditable by reason.
-          const moved = applySpiceMoves(purses, paid.flatMap(p => {
-            const seatId = seatOfFaction[p.faction]
-            return seatId
-              ? [{ from: BANK, to: seatId, amount: p.amount, reason: 'city-income' }]
-              : []
-          }))
+          // Through the ledger, like charity: one mover, auditable by
+          // reason — the harvest as 'spice-harvest', the income as
+          // 'city-income'.
+          const moved = applySpiceMoves(purses, [
+            ...harvest.collected.flatMap(p => {
+              const seatId = seatOfFaction[p.faction]
+              return seatId
+                ? [{ from: BANK, to: seatId, amount: p.amount, reason: 'spice-harvest' }]
+                : []
+            }),
+            ...paid.flatMap(p => {
+              const seatId = seatOfFaction[p.faction]
+              return seatId
+                ? [{ from: BANK, to: seatId, amount: p.amount, reason: 'city-income' }]
+                : []
+            }),
+          ])
           if (!moved.ok) return json({ error: 'income could not be paid', code: moved.refusal }, 500)
           const secretsPatch = Object.fromEntries(
             Object.entries(byId)
               .filter(([id]) => moved.purses[id] !== purses[id])
               .map(([id, d]) => [id, { ...d, spice: moved.purses[id] }]))
-          // THE RECEIPT IS PUBLIC on purpose: who occupies a city is on the
-          // board and the payout is printed on it, so the amounts tell nobody
-          // anything their eyes could not.
-          return await plainly({ cityIncome: { turn, paid } }, undefined, secretsPatch)
+          // THE RECEIPTS ARE PUBLIC on purpose: the piles and the stacks are
+          // on the board and the rates are printed, so the amounts tell
+          // nobody anything their eyes could not.
+          return await plainly({
+            spiceOnBoard: harvest.spiceOnBoard,
+            ...(harvest.collected.length
+              ? { spiceCollection: { turn, collected: harvest.collected } }
+              : null),
+            ...(paid.length ? { cityIncome: { turn, paid } } : null),
+          }, undefined, secretsPatch)
         }
 
         // ── the pause that counts strongholds ──────────────────────────────

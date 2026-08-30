@@ -526,6 +526,93 @@ check('a game is ten turns', TURN_LIMIT, 10)
     /send\(\{ type: 'SETUP_ANSWER', answer: 'ready' \}\)/.test(notice), true)
 }
 
+// ── the harvest ───────────────────────────────────────────────────────────
+// Phase 8's basic half: 3 a force with Arrakeen or Carthag held, else 2; by
+// the marker's own sector; capped by the pile; the rest stays. Advisors
+// neither collect nor grant the city rate.
+{
+  const { spiceHarvest, stormOrder: order } = await import('@/lib/dune/phaseAdvance')
+  const P = (faction: string, i: number) =>
+    ({ faction, seat: `player-position-${i}`, reserves: 0, handCount: 0, ally: null })
+  const players = [P('atreides', 1), P('harkonnen', 2)] as never
+  const F = (faction: string, territoryId: string, sector: string, count: number,
+    over: Record<string, unknown> = {}) =>
+    ({ faction, territoryId, sector, count, ...over })
+  const base = { storm: 'sector-3' as never, players }
+
+  check('two a force from the marker they stand on',
+    spiceHarvest({ ...base, forces: [F('atreides', 'territory-22', 'sector-15', 3)] as never,
+      spiceOnBoard: { 'territory-22': 8 } }).collected,
+    [{ faction: 'atreides', territoryId: 'territory-22', amount: 6 }])
+  check('...and the rest stays where it lies',
+    spiceHarvest({ ...base, forces: [F('atreides', 'territory-22', 'sector-15', 3)] as never,
+      spiceOnBoard: { 'territory-22': 8 } }).spiceOnBoard,
+    { 'territory-22': 2 })
+  check('three a force with Arrakeen held',
+    spiceHarvest({ ...base, forces: [
+      F('atreides', 'territory-22', 'sector-15', 3),
+      F('atreides', 'territory-13', 'sector-10', 1),
+    ] as never, spiceOnBoard: { 'territory-22': 20 } }).collected,
+    [{ faction: 'atreides', territoryId: 'territory-22', amount: 9 }])
+  check('...and with Carthag held the same',
+    spiceHarvest({ ...base, forces: [
+      F('harkonnen', 'territory-22', 'sector-15', 2),
+      F('harkonnen', 'territory-26', 'sector-11', 1),
+    ] as never, spiceOnBoard: { 'territory-22': 20 } }).collected,
+    [{ faction: 'harkonnen', territoryId: 'territory-22', amount: 6 }])
+  check('a stack takes only what is there, and empties the marker',
+    spiceHarvest({ ...base, forces: [F('atreides', 'territory-22', 'sector-15', 3)] as never,
+      spiceOnBoard: { 'territory-22': 4 } }),
+    { collected: [{ faction: 'atreides', territoryId: 'territory-22', amount: 4 }],
+      spiceOnBoard: {} })
+  check('the marker\'s own sector collects, the territory\'s others walk past',
+    spiceHarvest({ ...base, forces: [F('atreides', 'territory-11', 'sector-12', 5)] as never,
+      spiceOnBoard: { 'territory-11': 6 } }).collected, [])
+  check('an advisor on the marker collects nothing',
+    spiceHarvest({ ...base, forces: [
+      F('atreides', 'territory-22', 'sector-15', 3, { posture: 'advisor' }),
+    ] as never, spiceOnBoard: { 'territory-22': 8 } }).collected, [])
+  check('...and an advisor in Arrakeen buys nobody the city rate',
+    spiceHarvest({ ...base, forces: [
+      F('atreides', 'territory-22', 'sector-15', 3),
+      F('atreides', 'territory-13', 'sector-10', 1, { posture: 'advisor' }),
+    ] as never, spiceOnBoard: { 'territory-22': 20 } }).collected,
+    [{ faction: 'atreides', territoryId: 'territory-22', amount: 6 }])
+  check('starred forces collect as one force each',
+    spiceHarvest({ ...base, forces: [
+      F('atreides', 'territory-22', 'sector-15', 2, { starred: 2 }),
+    ] as never, spiceOnBoard: { 'territory-22': 20 } }).collected,
+    [{ faction: 'atreides', territoryId: 'territory-22', amount: 4 }])
+  check('a shared marker drains in storm order',
+    (() => {
+      const forces = [
+        F('atreides', 'territory-22', 'sector-15', 2),
+        F('harkonnen', 'territory-22', 'sector-15', 2),
+      ] as never
+      const out = spiceHarvest({ ...base, forces, spiceOnBoard: { 'territory-22': 5 } })
+      const first = order('sector-3' as never, players)[0]
+      return [out.collected[0].faction, out.collected[0].amount,
+        out.collected[1].amount, Object.keys(out.spiceOnBoard).length, first]
+    })(),
+    (() => {
+      const first = order('sector-3' as never, players)[0]
+      return [first, 4, 1, 0, first]
+    })())
+
+  // ── the server slice ────────────────────────────────────────────────────
+  const fn = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  const cut = fn.slice(fn.indexOf("case 'Spice Collection'"), fn.indexOf("case 'Mentat Pause'"))
+  check('the phase entry harvests and pays in ONE write',
+    [/const harvest = spiceHarvest\(base as never\)/.test(cut),
+      /reason: 'spice-harvest'/.test(cut),
+      /reason: 'city-income'/.test(cut),
+      /spiceOnBoard: harvest\.spiceOnBoard,/.test(cut)],
+    [true, true, true, true])
+  check('...and passes straight through when nothing is owed',
+    /if \(harvest\.collected\.length === 0 && paid\.length === 0\) return await plainly\(\)/.test(cut),
+    true)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.

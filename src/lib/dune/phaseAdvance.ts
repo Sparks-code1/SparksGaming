@@ -344,6 +344,61 @@ export function biddingOpening(input: {
 // ── Spice Collection ──────────────────────────────────────────────────────────
 
 /**
+ * The HARVEST — the basic game's whole half of Spice Collection: forces
+ * standing on a blow's marker collect from it.
+ *
+ * THE RATES ARE THE RULEBOOK'S: 3 spice per force for a faction occupying
+ * Arrakeen or Carthag at the time of collection, 2 per force otherwise.
+ * COLLECTION IS BY SECTOR — the spice sits on the blow's marker, and every
+ * territory's marker has one fixed sector (spiceSector), so only a stack
+ * standing IN that sector reaches it; a stack elsewhere in the same
+ * territory walks past. A stack can only take what is actually there, and
+ * what is not taken STAYS on the board for future turns.
+ *
+ * ADVISORS COLLECT NOTHING AND GRANT NOTHING: they do not occupy — the same
+ * posture rule cityIncome and strongholdsHeld apply — so an advisor on the
+ * marker leaves the pile alone, and an advisor in Arrakeen buys nobody the
+ * city rate.
+ *
+ * Should two factions ever share the marker's sector, they collect in STORM
+ * ORDER — the game's own precedence — each draining what the last left.
+ */
+export function spiceHarvest(
+  state: Pick<AdvanceState, 'forces' | 'players' | 'storm' | 'spiceOnBoard'>,
+): {
+  collected: { faction: FactionId; territoryId: string; amount: number }[]
+  spiceOnBoard: Record<string, number>
+} {
+  const board = { ...(state.spiceOnBoard ?? {}) }
+  const collected: { faction: FactionId; territoryId: string; amount: number }[] = []
+  const occupies = (faction: FactionId, territoryId: string) =>
+    (state.forces ?? []).some(f => f.faction === faction
+      && f.territoryId === territoryId && f.count > 0 && f.posture !== 'advisor')
+  // Arrakeen and Carthag: holding either raises the rate to three.
+  const CITY_RATE_HOLDS = ['territory-13', 'territory-26']
+  const order = stormOrder(state.storm, state.players)
+  for (const t of DUNE_TERRITORIES) {
+    let pile = board[t.id] ?? 0
+    if (pile <= 0 || !t.spiceSector) continue
+    for (const faction of order) {
+      if (pile <= 0) break
+      const standing = (state.forces ?? [])
+        .filter(f => f.faction === faction && f.territoryId === t.id
+          && f.sector === t.spiceSector && f.posture !== 'advisor')
+        .reduce((n, f) => n + f.count, 0)
+      if (standing <= 0) continue
+      const rate = CITY_RATE_HOLDS.some(c => occupies(faction, c)) ? 3 : 2
+      const take = Math.min(pile, rate * standing)
+      pile -= take
+      collected.push({ faction, territoryId: t.id, amount: take })
+    }
+    if (pile > 0) board[t.id] = pile
+    else delete board[t.id]
+  }
+  return { collected, spiceOnBoard: board }
+}
+
+/**
  * The city income: Arrakeen 2, Carthag 2, Tuek's Sietch 1, to each occupant.
  *
  * THE DOCUMENTED HALF OF THE PHASE, and only that. docs/dune-advance-rules.md
