@@ -15,18 +15,21 @@ var readSpice = (s) => {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 };
 var ALWAYS_ELIGIBLE = "bene-gesserit";
-function isEligibleForCharity(secrets, faction) {
-  if (faction === ALWAYS_ELIGIBLE) return true;
+function isEligibleForCharity(secrets, faction, mode) {
+  if (faction === ALWAYS_ELIGIBLE && mode === "advanced") return true;
   return readSpice(secrets) <= CHARITY_TOPS_UP_TO;
 }
-function charityGrant(secrets, faction) {
-  if (faction === ALWAYS_ELIGIBLE) return CHARITY_TOPS_UP_TO;
+function charityGrant(secrets, faction, mode) {
+  if (faction === ALWAYS_ELIGIBLE && mode === "advanced") return CHARITY_TOPS_UP_TO;
   const spice = readSpice(secrets);
   return spice <= CHARITY_TOPS_UP_TO ? CHARITY_TOPS_UP_TO - spice : 0;
 }
-function applyCharity(secrets, faction) {
+function applyCharity(secrets, faction, mode) {
   const spice = readSpice(secrets);
-  return { ...secrets ?? {}, spice: spice + charityGrant(secrets, faction) };
+  return {
+    ...secrets ?? {},
+    spice: spice + charityGrant(secrets, faction, mode)
+  };
 }
 function openCharityWindow(now, turn) {
   return { expiresAt: now + CHARITY_WINDOW_MS, claims: [], turn };
@@ -37,11 +40,11 @@ function refuseCharityOpen(window, phase, turn) {
   return null;
 }
 var charityWindowIsOpen = (w, now) => !!w && now < w.expiresAt;
-function refuseCharityClaim(window, secrets, playerId, now, faction) {
+function refuseCharityClaim(window, secrets, playerId, now, faction, mode) {
   if (!window) return "no-window";
   if (now >= window.expiresAt) return "window-closed";
   if (window.claims.includes(playerId)) return "already-claimed";
-  if (!isEligibleForCharity(secrets, faction)) return "not-eligible";
+  if (!isEligibleForCharity(secrets, faction, mode)) return "not-eligible";
   return null;
 }
 function applyCharityClaim(window, secrets, playerId) {

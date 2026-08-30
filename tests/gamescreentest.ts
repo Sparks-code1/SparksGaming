@@ -1081,9 +1081,9 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
 // A hard-coded 2 satisfies every source check and tells a seat holding one
 // spice that it may claim two.
 {
-  const modal = (spice: number, faction: FactionId) =>
+  const modal = (spice: number, faction: FactionId, mode: 'basic' | 'advanced' = 'basic') =>
     renderToStaticMarkup(createElement(CharityModal, {
-      faction, own: { spice }, onClaim: () => {}, onPass: () => {},
+      faction, own: { spice }, onClaim: () => {}, onPass: () => {}, mode,
     }))
 
   check('a seat one short is offered exactly one', modal(1, 'atreides' as FactionId).includes('<b>1</b>'), true)
@@ -1091,8 +1091,13 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   // THE BENE GESSERIT GET TWO WHATEVER THEY HOLD, which is the case a
   // hard-coded number would accidentally get right — so it is checked beside
   // one it would get wrong.
-  check('...while a rich Bene Gesserit is still offered two',
-    modal(9, 'bene-gesserit' as FactionId).includes('<b>2</b>'), true)
+  check('...while a rich Bene Gesserit is still offered two IN ADVANCED',
+    modal(9, 'bene-gesserit' as FactionId, 'advanced').includes('<b>2</b>'), true)
+  check('...and in basic is told there is nothing to claim',
+    modal(9, 'bene-gesserit' as FactionId, 'basic').includes('nothing to claim'), true)
+  const screenSrc = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
+  check('...and the screen tells the modal which game it is',
+    /<CharityModal\s*[\r\n]+\s*faction=\{seat\} own=\{own\}\s*[\r\n]+\s*mode=\{state\.mode === 'advanced' \? 'advanced' : 'basic'\}/.test(screenSrc), true)
 
   // CLAIM AND PASS, both, for a seat that may claim. The pass button used to be
   // checked by looking for onPass — which the ineligible branch's Close button

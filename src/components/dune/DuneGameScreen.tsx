@@ -1069,6 +1069,7 @@ export function DuneGameScreen({
           {charity && seat && timed.charity && (
             <CharityModal
               faction={seat} own={own}
+              mode={state.mode === 'advanced' ? 'advanced' : 'basic'}
               onClaim={charity.onClaim} onPass={charity.onPass}
               busy={charity.busy} refused={charity.refused} />
           )}

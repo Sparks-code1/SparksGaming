@@ -190,8 +190,8 @@ const code = (path: string) => readFileSync(path, 'utf8')
 
   // IT JUDGES ITS OWN SEAT, from its own row, and asks the shared rule rather
   // than comparing a number — which is what keeps the Bene Gesserit working.
-  check('the modal works out its own eligibility',
-    modal.includes('isEligibleForCharity(own, faction)'), true)
+  check('the modal works out its own eligibility, naming the mode',
+    modal.includes('isEligibleForCharity(own, faction, mode)'), true)
   check('...from the same rule the server pays out from',
     modal.includes("from '@/lib/dune/charity'"), true)
   check('...rather than comparing spice to the threshold itself',

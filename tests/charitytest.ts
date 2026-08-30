@@ -150,11 +150,11 @@ check('...and no spice anywhere in it',
 }
 
 
-// ── the Bene Gesserit ignore the threshold ────────────────────────────────
+// ── the Bene Gesserit ignore the threshold — IN ADVANCED ──────────────────
 // "You always receive CHOAM charity of 2 spice regardless of how many spice you
-// already have" — their advanced advantage. It sat in the faction data,
-// described and unimplemented, while both the client and the server topped
-// everyone up to two alike.
+// already have" — their ADVANCED advantage, and only that: in basic they are
+// bound by the threshold like everyone else. A basic-match Bene Gesserit
+// holding five claimed a flat two before the mode gate existed.
 //
 // A FLAT TWO, NOT A TOP-UP, and the difference is the whole advantage. Everyone
 // else is brought UP TO two, so a seat already holding two gets nothing;
@@ -171,28 +171,43 @@ check('...and no spice anywhere in it',
   check('...a seat at the threshold is eligible', isEligibleForCharity({ spice: 2 }, other), true)
   check('...and its claim is not refused',
     refuseCharityClaim({ expiresAt: 10_000, claims: [], turn: 1 }, { spice: 2 }, 'p1', 0, other), null)
-  check('...but a rich Bene Gesserit is', isEligibleForCharity({ spice: 9 }, bg), true)
-  check('...and a poor one still is', isEligibleForCharity({ spice: 0 }, bg), true)
+  check('...but a rich Bene Gesserit is, in advanced',
+    isEligibleForCharity({ spice: 9 }, bg, 'advanced'), true)
+  check('...and a poor one still is', isEligibleForCharity({ spice: 0 }, bg, 'advanced'), true)
+  // THE GATE: in basic the exception does not exist.
+  check('in basic a rich Bene Gesserit is bound by the threshold',
+    isEligibleForCharity({ spice: 9 }, bg, 'basic'), false)
+  check('...and one at the threshold claims the ordinary top-up',
+    [isEligibleForCharity({ spice: 2 }, bg, 'basic'), charityGrant({ spice: 1 }, bg, 'basic')],
+    [true, 1])
+  check('...and a caller naming no mode gets no exception either',
+    [isEligibleForCharity({ spice: 9 }, bg), charityGrant({ spice: 9 }, bg)], [false, 0])
 
   check('the ordinary grant tops up to the threshold',
     charityGrant({ spice: 1 }, other), CHARITY_TOPS_UP_TO - 1)
   check('...and is nothing at the threshold', charityGrant({ spice: 2 }, other), 0)
   check('...and nothing above it', charityGrant({ spice: 9 }, other), 0)
 
-  check('the Bene Gesserit get the full two however rich',
-    charityGrant({ spice: 9 }, bg), CHARITY_TOPS_UP_TO)
+  check('the Bene Gesserit get the full two however rich, in advanced',
+    charityGrant({ spice: 9 }, bg, 'advanced'), CHARITY_TOPS_UP_TO)
   check('...including at the threshold, where everyone else gets nothing',
-    charityGrant({ spice: 2 }, bg), CHARITY_TOPS_UP_TO)
+    charityGrant({ spice: 2 }, bg, 'advanced'), CHARITY_TOPS_UP_TO)
   check('...and it is added, not topped up to',
-    readSpice(applyCharity({ spice: 9 }, bg)), 11)
+    readSpice(applyCharity({ spice: 9 }, bg, 'advanced')), 11)
 
   // THE GRANT NO LONGER DECIDES ELIGIBILITY, which is what forced the rule to
   // be asked separately. A rich seat and a rich Bene Gesserit used to come out
   // at zero together, and only one of them is being refused.
-  check('a claim by a rich Bene Gesserit is not refused',
-    refuseCharityClaim({ expiresAt: 10_000, claims: [], turn: 1 }, { spice: 9 }, 'p1', 0, bg), null)
+  check('a claim by a rich Bene Gesserit is not refused, in advanced',
+    refuseCharityClaim(
+      { expiresAt: 10_000, claims: [], turn: 1 }, { spice: 9 }, 'p1', 0, bg, 'advanced'), null)
   check('...where the same claim by anyone else is',
-    refuseCharityClaim({ expiresAt: 10_000, claims: [], turn: 1 }, { spice: 9 }, 'p1', 0, other),
+    refuseCharityClaim(
+      { expiresAt: 10_000, claims: [], turn: 1 }, { spice: 9 }, 'p1', 0, other, 'advanced'),
+    'not-eligible')
+  check('...and in basic their own claim is refused with them',
+    refuseCharityClaim(
+      { expiresAt: 10_000, claims: [], turn: 1 }, { spice: 9 }, 'p1', 0, bg, 'basic'),
     'not-eligible')
 
   // WITHOUT A FACTION the ordinary rule applies. Callers that do not know who
@@ -205,10 +220,12 @@ check('...and no spice anywhere in it',
   // The other refusals still come first: being always eligible is not being
   // able to claim twice, or after the window has shut.
   check('always-eligible does not mean twice',
-    refuseCharityClaim({ expiresAt: 10_000, claims: ['p1'], turn: 1 }, { spice: 9 }, 'p1', 0, bg),
+    refuseCharityClaim(
+      { expiresAt: 10_000, claims: ['p1'], turn: 1 }, { spice: 9 }, 'p1', 0, bg, 'advanced'),
     'already-claimed')
   check('...nor after the window closes',
-    refuseCharityClaim({ expiresAt: 10_000, claims: [], turn: 1 }, { spice: 9 }, 'p1', 20_000, bg),
+    refuseCharityClaim(
+      { expiresAt: 10_000, claims: [], turn: 1 }, { spice: 9 }, 'p1', 20_000, bg, 'advanced'),
     'window-closed')
 }
 
@@ -217,10 +234,12 @@ check('...and no spice anywhere in it',
 // small and had no logic in it. It had exactly enough: this exception.
 {
   const edge = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
-  check('the endpoint asks eligibility directly',
-    /isEligibleForCharity\(secrets, myFaction\)/.test(edge), true)
-  check('...and grants by faction too',
-    /charityGrant\(secrets, myFaction\)/.test(edge), true)
+  check('the endpoint asks eligibility directly, naming the mode',
+    /isEligibleForCharity\(secrets, myFaction, mode\)/.test(edge), true)
+  check('...and grants by faction and mode too',
+    /charityGrant\(secrets, myFaction, mode\)/.test(edge), true)
+  check('...where the mode is the row\'s, not the payload\'s',
+    /const mode = state\.mode === 'advanced' \? 'advanced' : 'basic'/.test(edge), true)
   // FROM THE TOKEN, never the payload. A faction in the request body would let
   // any seat claim to be the one faction that always qualifies.
   check('...with the faction it derived, not one it was sent',

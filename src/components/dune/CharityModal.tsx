@@ -28,6 +28,8 @@ const PALE = '#f0e2bb'
 const SERIF = "Georgia, 'Times New Roman', serif"
 
 export interface CharityModalProps {
+  /** Which game is running: the always-receive-2 is ADVANCED only. */
+  mode?: 'basic' | 'advanced'
   /** This seat, whose decision it is. */
   faction: FactionId
   /** Its own secrets row — never anybody else's. */
@@ -59,9 +61,11 @@ const button = (primary: boolean) => ({
   color: primary ? '#fff' : PALE,
 })
 
-export function CharityModal({ faction, own, onClaim, onPass, busy, refused }: CharityModalProps) {
-  const eligible = isEligibleForCharity(own, faction)
-  const grant = charityGrant(own, faction)
+export function CharityModal({
+  faction, own, onClaim, onPass, busy, refused, mode = 'basic',
+}: CharityModalProps) {
+  const eligible = isEligibleForCharity(own, faction, mode)
+  const grant = charityGrant(own, faction, mode)
 
   return (
     <div

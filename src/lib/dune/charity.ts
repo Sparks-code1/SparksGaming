@@ -81,6 +81,9 @@ export const readSpice = (s: Secrets | null | undefined): number => {
  * Gesserit holding ten claim and hold twelve. Reading it as a top-up would give
  * them exactly what everybody else gets and quietly delete the advantage.
  */
+// IN ADVANCED ONLY: the sheet files it under advanced.charity, and in basic
+// they are bound by the threshold like everyone else — a basic-match Bene
+// Gesserit holding five claimed a flat two before the gate existed.
 const ALWAYS_ELIGIBLE: FactionId = 'bene-gesserit'
 
 /**
@@ -93,8 +96,9 @@ const ALWAYS_ELIGIBLE: FactionId = 'bene-gesserit'
  */
 export function isEligibleForCharity(
   secrets: Secrets | null | undefined, faction?: FactionId | null,
+  mode?: 'basic' | 'advanced',
 ): boolean {
-  if (faction === ALWAYS_ELIGIBLE) return true
+  if (faction === ALWAYS_ELIGIBLE && mode === 'advanced') return true
   return readSpice(secrets) <= CHARITY_TOPS_UP_TO
 }
 
@@ -109,8 +113,9 @@ export function isEligibleForCharity(
  */
 export function charityGrant(
   secrets: Secrets | null | undefined, faction?: FactionId | null,
+  mode?: 'basic' | 'advanced',
 ): number {
-  if (faction === ALWAYS_ELIGIBLE) return CHARITY_TOPS_UP_TO
+  if (faction === ALWAYS_ELIGIBLE && mode === 'advanced') return CHARITY_TOPS_UP_TO
   const spice = readSpice(secrets)
   return spice <= CHARITY_TOPS_UP_TO ? CHARITY_TOPS_UP_TO - spice : 0
 }
@@ -118,9 +123,13 @@ export function charityGrant(
 /** A seat's secrets after claiming. Untouched when the claim is worth nothing. */
 export function applyCharity(
   secrets: Secrets | null | undefined, faction?: FactionId | null,
+  mode?: 'basic' | 'advanced',
 ): DuneSecrets {
   const spice = readSpice(secrets)
-  return { ...(secrets ?? {}), spice: spice + charityGrant(secrets, faction) } as DuneSecrets
+  return {
+    ...(secrets ?? {}),
+    spice: spice + charityGrant(secrets, faction, mode),
+  } as DuneSecrets
 }
 
 /**
@@ -201,11 +210,12 @@ export function refuseCharityClaim(
   playerId: string,
   now: number,
   faction?: FactionId | null,
+  mode?: 'basic' | 'advanced',
 ): CharityRefusal | null {
   if (!window) return 'no-window'
   if (now >= window.expiresAt) return 'window-closed'
   if (window.claims.includes(playerId)) return 'already-claimed'
-  if (!isEligibleForCharity(secrets, faction)) return 'not-eligible'
+  if (!isEligibleForCharity(secrets, faction, mode)) return 'not-eligible'
   return null
 }
 

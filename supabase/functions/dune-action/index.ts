@@ -1080,8 +1080,9 @@ Deno.serve(async req => {
       // entirely. myFaction comes from match_players keyed on the caller's user
       // id — never from the payload, which would let a seat claim to be the one
       // faction that always qualifies.
-      const granted = charityGrant(secrets, myFaction)
-      if (!isEligibleForCharity(secrets, myFaction)) {
+      const mode = state.mode === 'advanced' ? 'advanced' : 'basic'
+      const granted = charityGrant(secrets, myFaction, mode)
+      if (!isEligibleForCharity(secrets, myFaction, mode)) {
         // Deliberately vague: telling a rejected caller their own total is fine,
         // but the refusal is logged without it so nothing downstream is tempted
         // to relay a number to the table.
