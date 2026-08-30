@@ -30,6 +30,10 @@ function payForTreachery(input) {
   const to = emperorPlaying && winner !== "emperor" ? "emperor" : BANK;
   return [{ from: winner, to, amount: price, reason: "treachery-bid" }];
 }
+function allyShare(cost, ownPurse) {
+  const own = Math.min(cost, Math.max(0, ownPurse));
+  return { own, ally: cost - own };
+}
 function payForAuction(awards, seated) {
   return awards.flatMap((a) => payForTreachery({ winner: a.winner, price: a.price, seated }));
 }
@@ -43,7 +47,15 @@ function bonusCardsDue(awards, handAfter, limit) {
 function settleCard(input) {
   const { award, card, hands, purses, seated } = input;
   const bonus = input.bonus ?? [];
-  const moves = payForAuction([award], seated);
+  const moves = payForAuction([award], seated).flatMap((m) => {
+    if (m.from !== award.winner || !input.ally) return [m];
+    const share = allyShare(m.amount, purses[award.winner] ?? 0);
+    if (share.ally <= 0) return [m];
+    return [
+      ...share.own > 0 ? [{ ...m, amount: share.own }] : [],
+      { ...m, from: input.ally, amount: share.ally }
+    ];
+  }).filter((m) => m.from !== m.to);
   const paid = applySpiceMoves(purses, moves);
   if (!paid.ok) {
     return {

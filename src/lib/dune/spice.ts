@@ -151,6 +151,17 @@ export function payForTreachery(input: {
  * what a Step is — and so the auction, which is card-blind and money-blind,
  * stays that way.
  */
+/**
+ * How a cost splits between a purse and the ally standing behind it: the
+ * payer's OWN spice first, the ally's only for what is left. Allies may pay
+ * for each other's treachery cards and shipments — this is the one split
+ * both rules use, so the two cannot disagree about whose spice goes first.
+ */
+export function allyShare(cost: number, ownPurse: number): { own: number; ally: number } {
+  const own = Math.min(cost, Math.max(0, ownPurse))
+  return { own, ally: cost - own }
+}
+
 export function payForAuction(
   awards: readonly { winner: FactionId; price: number }[],
   seated: readonly FactionId[],

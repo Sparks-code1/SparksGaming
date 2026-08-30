@@ -1414,5 +1414,32 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     [true, true, true])
 }
 
+// ── the separation banner ─────────────────────────────────────────────────
+// Shown during shipment whenever this seat shares ground with its ally —
+// before the pass that would be refused, and long before the teeth close.
+{
+  const alliedPlayers = (state.players as { faction: string }[]).map(p =>
+    p.faction === 'atreides' ? { ...p, ally: 'harkonnen' }
+      : p.faction === 'harkonnen' ? { ...p, ally: 'atreides' } : p)
+  const sharing = draw({
+    state: { ...state, phase: 'Shipment and Movement', players: alliedPlayers } as never,
+  })
+  check('sharing ground with an ally raises the banner, territory named',
+    [/data-ally-separate=""/.test(sharing), /Arrakeen/.test(sharing)], [true, true])
+  const rivals = draw({
+    state: { ...state, phase: 'Shipment and Movement' } as never,
+  })
+  const apart = draw({
+    state: {
+      ...state, phase: 'Shipment and Movement', players: alliedPlayers,
+      forces: (state.forces as { faction: string; territoryId: string }[])
+        .filter(f => !(f.faction === 'harkonnen' && f.territoryId === 'territory-13')),
+    } as never,
+  })
+  check('...a mere rival raises none, and neither does an ally kept apart',
+    [/data-ally-separate/.test(rivals), /data-ally-separate/.test(apart)],
+    [false, false])
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 process.exit(pass ? 0 : 1)

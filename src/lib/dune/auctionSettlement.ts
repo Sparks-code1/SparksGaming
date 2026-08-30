@@ -24,7 +24,7 @@
  * out of the game, and a deck that is quietly one short is not a thing anybody
  * notices until the reshuffle.
  */
-import { applySpiceMoves, payForAuction } from './spice'
+import { allyShare, applySpiceMoves, payForAuction } from './spice'
 import type { Purses, SpiceMove } from './spice'
 import type { AuctionResult } from './bidding'
 import type { FactionId } from '@/types/Dune/Faction'
@@ -108,6 +108,8 @@ export function settleCard(input: {
    * honoured while every bid still could. Omitted, the deck is presumed deep.
    */
   deckHolds?: number
+  /** The winner's ally, whose purse stands behind the winner's — or null. */
+  ally?: FactionId | null
 }): SettlementResult {
   const { award, card, hands, purses, seated } = input
   const bonus = input.bonus ?? []
@@ -115,7 +117,19 @@ export function settleCard(input: {
   // THE PAYMENT FIRST. If the winner cannot pay, nothing is dealt — refusing
   // after handing over a card is the exact failure this guards against, and
   // doing it in this order makes that impossible rather than unlikely.
-  const moves = payForAuction([award], seated)
+  // THE ALLY'S PURSE STANDS BEHIND THE WINNER'S: own spice first, the
+  // ally's only for what is left, in the same settlement. A move from a seat
+  // to itself — the Emperor collecting from an allied buyer out of the
+  // Emperor's own purse — nets nothing and is dropped rather than booked.
+  const moves = payForAuction([award], seated).flatMap(m => {
+    if (m.from !== award.winner || !input.ally) return [m]
+    const share = allyShare(m.amount, purses[award.winner] ?? 0)
+    if (share.ally <= 0) return [m]
+    return [
+      ...(share.own > 0 ? [{ ...m, amount: share.own }] : []),
+      { ...m, from: input.ally, amount: share.ally },
+    ]
+  }).filter(m => m.from !== m.to)
   const paid = applySpiceMoves(purses, moves)
   if (!paid.ok) {
     return {

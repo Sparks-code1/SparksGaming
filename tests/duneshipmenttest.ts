@@ -775,6 +775,121 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
     (fn3.match(/landPlacement\(/g) ?? []).length >= 2, true)
 }
 
+// ── the alliance's ground rules ───────────────────────────────────────────
+// Allies may not share a territory: landing on an ally is refused, the move
+// rings never offer their ground, and the Polar Sink is neutral. Advisors
+// are not forces and neither block nor share. The ally's purse stands
+// behind the shipper's for the fee, own spice first.
+{
+  const { allyOccupies, coOccupied, judgeShipment: js2, judgeMove: jm2,
+    moveTargets: mt2, POLAR_SINK: SINK } = await import('@/lib/dune/shipment')
+  const R = (faction: string, territoryId: string, sector: string, count: number,
+    posture?: string) => ({ faction, territoryId, sector, count,
+    ...(posture ? { posture } : null) })
+  const board = [
+    R('fremen', 'territory-13', 'sector-10', 2),
+    R('fremen', SINK, 'sector-10', 3),
+    R('fremen', 'territory-40', 'sector-4', 1),
+    R('atreides', 'territory-40', 'sector-4', 2),
+    R('atreides', SINK, 'sector-10', 1),
+    R('harkonnen', 'territory-26', 'sector-2', 4, 'advisor'),
+    R('atreides', 'territory-26', 'sector-2', 1),
+  ] as never
+
+  check('an ally with fighters there occupies; nobody, no ally, no occupation',
+    [allyOccupies(board, 'fremen' as never, 'territory-13'),
+      allyOccupies(board, 'fremen' as never, 'territory-33'),
+      allyOccupies(board, null, 'territory-13')],
+    [true, false, false])
+  check('...the Polar Sink is neutral ground',
+    allyOccupies(board, 'fremen' as never, SINK), false)
+  check('...and advisors are not an occupation',
+    allyOccupies(board, 'harkonnen' as never, 'territory-26'), false)
+  check('the shared ground names itself, sorted, Sink and advisors excluded',
+    [coOccupied(board, 'atreides' as never, 'fremen' as never),
+      coOccupied(board, 'atreides' as never, 'harkonnen' as never)],
+    [['territory-40'], []])
+
+  const shipTo = (over: object) => js2({
+    faction: 'atreides' as never, kind: 'off-planet', count: 1,
+    to: { territoryId: 'territory-13', sector: 'sector-10' },
+    forces: board, reserves: 10, reservesStarred: 0, spice: 5,
+    storm: 'sector-18' as never, guildSeated: false, ...over,
+  } as never)
+  check('shipping onto an ally is refused',
+    (shipTo({ ally: 'fremen' }) as { refusal: string }).refusal, 'ally-occupies')
+  check('...and the same landing beside a mere rival is taken',
+    shipTo({ ally: 'harkonnen' }).ok, true)
+  check('the ally purse stands behind the fee, own spice first',
+    [shipTo({ ally: 'harkonnen', count: 4, spice: 1, allySpice: 3 }).ok,
+      (shipTo({ ally: 'harkonnen', count: 4, spice: 1, allySpice: 2 }) as {
+        refusal: string
+      }).refusal],
+    [true, 'cannot-pay'])
+
+  check('moving onto an ally is refused before the path is even walked',
+    (jm2({
+      faction: 'atreides' as never, from: 'territory-01',
+      gather: [{ sector: 'sector-1', count: 1 }],
+      to: { territoryId: 'territory-13' }, forces: board,
+      storm: 'sector-18' as never, ally: 'fremen' as never,
+    }) as { refusal: string }).refusal, 'ally-occupies')
+
+  // THE RINGS AND THE JUDGE, ally rule included: over every cell, a ring is
+  // offered exactly where an allied one-force move would be taken — and the
+  // only cells an ally's presence removes are that ally's territories.
+  {
+    const mover = [R('atreides', 'territory-13', 'sector-10', 3),
+      R('fremen', 'territory-01', 'sector-1', 2)] as never
+    const from = { territoryId: 'territory-13', sector: 'sector-10' }
+    const noAlly = mt2({ faction: 'atreides' as never, from, forces: mover,
+      storm: 'sector-18' as never })
+    const withAlly = mt2({ faction: 'atreides' as never, from, forces: mover,
+      storm: 'sector-18' as never, ally: 'fremen' as never })
+    let disagree = 0
+    for (const t of DUNE_TERRITORIES) {
+      for (const s of t.sectors) {
+        const verdict = jm2({
+          faction: 'atreides' as never, from: from.territoryId,
+          gather: [{ sector: from.sector, count: 1 }],
+          to: { territoryId: t.id, sector: s }, forces: mover,
+          storm: 'sector-18' as never, ally: 'fremen' as never,
+        }).ok
+        if (verdict !== withAlly.has(t.id + '|' + s)) disagree++
+      }
+    }
+    check('the allied rings and the allied judge agree over every cell',
+      disagree, 0)
+    const dropped = [...noAlly].filter(k => !withAlly.has(k))
+    check('...the fixture reaches the ally without them (not vacuous)',
+      [...noAlly].some(k => k.startsWith('territory-01|')), true)
+    check('...and the ally rule removes exactly the ally ground',
+      dropped.every(k => k.startsWith('territory-01|')) && dropped.length > 0, true)
+  }
+
+  // ── the server slice ────────────────────────────────────────────────────
+  const fn2 = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  const shipCut = fn2.slice(fn2.indexOf("case 'SHIP'"), fn2.indexOf("case 'MOVE'"))
+  check('SHIP reads the ally once and judges with ground and purse',
+    [/ally: shipAlly as never,\s*[\r\n]+\s*allySpice: shipAllySpice,/.test(shipCut),
+      /const share = allyShare\(judged\.cost, readSpice\(secrets\)\)/.test(shipCut)],
+    [true, true])
+  const moveCut = fn2.slice(fn2.indexOf("case 'MOVE'"), fn2.indexOf("case 'PASS_TURN'"))
+  check('MOVE hands the judge the ally',
+    /\.find\(\(p\) => p\.faction === myFaction\)\?\.ally \?\? null\) as never,/.test(moveCut),
+    true)
+  const passCut = fn2.slice(fn2.indexOf("case 'PASS_TURN'"), fn2.indexOf("case 'REVIVE'"))
+  check('a live pass while sharing ground is refused — for the LATER ally only',
+    [/code: 'separate-from-ally'/.test(passCut),
+      /allyIdx !== -1 && allyIdx < w\.at/.test(passCut)],
+    [true, true])
+  check('and the phase\'s end separates whoever would not, later seat to the tanks',
+    [/const later = order\.indexOf\(x as never\) > order\.indexOf\(y as never\) \? x : y/.test(fn2),
+      /base\.tanks = bankDead\(/.test(fn2),
+      /&& f\.posture !== 'advisor'\)/.test(fn2)],
+    [true, true, true])
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.

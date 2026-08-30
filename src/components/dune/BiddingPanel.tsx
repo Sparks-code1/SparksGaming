@@ -54,6 +54,13 @@ export interface BiddingPanelProps {
   seat: FactionId
   /** This seat's own, from the secrets channel. */
   spice: number
+  /**
+   * Whether this seat has an ally. A FLAG, never the ally's balance: allies
+   * may pay for each other's cards, so an allied bidder's input is not
+   * capped at their own purse — the server judges the pair's spice together,
+   * and the exact number never reaches this component to leak.
+   */
+  allied?: boolean
   hand: readonly TreacheryCard[]
   /**
    * The card up for auction, face up.
@@ -201,7 +208,7 @@ export function BiddingBar(
 
 export function BiddingPanel(props: BiddingPanelProps) {
   const {
-    ask, order, toAct, passed, seat, spice, hand, revealed,
+    ask, order, toAct, passed, seat, spice, allied = false, hand, revealed,
     closesAt, now, refusal, onBid, onPass,
   } = props
   const minimum = ask.high ? ask.high.spice + 1 : MINIMUM_OPENING_BID
@@ -258,7 +265,8 @@ export function BiddingPanel(props: BiddingPanelProps) {
   ) : mine ? (
     <>
       <label htmlFor="dune-bid" style={{ fontSize: 12, opacity: 0.8 }}>Bid</label>
-      <input id="dune-bid" type="number" min={minimum} max={spice} value={amount}
+      <input id="dune-bid" type="number" min={minimum}
+        max={allied ? undefined : spice} value={amount}
         onChange={e => setAmount(Number(e.target.value))}
         style={{
           width: 72, background: '#ffffff12', color: SAND,
@@ -395,7 +403,14 @@ export function BiddingPanel(props: BiddingPanelProps) {
         <div style={{ marginTop: 14, borderTop: `1px solid ${SAND}22`, paddingTop: 10 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
             <span style={{ fontSize: 12, opacity: 0.8 }}>Your hand</span>
-            <span>{spice} spice</span>
+            <span>
+              {spice} spice
+              {allied && (
+                <span data-ally-purse="" style={{ fontSize: 12, opacity: 0.7 }}>
+                  {' '}— your ally&#39;s purse stands behind yours
+                </span>
+              )}
+            </span>
           </div>
           <div style={{ display: 'flex', gap: 6, marginTop: 8, minHeight: CARD_H * 0.3 }}>
             {hand.length === 0

@@ -875,7 +875,7 @@ function judgeShipment(input) {
       count,
       guildSeated: input.guildSeated
     });
-    if (cost2 > input.spice) return { ok: false, refusal: "cannot-pay" };
+    if (cost2 > input.spice + (input.allySpice ?? 0)) return { ok: false, refusal: "cannot-pay" };
     return { ok: true, cost: cost2, payee: payee2 };
   }
   if (!input.to) return { ok: false, refusal: "no-such-territory" };
@@ -886,6 +886,9 @@ function judgeShipment(input) {
   }
   if (strongholdClosed(forces, faction, input.to.territoryId)) {
     return { ok: false, refusal: "stronghold-full" };
+  }
+  if (allyOccupies(forces, input.ally, input.to.territoryId)) {
+    return { ok: false, refusal: "ally-occupies" };
   }
   if (kind === "cross") {
     const from = input.from;
@@ -907,8 +910,16 @@ function judgeShipment(input) {
     count,
     guildSeated: input.guildSeated
   });
-  if (cost > input.spice) return { ok: false, refusal: "cannot-pay" };
+  if (cost > input.spice + (input.allySpice ?? 0)) return { ok: false, refusal: "cannot-pay" };
   return { ok: true, cost, payee, sector: settled.sector };
+}
+function allyOccupies(forces, ally, territoryId) {
+  return !!ally && territoryId !== POLAR_SINK && forces.some((f) => f.faction === ally && f.territoryId === territoryId && f.count > 0 && f.posture !== "advisor");
+}
+function coOccupied(forces, a, b) {
+  const holds = (faction) => new Set(forces.filter((f) => f.faction === faction && f.count > 0 && f.posture !== "advisor").map((f) => f.territoryId));
+  const ours = holds(a);
+  return [...holds(b)].filter((t) => ours.has(t) && t !== POLAR_SINK).sort();
 }
 var num = (s) => Number(s.slice("sector-".length));
 var ringAdjacent = (a, b) => {
@@ -965,6 +976,7 @@ function moveTargets(input) {
   for (const t of DUNE_TERRITORIES) {
     if (t.id === from.territoryId) continue;
     if (strongholdClosed(forces, faction, t.id)) continue;
+    if (allyOccupies(forces, input.ally, t.id)) continue;
     for (const s of t.sectors) {
       const d = territoryDistance(from, { territoryId: t.id, sector: s }, storm);
       if (d <= range) reach.add(`${t.id}|${s}`);
@@ -984,6 +996,9 @@ function judgeMove(input) {
   if (inStorm(to.territoryId, settled.sector, storm)) return { ok: false, refusal: "stormed" };
   if (strongholdClosed(forces, faction, to.territoryId)) {
     return { ok: false, refusal: "stronghold-full" };
+  }
+  if (allyOccupies(forces, input.ally, to.territoryId)) {
+    return { ok: false, refusal: "ally-occupies" };
   }
   const range = movementRange(faction, forces);
   let moving = 0;
@@ -1055,7 +1070,9 @@ export {
   SHIP_OPEN_SPICE,
   SHIP_STRONGHOLD_SPICE,
   STRONGHOLD_CAP,
+  allyOccupies,
   bgFollowsShip,
+  coOccupied,
   fremenShipTargets,
   inStorm,
   judgeMove,

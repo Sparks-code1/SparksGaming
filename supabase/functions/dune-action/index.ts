@@ -25,7 +25,7 @@
 // ============================================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { applySpiceMoves, BANK } from '../_shared/duneSpice.gen.ts'
+import { allyShare, applySpiceMoves, BANK } from '../_shared/duneSpice.gen.ts'
 import { settleCard, bonusCardsDue, BONUS_FACTION } from '../_shared/duneAuction.gen.ts'
 import {
   beginAuction, answerBid, cardsOnOffer, BID_SECONDS, BETWEEN_CARDS_SECONDS,
@@ -56,6 +56,7 @@ import {
 } from '../_shared/duneRevival.gen.ts'
 import {
   judgeShipment, judgeMove, landForces, liftForces, nextSeat, SHIPMENT_SECONDS,
+  coOccupied,
 } from '../_shared/duneShipment.gen.ts'
 import {
   pendingBattles, nextAggressor, judgePlan, resolveBattle, battleLosses,
@@ -1384,6 +1385,18 @@ Deno.serve(async req => {
       if (!myFaction) {
         return json({ error: 'your seat has no faction', code: 'no-faction' }, 409)
       }
+      // THE ALLY'S PURSE STANDS BEHIND A BIDDER'S — allies may pay for each
+      // other's treachery cards, so the cap a bid is judged against is the
+      // pair's spice together. The refusal stays private either way.
+      const bidAlly = ((state.players ?? []) as { faction: string; ally?: string | null }[])
+        .find((p) => p.faction === myFaction)?.ally ?? null
+      let bidAllyPurse = 0
+      if (bidAlly && seatOfFaction[bidAlly]) {
+        const { data: allyRow } = await admin
+          .from('match_secrets').select('data')
+          .eq('match_id', matchId).eq('player_id', seatOfFaction[bidAlly]).maybeSingle()
+        bidAllyPurse = readSpice((allyRow?.data ?? {}) as DuneSecrets)
+      }
       // Needed whichever way this goes: to move the reveal on when the row
       // advances, and to deal the cards when it ends.
       const { data: deckNow } = await admin
@@ -1429,7 +1442,7 @@ Deno.serve(async req => {
       // not the seat being answered for. A pass spends nothing and answerBid
       // never looks at it, so the timed-out path passes zero rather than one
       // seat's balance standing in for another's.
-      const againstPurse = expired ? 0 : purse
+      const againstPurse = expired ? 0 : purse + bidAllyPurse
 
       // The two stamps for the NEXT card, if this answer closes one: when it
       // opens, and when its own window then shuts. Both from this clock, so the
@@ -1525,6 +1538,11 @@ Deno.serve(async req => {
           // Who is in the game, for the Emperor's redirect. From the auction's
           // own order rather than whoever happens to have a secrets row.
           seated: step.carry.order,
+          // The winner's ally, whose purse stands behind the winner's. The
+          // split is settleCard's own — both purses come back through
+          // writes.secrets like any other settlement.
+          ally: (((state.players ?? []) as { faction: string; ally?: string | null }[])
+            .find((p) => p.faction === justClosed.winner)?.ally ?? null) as never,
         })
         // Refusing here leaves the auction as it was and nothing dealt, which
         // is recoverable; dealing half of it would not be.
@@ -1780,6 +1798,36 @@ Deno.serve(async req => {
       // The pause's ready-up window ends with the pause: the advance that
       // moves the turn marker is what it was counting down to.
       if (state.phase === 'Mentat Pause') delete base.mentat
+      // ── ALLIES SEPARATE, OR ARE SEPARATED ───────────────────────────────
+      // Leaving the shipment phase with a pair still sharing ground (the
+      // Polar Sink excepted), the rule's teeth close: the ally LATER in
+      // storm order abandons the shared territories, those forces to the
+      // tanks. The live pass refused while they shared — this is what
+      // running the clock out instead costs. Advisors are not forces and
+      // neither share ground nor are swept.
+      if (state.phase === 'Shipment and Movement') {
+        const seatedPairs = ((state.players ?? []) as {
+          faction: string; ally?: string | null
+        }[]).flatMap((p) =>
+          p.ally && String(p.faction) < String(p.ally)
+            ? [[p.faction, p.ally] as const] : [])
+        if (seatedPairs.length > 0) {
+          const order = stormOrder(state.storm as never, (state.players ?? []) as never)
+          for (const [x, y] of seatedPairs) {
+            const shared = coOccupied((base.forces ?? []) as never, x as never, y as never)
+            if (shared.length === 0) continue
+            const later = order.indexOf(x as never) > order.indexOf(y as never) ? x : y
+            const rows = (base.forces ?? []) as {
+              faction: string; territoryId: string; posture?: string
+            }[]
+            const leaving = rows.filter((f) => f.faction === later
+              && shared.includes(f.territoryId) && f.posture !== 'advisor')
+            base.forces = rows.filter((f) => !leaving.includes(f))
+            base.tanks = bankDead(
+              (base.tanks ?? emptyTanks()) as never, leaving as never)
+          }
+        }
+      }
 
       /** The plain write most entries need: the pointer, and nothing else. */
       const plainly = async (
@@ -2033,6 +2081,21 @@ Deno.serve(async req => {
         faction: string; reserves: number; reservesStarred?: number
       }[]).find(p => p.faction === myFaction)
 
+      // THE ALLY, twice over: their ground refuses the landing, and their
+      // purse stands behind the fee. Read once, used by judge and payment.
+      const shipAlly = ((state.players ?? []) as { faction: string; ally?: string | null }[])
+        .find((p) => p.faction === myFaction)?.ally ?? null
+      const allySeat = shipAlly ? seatOfFaction[shipAlly] : undefined
+      let allyRowData: Record<string, unknown> | null = null
+      let shipAllySpice = 0
+      if (allySeat && allySeat !== playerId) {
+        const { data: a } = await admin
+          .from('match_secrets').select('data')
+          .eq('match_id', matchId).eq('player_id', allySeat).maybeSingle()
+        allyRowData = (a?.data ?? {}) as Record<string, unknown>
+        shipAllySpice = readSpice(allyRowData as never)
+      }
+
       const kind = (action.kind ?? 'off-planet') as 'off-planet' | 'cross' | 'to-reserves'
       const count = Number(action.count ?? 0)
       const starred = Number(action.starred ?? 0)
@@ -2045,6 +2108,8 @@ Deno.serve(async req => {
         spice: readSpice(secrets),
         storm: state.storm as never,
         guildSeated: 'spacing-guild' in seatOfFaction,
+        ally: shipAlly as never,
+        allySpice: shipAllySpice,
       })
       if (!judged.ok) return json({ error: 'that shipment is not legal', code: judged.refusal }, 409)
 
@@ -2093,13 +2158,31 @@ Deno.serve(async req => {
           guildRow = (g?.data ?? {}) as Record<string, unknown>
           purses[guildSeat] = readSpice(guildRow as never)
         }
-        const moved = applySpiceMoves(purses, [{
-          from: playerId, to: paySeat ? guildSeat : BANK,
-          amount: judged.cost, reason: 'shipment',
-        }])
+        if (allySeat && allyRowData && !(allySeat in purses)) {
+          purses[allySeat] = shipAllySpice
+        }
+        // OWN PURSE FIRST, the ally's for what is left — the same split the
+        // settlement uses. An ally who IS the payee (a Guild allied with the
+        // shipper) covering the remainder from their own purse nets nothing,
+        // so that move is dropped rather than booked.
+        const share = allyShare(judged.cost, readSpice(secrets))
+        const feeTo = paySeat ? guildSeat : BANK
+        const moved = applySpiceMoves(purses, ([
+          ...(share.own > 0
+            ? [{ from: playerId, to: feeTo, amount: share.own, reason: 'shipment' }]
+            : []),
+          ...(share.ally > 0 && allySeat
+            ? [{ from: allySeat, to: feeTo, amount: share.ally, reason: 'shipment' }]
+            : []),
+        ] as never[]).filter((m) => (m as { from: string; to: string }).from
+          !== (m as { from: string; to: string }).to) as never)
         if (!moved.ok) return json({ error: 'the spice could not move', code: moved.refusal }, 500)
         secretsPatch[playerId] = { ...secrets, spice: moved.purses[playerId] }
         if (paySeat) secretsPatch[guildSeat] = { ...guildRow, spice: moved.purses[guildSeat] }
+        if (allySeat && allyRowData && allySeat !== guildSeat
+          && moved.purses[allySeat] !== shipAllySpice) {
+          secretsPatch[allySeat] = { ...allyRowData, spice: moved.purses[allySeat] }
+        }
       }
 
       // THE SEAT KEEPS ITS TURN: the move is still to make, so the ring
@@ -2154,6 +2237,8 @@ Deno.serve(async req => {
         to: action.to as never,
         forces: (state.forces ?? []) as never,
         storm: state.storm as never,
+        ally: (((state.players ?? []) as { faction: string; ally?: string | null }[])
+          .find((p) => p.faction === myFaction)?.ally ?? null) as never,
       })
       if (!judged.ok) return json({ error: 'that move is not legal', code: judged.refusal }, 409)
 
@@ -2201,6 +2286,26 @@ Deno.serve(async req => {
       const expired = now >= w.closesAt
       if (!expired && w.order[w.at] !== myFaction) {
         return json({ error: 'not your turn to pass', code: 'not-your-turn' }, 403)
+      }
+      // ALLIES MUST SEPARATE DURING SHIPMENT. A live pass is refused only
+      // when this seat is the LATER of a pair still sharing ground — the
+      // earlier ally's turn is already spent, so this pass was the last
+      // chance. The expired path stays anyone's push (the clock is the
+      // backstop), and the phase's end has the teeth.
+      if (!expired) {
+        const passAlly = ((state.players ?? []) as { faction: string; ally?: string | null }[])
+          .find((p) => p.faction === myFaction)?.ally ?? null
+        if (passAlly) {
+          const shared = coOccupied(
+            (state.forces ?? []) as never, myFaction as never, passAlly as never)
+          const allyIdx = w.order.indexOf(passAlly)
+          if (shared.length > 0 && allyIdx !== -1 && allyIdx < w.at) {
+            return json({
+              error: 'allies must separate during shipment',
+              code: 'separate-from-ally', territories: shared,
+            }, 409)
+          }
+        }
       }
       const stepped = nextSeat(w as never, now + SHIPMENT_SECONDS * 1000)
       const rest = { ...state, awaiting: stepped ? stepped.order[stepped.at] : null }

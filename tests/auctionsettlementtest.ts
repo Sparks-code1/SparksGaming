@@ -10,6 +10,7 @@
 // purse is secret, so a card dealt without payment is invisible from every seat;
 // it surfaces as somebody quietly richer several turns later, by which time no
 // log says why.
+import { readFileSync } from 'node:fs'
 import { settleAuction, settleCard, bonusCardsDue, BONUS_FACTION } from '@/lib/dune/auctionSettlement'
 import { payForAuction } from '@/lib/dune/spice'
 import type { AuctionResult } from '@/lib/dune/bidding'
@@ -322,6 +323,90 @@ check('a winner spending their last spice is fine',
   const short = sale([])
   check('...while a caller who simply miscounts is still refused',
     short.ok ? 'dealt anyway' : short.refusal, 'not-enough-bonus-cards')
+}
+
+// ── the ally pays what the winner cannot ──────────────────────────────────
+// Own purse first, the ally's only for what is left, in the same settlement.
+// An Emperor allied with the buyer collecting from their own purse is a move
+// that nets nothing, and is dropped rather than booked.
+{
+  const { allyShare } = await import('@/lib/dune/spice')
+  check('the split is own-first, the ally for the remainder',
+    [allyShare(4, 10), allyShare(4, 1), allyShare(4, 0), allyShare(0, 5)],
+    [{ own: 4, ally: 0 }, { own: 1, ally: 3 }, { own: 0, ally: 4 },
+      { own: 0, ally: 0 }])
+
+  const both = ['atreides', 'harkonnen'] as FactionId[]
+  const helped = settleCard({
+    award: { index: 0, winner: 'atreides' as FactionId, price: 4 }, card: 'card-x',
+    hands: { atreides: [], fremen: [] },
+    purses: { atreides: 1, fremen: 5 },
+    seated: both, limits: { atreides: 4 }, bonus: [],
+    ally: 'fremen' as FactionId,
+  })
+  check('the ally covers the remainder in the same settlement',
+    helped.ok
+      ? [helped.writes.secrets['atreides'].spice, helped.writes.secrets['fremen'].spice,
+        helped.writes.secrets['atreides'].hand]
+      : null,
+    [0, 2, ['card-x']])
+  const rich = settleCard({
+    award: { index: 0, winner: 'atreides' as FactionId, price: 4 }, card: 'card-x',
+    hands: { atreides: [] },
+    purses: { atreides: 9, fremen: 5 },
+    seated: both, limits: { atreides: 4 }, bonus: [],
+    ally: 'fremen' as FactionId,
+  })
+  check('...a winner who can pay alone leaves the ally untouched',
+    rich.ok ? ['fremen' in rich.writes.secrets, rich.writes.secrets['atreides'].spice] : null,
+    [false, 5])
+  const short = settleCard({
+    award: { index: 0, winner: 'atreides' as FactionId, price: 4 }, card: 'card-x',
+    hands: { atreides: [] },
+    purses: { atreides: 1, fremen: 2 },
+    seated: both, limits: { atreides: 4 }, bonus: [],
+    ally: 'fremen' as FactionId,
+  })
+  check('...and a pair short together is refused whole',
+    short.ok ? 'paid' : short.refusal, 'a-winner-cannot-pay')
+  const imperial = settleCard({
+    award: { index: 0, winner: 'atreides' as FactionId, price: 4 }, card: 'card-x',
+    hands: { atreides: [], emperor: [] },
+    purses: { atreides: 1, emperor: 5 },
+    seated: ['atreides', 'emperor'] as FactionId[], limits: { atreides: 4 }, bonus: [],
+    ally: 'emperor' as FactionId,
+  })
+  check('an Emperor ally collecting from their own purse books nothing',
+    imperial.ok
+      ? [imperial.writes.secrets['atreides'].spice, imperial.writes.secrets['emperor'].spice]
+      : null,
+    [0, 6])
+  // The dropped move is not cosmetic: booked, it would demand the Emperor
+  // hold what they were owed — an Emperor too poor to pay themselves would
+  // wedge a sale the rule says goes through free.
+  const poorImperial = settleCard({
+    award: { index: 0, winner: 'atreides' as FactionId, price: 4 }, card: 'card-x',
+    hands: { atreides: [], emperor: [] },
+    purses: { atreides: 1, emperor: 2 },
+    seated: ['atreides', 'emperor'] as FactionId[], limits: { atreides: 4 }, bonus: [],
+    ally: 'emperor' as FactionId,
+  })
+  check('...even when that purse could not have covered the booking',
+    poorImperial.ok
+      ? [poorImperial.writes.secrets['atreides'].spice,
+        poorImperial.writes.secrets['emperor'].spice]
+      : poorImperial.refusal,
+    [0, 3])
+
+  // ── the server slice ────────────────────────────────────────────────────
+  const fn = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  check('a bid is judged against the pair\'s spice together',
+    [/const againstPurse = expired \? 0 : purse \+ bidAllyPurse/.test(fn),
+      /bidAllyPurse = readSpice\(\(allyRow\?\.data \?\? \{\}\) as DuneSecrets\)/.test(fn)],
+    [true, true])
+  check('...and the settlement is handed the winner\'s ally',
+    /\.find\(\(p\) => p\.faction === justClosed\.winner\)\?\.ally \?\? null\) as never,/.test(fn),
+    true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

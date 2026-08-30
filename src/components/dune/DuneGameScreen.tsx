@@ -60,7 +60,7 @@ import { BiddingPanel } from './BiddingPanel'
 import { CharityModal } from './CharityModal'
 import { SetupWindow, SetupBoardTargets } from './SetupWindow'
 import { ShipRail } from './ShipRail'
-import { inStorm, moveTargets, strongholdClosed } from '@/lib/dune/shipment'
+import { coOccupied, inStorm, moveTargets, strongholdClosed } from '@/lib/dune/shipment'
 import { RideRail } from './RideRail'
 import { RevivalRail } from './RevivalRail'
 import { BattlePanel } from './BattlePanel'
@@ -383,6 +383,10 @@ export function DuneGameScreen({
   const rideWindow = state.wormRide && now < state.wormRide.closesAt
     ? { closesAt: state.wormRide.closesAt, ms: WORM_RIDE_SECONDS * 1000 }
     : null
+  // THIS SEAT'S ALLY, read once off the public table: the bid cap lifts on
+  // it, the move rings avoid its ground, and the separation banner names it.
+  const myAlly = seat ? state.players.find(p => p.faction === seat)?.ally ?? null : null
+
   // The ride's minute sits INSIDE the Nexus's five: while both run, the
   // ride is the nearer clock and the one the header counts.
   const nexusWindow = state.phase === 'Spice Blow and Nexus'
@@ -894,6 +898,7 @@ export function DuneGameScreen({
                   const reach = moveTargets({
                     faction: seat!, from: movePlan.from,
                     forces: state.forces, storm: state.storm,
+                    ally: myAlly,
                   })
                   return (
                     <>
@@ -1024,6 +1029,7 @@ export function DuneGameScreen({
           {bidding && seat && (
             <BiddingPanel {...bidding} seat={seat} now={now}
               spice={own?.spice ?? 0}
+              allied={!!myAlly}
               hand={handOf(own)}
               revealed={revealedFor(own)} />
           )}
@@ -1133,6 +1139,24 @@ export function DuneGameScreen({
                   Ready
                 </button>
               )}
+            </div>
+          )}
+          {/* THE SEPARATION BANNER: allies may not share ground, and a pair
+              still sharing when the phase ends forfeits the later seat's
+              forces there. Said here, before the pass that would be refused
+              and long before the teeth close. */}
+          {state.phase === 'Shipment and Movement' && seat && myAlly
+            && coOccupied(state.forces, seat, myAlly).length > 0 && (
+            <div data-ally-separate="" style={{
+              position: 'absolute', left: 0, right: 0, bottom: 0,
+              padding: '8px 12px', background: '#0d1220', color: '#e8b04b',
+              borderTop: '1px solid #e8b04b44', font: '14px Georgia, serif',
+            }}>
+              You share {coOccupied(state.forces, seat, myAlly)
+                .map(t => DUNE_TERRITORIES.find(d => d.id === t)?.displayName ?? t)
+                .join(', ')} with your ally — allies must separate during
+              shipment, or the later of you in storm order forfeits those
+              forces to the tanks when the phase ends.
             </div>
           )}
           {/* THE NEXUS BAR: private halves filtered to THIS Nexus's turn

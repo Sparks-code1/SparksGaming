@@ -104,7 +104,7 @@ export type ShipRefusal =
   | 'no-such-territory' | 'sector-needed' | 'no-such-sector' | 'stormed'
   | 'stronghold-full' | 'cannot-pay' | 'not-enough-reserves' | 'not-yours-to-ship'
   | 'guild-only' | 'nothing-there' | 'out-of-range'
-  | 'no-path'
+  | 'no-path' | 'ally-occupies' | 'separate-from-ally'
 
 /** Resolve the sector a shipment or move ends in, or refuse. */
 export function settleSector(
@@ -220,6 +220,10 @@ export function judgeShipment(input: {
   spice: number
   storm: SectorId
   guildSeated: boolean
+  /** The shipper's ally, for the shared-ground refusal — or null. */
+  ally?: FactionId | null
+  /** The ally's purse, standing behind the shipper's for the fee. */
+  allySpice?: number
 }): { ok: true; cost: number; payee: 'bank' | 'guild'; sector?: SectorId }
   | { ok: false; refusal: ShipRefusal } {
   const { faction, kind, count, forces, storm } = input
@@ -242,7 +246,7 @@ export function judgeShipment(input: {
     const { cost, payee } = shipCost({
       faction, kind, territoryId: from.territoryId, count, guildSeated: input.guildSeated,
     })
-    if (cost > input.spice) return { ok: false, refusal: 'cannot-pay' }
+    if (cost > input.spice + (input.allySpice ?? 0)) return { ok: false, refusal: 'cannot-pay' }
     return { ok: true, cost, payee }
   }
 
@@ -255,6 +259,9 @@ export function judgeShipment(input: {
   }
   if (strongholdClosed(forces, faction, input.to.territoryId)) {
     return { ok: false, refusal: 'stronghold-full' }
+  }
+  if (allyOccupies(forces, input.ally, input.to.territoryId)) {
+    return { ok: false, refusal: 'ally-occupies' }
   }
 
   if (kind === 'cross') {
@@ -276,8 +283,39 @@ export function judgeShipment(input: {
   const { cost, payee } = shipCost({
     faction, kind, territoryId: input.to.territoryId, count, guildSeated: input.guildSeated,
   })
-  if (cost > input.spice) return { ok: false, refusal: 'cannot-pay' }
+  if (cost > input.spice + (input.allySpice ?? 0)) return { ok: false, refusal: 'cannot-pay' }
   return { ok: true, cost, payee, sector: settled.sector }
+}
+
+// ── the alliance's ground rules ───────────────────────────────────────────
+
+/**
+ * Whether an ally OCCUPIES this territory: fighters, never advisors, and the
+ * Polar Sink is neutral ground the rule does not reach. Landing where your
+ * ally stands is refused — allies may not share a territory.
+ */
+export function allyOccupies(
+  forces: readonly Force[], ally: FactionId | null | undefined, territoryId: string,
+): boolean {
+  return !!ally && territoryId !== POLAR_SINK && forces.some(f =>
+    f.faction === ally && f.territoryId === territoryId && f.count > 0
+    && (f as { posture?: string }).posture !== 'advisor')
+}
+
+/**
+ * The territories two allies share, fighters on both sides — the ground they
+ * must separate over during shipment. The Polar Sink never appears; sorted,
+ * so two calls over the same board name the same list.
+ */
+export function coOccupied(
+  forces: readonly Force[], a: FactionId, b: FactionId,
+): string[] {
+  const holds = (faction: FactionId) => new Set(forces
+    .filter(f => f.faction === faction && f.count > 0
+      && (f as { posture?: string }).posture !== 'advisor')
+    .map(f => f.territoryId))
+  const ours = holds(a)
+  return [...holds(b)].filter(t => ours.has(t) && t !== POLAR_SINK).sort()
 }
 
 // ── movement ──────────────────────────────────────────────────────────────
@@ -375,6 +413,8 @@ export function moveTargets(input: {
   from: { territoryId: string; sector: string }
   forces: readonly Force[]
   storm: SectorId
+  /** The mover's ally — rings are never offered on shared ground. */
+  ally?: FactionId | null
 }): Set<string> {
   const { faction, from, forces, storm } = input
   const range = movementRange(faction, forces)
@@ -382,6 +422,7 @@ export function moveTargets(input: {
   for (const t of DUNE_TERRITORIES) {
     if (t.id === from.territoryId) continue
     if (strongholdClosed(forces, faction, t.id)) continue
+    if (allyOccupies(forces, input.ally, t.id)) continue
     for (const s of t.sectors) {
       // no storm check here ON PURPOSE: territoryDistance is the storm's law
       // — a stormed destination is Infinity — and writing it twice would
@@ -409,6 +450,8 @@ export function judgeMove(input: {
   to: { territoryId: string; sector?: string }
   forces: readonly Force[]
   storm: SectorId
+  /** The mover's ally, for the shared-ground refusal — or null. */
+  ally?: FactionId | null
 }): { ok: true; sector: SectorId; moving: number } | { ok: false; refusal: ShipRefusal } {
   const { faction, from, gather, to, forces, storm } = input
   if (!territory(from)) return { ok: false, refusal: 'no-such-territory' }
@@ -421,6 +464,9 @@ export function judgeMove(input: {
   if (inStorm(to.territoryId, settled.sector, storm)) return { ok: false, refusal: 'stormed' }
   if (strongholdClosed(forces, faction, to.territoryId)) {
     return { ok: false, refusal: 'stronghold-full' }
+  }
+  if (allyOccupies(forces, input.ally, to.territoryId)) {
+    return { ok: false, refusal: 'ally-occupies' }
   }
 
   const range = movementRange(faction, forces)

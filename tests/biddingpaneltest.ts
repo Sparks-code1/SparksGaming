@@ -294,5 +294,17 @@ check('the seat to act is given the controls', draw().includes('id="dune-bid"'),
   check('...and still offers a bid', plain.includes('Bid'), true)
 }
 
+// ── an allied bidder's input is not capped at their own purse ─────────────
+// The flag is a boolean on purpose: the ally's balance never reaches the
+// panel, so nothing here can leak it — the server judges the pair together.
+{
+  const alone = draw()
+  const together = draw({ allied: true })
+  check('alone, the bid input is capped at the purse',
+    [/max="12"/.test(alone), /data-ally-purse/.test(alone)], [true, false])
+  check('...allied, the cap lifts and the purse line says why',
+    [/max="12"/.test(together), /data-ally-purse/.test(together)], [false, true])
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 process.exit(pass ? 0 : 1)

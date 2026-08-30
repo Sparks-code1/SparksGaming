@@ -34,11 +34,16 @@ function payForTreachery(input) {
   const to = emperorPlaying && winner !== "emperor" ? "emperor" : BANK;
   return [{ from: winner, to, amount: price, reason: "treachery-bid" }];
 }
+function allyShare(cost, ownPurse) {
+  const own = Math.min(cost, Math.max(0, ownPurse));
+  return { own, ally: cost - own };
+}
 function payForAuction(awards, seated) {
   return awards.flatMap((a) => payForTreachery({ winner: a.winner, price: a.price, seated }));
 }
 export {
   BANK,
+  allyShare,
   applySpiceMoves,
   heldBy,
   netFromBank,
