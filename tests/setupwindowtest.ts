@@ -15,9 +15,11 @@
 //
 //   The traitor choice is the actual cards, off this seat's own row and no
 //   other route. Ready closes this column — gated on what THIS seat owes, so
-//   nobody declares themselves done with an advisor still to stand — while the
-//   deadline's escape hatch stays ungated, because that is what stops a table
-//   of held buttons wedging when somebody walks away.
+//   nobody declares themselves done with an advisor still to stand, but never
+//   on the prediction, where declining is a real choice and a gate would
+//   charge seven minutes of waiting for it — while the deadline's escape hatch
+//   stays ungated, because that is what stops a table of held buttons wedging
+//   when somebody walks away.
 import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
@@ -326,6 +328,29 @@ const draw = (over: Partial<SetupWindowProps> = {}) =>
     outstanding: OUTSTANDING.filter(d => d.faction !== 'bene-gesserit'),
   })
   check('...and freed once it has', /data-layer="setup-ready"(?![^>]*disabled)/.test(bgDone), true)
+
+  // THE PREDICTION DOES NOT HOLD READY DOWN. Declining is a real choice whose
+  // cost — no prediction — is already the default, so gating it would price a
+  // legitimate decision at the whole seven-minute deadline. Warn, don't hold.
+  const onlyPredicting = OUTSTANDING.filter(
+    d => d.faction === 'bene-gesserit' && d.kind === 'prediction')
+  check('the fixture leaves a prediction to decline', onlyPredicting.length, 1)
+  const declining = draw({ seat: 'bene-gesserit', outstanding: onlyPredicting })
+  check('a seat owing only a prediction may still press Ready',
+    [/data-layer="setup-ready"(?![^>]*disabled)/.test(declining),
+      /data-ready-blocked/.test(declining)],
+    [true, false])
+  check('...and is told what declining costs, not what it is waiting for',
+    [declining.includes('sealed no prediction'),
+      declining.includes('Still to answer')],
+    [true, false])
+  // AND IT IS STILL A GATE. A prediction alongside something that does hold
+  // keeps the button dead, and the dead-button line names only the holder.
+  const bgHeld = draw({ seat: 'bene-gesserit' })
+  check('a prediction beside a real holder does not soften the gate',
+    [/data-layer="setup-ready"[^>]*disabled/.test(bgHeld),
+      bgHeld.includes('your prediction')],
+    [true, false])
 
   // PRESSED: disabled into a confirmation rather than vanishing, so its
   // presser can see it registered.

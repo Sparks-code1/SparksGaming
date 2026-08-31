@@ -45,6 +45,13 @@
  * defaults, and a seat that had declared itself done had no reason to look
  * back. Disabled with the reason written beside it is the honest version.
  *
+ * EXCEPT THE PREDICTION, WHICH IS A CHOICE AND NOT A CHORE. Silence there is
+ * already a legal answer — no prediction, costing that seat one route to
+ * victory and nothing else — so a gate would make a player who has decided
+ * not to predict sit out the whole deadline to decline. It warns instead: see
+ * GATES_READY. The rest are placements and a kept traitor, where silence
+ * costs pieces and position, which is what a gate is for.
+ *
  * THE DEADLINE'S ESCAPE HATCH IS NOT THIS BUTTON and must never be gated on
  * anything: once the clock has run out, any seat may push the game along from
  * the notices strip, defaults and all. That is what stops a table wedging
@@ -108,6 +115,14 @@ const OWED_TEXT: Record<SetupDecision['kind'], string> = {
   prediction: 'your prediction',
   traitor: 'the traitor you keep',
 }
+
+/**
+ * WHICH OUTSTANDING DECISIONS HOLD READY DOWN — everything but the prediction.
+ * Declining to predict is a real choice with a real cost already priced in,
+ * and gating Ready on it would price that choice at seven more minutes of
+ * waiting. The seat is told it has not predicted; it is not held for it.
+ */
+const GATES_READY = (d: SetupDecision) => d.kind !== 'prediction'
 
 const territory = (id: string) => DUNE_TERRITORIES.find(t => t.id === id) ?? null
 const territoryName = (id: string) => territory(id)?.displayName ?? id
@@ -220,6 +235,8 @@ export function SetupWindow({
   const owes = (kind: SetupDecision['kind']) => owed.some(d => d.kind === kind)
   const advisorBlocked = outstanding.some(d => d.kind === 'fremen-placement')
   const meReady = ready.includes(seat)
+  const blocking = owed.filter(GATES_READY)
+  const held = blocking.length > 0
 
   return (
     <aside data-layer="setup-window" aria-label="Setting up" style={{
@@ -289,29 +306,33 @@ export function SetupWindow({
         background: '#0d1220',
       }}>
         <button type="button" data-layer="setup-ready" onClick={onReady}
-          disabled={busy || meReady || owed.length > 0}
-          data-ready-blocked={owed.length > 0 ? 'yes' : undefined}
+          disabled={busy || meReady || held}
+          data-ready-blocked={held ? 'yes' : undefined}
           aria-label={meReady ? 'You are ready'
-            : owed.length > 0 ? 'Answer what your seat owes before declaring ready'
+            : held ? 'Answer what your seat owes before declaring ready'
             : 'Ready — done with setup'}
           style={{
             ...button(true),
             width: '100%',
-            cursor: meReady || owed.length > 0 ? 'default' : 'pointer',
+            cursor: meReady || held ? 'default' : 'pointer',
             border: `1px solid ${meReady ? '#27AE60' : '#c9542a'}`,
-            background: meReady || owed.length > 0 ? 'transparent' : '#c9542a',
-            color: meReady ? '#27AE60' : owed.length > 0 ? '#f0e2bb66' : '#fff',
+            background: meReady || held ? 'transparent' : '#c9542a',
+            color: meReady ? '#27AE60' : held ? '#f0e2bb66' : '#fff',
           }}>
           {meReady ? '✓ Ready' : 'Ready'}
         </button>
         {/* WHY IT IS DEAD, in the same breath as the dead button — a control
-            that refuses without saying what it wants reads as broken. */}
+            that refuses without saying what it wants reads as broken. And when
+            only the prediction is outstanding the button is live: the line
+            says what pressing it forgoes rather than standing in the way. */}
         <p style={{ ...quiet, marginTop: 6, textAlign: 'center' }}>
           {meReady
             ? `Waiting on the rest — ${ready.length}/${seated.length} seats are ready.`
-            : owed.length > 0
-              ? `Still to answer: ${owed.map(d => OWED_TEXT[d.kind] ?? d.kind).join(', ')}.`
-              : 'The game starts when every seat has pressed it.'}
+            : held
+              ? `Still to answer: ${blocking.map(d => OWED_TEXT[d.kind] ?? d.kind).join(', ')}.`
+              : owes('prediction')
+                ? 'You have sealed no prediction. Ready anyway if you mean to decline — it costs you that route to victory and nothing else.'
+                : 'The game starts when every seat has pressed it.'}
         </p>
       </div>
     </aside>
