@@ -45,6 +45,9 @@ import { DUNE_PHASES } from '@/types/Dune/Game'
 import {
   resolveStorm, stormRollRange, FIRST_STORM_ROLL, firstPlayerAfterStorm, seatsFromPositions,
 } from './storm'
+export {
+  mayAtomics, WEATHER_CONTROL_MAX, STORM_CARD_SECONDS, SHIELD_WALL_TERRITORY,
+} from './storm'
 import type { StormOutcome } from './storm'
 import { strongholdsHeld } from './hud'
 import { bankDead } from './revival'
@@ -117,6 +120,8 @@ export interface AdvanceState {
   mentat?: { closesAt: number; ready?: string[] }
   /** The Nexus's window: cleared by the last ready, outlived by the clock. */
   nexus?: { closesAt: number; ready?: string[] }
+  /** The storm's between-beat: calculated, the cards deciding, not moved. */
+  stormCarry?: { turn: number; roll: number; closesAt: number }
   phaseClock?: PhaseClock
 }
 
@@ -144,6 +149,7 @@ export interface AdvanceHold {
   code: 'setup-not-finished' | 'game-over' | 'blow-not-turned'
     | 'worms-pending' | 'charity-open' | 'auction-running' | 'shipping-underway'
     | 'battles-underway' | 'worm-ride' | 'mentat-pause' | 'nexus-open'
+    | 'storm-window'
   until?: number
 }
 
@@ -191,6 +197,17 @@ export function advanceHold(state: AdvanceState, now: number): AdvanceHold | nul
     // passed, or run out its clock. Each seat's expiry has its own push
     // (PASS_TURN by anyone), the same rule as every other pause.
     if (state.shipping) return { code: 'shipping-underway', until: state.shipping.closesAt }
+    return null
+  }
+
+  if (state.phase === 'Storm') {
+    // THE CALCULATED STORM WAITS ITS BEAT: the window between the roll and
+    // the move belongs to the cards, and the press that would move the
+    // marker early is held off it. Spent or run out, the hold clears and
+    // the next press moves the storm.
+    if (state.stormCarry && now < state.stormCarry.closesAt) {
+      return { code: 'storm-window', until: state.stormCarry.closesAt }
+    }
     return null
   }
 
@@ -674,6 +691,7 @@ export function resetDeadlines(
     battleCaptureSeconds: number
     mentatSeconds: number
     nexusSeconds: number
+    stormCardSeconds: number
   },
 ): { patch: Record<string, unknown>; reset: string[] } {
   const patch: Record<string, unknown> = {}
@@ -694,6 +712,12 @@ export function resetDeadlines(
   if (state.nexus) {
     patch.nexus = { ...state.nexus, closesAt: now + lengths.nexusSeconds * 1000 }
     reset.push('nexus')
+  }
+  if (state.stormCarry) {
+    patch.stormCarry = {
+      ...state.stormCarry, closesAt: now + lengths.stormCardSeconds * 1000,
+    }
+    reset.push('storm-window')
   }
   if (state.spiceBlow) {
     patch.spiceBlow = { ...state.spiceBlow, closesAt: now + lengths.wormSeconds * 1000 }

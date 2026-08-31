@@ -490,6 +490,23 @@ export interface DuneGameState {
   /** The last turn a Nexus was called — at most one a turn. */
   nexusTurn?: number
   /**
+   * THE STORM, CALCULATED BUT NOT YET MOVED: the printed beat between the
+   * two — Weather Control writes this instead of the dials, and Family
+   * Atomics answers it before the move lands. Cleared by the move. The
+   * roll is public the moment it exists, exactly as the dials are at the
+   * table; `steered` names the seat that chose it.
+   */
+  stormCarry?: {
+    turn: number
+    roll: number
+    closesAt: number
+    steered?: FactionId
+    atomics?: FactionId
+  }
+  /** Cards out of the game for good — Family Atomics detonated, never
+   *  reshuffled. The treachery economy counts them here. */
+  removedFromPlay?: string[]
+  /**
    * THE TRUTHTRANCE LOG, public and permanent: who asked whom what, the
    * answer, and the moment it was true — an answer is a fact about a
    * moment, and the stamp is what keeps an old yes from reading as a

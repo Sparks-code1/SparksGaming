@@ -74,6 +74,7 @@ import {
   KWISATZ_HADERACH, kwisatzHaderachAvailable,
 } from '../_shared/duneBattle.gen.ts'
 import {
+  mayAtomics, STORM_CARD_SECONDS, WEATHER_CONTROL_MAX, SHIELD_WALL_TERRITORY,
   phaseAfter, advanceHold, phaseWindowOpen, rollStorm, stormEntry, cityIncome,
   mentatVerdict, biddingOpening, stormOrder, resetDeadlines, PHASE_SECONDS, TURN_LIMIT,
   spiceHarvest, MENTAT_READY_SECONDS,
@@ -1804,9 +1805,64 @@ Deno.serve(async req => {
       // and the stamp below makes the second press subject to the same look-
       // window as any other phase.
       if (state.phase === 'Storm' && state.stormMoved !== state.turn) {
+        const carried = state.stormCarry as {
+          turn: number; roll: number; closesAt: number
+          steered?: string; atomics?: string
+        } | undefined
+        if (carried && carried.turn === Number(state.turn)) {
+          // ── SECOND BEAT: the window has run out — advanceHold gated the
+          // early press — and the storm moves AS CALCULATED, against the
+          // Wall as it stands NOW: a detonation in between is exactly what
+          // the beat exists for.
+          const { patch } = stormEntry(state as never, carried.roll)
+          const moved9 = {
+            ...state, ...patch, awaiting: null,
+            stormReport: {
+              ...(patch.stormReport as object),
+              ...(carried.steered ? { steered: carried.steered } : null),
+              ...(carried.atomics ? { atomics: carried.atomics } : null),
+            },
+            phaseClock: stamp(Number(state.turn), 'Storm'),
+          } as Record<string, unknown>
+          delete moved9.stormCarry
+          const { data, error } = await admin.rpc('apply_match_write', {
+            p_match_id: matchId,
+            p_expected_version: match.version,
+            p_state: moved9,
+            p_secrets: {},
+          })
+          if (error) return json({ error: error.message }, 500)
+          if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+          return json({ phase: 'Storm', turn: state.turn, stormReport: moved9.stormReport, version: data[0].version })
+        }
         const roll = rollStorm(
           Number(state.turn), state.mode as never,
           seededRng(Number(match.rng_seed) + match.action_seq))
+        // THE PRINTED BEAT between calculated and moved: from turn two,
+        // when some seat could legally answer with Family Atomics, the roll
+        // is PUBLISHED — as the dials are at the table — and the marker
+        // waits its window. With nobody in reach of the Wall the storm
+        // moves in the same press, as it always did.
+        const anyAtomics = Number(state.turn) >= 2
+          && ((state.players ?? []) as { faction: string }[]).some((p) =>
+            mayAtomics((state.forces ?? []) as never, p.faction as never, state.storm as never))
+        if (anyAtomics) {
+          const { data, error } = await admin.rpc('apply_match_write', {
+            p_match_id: matchId,
+            p_expected_version: match.version,
+            p_state: {
+              ...state, awaiting: null,
+              stormCarry: {
+                turn: Number(state.turn), roll,
+                closesAt: now + STORM_CARD_SECONDS * 1000,
+              },
+            },
+            p_secrets: {},
+          })
+          if (error) return json({ error: error.message }, 500)
+          if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+          return json({ phase: 'Storm', stormCalculated: roll, version: data[0].version })
+        }
         const { patch } = stormEntry(state as never, roll)
         const { data, error } = await admin.rpc('apply_match_write', {
           p_match_id: matchId,
@@ -3108,6 +3164,116 @@ Deno.serve(async req => {
         b as never, c as never, [...c.revealed.traitor.calls] as never, choice)
     }
 
+    // ── Weather Control: the holder steers the storm ────────────────────────
+    // Played before the marker is calculated, from turn two: the chosen
+    // reach becomes the calculation, published like any roll, and the
+    // atomics window still follows when someone stands in the Wall's reach.
+    case 'WEATHER_CONTROL': {
+      if (!myFaction) return json({ error: 'your seat has no faction', code: 'no-faction' }, 409)
+      if (state.phase !== 'Storm' || state.stormMoved === state.turn || state.stormCarry) {
+        return json({ error: 'the storm is not waiting to be calculated', code: 'no-window' }, 409)
+      }
+      if (Number(state.turn) < 2) {
+        return json({ error: 'the first storm is the dials\' alone', code: 'too-early' }, 409)
+      }
+      const sectors = Number(action.sectors)
+      if (!Number.isInteger(sectors) || sectors < 0 || sectors > WEATHER_CONTROL_MAX) {
+        return json({ error: 'nought to ten sectors', code: 'bad-sectors' }, 409)
+      }
+      const { data: wcRow } = await admin
+        .from('match_secrets').select('data')
+        .eq('match_id', matchId).eq('player_id', playerId).maybeSingle()
+      const wcMine = (wcRow?.data ?? {}) as { cards?: string[] }
+      if (!(wcMine.cards ?? []).includes('weathercontrol')) {
+        return json({ error: 'you do not hold Weather Control', code: 'card-not-held' }, 409)
+      }
+      const wcHand = [...(wcMine.cards ?? [])]
+      wcHand.splice(wcHand.indexOf('weathercontrol'), 1)
+      const atomicsCould = ((state.players ?? []) as { faction: string }[]).some((p) =>
+        mayAtomics((state.forces ?? []) as never, p.faction as never, state.storm as never))
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state,
+          stormCarry: {
+            turn: Number(state.turn), roll: sectors,
+            // the atomics beat still follows a steered storm; with nobody
+            // in reach the window is already spent
+            closesAt: atomicsCould ? now + STORM_CARD_SECONDS * 1000 : now,
+            steered: myFaction,
+          },
+          players: ((state.players ?? []) as { faction: string; handCount?: number }[])
+            .map((p) => p.faction === myFaction ? { ...p, handCount: wcHand.length } : p),
+          treacheryDiscard: [
+            ...((state.treacheryDiscard ?? []) as string[]), 'weathercontrol',
+          ],
+        },
+        p_secrets: { [playerId]: { ...wcMine, cards: wcHand } },
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ steered: sectors, version: data[0].version })
+    }
+
+    // ── Family Atomics: the Wall comes down ─────────────────────────────────
+    // Played in the beat between calculated and moved, by a seat in reach
+    // of the Wall. Everything standing on the Wall dies with it, the three
+    // sheltered territories are open to the storm for good, and the card
+    // leaves the game — removed from play, never reshuffled.
+    case 'FAMILY_ATOMICS': {
+      if (!myFaction) return json({ error: 'your seat has no faction', code: 'no-faction' }, 409)
+      const fc = state.stormCarry as {
+        turn: number; roll: number; closesAt: number; atomics?: string
+      } | undefined
+      if (state.phase !== 'Storm' || !fc || state.stormMoved === state.turn) {
+        return json({ error: 'the storm is not between its beats', code: 'no-window' }, 409)
+      }
+      if (fc.atomics) {
+        return json({ error: 'the Wall is already down', code: 'already-detonated' }, 409)
+      }
+      if (!mayAtomics((state.forces ?? []) as never, myFaction as never, state.storm as never)) {
+        return json({ error: 'you are not in reach of the Shield Wall', code: 'not-in-reach' }, 409)
+      }
+      const { data: faRow } = await admin
+        .from('match_secrets').select('data')
+        .eq('match_id', matchId).eq('player_id', playerId).maybeSingle()
+      const faMine = (faRow?.data ?? {}) as { cards?: string[] }
+      if (!(faMine.cards ?? []).includes('familyatomics')) {
+        return json({ error: 'you do not hold Family Atomics', code: 'card-not-held' }, 409)
+      }
+      const faHand = [...(faMine.cards ?? [])]
+      faHand.splice(faHand.indexOf('familyatomics'), 1)
+      // ALL FORCES ON THE WALL ARE DESTROYED — the detonator's own included.
+      const wallRows = ((state.forces ?? []) as {
+        territoryId: string; count: number
+      }[]).filter((f) => f.territoryId === SHIELD_WALL_TERRITORY && f.count > 0)
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state,
+          shieldWall: 'destroyed',
+          forces: ((state.forces ?? []) as { territoryId: string; count: number }[])
+            .filter((f) => !(f.territoryId === SHIELD_WALL_TERRITORY && f.count > 0)),
+          tanks: bankDead((state.tanks ?? emptyTanks()) as never, wallRows as never),
+          // the window is SPENT: the storm may move on the next press
+          stormCarry: { ...fc, atomics: myFaction, closesAt: now },
+          players: ((state.players ?? []) as { faction: string; handCount?: number }[])
+            .map((p) => p.faction === myFaction ? { ...p, handCount: faHand.length } : p),
+          // REMOVED FROM PLAY, not discarded: the treachery economy counts
+          // this list so the card's absence reads as the rule, not a leak.
+          removedFromPlay: [
+            ...((state.removedFromPlay ?? []) as string[]), 'familyatomics',
+          ],
+        },
+        p_secrets: { [playerId]: { ...faMine, cards: faHand } },
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ detonated: true, version: data[0].version })
+    }
+
     // ── the Tleilaxu Ghola: one free revival, at any time ───────────────────
     // The card waives the gate, the ledger and the cost — never the
     // face-down cycle — and is spent only when the revival lands.
@@ -3724,6 +3890,7 @@ Deno.serve(async req => {
         battleCaptureSeconds: BATTLE_CAPTURE_SECONDS,
         mentatSeconds: MENTAT_READY_SECONDS,
         nexusSeconds: NEXUS_SECONDS,
+        stormCardSeconds: STORM_CARD_SECONDS,
       })
       if (reset.length === 0) {
         return json({ error: 'nothing here holds a clock', code: 'no-clock' }, 409)

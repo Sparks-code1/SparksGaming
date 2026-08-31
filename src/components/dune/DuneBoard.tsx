@@ -224,6 +224,8 @@ export interface DuneBoardStack {
 }
 
 export interface DuneBoardProps {
+  /** "The Shield Wall now turns blue as a reminder" — the card's own words. */
+  shieldWall?: 'intact' | 'destroyed'
   storm: SectorId
   stacks: readonly DuneBoardStack[]
   /** Spice lying in territories, keyed by territory id. */
@@ -391,6 +393,7 @@ function AwaitingMark({ faction, seating }: {
 }
 
 export function DuneBoard({
+  shieldWall = 'intact',
   storm, stacks, spice, seating, deck, mode,
   worms = [], awaiting = null, phase = null, turn = null, interactive = false, children,
   closesAt = null, windowMs, now = 0, tanks = null,
@@ -458,6 +461,23 @@ export function DuneBoard({
         pointerEvents: interactive ? 'auto' : 'none',
       }}>
         {wedge && <path d={wedge} fill="#c9542a" fillOpacity="0.55" stroke="#f2d9a0" strokeWidth="2" />}
+
+        {/* THE FALLEN WALL, blue as the card prints it: a standing reminder
+            that Arrakeen, Carthag and the Imperial Basin lie open. */}
+        {shieldWall === 'destroyed' && (() => {
+          const wall = DUNE_TERRITORIES.find(t => t.displayName === 'Shield Wall')
+          return wall ? (
+            <path d={wall.outline} data-wall-down=""
+              fill="#3b7dd8" fillOpacity={0.3}
+              stroke="#5aa0f2" strokeWidth={2} strokeOpacity={0.85}
+              strokeLinejoin="round" pointerEvents="none">
+              <title>
+                The Shield Wall is destroyed — Arrakeen, Carthag and the
+                Imperial Basin lie open to the storm.
+              </title>
+            </path>
+          ) : null
+        })()}
 
         {/* THE ADVISOR WEAVE, one pattern per faction that needs it. A checker
             in the faction's own colour: the piece is unmistakably theirs and

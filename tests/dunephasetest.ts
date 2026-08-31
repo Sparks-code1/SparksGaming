@@ -751,7 +751,7 @@ check('a game is ten turns', TURN_LIMIT, 10)
         battleTraitorSeconds: 1, battleVoiceSeconds: 1,
         battlePrescienceSeconds: 1, battleAllocateSeconds: 1,
         battleCaptureSeconds: 1, mentatSeconds: MENTAT_READY_SECONDS,
-        nexusSeconds: 1,
+        nexusSeconds: 1, stormCardSeconds: 1,
       })
       return [(out.patch.mentat as { closesAt: number }).closesAt, out.reset]
     })(),
@@ -816,10 +816,100 @@ check('a game is ten turns', TURN_LIMIT, 10)
           battleTraitorSeconds: 1, battleVoiceSeconds: 1,
           battlePrescienceSeconds: 1, battleAllocateSeconds: 1,
           battleCaptureSeconds: 1, mentatSeconds: 1, nexusSeconds: NEXUS_SECONDS,
+          stormCardSeconds: 1,
         })
       return [(out.patch.nexus as { closesAt: number }).closesAt, out.reset]
     })(),
     [1_000_000 + NEXUS_SECONDS * 1000, ['nexus']])
+}
+
+// ── the storm cards ───────────────────────────────────────────────────────
+// The storm advances in its two printed beats when a detonation could
+// answer: calculated, a window, then moved. Weather Control writes the
+// calculation; Family Atomics answers it from the Wall's reach.
+{
+  const { mayAtomics, STORM_CARD_SECONDS, WEATHER_CONTROL_MAX,
+    SHIELD_WALL_TERRITORY, advanceHold: hold4, resetDeadlines: reset4 } =
+    await import('@/lib/dune/phaseAdvance')
+  check('the constants are the card\'s', [WEATHER_CONTROL_MAX, STORM_CARD_SECONDS], [10, 45])
+
+  const wall = DUNE_TERRITORIES.find(t => t.id === SHIELD_WALL_TERRITORY)!
+  check('the Wall is where the board prints it', wall.displayName, 'Shield Wall')
+  const row4 = (territoryId: string, sector: string) =>
+    ({ faction: 'atreides', territoryId, sector, count: 1 })
+  check('a force ON the Wall is in reach, storm or no storm',
+    [mayAtomics([row4(SHIELD_WALL_TERRITORY, wall.sectors[0])] as never,
+      'atreides' as never, 'sector-18' as never),
+      mayAtomics([row4(SHIELD_WALL_TERRITORY, wall.sectors[0])] as never,
+        'atreides' as never, wall.sectors[0] as never)],
+    [true, true])
+  // A NEIGHBOUR IN REACH: found from the geography rather than hard-coded,
+  // then the SAME cell refused when its own sector is stormed — "no storm
+  // between your sector and the Wall".
+  const doorstep = wall.adjacent.flatMap(adj =>
+    (DUNE_TERRITORIES.find(t => t.id === adj)?.sectors ?? []).map(s => ({ adj, s })))
+    .find(({ adj, s }) => mayAtomics([row4(adj, s)] as never,
+      'atreides' as never, 'sector-18' as never))
+  check('a neighbour with a clear way in is in reach', !!doorstep, true)
+  check('...and the same cell, stormed, is not',
+    doorstep ? mayAtomics([row4(doorstep.adj, doorstep.s)] as never,
+      'atreides' as never, doorstep.s as never) : 'no doorstep',
+    false)
+  check('...nobody anywhere is not', mayAtomics([] as never, 'atreides' as never, 'sector-18' as never), false)
+
+  check('the calculated storm holds the marker for its window',
+    hold4(at('Storm', { stormCarry: { turn: 4, roll: 3, closesAt: 400_000 } }), 1000),
+    { code: 'storm-window', until: 400_000 })
+  check('...and past the window the press may move it',
+    hold4(at('Storm', { stormCarry: { turn: 4, roll: 3, closesAt: 400_000 } }), 500_000), null)
+  check('the reset restamps the window',
+    (() => {
+      const out = reset4(at('Storm', {
+        stormCarry: { turn: 4, roll: 3, closesAt: 5 },
+      }), 1_000_000, {
+        setupSeconds: 1, charityMs: 1, wormSeconds: 1, bidSeconds: 1,
+        shipmentSeconds: 1, battlePickSeconds: 1, battlePlanSeconds: 1,
+        battleTraitorSeconds: 1, battleVoiceSeconds: 1,
+        battlePrescienceSeconds: 1, battleAllocateSeconds: 1,
+        battleCaptureSeconds: 1, mentatSeconds: 1, nexusSeconds: 1,
+        stormCardSeconds: STORM_CARD_SECONDS,
+      })
+      return [(out.patch.stormCarry as { closesAt: number }).closesAt, out.reset]
+    })(),
+    [1_000_000 + STORM_CARD_SECONDS * 1000, ['storm-window']])
+
+  // ── the server slice ────────────────────────────────────────────────────
+  const fns = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  check('the storm publishes its calculation when a detonation could answer',
+    [/const anyAtomics = Number\(state\.turn\) >= 2/.test(fns),
+      /stormCalculated: roll/.test(fns),
+      /closesAt: now \+ STORM_CARD_SECONDS \* 1000,/.test(fns)],
+    [true, true, true])
+  check('...and the second beat moves it AS CALCULATED, against the Wall as it stands',
+    [/stormEntry\(state as never, carried\.roll\)/.test(fns),
+      /delete moved9\.stormCarry/.test(fns),
+      /\.\.\.\(carried\.steered \? \{ steered: carried\.steered \} : null\)/.test(fns)],
+    [true, true, true])
+  const wc = fns.slice(fns.indexOf("case 'WEATHER_CONTROL'"), fns.indexOf("case 'FAMILY_ATOMICS'"))
+  check('Weather Control writes the calculation and is discarded',
+    [/code: 'no-window'/.test(wc), /code: 'too-early'/.test(wc),
+      /code: 'bad-sectors'/.test(wc),
+      /steered: myFaction,/.test(wc),
+      /'weathercontrol',\s*[\r\n]+\s*\]/.test(wc)],
+    [true, true, true, true, true])
+  const fa = fns.slice(fns.indexOf("case 'FAMILY_ATOMICS'"), fns.indexOf("case 'TLEILAXU_GHOLA'"))
+  check('Family Atomics kills the Wall\'s occupants, opens the three, and leaves the game',
+    [/code: 'already-detonated'/.test(fa), /code: 'not-in-reach'/.test(fa),
+      /shieldWall: 'destroyed',/.test(fa),
+      /tanks: bankDead\(/.test(fa),
+      /removedFromPlay: \[/.test(fa),
+      /stormCarry: \{ \.\.\.fc, atomics: myFaction, closesAt: now \}/.test(fa)],
+    [true, true, true, true, true, true])
+  check('...and is NEVER discarded — removed is the economy\'s word for it',
+    /treacheryDiscard/.test(fa), false)
+  const bag9 = readFileSync('scripts/local-invariants.mjs', 'utf8')
+  check('the harness counts the removed as part of the economy',
+    /\.\.\.\(snap\.state\.removedFromPlay \?\? \[\]\),/.test(bag9), true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

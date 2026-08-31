@@ -711,6 +711,7 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
                 'battles-underway': 'Battles are being fought, in storm order.',
                 'worm-ride': 'Shai-Hulud waits — the Fremen may ride.',
                 'nexus-open': 'A Nexus — the table is talking alliances.',
+                'storm-window': 'The storm is calculated — the cards may answer before it moves.',
                 'mentat-pause': 'the table is readying for the next turn',
                 'game-over': 'The game is over.',
                 'setup-not-finished': 'Setting up.',
@@ -872,6 +873,16 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
           : null}
         onHajr={seat ? () => void send({ type: 'HAJR' }) : undefined}
         hajrRefusal={refusedBy === 'HAJR' && refused
+          ? { code: refused }
+          : null}
+        onWeather={seat
+          ? sectors => void send({ type: 'WEATHER_CONTROL', sectors })
+          : undefined}
+        weatherRefusal={refusedBy === 'WEATHER_CONTROL' && refused
+          ? { code: refused }
+          : null}
+        onAtomics={seat ? () => void send({ type: 'FAMILY_ATOMICS' }) : undefined}
+        atomicsRefusal={refusedBy === 'FAMILY_ATOMICS' && refused
           ? { code: refused }
           : null}
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused

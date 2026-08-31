@@ -1601,5 +1601,47 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     [true, true])
 }
 
+// ── the storm cards on screen ─────────────────────────────────────────────
+{
+  const { WeatherPanel } = await import('@/components/dune/WeatherPanel')
+  const { AtomicsPanel } = await import('@/components/dune/AtomicsPanel')
+  const weather = renderToStaticMarkup(createElement(WeatherPanel, {
+    onPlay: () => {}, onClose: () => {},
+  }))
+  check('the Weather panel steers by stepper and spends deliberately',
+    [/data-weather-plus/.test(weather), /data-weather-play=""/.test(weather),
+      /counterclockwise/.test(weather)],
+    [true, true, true])
+  const atomics = renderToStaticMarkup(createElement(AtomicsPanel, {
+    roll: 4, onPlay: () => {}, onClose: () => {}, refusal: 'not-in-reach',
+  }))
+  check('the Atomics panel shows the calculation and the price in red',
+    [/data-atomics-roll/.test(atomics), />4</.test(atomics),
+      /data-atomics-play=""/.test(atomics),
+      /yours\s+included/.test(atomics),
+      /data-atomics-refusal="not-in-reach"/.test(atomics)],
+    [true, true, true, true, true])
+
+  const downed = draw({
+    state: { ...state, shieldWall: 'destroyed' } as never,
+  })
+  const standing = draw()
+  check('the fallen Wall turns blue on the board, and only fallen',
+    [/data-wall-down/.test(downed), /data-wall-down/.test(standing)],
+    [true, false])
+
+  const screen6 = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
+  check('the ribbons ride the storm\'s beats',
+    [/&& state\.stormMoved !== state\.turn && !state\.stormCarry/.test(screen6),
+      /&& mayAtomics\(state\.forces, seat, state\.storm\)/.test(screen6)],
+    [true, true])
+  const match7 = readFileSync('src/components/dune/DuneMatchScreen.tsx', 'utf8')
+  const harness7 = readFileSync('src/components/dune/DuneMultiSeatView.tsx', 'utf8')
+  check('both drivers post both plays',
+    [/WEATHER_CONTROL/.test(match7) && /FAMILY_ATOMICS/.test(match7),
+      /WEATHER_CONTROL/.test(harness7) && /FAMILY_ATOMICS/.test(harness7)],
+    [true, true])
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 process.exit(pass ? 0 : 1)

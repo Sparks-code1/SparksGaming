@@ -17,6 +17,7 @@ import {
 import type { Force, GameMode, SectorId, ShieldWall, TerritoryId } from '@/types/Dune/Game'
 import type { FactionId } from '@/types/Dune/Faction'
 import { offering } from './phase'
+import { territoryDistance } from './shipment'
 import type { Step } from './phase'
 
 export const SECTOR_COUNT = 18
@@ -425,4 +426,36 @@ export function seatsFromPositions(
 export function sectorIdsAreValid(): boolean {
   return DUNE_SECTORS.length === SECTOR_COUNT
     && DUNE_SECTORS.every(s => s.id === sectorId(s.number))
+}
+
+// ── the storm cards ───────────────────────────────────────────────────────
+
+/** Weather Control's reach: nought to ten sectors, the holder's choice. */
+export const WEATHER_CONTROL_MAX = 10
+/** The beat between the roll and the move, when the cards may answer. */
+export const STORM_CARD_SECONDS = 45
+/** The Wall itself, on the board. */
+export const SHIELD_WALL_TERRITORY: TerritoryId = 'territory-06' as TerritoryId
+
+/**
+ * Whether this faction may detonate Family Atomics: one or more forces on
+ * the Shield Wall itself, or on an adjacent territory "with no storm
+ * between your sector and the Wall" — judged as a DIRECT crossing by the
+ * same walk the movement rules use: distance one, storm included, so a
+ * stormed meeting-point or a stormed own sector refuses the way the card
+ * means it to.
+ */
+export function mayAtomics(
+  forces: readonly Force[], faction: FactionId, storm: SectorId,
+): boolean {
+  const mine = forces.filter(f => f.faction === faction && f.count > 0)
+  if (mine.some(f => f.territoryId === SHIELD_WALL_TERRITORY)) return true
+  const wall = DUNE_TERRITORIES.find(t => t.id === SHIELD_WALL_TERRITORY)
+  if (!wall) return false
+  const nextDoor = new Set(wall.adjacent)
+  return mine.some(f => nextDoor.has(f.territoryId)
+    && wall.sectors.some(sec =>
+      territoryDistance(
+        { territoryId: f.territoryId, sector: f.sector },
+        { territoryId: SHIELD_WALL_TERRITORY, sector: sec }, storm) === 1))
 }

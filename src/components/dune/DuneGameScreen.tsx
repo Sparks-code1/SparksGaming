@@ -71,6 +71,9 @@ import type { NexusMove } from './NexusPanel'
 import { TruthtrancePanel } from './TruthtrancePanel'
 import { GholaPanel } from './GholaPanel'
 import { HajrPanel } from './HajrPanel'
+import { WeatherPanel } from './WeatherPanel'
+import { AtomicsPanel } from './AtomicsPanel'
+import { mayAtomics } from '@/lib/dune/storm'
 import type { TruthtranceQuestion } from '@/lib/dune/truthtrance'
 import {
   REVIVAL_CAP, STARRED_REVIVALS_PER_TURN, PATRON_EXTRA_REVIVALS,
@@ -207,6 +210,12 @@ export interface DuneGameScreenProps {
   /** Play Hajr: an extra movement riding this seat's open shipping turn. */
   onHajr?: () => void
   hajrRefusal?: { code: string } | null
+  /** Play Weather Control: steer the storm nought to ten sectors. */
+  onWeather?: (sectors: number) => void
+  weatherRefusal?: { code: string } | null
+  /** Play Family Atomics: bring the Shield Wall down between the beats. */
+  onAtomics?: () => void
+  atomicsRefusal?: { code: string } | null
   /** The last NEXUS action's refusal — code and which action, the same
    *  discipline as battleRefusal. */
   nexusRefusal?: { type: string; code: string } | null
@@ -282,7 +291,9 @@ export function DuneGameScreen({
   onBattleVoice, onBattlePrescience, onBattleAllocate, onBattleCapture,
   onMentatReady, onNexus, nexusRefusal = null, onAllyGrant,
   onTruthtrance, truthtranceRefusal = null,
-  onGhola, gholaRefusal = null, onHajr, hajrRefusal = null, battleRefusal,
+  onGhola, gholaRefusal = null, onHajr, hajrRefusal = null,
+  onWeather, weatherRefusal = null, onAtomics, atomicsRefusal = null,
+  battleRefusal,
   worms = [], onWormRide, onPassTurn,
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
@@ -293,6 +304,8 @@ export function DuneGameScreen({
   const [ttSeen, setTtSeen] = useState(0)
   const [gholaOpen, setGholaOpen] = useState(false)
   const [hajrOpen, setHajrOpen] = useState(false)
+  const [weatherOpen, setWeatherOpen] = useState(false)
+  const [atomicsOpen, setAtomicsOpen] = useState(false)
   /** Forces staged on the rail, waiting for a landing click on the board. */
   const [staged, setStaged] = useState({ plain: 0, starred: 0 })
   const rows = hudRows(state)
@@ -726,6 +739,7 @@ export function DuneGameScreen({
               rectangle. Sizing a box to the board's aspect ratio instead was
               what left the column's height unused. */}
           <DuneBoard
+            shieldWall={state.shieldWall}
             storm={state.storm} stacks={[...stacks, ...previewStacks]}
             spice={state.spiceOnBoard}
             seating={seating} deck={state.spiceDeck} mode={state.mode}
@@ -1256,6 +1270,21 @@ export function DuneGameScreen({
               onClose={() => setHajrOpen(false)}
               refusal={hajrRefusal?.code ?? null} />
           )}
+          {weatherOpen && seat && onWeather
+            && (own?.cards ?? []).includes('weathercontrol') && (
+            <WeatherPanel
+              onPlay={onWeather}
+              onClose={() => setWeatherOpen(false)}
+              refusal={weatherRefusal?.code ?? null} />
+          )}
+          {atomicsOpen && seat && onAtomics
+            && (own?.cards ?? []).includes('familyatomics') && (
+            <AtomicsPanel
+              roll={state.stormCarry?.roll ?? 0}
+              onPlay={onAtomics}
+              onClose={() => setAtomicsOpen(false)}
+              refusal={atomicsRefusal?.code ?? null} />
+          )}
           {/* THE SEPARATION BANNER: allies may not share ground, and a pair
               still sharing when the phase ends forfeits the later seat's
               forces there. Said here, before the pass that would be refused
@@ -1338,11 +1367,24 @@ export function DuneGameScreen({
                 ...(onGhola ? ['tleilaxughola'] : []),
                 ...(onHajr && state.shipping
                   && hajrMayPlay(state.shipping as never, seat) ? ['hajr'] : []),
+                // The storm cards ride the storm's own beats: steering
+                // before the calculation, the detonation between it and
+                // the move — and only from a seat in the Wall's reach.
+                ...(onWeather && state.phase === 'Storm' && state.turn >= 2
+                  && state.stormMoved !== state.turn && !state.stormCarry
+                  ? ['weathercontrol'] : []),
+                ...(onAtomics && state.phase === 'Storm' && state.stormCarry
+                  && !state.stormCarry.atomics
+                  && state.stormMoved !== state.turn
+                  && mayAtomics(state.forces, seat, state.storm)
+                  ? ['familyatomics'] : []),
               ]}
               onPlayCard={id => {
                 if (id === 'truthtrance') setTtOpen(true)
                 if (id === 'tleilaxughola') setGholaOpen(true)
                 if (id === 'hajr') setHajrOpen(true)
+                if (id === 'weathercontrol') setWeatherOpen(true)
+                if (id === 'familyatomics') setAtomicsOpen(true)
               }} />
           )}
         </div>

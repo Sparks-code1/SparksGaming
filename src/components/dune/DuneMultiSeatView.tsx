@@ -705,6 +705,16 @@ export default function DuneMultiSeatView() {
         hajrRefusal={refusedBy === 'HAJR' && refused
           ? { code: refused }
           : null}
+        onWeather={mine
+          ? sectors => void send(mine, 'WEATHER_CONTROL', { sectors } as never)
+          : undefined}
+        weatherRefusal={refusedBy === 'WEATHER_CONTROL' && refused
+          ? { code: refused }
+          : null}
+        onAtomics={mine ? () => void send(mine, 'FAMILY_ATOMICS') : undefined}
+        atomicsRefusal={refusedBy === 'FAMILY_ATOMICS' && refused
+          ? { code: refused }
+          : null}
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused
           ? { type: refusedBy, code: refused }
           : null}

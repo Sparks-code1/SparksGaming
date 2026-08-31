@@ -182,6 +182,10 @@ const treacheryMultiset = (snap) => {
     ...(snap.decks.treachery ?? []),
     ...(snap.decks['auction-lot'] ?? []).filter((_, i) => !ghost.has(i)),
     ...(snap.state.treacheryDiscard ?? []),
+    // FAMILY ATOMICS LEAVES THE GAME, not the economy: removed-from-play is
+    // where a detonated card lives, and a bag that did not count it would
+    // read the rule as a leak.
+    ...(snap.state.removedFromPlay ?? []),
     ...Object.values(snap.rows).flatMap(r => r.cards ?? []),
   ]
   const bag = {}

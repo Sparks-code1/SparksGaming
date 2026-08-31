@@ -827,6 +827,57 @@ var DUNE_PLAYER_POSITIONS = [
   { id: "player-position-6", x: 72.1, y: 320.46, sectorId: "sector-14" }
 ];
 
+// src/lib/dune/shipment.ts
+var territory = (id) => DUNE_TERRITORIES.find((t) => t.id === id);
+function inStorm(territoryId, sector, storm) {
+  const t = territory(territoryId);
+  if (t?.terrain === "polar-sink") return false;
+  return sector === storm;
+}
+var num = (s) => Number(s.slice("sector-".length));
+var ringAdjacent = (a, b) => {
+  const d = Math.abs(num(a) - num(b));
+  return d === 1 || d === 17;
+};
+function territoryDistance(from, to, storm) {
+  const key = (t, s) => `${t}|${s}`;
+  const blocked = (t, s) => inStorm(t, s, storm);
+  if (blocked(from.territoryId, from.sector) || blocked(to.territoryId, to.sector)) {
+    return Infinity;
+  }
+  const dist = /* @__PURE__ */ new Map([[key(from.territoryId, from.sector), 0]]);
+  const queue = [{ t: from.territoryId, s: from.sector }];
+  while (queue.length) {
+    let bi = 0;
+    for (let i = 1; i < queue.length; i++) {
+      if ((dist.get(key(queue[i].t, queue[i].s)) ?? 0) < (dist.get(key(queue[bi].t, queue[bi].s)) ?? 0)) bi = i;
+    }
+    const [{ t, s }] = queue.splice(bi, 1);
+    const d = dist.get(key(t, s)) ?? 0;
+    const here = territory(t);
+    if (!here) continue;
+    const step = (nt, ns, cost) => {
+      if (blocked(nt, ns)) return;
+      const k = key(nt, ns);
+      if ((dist.get(k) ?? Infinity) > d + cost) {
+        dist.set(k, d + cost);
+        queue.push({ t: nt, s: ns });
+      }
+    };
+    for (const s2 of here.sectors) {
+      if (s2 !== s && ringAdjacent(s, s2)) step(t, s2, 0);
+    }
+    for (const adj of here.adjacent) {
+      const there = territory(adj);
+      if (!there) continue;
+      for (const s2 of there.sectors) {
+        if (s2 === s || ringAdjacent(s, s2)) step(adj, s2, 1);
+      }
+    }
+  }
+  return dist.get(key(to.territoryId, to.sector)) ?? Infinity;
+}
+
 // src/lib/dune/storm.ts
 var SECTOR_COUNT = 18;
 var FIRST_STORM_ROLL = { min: 0, max: 20 };
@@ -841,11 +892,11 @@ var SHIELD_WALL_PROTECTS = [
   "territory-26"
   // Carthag — stronghold
 ];
-var num = (id) => Number(id.slice("sector-".length));
+var num2 = (id) => Number(id.slice("sector-".length));
 var sectorId = (n) => `sector-${(n - 1) % SECTOR_COUNT + 1}`;
 function sweptSectors(from, count) {
   if (count <= 0) return [];
-  const start = num(from);
+  const start = num2(from);
   const seen = /* @__PURE__ */ new Set();
   const out = [];
   for (let i = 1; i <= Math.min(count, SECTOR_COUNT); i++) {
@@ -857,7 +908,7 @@ function sweptSectors(from, count) {
   return out;
 }
 function stormDestination(from, count) {
-  return sectorId(num(from) + Math.max(0, count));
+  return sectorId(num2(from) + Math.max(0, count));
 }
 function isExposedToStorm(cell, swept, shieldWall) {
   if (!swept.includes(cell.sector)) return false;
@@ -916,7 +967,7 @@ function firstPlayerAfterStorm(storm, seats) {
   if (stray) {
     throw new Error(`a seat sits beside no sector this board has: ${String(stray.sector)}`);
   }
-  const start = num(storm);
+  const start = num2(storm);
   for (let i = 1; i <= SECTOR_COUNT; i++) {
     const id = sectorId(start + i);
     const seat = seats.find((s) => s.sector === id);
@@ -934,6 +985,21 @@ function seatsFromPositions(seating) {
     throw new Error(`${twice.faction} is seated in more than one position`);
   }
   return seats;
+}
+var WEATHER_CONTROL_MAX = 10;
+var STORM_CARD_SECONDS = 45;
+var SHIELD_WALL_TERRITORY = "territory-06";
+function mayAtomics(forces, faction, storm) {
+  const mine = forces.filter((f) => f.faction === faction && f.count > 0);
+  if (mine.some((f) => f.territoryId === SHIELD_WALL_TERRITORY)) return true;
+  const wall = DUNE_TERRITORIES.find((t) => t.id === SHIELD_WALL_TERRITORY);
+  if (!wall) return false;
+  const nextDoor = new Set(wall.adjacent);
+  return mine.some((f) => nextDoor.has(f.territoryId) && wall.sectors.some((sec) => territoryDistance(
+    { territoryId: f.territoryId, sector: f.sector },
+    { territoryId: SHIELD_WALL_TERRITORY, sector: sec },
+    storm
+  ) === 1));
 }
 
 // src/lib/dune/hud.ts
@@ -1258,6 +1324,12 @@ function advanceHold(state, now) {
     if (state.shipping) return { code: "shipping-underway", until: state.shipping.closesAt };
     return null;
   }
+  if (state.phase === "Storm") {
+    if (state.stormCarry && now < state.stormCarry.closesAt) {
+      return { code: "storm-window", until: state.stormCarry.closesAt };
+    }
+    return null;
+  }
   if (state.phase === "Battles") {
     if (state.battles) {
       const c = state.battles.current;
@@ -1461,6 +1533,13 @@ function resetDeadlines(state, now, lengths) {
     patch.nexus = { ...state.nexus, closesAt: now + lengths.nexusSeconds * 1e3 };
     reset.push("nexus");
   }
+  if (state.stormCarry) {
+    patch.stormCarry = {
+      ...state.stormCarry,
+      closesAt: now + lengths.stormCardSeconds * 1e3
+    };
+    reset.push("storm-window");
+  }
   if (state.spiceBlow) {
     patch.spiceBlow = { ...state.spiceBlow, closesAt: now + lengths.wormSeconds * 1e3 };
     reset.push("worm-pause");
@@ -1555,13 +1634,17 @@ export {
   HABBANYA_SIETCH,
   MENTAT_READY_SECONDS,
   PHASE_SECONDS,
+  SHIELD_WALL_TERRITORY,
   SIETCH_TABR,
+  STORM_CARD_SECONDS,
   TUEKS_SIETCH,
   TURN_LIMIT,
+  WEATHER_CONTROL_MAX,
   WIN_STRONGHOLDS,
   advanceHold,
   biddingOpening,
   cityIncome,
+  mayAtomics,
   mentatVerdict,
   phaseAfter,
   phaseWindowOpen,
