@@ -171,6 +171,7 @@ export default function DuneGameScreenPreview() {
   const [card, setCard] = useState(
     q.get('auction') === 'off' || q.has('battle') || q.has('nexus')
       || q.has('truthtrance') || q.has('stormshow') || q.has('blowshow')
+      || q.has('atomicsshow')
       ? -1 : BIDDING.ask.index)
   const running = card >= 0 && card < BIDDING.ask.cardCount
 
@@ -359,6 +360,14 @@ export default function DuneGameScreenPreview() {
   }
   const [blowState, setBlowState] = useState<DuneGameState | null>(null)
 
+  // ── the detonation, at ?dune-game&atomicsshow ─────────────────────────────
+  const detonating = q.has('atomicsshow')
+  const [wallDown, setWallDown] = useState(false)
+  const atomicsState = {
+    ...STATE, phase: 'Storm', awaiting: null,
+    shieldWall: wallDown ? 'destroyed' : 'intact',
+  } as unknown as DuneGameState
+
   // ── the storm's replay, at ?dune-game&stormshow ───────────────────────────
   // Press the button and the SERVER'S ruling (the law, run locally here)
   // lands whole — then the screen replays it: dials, then the walk, the
@@ -396,6 +405,7 @@ export default function DuneGameScreenPreview() {
           : truthing ? truthState
           : storming ? (stormFired ? stormPost : stormPre)
           : blowing ? (blowFired && blowState ? blowState : blowPre)
+          : detonating ? atomicsState
           : { ...STATE, mode }}
         seat={seat}
         own={settling && seat
@@ -485,6 +495,15 @@ export default function DuneGameScreenPreview() {
           THE PREVIEW'S OWN CONTROL, not the game's — a real match never draws
           it — and the staged views stand down too: a battle or a Nexus is not
           a place to restart the auction demo from. */}
+      {detonating && !wallDown && (
+        <button type="button" onClick={() => setWallDown(true)}
+          style={{
+            position: 'fixed', left: '50%', transform: 'translateX(-50%)', bottom: 10, zIndex: 5,
+            background: '#1b2337', color: '#f0e2bb', border: '1px solid #c9542a',
+            borderRadius: 4, padding: '5px 11px', cursor: 'pointer',
+            font: '12px Georgia, "Times New Roman", serif',
+          }}>detonate</button>
+      )}
       {blowing && !blowFired && (
         <button type="button"
           onClick={() => { setBlowState(blowPost(Date.now())); setBlowFired(true) }}
@@ -505,7 +524,7 @@ export default function DuneGameScreenPreview() {
           }}>roll the storm</button>
       )}
       {!running && !battling && !nexusing && !settling && !truthing && !storming
-        && !blowing && (
+        && !blowing && !detonating && (
         <button type="button" onClick={() => setCard(0)}
           style={{
             // Bottom centre, over the board: the right-hand column is the tray now

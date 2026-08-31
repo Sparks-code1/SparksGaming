@@ -343,6 +343,24 @@ export const playTroop       = () => play('troop')
 export const playButton      = () => play('button')
 export const playMissile     = () => play('missile')
 
+// ─── Dune effects, from files ─────────────────────────────────────────────────
+// Real recordings rather than synthesis, dropped into public/Dune_effects by
+// the same folder grammar the battle backdrops use. Lazy, so nothing loads
+// until the first play; through Howler, so master volume and mute apply.
+let duneHowls: Record<string, Howl> | null = null
+function duneEffect(name: 'Blow' | 'Family-atomics') {
+  if (muted) return
+  try {
+    duneHowls ??= {
+      'Blow': new Howl({ src: ['/Dune_effects/Blow.mp3'], html5: true }),
+      'Family-atomics': new Howl({ src: ['/Dune_effects/Family-atomics.mp3'], html5: true }),
+    }
+    duneHowls[name].play()
+  } catch { /* audio unavailable — ignore */ }
+}
+export const playBlow = () => duneEffect('Blow')
+export const playAtomics = () => duneEffect('Family-atomics')
+
 // ─── Ambient background loop ──────────────────────────────────────────────────
 
 export function startAmbient() {

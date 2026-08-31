@@ -47,6 +47,13 @@ import type { ChatMessage, ChatSendScope } from './ChatPanel'
 import { PlayerHud } from './PlayerHud'
 import { OwnStrip } from './OwnStrip'
 import { DuneBoard, BATTLE_ZOOM_MS } from './DuneBoard'
+import { playBlow, playAtomics } from '@/lib/sounds'
+import { TreacheryCardFace } from './TreacheryCardFace'
+
+/** The detonation's two screens: the card held over the board, then the
+ *  plain sentence about what the three cities have lost. */
+export const ATOMICS_CARD_MS = 3000
+export const ATOMICS_TEXT_MS = 4000
 
 /** The blow's beats: the sandstorm clearing, a card held up, the zoom to
  *  its ground — and the worm's longer stare before the devour. */
@@ -541,6 +548,8 @@ export function DuneGameScreen({
       return () => clearTimeout(t)
     }
     if (blowStage === 'sandstorm') {
+      // THE BLOW'S VOICE rides the sand — once per replay, at its start.
+      playBlow()
       return step(() => setBlowShow(s => s && { ...s, stage: 'card' }), BLOW_SANDSTORM_MS)
     }
     if (blowStage === 'card') {
@@ -594,6 +603,38 @@ export function DuneGameScreen({
     ? [...state.forces, ...stormShow.killed.filter(k =>
       stormShow.swept.indexOf(k.sector) >= stormShow.step)]
     : blowForces ?? state.forces
+
+  /**
+   * THE DETONATION'S MOMENT. When the Shield Wall goes from standing to
+   * destroyed — whoever played the card, whatever screen this is — the
+   * recording plays, the card itself covers the board for a few seconds,
+   * and then a plain sentence says what the three cities have lost. A late
+   * joiner sees a blue wall, not a replayed explosion.
+   */
+  const [atomicsShow, setAtomicsShow] = useState<null | 'card' | 'text'>(null)
+  const wallSeen = useRef({ ready: false, wall: 'intact' as string })
+  useEffect(() => {
+    const r = wallSeen.current
+    if (!r.ready) {
+      r.ready = true
+      r.wall = state.shieldWall
+      return
+    }
+    if (r.wall !== 'destroyed' && state.shieldWall === 'destroyed') {
+      r.wall = 'destroyed'
+      playAtomics()
+      setAtomicsShow('card')
+      return
+    }
+    r.wall = state.shieldWall
+  }, [state.shieldWall])
+  const atomicsStage = atomicsShow
+  useEffect(() => {
+    if (!atomicsStage) return
+    const t = setTimeout(() => setAtomicsShow(s => s === 'card' ? 'text' : null),
+      atomicsStage === 'card' ? ATOMICS_CARD_MS : ATOMICS_TEXT_MS)
+    return () => clearTimeout(t)
+  }, [atomicsStage])
 
   /** The ride, announced: once the table's replay has played out, the
    *  Fremen are told Shai-Hulud will carry them — only when they are
@@ -1613,6 +1654,34 @@ export function DuneGameScreen({
               expired={now >= state.karamaGiveBack.closesAt}
               onPay={onGiveBack}
               refusal={giveBackRefusal?.code ?? null} />
+          )}
+          {/* THE WALL COMES DOWN: the card over the board, then the
+              sentence — everything else waits behind it. */}
+          {atomicsShow && (
+            <div data-atomics-show={atomicsShow} style={{
+              position: 'absolute', inset: 0, zIndex: 8,
+              display: 'grid', placeItems: 'center',
+              background: '#0d1220f5',
+            }}>
+              {atomicsShow === 'card' ? (() => {
+                const c = TREACHERY_CARDS.find(x => x.id === 'familyatomics')
+                return c ? (
+                  <div style={{ filter: 'drop-shadow(0 0 60px #c9542a)' }}>
+                    <TreacheryCardFace card={c} width={300} />
+                  </div>
+                ) : null
+              })() : (
+                <p data-atomics-text="" style={{
+                  maxWidth: 520, margin: 0, padding: '0 24px',
+                  font: '22px Georgia, serif', lineHeight: 1.6,
+                  color: '#9fc4f2', textAlign: 'center',
+                  textShadow: '0 0 30px #3b7dd8',
+                }}>
+                  The Shield Wall has been destroyed. Carthag, Imperial
+                  Basin, and Arrakeen are no longer protected from the storm.
+                </p>
+              )}
+            </div>
           )}
           {/* THE BLOW PERFORMED: the sandstorm clearing, each card held
               up — the worm bigger and longer — while the view dives to the

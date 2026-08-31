@@ -1916,5 +1916,47 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     [true, true, false])
 }
 
+// ── the wall comes down ───────────────────────────────────────────────────
+// The blow found its voice and the detonation its moment: Blow.mp3 rides
+// the sandstorm's first beat, and a Shield Wall going from standing to
+// destroyed plays the recording, holds the card over the board, then says
+// plainly what the three cities have lost. A late joiner sees a blue wall.
+{
+  const { ATOMICS_CARD_MS, ATOMICS_TEXT_MS } =
+    await import('@/components/dune/DuneGameScreen')
+  check('the detonation\'s screens hold their spec lengths',
+    [ATOMICS_CARD_MS, ATOMICS_TEXT_MS], [3000, 4000])
+
+  const screenC = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
+  const sandstormAt = screenC.indexOf("blowStage === 'sandstorm'")
+  check('the blow sounds at the sandstorm\'s start',
+    [sandstormAt >= 0, screenC.slice(sandstormAt, sandstormAt + 260).includes('playBlow()')],
+    [true, true])
+  check('a late joiner sees a wall, not a replay',
+    [/if \(!r\.ready\) \{\s*r\.ready = true\s*r\.wall = state\.shieldWall\s*return\s*\}/.test(screenC),
+      /r\.wall !== 'destroyed' && state\.shieldWall === 'destroyed'/.test(screenC),
+      screenC.includes('playAtomics()')],
+    [true, true, true])
+  check('the card yields to the sentence, the sentence to the board',
+    /s === 'card' \? 'text' : null/.test(screenC), true)
+  check('the detonation covers the board',
+    [/data-atomics-show=\{atomicsShow\}/.test(screenC),
+      /x\.id === 'familyatomics'/.test(screenC),
+      /data-atomics-text/.test(screenC)],
+    [true, true, true])
+  check('the sentence names the three cities',
+    screenC.replace(/\s+/g, ' ').includes(
+      'The Shield Wall has been destroyed. Carthag, Imperial Basin, and Arrakeen are no longer protected from the storm.'),
+    true)
+
+  const soundsSrc = readFileSync('src/lib/sounds.ts', 'utf8')
+  const effectAt = soundsSrc.indexOf('function duneEffect')
+  check('the recordings ride the mute switch',
+    [effectAt >= 0, soundsSrc.slice(effectAt, effectAt + 120).includes('if (muted) return'),
+      soundsSrc.includes("'/Dune_effects/Blow.mp3'"),
+      soundsSrc.includes("'/Dune_effects/Family-atomics.mp3'")],
+    [true, true, true, true])
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 process.exit(pass ? 0 : 1)
