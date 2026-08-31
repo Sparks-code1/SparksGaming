@@ -490,6 +490,20 @@ export interface DuneGameState {
   /** The last turn a Nexus was called — at most one a turn. */
   nexusTurn?: number
   /**
+   * THE TRUTHTRANCE LOG, public and permanent: who asked whom what, the
+   * answer, and the moment it was true — an answer is a fact about a
+   * moment, and the stamp is what keeps an old yes from reading as a
+   * standing one. The question travels as its WORDING: the phrase is the
+   * question, and a log of tags would need the bank to read itself back.
+   */
+  truthtrances?: {
+    asker: FactionId
+    target: FactionId
+    asked: string
+    answer: boolean
+    asOf: { turn: number; phase: GamePhase }
+  }[]
+  /**
    * STANDING ALLIANCE GRANTS, each faction's own policy: set once and held
    * until changed, never asked per event — a decision window on every worm
    * would stall the blow for what is usually a yes. Public, like the

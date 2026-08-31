@@ -104,6 +104,8 @@ export type TruthtranceQuestion =
 export type PlanLeader =
   | { kind: 'leader'; name: string }
   | { kind: 'cheap-hero' }
+  /** A committed plan may field nobody at all — a legal, cardless dial. */
+  | { kind: 'none' }
 
 export interface CommittedPlan {
   leader: PlanLeader
@@ -112,6 +114,25 @@ export interface CommittedPlan {
   /** Card id, or null for an empty slot. */
   weapon: string | null
   defence: string | null
+}
+
+/**
+ * A committed plan as the secret store writes it, converted to the shape
+ * the questions read. ONE function, exported, so the server and the law
+ * cannot disagree about what "playing a weapon" means for a row — and a
+ * leaderless row answers 'none', never a lie in either direction.
+ */
+export function planFromRow(row: {
+  dial?: number; leader?: string; cheapHero?: boolean
+  weapon?: string; defence?: string
+}): CommittedPlan {
+  return {
+    leader: row.leader ? { kind: 'leader', name: row.leader }
+      : row.cheapHero ? { kind: 'cheap-hero' } : { kind: 'none' },
+    dialled: row.dial ?? 0,
+    weapon: row.weapon ?? null,
+    defence: row.defence ?? null,
+  }
 }
 
 export interface TruthtranceSecrets {

@@ -2,6 +2,7 @@
 // the checks worth writing are the ones about that promise rather than about
 // any individual question: that the menu never offers something unanswerable,
 // and that a gap in the server's knowledge never comes out as a "no".
+import { readFileSync } from 'node:fs'
 import {
   askTruthtrance, truthtranceBank, phraseQuestion, isPredictionQuestion, isBattlePlanQuestion,
 } from '@/lib/dune/truthtrance'
@@ -341,6 +342,57 @@ check('no question phrases with a raw id or an undefined',
     .map(q => phraseQuestion(q))
     .filter(text => /undefined|\bnull\b/.test(text) || FACTION_IDS.some(id => text.includes(id))),
   [])
+
+// ── the wiring: rows in, answers published, the card spent on truth ───────
+{
+  const { planFromRow } = await import('@/lib/dune/truthtrance')
+  check('a row converts leader, hero, or NOBODY — never a lie either way',
+    [planFromRow({ dial: 3, leader: 'Stilgar', weapon: 'crysknife' }),
+      planFromRow({ dial: 2, cheapHero: true }),
+      planFromRow({ dial: 1 })],
+    [{ leader: { kind: 'leader', name: 'Stilgar' }, dialled: 3, weapon: 'crysknife', defence: null },
+      { leader: { kind: 'cheap-hero' }, dialled: 2, weapon: null, defence: null },
+      { leader: { kind: 'none' }, dialled: 1, weapon: null, defence: null }])
+  const nobody = askTruthtrance({
+    asker: 'harkonnen', target: 'atreides',
+    question: { ask: 'plan-uses-cheap-hero' },
+    secrets: {
+      hands: {}, traitors: {}, spice: {},
+      battle: {
+        combatants: ['atreides', 'emperor'],
+        plans: {
+          atreides: planFromRow({ dial: 1 }),
+          emperor: planFromRow({ dial: 2, leader: 'Hasimir Fenring' }),
+        },
+        revealed: false,
+      },
+    } as never,
+    turn: 4, phase: 'Battles',
+  } as never)
+  check('...and a leaderless plan answers NO to the hero, not undefined',
+    nobody.ok && nobody.answer.answer, false)
+
+  // ── the endpoint's discipline ───────────────────────────────────────────
+  const fn = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  const tt = fn.slice(fn.indexOf("case 'TRUTHTRANCE'"), fn.indexOf("case 'ALLY_GRANT'"))
+  check('the play needs the card in hand, and the refusal keeps it there',
+    [/code: 'card-not-held'/.test(tt),
+      // refuse BEFORE spend: the order in the source is the proof
+      tt.indexOf('askedTT.ok') < tt.indexOf('handTT.splice')],
+    [true, true])
+  check('one copy is spent — spliced, never filtered whole',
+    /handTT\.splice\(handTT\.indexOf\('truthtrance'\), 1\)/.test(tt), true)
+  check('the answer is published with its moment, the card discarded, the count moved',
+    [/\{ asker: a\.asker, target: a\.target, asked: a\.asked, answer: a\.answer, asOf: a\.asOf \}/.test(tt),
+      /treacheryDiscard: \[/.test(tt) && /'truthtrance',\s*[\r\n]+\s*\]/.test(tt),
+      /handCount: handTT\.length/.test(tt)],
+    [true, true, true])
+  check('the store is assembled from every seated row — the law refuses loudly, never lies quietly',
+    [/hands\[fac\] = row\.cards \?\? \[\]/.test(tt),
+      /if \(fac === 'bene-gesserit' && row\.prediction\) prediction = row\.prediction/.test(tt),
+      /\? \[\[f, planFromRow\(row\.battlePlan as never\)\]\] : \[\]/.test(tt)],
+    [true, true, true])
+}
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 

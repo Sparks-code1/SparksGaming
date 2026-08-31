@@ -168,6 +168,7 @@ export default function DuneGameScreenPreview() {
   // preview of one frame.
   const [card, setCard] = useState(
     q.get('auction') === 'off' || q.has('battle') || q.has('nexus')
+      || q.has('truthtrance')
       ? -1 : BIDDING.ask.index)
   const running = card >= 0 && card < BIDDING.ask.cardCount
 
@@ -267,6 +268,21 @@ export default function DuneGameScreenPreview() {
       nexusOffers: [{ from: 'bene-gesserit', turn: 4 }],
     }
 
+  // ── Truthtrance, at ?dune-game&truthtrance ────────────────────────────────
+  // The card in hand (the ask button offers it), and one answer already on
+  // the public record so the read-back line shows: question, verdict, and
+  // the moment it was true.
+  const truthing = q.has('truthtrance')
+  const truthState = {
+    ...STATE,
+    truthtrances: [{
+      asker: 'atreides', target: 'harkonnen',
+      asked: 'Do you hold the Lasgun?', answer: true,
+      asOf: { turn: 4, phase: 'Bidding' },
+    }],
+  } as unknown as DuneGameState
+  const truthOwn: DuneSecrets = { ...OWN, cards: [...(OWN.cards ?? []), 'truthtrance'] }
+
   const setupState: DuneGameState & { setup?: SetupWindow } = dealt
     ? { ...dealt.state, mode: 'advanced',
         forces: [...dealt.state.forces, ...placedForces],
@@ -279,15 +295,18 @@ export default function DuneGameScreenPreview() {
         state={settling ? setupState
           : battling ? battleState
           : nexusing ? nexusState
+          : truthing ? truthState
           : { ...STATE, mode }}
         seat={seat}
         own={settling && seat
           ? (dealt.secrets[`p${mySeatId}`] as DuneSecrets)
           : nexusing && seat ? nexusOwn
+          : truthing && seat ? truthOwn
           : seat ? OWN : null}
         chat={CHAT}
         onSend={seat ? () => {} : undefined}
         onNexus={nexusing && seat ? () => {} : undefined}
+        onTruthtrance={seat ? () => {} : undefined}
         onBattlePick={seat ? () => {} : undefined}
         onBattlePlan={seat ? () => {} : undefined}
         onBattleAnswer={seat ? () => {} : undefined}
@@ -366,7 +385,7 @@ export default function DuneGameScreenPreview() {
           THE PREVIEW'S OWN CONTROL, not the game's — a real match never draws
           it — and the staged views stand down too: a battle or a Nexus is not
           a place to restart the auction demo from. */}
-      {!running && !battling && !nexusing && !settling && (
+      {!running && !battling && !nexusing && !settling && !truthing && (
         <button type="button" onClick={() => setCard(0)}
           style={{
             // Bottom centre, over the board: the right-hand column is the tray now

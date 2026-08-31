@@ -40,6 +40,7 @@ import {
   rideTerritories, judgeWormRide, WORM_RIDE_SECONDS,
 } from '../_shared/duneSpiceBlow.gen.ts'
 import { bgFollowsShip, POLAR_SINK, POLAR_SINK_SECTOR } from '../_shared/duneShipment.gen.ts'
+import { askTruthtrance, planFromRow } from '../_shared/duneTruthtrance.gen.ts'
 import { prescienceFor, withReveal, PRESCIENT_FACTION } from '../_shared/dunePrescience.gen.ts'
 import {
   openingPosition, answerFremenPlacement, answerPrediction, answerTraitor,
@@ -3085,6 +3086,103 @@ Deno.serve(async req => {
       }
       return await settleBattle(
         b as never, c as never, [...c.revealed.traitor.calls] as never, choice)
+    }
+
+    // ── Truthtrance: one question, answered by the table itself ─────────────
+    // The card the printed game trusts a player to answer honestly is
+    // answered HERE, out of the secret store, so nobody can lie. Question
+    // and answer are public — the asking costs the asker that much — and
+    // the card is spent only when an answer actually lands: a refused
+    // question refuses the play, it does not eat the card.
+    case 'TRUTHTRANCE': {
+      if (!myFaction) return json({ error: 'your seat has no faction', code: 'no-faction' }, 409)
+      const target = String(action.target ?? '')
+      const q = action.question
+      if (!q || typeof q !== 'object') {
+        return json({ error: 'no question asked', code: 'bad-question' }, 409)
+      }
+      const { data: allRows } = await admin
+        .from('match_secrets').select('player_id, data').eq('match_id', matchId)
+      const rowOf = Object.fromEntries((allRows ?? []).map((r) => [r.player_id, r.data ?? {}]))
+      const mine = (rowOf[playerId] ?? {}) as { cards?: string[] }
+      if (!(mine.cards ?? []).includes('truthtrance')) {
+        return json({ error: 'you do not hold Truthtrance', code: 'card-not-held' }, 409)
+      }
+      if (!(target in seatOfFaction)) {
+        return json({ error: 'no such seat', code: 'not-seated' }, 409)
+      }
+
+      // THE STORE, assembled by faction — the law's own input shape. Every
+      // seat's row is read so a missing one is a loud refusal inside the
+      // law ('no-secret-for-seat'), never a silent "no".
+      const hands: Record<string, readonly string[]> = {}
+      const traitors: Record<string, readonly string[]> = {}
+      const spice: Record<string, number> = {}
+      let prediction: { faction: string; turn: number } | undefined
+      for (const [fac, seatId] of Object.entries(seatOfFaction)) {
+        const row = (rowOf[seatId] ?? {}) as {
+          cards?: string[]; traitors?: string[]
+          prediction?: { faction: string; turn: number }
+        }
+        hands[fac] = row.cards ?? []
+        traitors[fac] = row.traitors ?? []
+        spice[fac] = readSpice(row as never)
+        if (fac === 'bene-gesserit' && row.prediction) prediction = row.prediction
+      }
+      const cur = (state.battles as {
+        current?: {
+          territoryId: string; aggressor: string; defender: string
+          revealed?: unknown
+        }
+      } | undefined)?.current
+      const battle = cur
+        ? {
+          combatants: [cur.aggressor, cur.defender],
+          plans: Object.fromEntries([cur.aggressor, cur.defender].flatMap((f) => {
+            const row = (rowOf[seatOfFaction[f]] ?? {}) as {
+              battlePlan?: { territoryId?: string } & Record<string, unknown>
+            }
+            return row.battlePlan?.territoryId === cur.territoryId
+              ? [[f, planFromRow(row.battlePlan as never)]] : []
+          })),
+          revealed: !!cur.revealed,
+        }
+        : undefined
+      const askedTT = askTruthtrance({
+        asker: myFaction as never, target: target as never,
+        question: q as never,
+        secrets: { hands, traitors, spice, prediction, battle } as never,
+        turn: Number(state.turn ?? 0), phase: state.phase as never,
+      })
+      if (!askedTT.ok) {
+        return json({ error: 'that question cannot be asked', code: askedTT.refusal }, 409)
+      }
+
+      // THE CARD IS SPENT in the same write that publishes the answer — one
+      // copy, not every copy a hoarder might hold.
+      const handTT = [...(mine.cards ?? [])]
+      handTT.splice(handTT.indexOf('truthtrance'), 1)
+      const a = askedTT.answer
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state,
+          truthtrances: [
+            ...((state.truthtrances ?? []) as unknown[]),
+            { asker: a.asker, target: a.target, asked: a.asked, answer: a.answer, asOf: a.asOf },
+          ],
+          treacheryDiscard: [
+            ...((state.treacheryDiscard ?? []) as string[]), 'truthtrance',
+          ],
+          players: ((state.players ?? []) as { faction: string; handCount?: number }[])
+            .map((p) => p.faction === myFaction ? { ...p, handCount: handTT.length } : p),
+        },
+        p_secrets: { [playerId]: { ...mine, cards: handTT } },
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ answer: a, version: data[0].version })
     }
 
     // ── a standing alliance grant flips ─────────────────────────────────────

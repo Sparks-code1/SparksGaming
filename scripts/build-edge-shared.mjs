@@ -94,6 +94,17 @@ const TARGETS = [
     exportName: 'charityGrant',
   },
   {
+    entry: 'src/lib/dune/truthtrance.ts',
+    out: 'supabase/functions/_shared/duneTruthtrance.gen.ts',
+    what: 'truthtrance questions',
+    // askTruthtrance IS the card: the server answering from the secret
+    // store is the whole design, and a second copy of the answering would
+    // be a second chance to lie under a rule whose promise is that nobody
+    // can.
+    mustExport: /export\s*\{[^}]*askTruthtrance/,
+    exportName: 'askTruthtrance',
+  },
+  {
     entry: 'src/lib/dune/spiceBlow.ts',
     out: 'supabase/functions/_shared/duneSpiceBlow.gen.ts',
     what: 'spice deck and blow',

@@ -66,6 +66,8 @@ import { RevivalRail } from './RevivalRail'
 import { BattlePanel } from './BattlePanel'
 import { NexusPanel } from './NexusPanel'
 import type { NexusMove } from './NexusPanel'
+import { TruthtrancePanel } from './TruthtrancePanel'
+import type { TruthtranceQuestion } from '@/lib/dune/truthtrance'
 import {
   REVIVAL_CAP, STARRED_REVIVALS_PER_TURN, PATRON_EXTRA_REVIVALS,
   GRANTED_FREE_REVIVALS, revivableLeaders,
@@ -191,6 +193,10 @@ export interface DuneGameScreenProps {
   onNexus?: (m: NexusMove) => void
   /** Flip one standing alliance grant — the Fremen's or the Emperor's. */
   onAllyGrant?: (grant: 'shield' | 'revivals', on: boolean) => void
+  /** Play Truthtrance: a target and a question from the fixed bank. The
+   *  server answers out of the secret store and publishes both. */
+  onTruthtrance?: (target: FactionId, question: TruthtranceQuestion) => void
+  truthtranceRefusal?: { code: string } | null
   /** The last NEXUS action's refusal — code and which action, the same
    *  discipline as battleRefusal. */
   nexusRefusal?: { type: string; code: string } | null
@@ -264,11 +270,16 @@ export function DuneGameScreen({
   state, seat, own, chat, onSend, talkingTo, seatNames, notices, onShipReserves, onMoveStack,
   onShipSpecial, onRevive, onBattlePick, onBattlePlan, onBattleAnswer,
   onBattleVoice, onBattlePrescience, onBattleAllocate, onBattleCapture,
-  onMentatReady, onNexus, nexusRefusal = null, onAllyGrant, battleRefusal,
+  onMentatReady, onNexus, nexusRefusal = null, onAllyGrant,
+  onTruthtrance, truthtranceRefusal = null, battleRefusal,
   worms = [], onWormRide, onPassTurn,
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
   const [chatShut, setChatShut] = useState(false)
+  /** The ask panel, and how much of the public answer log this seat has
+   *  dismissed — a new answer re-raises the line for everyone. */
+  const [ttOpen, setTtOpen] = useState(false)
+  const [ttSeen, setTtSeen] = useState(0)
   /** Forces staged on the rail, waiting for a landing click on the board. */
   const [staged, setStaged] = useState({ plain: 0, starred: 0 })
   const rows = hudRows(state)
@@ -1169,6 +1180,60 @@ export function DuneGameScreen({
                 </button>
               )}
             </div>
+          )}
+          {/* THE TRUTH, read to the whole table: the latest Truthtrance
+              answer, stamped with the moment it was true — an old yes must
+              not read as a standing one. Dismissable, until the next. */}
+          {(state.truthtrances ?? []).length > ttSeen && (() => {
+            const tt = state.truthtrances![state.truthtrances!.length - 1]
+            return (
+              <div data-truthtrance-answer="" style={{
+                position: 'absolute', left: 0, right: 0, top: 0,
+                padding: '7px 12px', background: '#0d1220ee', color: '#f0e2bb',
+                borderBottom: '1px solid #f0e2bb44', font: '14px Georgia, serif',
+                display: 'flex', gap: 8, alignItems: 'baseline',
+              }}>
+                <b>Truthtrance</b>
+                <span>
+                  {FACTION_LOOK[tt.asker]?.name ?? tt.asker} asked
+                  the {FACTION_LOOK[tt.target]?.name ?? tt.target}:
+                  {' '}<i>{'“'}{tt.asked}{'”'}</i> —{' '}
+                  <b data-tt-verdict={tt.answer ? 'yes' : 'no'}>
+                    {tt.answer ? 'YES' : 'NO'}
+                  </b>
+                  <span style={{ opacity: 0.65 }}>
+                    {' '}(turn {tt.asOf.turn}, {tt.asOf.phase})
+                  </span>
+                </span>
+                <span style={{ flex: 1 }} />
+                <button type="button" data-tt-dismiss=""
+                  onClick={() => setTtSeen(state.truthtrances!.length)}
+                  style={{ background: 'none', border: 'none', color: '#f0e2bb', cursor: 'pointer' }}>
+                  ✕
+                </button>
+              </div>
+            )
+          })()}
+          {/* THE CARD, offered while it is held: the ask panel opens over
+              the board, and the server judges the play. */}
+          {seat && onTruthtrance && (own?.cards ?? []).includes('truthtrance') && !ttOpen && (
+            <button type="button" data-truthtrance-open=""
+              onClick={() => setTtOpen(true)}
+              style={{
+                position: 'absolute', right: 10, bottom: 10, zIndex: 4,
+                padding: '5px 12px', borderRadius: 4, cursor: 'pointer',
+                background: '#1b2337', color: '#f0e2bb', border: '1px solid #f0e2bb55',
+                font: '12px Georgia, serif',
+              }}>
+              Truthtrance — ask the table
+            </button>
+          )}
+          {ttOpen && seat && onTruthtrance && (
+            <TruthtrancePanel
+              seat={seat} players={state.players}
+              onAsk={(t, q) => onTruthtrance(t, q)}
+              onClose={() => setTtOpen(false)}
+              refusal={truthtranceRefusal?.code ?? null} />
           )}
           {/* THE SEPARATION BANNER: allies may not share ground, and a pair
               still sharing when the phase ends forfeits the later seat's

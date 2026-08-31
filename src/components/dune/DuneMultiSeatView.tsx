@@ -689,6 +689,12 @@ export default function DuneMultiSeatView() {
         onAllyGrant={mine
           ? (grant, on) => void send(mine, 'ALLY_GRANT', { grant, on } as never)
           : undefined}
+        onTruthtrance={mine
+          ? (target, question) => void send(mine, 'TRUTHTRANCE', { target, question } as never)
+          : undefined}
+        truthtranceRefusal={refusedBy === 'TRUTHTRANCE' && refused
+          ? { code: refused }
+          : null}
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused
           ? { type: refusedBy, code: refused }
           : null}

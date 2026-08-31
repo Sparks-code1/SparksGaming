@@ -858,6 +858,12 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
         onAllyGrant={seat
           ? (grant, on) => void send({ type: 'ALLY_GRANT', grant, on })
           : undefined}
+        onTruthtrance={seat
+          ? (target, question) => void send({ type: 'TRUTHTRANCE', target, question })
+          : undefined}
+        truthtranceRefusal={refusedBy === 'TRUTHTRANCE' && refused
+          ? { code: refused }
+          : null}
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused
           ? { type: refusedBy, code: refused }
           : null}

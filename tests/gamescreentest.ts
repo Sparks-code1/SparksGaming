@@ -1480,5 +1480,66 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     [/ALLY_GRANT/.test(match2), /ALLY_GRANT/.test(harness2)], [true, true])
 }
 
+// ── Truthtrance on screen ─────────────────────────────────────────────────
+// The card is offered only while HELD; the latest public answer reads to
+// the whole table with the moment it was true; the ask panel never offers
+// the asker themselves.
+{
+  const { TruthtrancePanel } = await import('@/components/dune/TruthtrancePanel')
+  const holder = draw({
+    own: { ...own, cards: ['truthtrance'] },
+    onTruthtrance: () => {},
+  } as never)
+  const empty = draw({ onTruthtrance: () => {} } as never)
+  check('the ask button is offered exactly while the card is held',
+    [/data-truthtrance-open/.test(holder), /data-truthtrance-open/.test(empty)],
+    [true, false])
+
+  const answered = draw({
+    state: {
+      ...state,
+      truthtrances: [{
+        asker: 'harkonnen', target: 'atreides',
+        asked: 'Do you hold the Lasgun?', answer: true,
+        asOf: { turn: 3, phase: 'Bidding' },
+      }],
+    } as never,
+  })
+  const denied = draw({
+    state: {
+      ...state,
+      truthtrances: [{
+        asker: 'harkonnen', target: 'atreides',
+        asked: 'Do you hold the Lasgun?', answer: false,
+        asOf: { turn: 3, phase: 'Bidding' },
+      }],
+    } as never,
+  })
+  check('the latest answer reads publicly, verdict and moment stamped',
+    [/data-truthtrance-answer/.test(answered),
+      /data-tt-verdict="yes"/.test(answered),
+      /data-tt-verdict="no"/.test(denied),
+      /turn 3, Bidding/.test(answered),
+      /Do you hold the Lasgun\?/.test(answered)],
+    [true, true, true, true, true])
+
+  const panel = renderToStaticMarkup(createElement(TruthtrancePanel, {
+    seat: 'atreides' as never,
+    players: state.players as never,
+    onAsk: () => {}, onClose: () => {},
+  }))
+  check('the panel offers every seat but the asker, previews the wording, and waits for a target',
+    [/data-tt-target="harkonnen"/.test(panel),
+      /data-tt-target="atreides"/.test(panel),
+      /data-tt-preview/.test(panel),
+      /data-tt-ask="" disabled=""/.test(panel)],
+    [true, false, true, true])
+
+  const match3 = readFileSync('src/components/dune/DuneMatchScreen.tsx', 'utf8')
+  const harness3 = readFileSync('src/components/dune/DuneMultiSeatView.tsx', 'utf8')
+  check('both drivers post the play',
+    [/TRUTHTRANCE/.test(match3), /TRUTHTRANCE/.test(harness3)], [true, true])
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 process.exit(pass ? 0 : 1)
