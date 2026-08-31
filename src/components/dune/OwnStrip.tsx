@@ -59,13 +59,14 @@ const SERIF = "Georgia, 'Times New Roman', serif"
  *
  * The pair is exported because the RATIO is the claim. Cards are laid out
  * against CARD_W — see TreacheryCardFace — and their rules text is sized
- * against that; at thumbnail size it is a grey smudge, which is the entire
- * reason for opening one. A "zoom" that opens a card at the size it already was
- * is a thing that looks implemented and does nothing, and nothing about the
- * markup would say so.
+ * against that. The hand now draws them AT the design width, so the text
+ * reads in the drawer itself; the zoom still opens one at better than
+ * double, because a "zoom" that opens a card near the size it already was
+ * is a thing that looks implemented and does nothing, and nothing about
+ * the markup would say so.
  */
-export const CARD_THUMB = 116
-export const CARD_ZOOM = 300
+export const CARD_THUMB = 168
+export const CARD_ZOOM = 360
 
 /** A button that opens one of the floating cards. */
 const cardButton = (colour: string, open: boolean): React.CSSProperties => ({
@@ -355,9 +356,9 @@ export function PrivateView(
         display: 'flex', gap: 10, padding: '10px 12px', overflowX: 'auto',
         background: '#0b1020', borderBottom: '1px solid #ffffff1f',
       }}>
-      {/* At this size the rules text on a card is a grey smudge — it is drawn
-          at a fifth of the size the card was designed at. The thumbnail says
-          WHICH card; clicking it says what the card does. */}
+      {/* Drawn at the DESIGN width, so the rules text reads in the drawer
+          itself. Clicking still opens one bigger — or, for a card with a
+          play flow, plays it. */}
       {kind === 'treachery' && (hand.length
         ? hand.map(c => {
             const plays = !!onPlay && playable.includes(c.id)
@@ -366,22 +367,16 @@ export function PrivateView(
                 onClick={() => (plays ? onPlay!(c.id) : onOpenCard?.(c))}
                 aria-label={plays ? `Play ${c.name}` : `Open ${c.name}`}
                 {...(plays ? { 'data-play-card': c.id } : null)}
+                title={plays ? `Play ${c.name}` : undefined}
                 style={{
-                  background: 'none', border: 'none', padding: 0,
+                  background: 'none', padding: 0, lineHeight: 0,
+                  // No label riding the art — the gold edge is the whole
+                  // signal that this one PLAYS where the others open.
+                  border: plays ? '2px solid #e8b04b' : 'none',
+                  borderRadius: plays ? 6 : 0,
                   cursor: plays ? 'pointer' : onOpenCard ? 'zoom-in' : 'default',
-                  lineHeight: 0, position: 'relative',
                 }}>
                 <TreacheryCardFace card={c} width={CARD_THUMB} />
-                {plays && (
-                  <span style={{
-                    position: 'absolute', left: 3, right: 3, bottom: 4,
-                    background: '#e8b04bee', color: '#1c1408', borderRadius: 3,
-                    font: `bold 10px ${SERIF}`, letterSpacing: 1.2,
-                    padding: '2px 0', lineHeight: 1.2,
-                  }}>
-                    PLAY
-                  </span>
-                )}
               </button>
             )
           })
@@ -448,7 +443,10 @@ export function OwnStrip({
           shoulder has in it. */}
       {open === 'treachery' && (
         <DraggableResizable title="Your treachery cards" accentColor={look.colour}
-          width={430} storageKey={`dune-hand-${seat}`} initialTop={70} initialRight={470}
+          // Wide enough for three cards at the DESIGN width — the drawer's
+          // size and position persist per key, so the key steps when the
+          // default grows or nobody with an old saved size would see it.
+          width={610} storageKey={`dune-hand2-${seat}`} initialTop={70} initialRight={330}
           onClose={() => setOpen(null)}>
           <PrivateView kind="treachery" hand={hand} traitors={traitors}
             onOpenCard={setZoom}

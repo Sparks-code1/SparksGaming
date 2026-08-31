@@ -762,7 +762,7 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   check('...and so does the traitor hand',
     /open === 'traitors' && \([\s\S]{0,200}<DraggableResizable/.test(src), true)
   check('...each remembering its own place',
-    src.includes('dune-hand-') && src.includes('dune-traitors-'), true)
+    src.includes('dune-hand2-') && src.includes('dune-traitors-'), true)
 
   // The ally's card carries the ALLY's mark, not this seat's — it is their
   // card, and the whole point of it is that it is somebody else's.
@@ -1492,13 +1492,13 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     kind: 'treachery' as const, hand: [ttCard, SECRET_CARD], traitors: [],
     onOpenCard: () => {}, playable: ['truthtrance'], onPlay: () => {},
   }))
-  check('a playable card is the button — ribboned, and only that card',
+  check('a playable card is the button — edged in gold, no label, only that card',
     [/data-play-card="truthtrance"/.test(drawer),
       /aria-label="Play Truthtrance"/.test(drawer),
       />PLAY</.test(drawer),
       new RegExp(`data-play-card="${SECRET_CARD.id}"`).test(drawer),
       new RegExp(`aria-label="Open ${SECRET_CARD.name}"`).test(drawer)],
-    [true, true, true, false, true])
+    [true, true, false, false, true])
   const inert = renderToStaticMarkup(createElement(PrivateView, {
     kind: 'treachery' as const, hand: [ttCard], traitors: [],
     onOpenCard: () => {},
