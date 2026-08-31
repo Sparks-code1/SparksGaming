@@ -1214,20 +1214,6 @@ export function DuneGameScreen({
               </div>
             )
           })()}
-          {/* THE CARD, offered while it is held: the ask panel opens over
-              the board, and the server judges the play. */}
-          {seat && onTruthtrance && (own?.cards ?? []).includes('truthtrance') && !ttOpen && (
-            <button type="button" data-truthtrance-open=""
-              onClick={() => setTtOpen(true)}
-              style={{
-                position: 'absolute', right: 10, bottom: 10, zIndex: 4,
-                padding: '5px 12px', borderRadius: 4, cursor: 'pointer',
-                background: '#1b2337', color: '#f0e2bb', border: '1px solid #f0e2bb55',
-                font: '12px Georgia, serif',
-              }}>
-              Truthtrance — ask the table
-            </button>
-          )}
           {ttOpen && seat && onTruthtrance && (
             <TruthtrancePanel
               seat={seat} players={state.players}
@@ -1307,7 +1293,11 @@ export function DuneGameScreen({
               ally={allyOf(state.players, mine)}
               grants={seat === 'fremen' || seat === 'emperor'
                 ? state.allyGrants?.[seat] ?? null : null}
-              onGrant={onAllyGrant} />
+              onGrant={onAllyGrant}
+              // THE CARD IS THE BUTTON: a special with a flow open right now
+              // is played by clicking it in the hand, no chrome beside it.
+              playableCards={onTruthtrance ? ['truthtrance'] : []}
+              onPlayCard={id => { if (id === 'truthtrance') setTtOpen(true) }} />
           )}
         </div>
       </div>

@@ -100,6 +100,10 @@ export interface OwnStripProps {
    */
   grants?: { shield?: boolean; revivals?: boolean } | null
   onGrant?: (grant: 'shield' | 'revivals', on: boolean) => void
+  /** The specials with a play flow open right now — the card itself is the
+   *  button in the drawer. See PrivateView.playable. */
+  playableCards?: readonly string[]
+  onPlayCard?: (cardId: string) => void
 }
 
 /** A titled block along the strip. */
@@ -326,13 +330,22 @@ function HiddenStack(
  * not show cards.
  */
 export function PrivateView(
-  { kind, hand, traitors, onOpenCard }:
+  { kind, hand, traitors, onOpenCard, playable = [], onPlay }:
   {
     kind: 'treachery' | 'traitors'
     hand: readonly TreacheryCard[]
     traitors: readonly string[]
     /** Clicking a card asks for it enlarged. Absent means the cards are inert. */
     onOpenCard?: (card: TreacheryCard) => void
+    /**
+     * Cards with a PLAY FLOW of their own, right now: clicking one of these
+     * opens that flow instead of the zoom — the card itself is the button,
+     * and the flow's panel shows the card's face so nothing is lost. Which
+     * cards qualify is the CALLER's list: it knows which specials have a
+     * window open, and this component only draws the ribbon.
+     */
+    playable?: readonly string[]
+    onPlay?: (cardId: string) => void
   },
 ) {
   return (
@@ -346,16 +359,32 @@ export function PrivateView(
           at a fifth of the size the card was designed at. The thumbnail says
           WHICH card; clicking it says what the card does. */}
       {kind === 'treachery' && (hand.length
-        ? hand.map(c => (
-            <button key={c.id} type="button" onClick={() => onOpenCard?.(c)}
-              aria-label={`Open ${c.name}`}
-              style={{
-                background: 'none', border: 'none', padding: 0,
-                cursor: onOpenCard ? 'zoom-in' : 'default', lineHeight: 0,
-              }}>
-              <TreacheryCardFace card={c} width={CARD_THUMB} />
-            </button>
-          ))
+        ? hand.map(c => {
+            const plays = !!onPlay && playable.includes(c.id)
+            return (
+              <button key={c.id} type="button"
+                onClick={() => (plays ? onPlay!(c.id) : onOpenCard?.(c))}
+                aria-label={plays ? `Play ${c.name}` : `Open ${c.name}`}
+                {...(plays ? { 'data-play-card': c.id } : null)}
+                style={{
+                  background: 'none', border: 'none', padding: 0,
+                  cursor: plays ? 'pointer' : onOpenCard ? 'zoom-in' : 'default',
+                  lineHeight: 0, position: 'relative',
+                }}>
+                <TreacheryCardFace card={c} width={CARD_THUMB} />
+                {plays && (
+                  <span style={{
+                    position: 'absolute', left: 3, right: 3, bottom: 4,
+                    background: '#e8b04bee', color: '#1c1408', borderRadius: 3,
+                    font: `bold 10px ${SERIF}`, letterSpacing: 1.2,
+                    padding: '2px 0', lineHeight: 1.2,
+                  }}>
+                    PLAY
+                  </span>
+                )}
+              </button>
+            )
+          })
         : <p style={{ opacity: 0.6, margin: 0, fontSize: 12 }}>No treachery cards.</p>)}
       {/* CARDS, not discs. A disc is what a leader is on the BOARD — a counter
           you move and put in the tanks. A traitor is a card in your hand, and it
@@ -372,7 +401,9 @@ export function PrivateView(
   )
 }
 
-export function OwnStrip({ seat, mode, own, player, ally, grants, onGrant }: OwnStripProps) {
+export function OwnStrip({
+  seat, mode, own, player, ally, grants, onGrant, playableCards, onPlayCard,
+}: OwnStripProps) {
   const [open, setOpen] = useState<'treachery' | 'traitors' | null>(null)
   // The two floating panels, and the one card blown up to be readable. All
   // three are the player's own view of their own things; none of them changes
@@ -420,7 +451,8 @@ export function OwnStrip({ seat, mode, own, player, ally, grants, onGrant }: Own
           width={430} storageKey={`dune-hand-${seat}`} initialTop={70} initialRight={470}
           onClose={() => setOpen(null)}>
           <PrivateView kind="treachery" hand={hand} traitors={traitors}
-            onOpenCard={setZoom} />
+            onOpenCard={setZoom}
+            playable={playableCards} onPlay={onPlayCard} />
         </DraggableResizable>
       )}
       {open === 'traitors' && (

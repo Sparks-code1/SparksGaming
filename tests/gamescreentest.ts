@@ -1481,19 +1481,37 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
 }
 
 // ── Truthtrance on screen ─────────────────────────────────────────────────
-// The card is offered only while HELD; the latest public answer reads to
-// the whole table with the moment it was true; the ask panel never offers
-// the asker themselves.
+// THE CARD IS THE BUTTON: a special with a flow open is played by clicking
+// it in the hand — a PLAY ribbon marks it, no chrome beside it. The latest
+// public answer reads to the whole table with the moment it was true; the
+// ask panel never offers the asker themselves.
 {
   const { TruthtrancePanel } = await import('@/components/dune/TruthtrancePanel')
-  const holder = draw({
-    own: { ...own, cards: ['truthtrance'] },
-    onTruthtrance: () => {},
-  } as never)
-  const empty = draw({ onTruthtrance: () => {} } as never)
-  check('the ask button is offered exactly while the card is held',
-    [/data-truthtrance-open/.test(holder), /data-truthtrance-open/.test(empty)],
-    [true, false])
+  const ttCard = TREACHERY_CARDS.find(c => c.id === 'truthtrance')!
+  const drawer = renderToStaticMarkup(createElement(PrivateView, {
+    kind: 'treachery' as const, hand: [ttCard, SECRET_CARD], traitors: [],
+    onOpenCard: () => {}, playable: ['truthtrance'], onPlay: () => {},
+  }))
+  check('a playable card is the button — ribboned, and only that card',
+    [/data-play-card="truthtrance"/.test(drawer),
+      /aria-label="Play Truthtrance"/.test(drawer),
+      />PLAY</.test(drawer),
+      new RegExp(`data-play-card="${SECRET_CARD.id}"`).test(drawer),
+      new RegExp(`aria-label="Open ${SECRET_CARD.name}"`).test(drawer)],
+    [true, true, true, false, true])
+  const inert = renderToStaticMarkup(createElement(PrivateView, {
+    kind: 'treachery' as const, hand: [ttCard], traitors: [],
+    onOpenCard: () => {},
+  }))
+  check('...and without a flow to open, the card zooms like any other',
+    [/data-play-card/.test(inert), /aria-label="Open Truthtrance"/.test(inert)],
+    [false, true])
+  const screen4 = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
+  check('the screen wires the hand to the flow, and the old chrome button is gone',
+    [/playableCards=\{onTruthtrance \? \['truthtrance'\] : \[\]\}/.test(screen4),
+      /onPlayCard=\{id => \{ if \(id === 'truthtrance'\) setTtOpen\(true\) \}\}/.test(screen4),
+      /data-truthtrance-open/.test(screen4)],
+    [true, true, false])
 
   const answered = draw({
     state: {

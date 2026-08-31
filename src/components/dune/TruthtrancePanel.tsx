@@ -15,6 +15,7 @@
  */
 import { useState } from 'react'
 import { FACTION_LOOK } from './SeatLayer'
+import { TreacheryCardFace } from './TreacheryCardFace'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { FACTIONS, FACTION_IDS } from '@/data/dune/factions'
 import { phraseQuestion } from '@/lib/dune/truthtrance'
@@ -71,8 +72,11 @@ const TEMPLATES: { id: TemplateId; label: string }[] = [
 
 const ALL_LEADERS = FACTION_IDS.flatMap(id => FACTIONS[id]?.leaders.map(l => l.name) ?? [])
 
+// LIGHT FIELDS ON PURPOSE: a native select's dropdown list is drawn by the
+// browser, and pale-on-dark styling left the question list pale-on-white —
+// unreadable. Black on parchment reads in the closed field AND the list.
 const field = {
-  background: '#ffffff12', color: '#f0e2bb', border: '1px solid #f0e2bb44',
+  background: '#f7efdc', color: '#1c1c1c', border: '1px solid #00000044',
   borderRadius: 4, padding: '4px 6px', font: '13px Georgia, serif',
 } as const
 
@@ -166,7 +170,10 @@ export function TruthtrancePanel({
   return (
     <div data-layer="truthtrance-panel" style={{
       position: 'absolute', inset: 0, display: 'grid', placeItems: 'center',
-      background: '#000000a0', zIndex: 30,
+      // Above the floating drawers (DraggableResizable sits at 1050): the
+      // click that opened this came FROM the hand drawer, and a modal under
+      // the thing that opened it reads as broken.
+      background: '#000000a0', zIndex: 1100,
     }}>
       <div style={{
         width: 480, maxWidth: '92%', maxHeight: '86%', overflowY: 'auto',
@@ -174,17 +181,28 @@ export function TruthtrancePanel({
         border: '1px solid #f0e2bb44', padding: '14px 16px',
         font: '14px Georgia, serif',
       }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-          <b style={{ fontSize: 16 }}>Truthtrance</b>
-          <span style={{ opacity: 0.7, fontSize: 12 }}>
-            one question, answered by the table itself — question and answer
-            are public
-          </span>
-          <span style={{ flex: 1 }} />
-          <button type="button" data-tt-close="" onClick={onClose}
-            style={{ background: 'none', border: 'none', color: '#f0e2bb', cursor: 'pointer', fontSize: 15 }}>
-            ✕
-          </button>
+        <div style={{ display: 'flex', gap: 12 }}>
+          {/* THE CARD ITSELF, since clicking it is what opened this — the
+              play flow is also where its rules text stays readable. */}
+          {(() => {
+            const tt = TREACHERY_CARDS.find(c => c.id === 'truthtrance')
+            return tt ? <TreacheryCardFace card={tt} width={92} /> : null
+          })()}
+          <div style={{ flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+              <b style={{ fontSize: 16 }}>Truthtrance</b>
+              <span style={{ flex: 1 }} />
+              <button type="button" data-tt-close="" onClick={onClose}
+                style={{ background: 'none', border: 'none', color: '#f0e2bb', cursor: 'pointer', fontSize: 15 }}>
+                ✕
+              </button>
+            </div>
+            <p style={{ margin: '4px 0 0', opacity: 0.7, fontSize: 12 }}>
+              One question, answered by the table itself — question and
+              answer are public, and the card is spent only when an answer
+              lands.
+            </p>
+          </div>
         </div>
 
         <div style={{ marginTop: 10 }}>
