@@ -48,6 +48,14 @@ import { PlayerHud } from './PlayerHud'
 import { OwnStrip } from './OwnStrip'
 import { DuneBoard, BATTLE_ZOOM_MS } from './DuneBoard'
 
+/** The blow's beats: the sandstorm clearing, a card held up, the zoom to
+ *  its ground — and the worm's longer stare before the devour. */
+export const BLOW_SANDSTORM_MS = 2200
+export const BLOW_CARD_MS = 1600
+export const BLOW_ZOOM_MS = 1600
+export const BLOW_WORM_CARD_MS = 1800
+export const BLOW_DEVOUR_MS = 1000
+
 /** The dials spin for eight seconds on the first storm, five after. */
 export const STORM_SPIN_FIRST_MS = 8000
 export const STORM_SPIN_MS = 5000
@@ -438,10 +446,164 @@ export function DuneGameScreen({
   const stormFace = stormShow && stormShow.kind === 'walk'
     ? (stormShow.step === 0 ? stormShow.from : stormShow.swept[stormShow.step - 1])
     : state.storm
+
+  /**
+   * THE BLOW'S REPLAY. The server turns the cards in one write; the table
+   * watches: a sandstorm clears to the first card, each card holds the
+   * screen and the view dives to its ground — pile A then pile B — and a
+   * worm fills the screen before the dive, the devoured leaving the board
+   * mid-stare. Reconstructed from the DISCARD DELTA, so the deck's own
+   * record is the script; the devoured territories come from the forces
+   * diff, which serves the placed worms as well as the drawn.
+   */
+  const [blowShow, setBlowShow] = useState<{
+    beats: ({ kind: 'territory'; territoryId: string; name: string; spice: number }
+      | { kind: 'worm'; territoryId: string | null })[]
+    at: number
+    stage: 'sandstorm' | 'card' | 'zoom' | 'eaten'
+    prevForces: readonly Force[]
+    wormTerritories: readonly string[]
+  } | null>(null)
+  const blowSeen = useRef({
+    ready: false, aLen: 0, bLen: 0, stormTurn: -1,
+    forces: [] as readonly Force[],
+  })
+  useEffect(() => {
+    const r = blowSeen.current
+    const a = state.spiceDeck?.discardA ?? []
+    const b = state.spiceDeck?.discardB ?? []
+    if (!r.ready) {
+      r.ready = true
+      r.aLen = a.length
+      r.bLen = b.length
+      r.forces = state.forces
+      return
+    }
+    if (a.length < r.aLen || b.length < r.bLen) {
+      // a reshuffle pours the discard home — resync, nothing to perform
+      r.aLen = a.length
+      r.bLen = b.length
+      r.forces = state.forces
+      return
+    }
+    if (a.length === r.aLen && b.length === r.bLen) {
+      r.forces = blowShow ? r.forces : state.forces
+      return
+    }
+    const fresh = [...a.slice(r.aLen), ...b.slice(r.bLen)]
+    const prevForces = r.forces
+    // the devoured, from the forces diff — placed worms included
+    const lost = new Set<string>()
+    for (const f of prevForces) {
+      const still = state.forces
+        .filter(x => x.faction === f.faction && x.territoryId === f.territoryId
+          && x.sector === f.sector)
+        .reduce((n, x) => n + x.count, 0)
+      const had = prevForces
+        .filter(x => x.faction === f.faction && x.territoryId === f.territoryId
+          && x.sector === f.sector)
+        .reduce((n, x) => n + x.count, 0)
+      if (still < had) lost.add(f.territoryId)
+    }
+    const pending = [...lost]
+    const beats = fresh.map(c => c.kind === 'territory'
+      ? {
+        kind: 'territory' as const, territoryId: c.territoryId as string,
+        name: (c as { name?: string }).name ?? c.territoryId as string,
+        spice: (c as { spice?: number }).spice ?? 0,
+      }
+      : { kind: 'worm' as const, territoryId: pending.shift() ?? null })
+    if (beats.length === 0) {
+      r.aLen = a.length
+      r.bLen = b.length
+      r.forces = state.forces
+      return
+    }
+    const stormNow = r.stormTurn !== Number(state.turn ?? 0)
+    r.stormTurn = Number(state.turn ?? 0)
+    r.aLen = a.length
+    r.bLen = b.length
+    const held = r.forces
+    r.forces = state.forces
+    setBlowShow({
+      beats, at: 0, stage: stormNow ? 'sandstorm' : 'card',
+      prevForces: held, wormTerritories: [...lost],
+    })
+  }, [state.spiceDeck?.discardA, state.spiceDeck?.discardB, state.forces,
+    state.turn, blowShow])
+  const blowStage = blowShow?.stage ?? null
+  const blowAt = blowShow?.at ?? -1
+  const blowKind = blowShow ? blowShow.beats[blowShow.at]?.kind ?? null : null
+  useEffect(() => {
+    if (!blowStage) return
+    const step = (next: () => void, ms: number) => {
+      const t = setTimeout(next, ms)
+      return () => clearTimeout(t)
+    }
+    if (blowStage === 'sandstorm') {
+      return step(() => setBlowShow(s => s && { ...s, stage: 'card' }), BLOW_SANDSTORM_MS)
+    }
+    if (blowStage === 'card') {
+      return step(() => setBlowShow(s => {
+        if (!s) return s
+        const beat = s.beats[s.at]
+        // a worm with nothing showing eats nobody: no ground to dive to
+        if (beat.kind === 'worm' && !beat.territoryId) {
+          return s.at + 1 < s.beats.length ? { ...s, at: s.at + 1, stage: 'card' } : null
+        }
+        return { ...s, stage: 'zoom' }
+      }), blowKind === 'worm' ? BLOW_WORM_CARD_MS : BLOW_CARD_MS)
+    }
+    if (blowStage === 'zoom') {
+      return step(() => setBlowShow(s => {
+        if (!s) return s
+        if (s.beats[s.at].kind === 'worm') return { ...s, stage: 'eaten' }
+        return s.at + 1 < s.beats.length ? { ...s, at: s.at + 1, stage: 'card' } : null
+      }), BLOW_ZOOM_MS)
+    }
+    return step(() => setBlowShow(s => s
+      ? (s.at + 1 < s.beats.length ? { ...s, at: s.at + 1, stage: 'card' } : null)
+      : s), BLOW_DEVOUR_MS)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blowStage, blowAt, blowKind])
+  /** The blow's zoom target while a beat stares at its ground. */
+  const blowZoom = blowShow && (blowShow.stage === 'zoom' || blowShow.stage === 'eaten')
+    ? blowShow.beats[blowShow.at]?.territoryId ?? null
+    : null
+  /** During the replay, a devoured territory keeps its dead until ITS beat
+   *  has stared — then the worm's work shows. */
+  const blowForces = (() => {
+    if (!blowShow) return null
+    const eatenAlready = new Set<string>()
+    for (let i = 0; i < blowShow.at; i++) {
+      const b9 = blowShow.beats[i]
+      if (b9.kind === 'worm' && b9.territoryId) eatenAlready.add(b9.territoryId)
+    }
+    const here = blowShow.beats[blowShow.at]
+    if (here?.kind === 'worm' && here.territoryId && blowShow.stage === 'eaten') {
+      eatenAlready.add(here.territoryId)
+    }
+    const waiting = blowShow.wormTerritories.filter(t => !eatenAlready.has(t))
+    if (waiting.length === 0) return null
+    return [
+      ...state.forces.filter(f => !waiting.includes(f.territoryId)),
+      ...blowShow.prevForces.filter(f => waiting.includes(f.territoryId)),
+    ]
+  })()
   const forcesShown = stormShow && stormShow.kind === 'walk'
     ? [...state.forces, ...stormShow.killed.filter(k =>
       stormShow.swept.indexOf(k.sector) >= stormShow.step)]
-    : state.forces
+    : blowForces ?? state.forces
+
+  /** The ride, announced: once the table's replay has played out, the
+   *  Fremen are told Shai-Hulud will carry them — only when they are
+   *  seated, and once per window. */
+  const [rideSeen, setRideSeen] = useState(0)
+  const ridePop = !blowShow
+    && state.wormRide && now < state.wormRide.closesAt
+    && state.wormRide.turn !== rideSeen
+    && state.players.some(p => p.faction === 'fremen')
+    ? state.wormRide : null
   /** Forces staged on the rail, waiting for a landing click on the board. */
   const [staged, setStaged] = useState({ plain: 0, starred: 0 })
   const rows = hudRows(state)
@@ -875,7 +1037,7 @@ export function DuneGameScreen({
               rectangle. Sizing a box to the board's aspect ratio instead was
               what left the column's height unused. */}
           <DuneBoard
-            zoomTo={battleAt}
+            zoomTo={battleAt ?? blowZoom}
             shieldWall={state.shieldWall}
             storm={stormFace} stacks={[...stacks, ...previewStacks]}
             spice={state.spiceOnBoard}
@@ -1451,6 +1613,106 @@ export function DuneGameScreen({
               expired={now >= state.karamaGiveBack.closesAt}
               onPay={onGiveBack}
               refusal={giveBackRefusal?.code ?? null} />
+          )}
+          {/* THE BLOW PERFORMED: the sandstorm clearing, each card held
+              up — the worm bigger and longer — while the view dives to the
+              ground it names. */}
+          {blowShow && blowShow.stage === 'sandstorm' && (
+            <div data-blow-sandstorm="" style={{
+              position: 'absolute', inset: 0, zIndex: 7, pointerEvents: 'none',
+              overflow: 'hidden',
+            }}>
+              <style>{`@keyframes duneSand {
+                0% { transform: translateX(0) translateY(0); opacity: 1 }
+                70% { opacity: 0.9 }
+                100% { transform: translateX(-8%) translateY(3%); opacity: 0 }
+              }`}</style>
+              <div style={{
+                position: 'absolute', inset: '-20%',
+                background:
+                  'repeating-radial-gradient(circle at 30% 40%, #d8b06a 0 2px, #c49b52 2px 5px, #b98e46 5px 9px),'
+                  + ' radial-gradient(circle at 60% 60%, #e2bd7a, #a87f3d)',
+                backgroundBlendMode: 'multiply',
+                animation: `duneSand ${BLOW_SANDSTORM_MS}ms ease-in forwards`,
+              }} />
+            </div>
+          )}
+          {blowShow && blowShow.stage !== 'sandstorm' && (() => {
+            const beat = blowShow.beats[blowShow.at]
+            if (!beat) return null
+            const big = blowShow.stage === 'card'
+            return (
+              <div data-blow-card={beat.kind} style={{
+                position: 'absolute', zIndex: 7, pointerEvents: 'none',
+                transition: 'all 500ms ease',
+                ...(big
+                  ? { inset: 0, display: 'grid', placeItems: 'center' }
+                  : { right: 14, top: 14 }),
+              }}>
+                <div style={{
+                  width: big ? 240 : 120, borderRadius: 10, textAlign: 'center',
+                  padding: big ? '26px 18px' : '10px 8px',
+                  font: 'italic 14px Georgia, serif',
+                  transition: 'all 500ms ease',
+                  ...(beat.kind === 'worm'
+                    ? {
+                      background: '#1c1408', color: '#e8b04b',
+                      border: '3px solid #c9542a', boxShadow: '0 0 60px #c9542a88',
+                    }
+                    : {
+                      background: '#f7efdc', color: '#3a2c14',
+                      border: '3px solid #b98e46', boxShadow: '0 0 40px #00000088',
+                    }),
+                }}>
+                  {beat.kind === 'worm' ? (
+                    <>
+                      <img src="/icons/sandworm.svg" alt=""
+                        style={{ width: big ? 110 : 48 }} />
+                      <b data-blow-worm="" style={{
+                        display: 'block', fontSize: big ? 26 : 13,
+                        letterSpacing: 2, fontStyle: 'normal',
+                      }}>SHAI-HULUD</b>
+                      {big && (
+                        <span style={{ opacity: 0.8 }}>
+                          {beat.territoryId ? 'the maker comes…' : 'a worm finds a worm showing — nothing to devour'}
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <b data-blow-territory={beat.territoryId} style={{
+                        display: 'block', fontSize: big ? 22 : 12, fontStyle: 'normal',
+                      }}>{beat.name}</b>
+                      <span style={{
+                        display: 'block', fontSize: big ? 44 : 20,
+                        fontStyle: 'normal', fontWeight: 700,
+                      }}>{beat.spice}</span>
+                      <span style={{ opacity: 0.75 }}>spice</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            )
+          })()}
+          {ridePop && (
+            <div data-worm-ride-pop="" style={{
+              position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 6,
+              padding: '9px 12px', background: '#1c1408f0', color: '#e8b04b',
+              borderTop: '2px solid #c9542a', font: '14px Georgia, serif',
+              display: 'flex', gap: 10, alignItems: 'baseline',
+            }}>
+              <b>Shai-Hulud waits.</b>
+              <span style={{ color: '#f0e2bb' }}>
+                The Fremen may ride the sandworm, moving its forces into any
+                territory outside the storm.
+              </span>
+              <span style={{ flex: 1 }} />
+              <button type="button" data-ride-pop-dismiss=""
+                onClick={() => setRideSeen(state.wormRide!.turn)}
+                style={{ background: 'none', border: 'none', color: '#f0e2bb', cursor: 'pointer' }}>
+                ✕
+              </button>
+            </div>
           )}
           {/* THE STORM'S FACE: the dials spinning, the revealed number
               held through the atomics window, and the walk's own count. */}

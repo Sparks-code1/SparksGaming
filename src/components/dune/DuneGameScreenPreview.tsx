@@ -16,6 +16,7 @@ import type { FactionId } from '@/types/Dune/Faction'
 import type { DuneGameState, GameMode, Force } from '@/types/Dune/Game'
 import type { DuneSecrets } from '@/lib/dune/charity'
 import { stormEntry } from '@/lib/dune/phaseAdvance'
+import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import {
   openingPosition, settle, defaultSector, postureFor, defaultFremenPlacement, SETUP_SECONDS,
 } from '@/lib/dune/setup'
@@ -169,7 +170,7 @@ export default function DuneGameScreenPreview() {
   // preview of one frame.
   const [card, setCard] = useState(
     q.get('auction') === 'off' || q.has('battle') || q.has('nexus')
-      || q.has('truthtrance') || q.has('stormshow')
+      || q.has('truthtrance') || q.has('stormshow') || q.has('blowshow')
       ? -1 : BIDDING.ask.index)
   const running = card >= 0 && card < BIDDING.ask.cardCount
 
@@ -284,6 +285,80 @@ export default function DuneGameScreenPreview() {
   } as unknown as DuneGameState
   const truthOwn: DuneSecrets = { ...OWN, cards: [...(OWN.cards ?? []), 'truthtrance'] }
 
+  // ── the blow performed, at ?dune-game&blowshow ────────────────────────────
+  // Press the button and the turned cards land whole, the way a real
+  // commit does — then the screen performs them: the sandstorm clears, each
+  // card holds the screen, the view dives to its ground. &blowshow=worm
+  // leads with Shai-Hulud: the showing territory devoured mid-stare, the
+  // Fremen spared, and the ride announced when the dust settles.
+  const blowing = q.has('blowshow')
+  const blowWorm = q.get('blowshow') === 'worm'
+  const [blowFired, setBlowFired] = useState(false)
+  const tName = (id: string) => DUNE_TERRITORIES.find(t => t.id === id)?.displayName ?? id
+  const blowPre = {
+    ...STATE, phase: 'Spice Blow and Nexus', awaiting: null,
+    spiceDeck: {
+      remaining: 11,
+      discardA: [{
+        kind: 'territory', territoryId: 'territory-11', name: tName('territory-11'),
+        spice: 6, sector: 'sector-13',
+      }],
+      discardB: [],
+    },
+    forces: [
+      ...STATE.forces,
+      f('emperor', 'territory-11', 'sector-13', 4),
+      f('fremen', 'territory-11', 'sector-13', 3),
+    ],
+  } as unknown as DuneGameState
+  const blowPost = (nowAt: number) => {
+    const cardA = {
+      kind: 'territory', territoryId: 'territory-20', name: tName('territory-20'),
+      spice: 8, sector: 'sector-16',
+    }
+    const cardB = {
+      kind: 'territory', territoryId: 'territory-32', name: tName('territory-32'),
+      spice: 6, sector: 'sector-4',
+    }
+    if (!blowWorm) {
+      return {
+        ...blowPre,
+        spiceDeck: {
+          remaining: 9,
+          discardA: [...blowPre.spiceDeck.discardA, cardA],
+          discardB: [cardB],
+        },
+        spiceOnBoard: {
+          ...blowPre.spiceOnBoard, 'territory-20': 8,
+          'territory-32': (blowPre.spiceOnBoard['territory-32'] ?? 0) + 6,
+        },
+      } as unknown as DuneGameState
+    }
+    return {
+      ...blowPre,
+      spiceDeck: {
+        remaining: 8,
+        discardA: [...blowPre.spiceDeck.discardA, { kind: 'shai-hulud' }, cardA],
+        discardB: [cardB],
+      },
+      // Shai-Hulud takes the showing territory whole — the Fremen spared
+      forces: (blowPre.forces as { faction: string; territoryId: string }[])
+        .filter(x => !(x.territoryId === 'territory-11' && x.faction !== 'fremen')) as never,
+      spiceOnBoard: (() => {
+        const sp = {
+          ...blowPre.spiceOnBoard, 'territory-20': 8,
+          'territory-32': (blowPre.spiceOnBoard['territory-32'] ?? 0) + 6,
+        } as Record<string, number>
+        delete sp['territory-11']
+        return sp
+      })(),
+      wormRide: {
+        turn: 4, territories: ['territory-11'], closesAt: nowAt + 60_000,
+      },
+    } as unknown as DuneGameState
+  }
+  const [blowState, setBlowState] = useState<DuneGameState | null>(null)
+
   // ── the storm's replay, at ?dune-game&stormshow ───────────────────────────
   // Press the button and the SERVER'S ruling (the law, run locally here)
   // lands whole — then the screen replays it: dials, then the walk, the
@@ -320,6 +395,7 @@ export default function DuneGameScreenPreview() {
           : nexusing ? nexusState
           : truthing ? truthState
           : storming ? (stormFired ? stormPost : stormPre)
+          : blowing ? (blowFired && blowState ? blowState : blowPre)
           : { ...STATE, mode }}
         seat={seat}
         own={settling && seat
@@ -409,6 +485,16 @@ export default function DuneGameScreenPreview() {
           THE PREVIEW'S OWN CONTROL, not the game's — a real match never draws
           it — and the staged views stand down too: a battle or a Nexus is not
           a place to restart the auction demo from. */}
+      {blowing && !blowFired && (
+        <button type="button"
+          onClick={() => { setBlowState(blowPost(Date.now())); setBlowFired(true) }}
+          style={{
+            position: 'fixed', left: '50%', transform: 'translateX(-50%)', bottom: 10, zIndex: 5,
+            background: '#1b2337', color: '#f0e2bb', border: '1px solid #b98e46',
+            borderRadius: 4, padding: '5px 11px', cursor: 'pointer',
+            font: '12px Georgia, "Times New Roman", serif',
+          }}>turn the blow</button>
+      )}
       {storming && !stormFired && (
         <button type="button" onClick={() => setStormFired(true)}
           style={{
@@ -418,7 +504,8 @@ export default function DuneGameScreenPreview() {
             font: '12px Georgia, "Times New Roman", serif',
           }}>roll the storm</button>
       )}
-      {!running && !battling && !nexusing && !settling && !truthing && !storming && (
+      {!running && !battling && !nexusing && !settling && !truthing && !storming
+        && !blowing && (
         <button type="button" onClick={() => setCard(0)}
           style={{
             // Bottom centre, over the board: the right-hand column is the tray now

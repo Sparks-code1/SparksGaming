@@ -1826,7 +1826,7 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   check('the veil holds the battle screen back for exactly the flight',
     [/setTimeout\(\(\) => setBattleVeil\(false\), BATTLE_ZOOM_MS\)/.test(screenZ),
       /state\.battles && seat && !battleVeil/.test(screenZ),
-      /zoomTo=\{battleAt\}/.test(screenZ)],
+      /zoomTo=\{battleAt \?\? blowZoom\}/.test(screenZ)],
     [true, true, true])
   const boardZ = readFileSync('src/components/dune/DuneBoard.tsx', 'utf8')
   check('...and the flight home retraces the way it came',
@@ -1862,6 +1862,58 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
       /data-storm-spin=\{stormShow\.kind\}/.test(screenS),
       /data-storm-walk=""/.test(screenS)],
     [true, true, true, true])
+}
+
+// ── the blow performed ────────────────────────────────────────────────────
+// The discard delta is the script: a sandstorm clears to each card, the
+// view dives to its ground, the worm stares longer and the devoured leave
+// mid-stare — and after it all, a table with Fremen in it is told they may
+// ride.
+{
+  const { BLOW_SANDSTORM_MS, BLOW_CARD_MS, BLOW_ZOOM_MS, BLOW_WORM_CARD_MS,
+    BLOW_DEVOUR_MS } = await import('@/components/dune/DuneGameScreen')
+  check('the beats are the spec\'s',
+    [BLOW_SANDSTORM_MS, BLOW_CARD_MS, BLOW_ZOOM_MS, BLOW_WORM_CARD_MS, BLOW_DEVOUR_MS],
+    [2200, 1600, 1600, 1800, 1000])
+
+  const screenB = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
+  check('a reshuffle resyncs and performs nothing',
+    /if \(a\.length < r\.aLen \|\| b\.length < r\.bLen\) \{/.test(screenB), true)
+  check('the devoured come from the forces diff — the placed worms\' ground included',
+    [/pending\.shift\(\) \?\? null/.test(screenB),
+      /if \(still < had\) lost\.add\(f\.territoryId\)/.test(screenB)],
+    [true, true])
+  check('the devoured keep their dead until their beat has stared',
+    [/blowForces \?\? state\.forces/.test(screenB),
+      /\.\.\.blowShow\.prevForces\.filter\(f => waiting\.includes\(f\.territoryId\)\)/.test(screenB)],
+    [true, true])
+  check('the overlays exist: the sandstorm, the held-up card, the maker\'s name',
+    [/data-blow-sandstorm/.test(screenB), /data-blow-card=\{beat\.kind\}/.test(screenB),
+      /SHAI-HULUD/.test(screenB)],
+    [true, true, true])
+  check('the ride is announced after the replay, to a table with Fremen in it',
+    [/const ridePop = !blowShow/.test(screenB),
+      /state\.players\.some\(p => p\.faction === 'fremen'\)/.test(screenB)],
+    [true, true])
+
+  const riding = draw({
+    state: {
+      ...state, phase: 'Spice Blow and Nexus',
+      wormRide: { turn: 3, territories: ['territory-11'], closesAt: 999_999 },
+    } as never,
+  })
+  const noFremen = draw({
+    state: {
+      ...state, phase: 'Spice Blow and Nexus',
+      players: (state.players as { faction: string }[])
+        .filter(p => p.faction !== 'fremen'),
+      wormRide: { turn: 3, territories: ['territory-11'], closesAt: 999_999 },
+    } as never,
+  })
+  check('the popup rides the window — and never a table without Fremen',
+    [/data-worm-ride-pop/.test(riding), /Fremen may ride the sandworm/.test(riding),
+      /data-worm-ride-pop/.test(noFremen)],
+    [true, true, false])
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
