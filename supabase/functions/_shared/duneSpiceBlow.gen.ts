@@ -824,7 +824,7 @@ function strongholdClosed(forces, faction, territoryId) {
   const t = territory(territoryId);
   if (!t?.stronghold) return false;
   const inside = new Set(
-    forces.filter((f) => f.territoryId === territoryId && f.count > 0).map((f) => f.faction)
+    forces.filter((f) => f.territoryId === territoryId && f.count > 0 && f.posture !== "advisor").map((f) => f.faction)
   );
   return !inside.has(faction) && inside.size >= STRONGHOLD_CAP;
 }
