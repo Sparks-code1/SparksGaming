@@ -14,7 +14,10 @@
 //   preview must look like the real pieces it becomes.
 //
 //   The traitor choice is the actual cards, off this seat's own row and no
-//   other route. Ready lives on the players column and the window counts it.
+//   other route. Ready closes this column — gated on what THIS seat owes, so
+//   nobody declares themselves done with an advisor still to stand — while the
+//   deadline's escape hatch stays ungated, because that is what stops a table
+//   of held buttons wedging when somebody walks away.
 import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
@@ -69,6 +72,7 @@ const base: SetupWindowProps = {
   onConfirmAdvisor: () => {},
   onPrediction: () => {},
   onTraitor: () => {},
+  onReady: () => {},
 }
 
 const draw = (over: Partial<SetupWindowProps> = {}) =>
@@ -265,7 +269,7 @@ const draw = (over: Partial<SetupWindowProps> = {}) =>
   const rows = hudRows(state)
   const hud = renderToStaticMarkup(createElement(PlayerHud, {
     rows, awaiting: null, seat: 'emperor' as FactionId,
-    ready: ['fremen'] as FactionId[], onReady: () => {},
+    ready: ['fremen'] as FactionId[],
   }))
   check('the Emperor\'s reserve reads fifteen plus five',
     hud.includes('15') && /data-starred="5"/.test(hud) && hud.includes('+5★'), true)
@@ -275,21 +279,80 @@ const draw = (over: Partial<SetupWindowProps> = {}) =>
     /data-stat="reserve"[^>]*data-starred/.test(
       hud.split('data-faction="atreides"')[1] ?? ''), false)
 
-  // READY: the tag on the seat that pressed it, the button for the seat that
-  // has not, disabled once it has.
+  // READY: THE TAG IS THE HUD'S, THE BUTTON IS THE SETUP COLUMN'S. The button
+  // used to sit in this column's bottom corner, diagonally across the screen
+  // from the questions it answers. What stays here is the status.
   check('a ready seat is tagged', /data-ready="yes"/.test(hud), true)
-  check('the button offers Ready to a seat that has not pressed it',
-    /data-layer="setup-ready"/.test(hud) && !hud.includes('✓ Ready'), true)
-  const pressed = renderToStaticMarkup(createElement(PlayerHud, {
-    rows, awaiting: null, seat: 'emperor' as FactionId,
-    ready: ['emperor'] as FactionId[], onReady: () => {},
-  }))
-  check('...and disables into a confirmation once pressed',
-    pressed.includes('✓ Ready') && /data-layer="setup-ready"[^>]*disabled/.test(pressed), true)
-  const noSetup = renderToStaticMarkup(createElement(PlayerHud, {
-    rows, awaiting: null, seat: 'emperor' as FactionId,
-  }))
-  check('outside setup there is no button', /data-layer="setup-ready"/.test(noSetup), false)
+  check('the players column no longer carries the button',
+    /data-layer="setup-ready"/.test(hud), false)
+}
+
+// ── ready, at the foot of the column that asked ───────────────────────────
+// It closes the setup column now, and it is gated on what THIS seat still
+// owes: Ready means "I have finished", so a seat with an advisor still to
+// stand or a traitor still to keep cannot truthfully press it.
+{
+  const nothingOwed = answered('fremen-placement')
+    .filter(d => d.faction !== 'fremen')
+  const free = draw({ outstanding: nothingOwed })
+  check('the button closes the setup column',
+    /data-layer="setup-ready"/.test(free), true)
+  check('...offered live to a seat that owes nothing',
+    /data-layer="setup-ready"(?![^>]*disabled)/.test(free), true)
+  // BELOW THE QUESTIONS AND OUTSIDE THE LIST THAT SCROLLS — the traitor cards
+  // make this column taller than the screen, and a Ready that scrolled away
+  // with them is the covered-button wedge again.
+  const asking = draw()
+  const guideAt = asking.indexOf('data-guide=')
+  const scrollAt = asking.indexOf('overflow-y:auto')
+  const readyAt = asking.indexOf('data-layer="setup-ready"')
+  check('...and it sits below the questions, outside the scrolling list',
+    [guideAt > 0, scrollAt > 0, guideAt < readyAt,
+      asking.slice(scrollAt, readyAt).split('</div>').length > 1],
+    [true, true, true, true])
+
+  // THE GATE. The fixture's Fremen owe their ten; the Bene Gesserit owe an
+  // advisor they cannot even place until the Fremen have gone.
+  const owing = draw()
+  check('a seat that still owes cannot press it',
+    /data-layer="setup-ready"[^>]*disabled/.test(owing), true)
+  check('...and is told what it is still owed',
+    /data-ready-blocked="yes"/.test(owing) && owing.includes('your ten forces'), true)
+  const bg = draw({ seat: 'bene-gesserit' })
+  check('the Bene Gesserit are held until their advisor stands',
+    /data-layer="setup-ready"[^>]*disabled/.test(bg) && bg.includes('your advisor'), true)
+  const bgDone = draw({
+    seat: 'bene-gesserit',
+    outstanding: OUTSTANDING.filter(d => d.faction !== 'bene-gesserit'),
+  })
+  check('...and freed once it has', /data-layer="setup-ready"(?![^>]*disabled)/.test(bgDone), true)
+
+  // PRESSED: disabled into a confirmation rather than vanishing, so its
+  // presser can see it registered.
+  const pressed = draw({ outstanding: nothingOwed, ready: ['fremen'] as FactionId[] })
+  check('a pressed Ready confirms and disables',
+    pressed.includes('✓ Ready')
+      && /data-layer="setup-ready"[^>]*disabled/.test(pressed), true)
+  check('...and says what it is waiting for', pressed.includes('Waiting on the rest'), true)
+
+  // THE WAY OUT MUST NOT BE GATED. Ready is now dead for any seat with a
+  // decision outstanding, so past the deadline a table could hold nothing but
+  // dead Ready buttons. What saves it is the escape hatch in the notices,
+  // which sends a bare Ready and takes the defaults — and it is offered on the
+  // clock alone: seated, not spectating, past closesAt, and NOTHING about what
+  // anybody owes. Gate that on `outstanding` and the wedge is back.
+  const match = code('src/components/dune/DuneMatchScreen.tsx')
+  const hatchAt = match.indexOf('push the game along')
+  const hatch = match.slice(Math.max(0, hatchAt - 400), hatchAt)
+  check('the deadline\'s escape hatch is offered on the clock alone',
+    [hatchAt > 0,
+      /now >= setup\.closesAt/.test(hatch),
+      /!spectating/.test(hatch),
+      /outstanding|owed/.test(hatch)],
+    [true, true, true, false])
+  check('...and it sends a bare Ready, which the server takes from any seat',
+    /SETUP_ANSWER'?,?\s*answer: 'ready'/.test(hatch.replace(/\s+/g, ' '))
+      || /answer: 'ready'/.test(match.slice(hatchAt - 400, hatchAt + 120)), true)
 }
 
 // ── on the screen, wired together ─────────────────────────────────────────
@@ -348,10 +411,16 @@ const draw = (over: Partial<SetupWindowProps> = {}) =>
     [dealtTraitors(null), dealtTraitors({ spice: 0 } as DuneSecrets), dealtTraitors(own)],
     [[], [], DEALT])
 
-  // READY flows to the HUD: the tag from public state, the button from the
-  // handlers.
+  // READY, WIRED: the tag from public state on the HUD, the button at the
+  // foot of the setup column — and on this screen the Fremen owe their ten,
+  // so it is there and dead.
   check('the ready seat is tagged in the HUD', /data-ready="yes"/.test(mine), true)
   check('...and this seat is offered the button', /data-layer="setup-ready"/.test(mine), true)
+  check('...inside the setup column, not the players column',
+    mine.indexOf('data-layer="setup-ready"') > mine.indexOf('data-layer="setup-window"')
+      && mine.indexOf('data-layer="setup-ready"') < mine.indexOf('data-layer="board"'), true)
+  check('...and dead while this seat still owes its ten',
+    /data-layer="setup-ready"[^>]*disabled/.test(mine), true)
 
   // NO HANDLERS, NO COLUMN — a spectator watches setup, never answers it.
   check('a screen given no setup handlers draws no window',

@@ -47,13 +47,6 @@ export interface PlayerHudProps {
    * shared row's setup window; absent outside setup.
    */
   ready?: readonly FactionId[]
-  /**
-   * Declare THIS seat done. Present only while setup runs and this client
-   * holds a seat — the button draws only then, in the HUD's bottom corner,
-   * and disables itself once pressed (the server keeps the list; there is no
-   * un-ready).
-   */
-  onReady?: (() => void) | null
 }
 
 /** What a faction's elite forces are called. Display copy, not rules data. */
@@ -161,9 +154,8 @@ function Stat({ label, value, title }: { label: string; value: number; title: st
   )
 }
 
-export function PlayerHud({ rows, awaiting, seat, ready = [], onReady = null }: PlayerHudProps) {
+export function PlayerHud({ rows, awaiting, seat, ready = [] }: PlayerHudProps) {
   const ordered = pairAllies(rows)
-  const meReady = !!seat && ready.includes(seat)
   return (
     <aside data-layer="player-hud" aria-label="Players"
       style={{
@@ -217,27 +209,13 @@ export function PlayerHud({ rows, awaiting, seat, ready = [], onReady = null }: 
         })}
       </div>
 
-      {/* THE WAY SETUP NORMALLY ENDS. Bottom right of the column the players
-          are listed in, because pressing it is a statement about the list:
-          when every bubble above says READY, the game starts. It disables
-          rather than disappears once pressed — a button that vanished would
-          leave its presser wondering whether it registered. */}
-      {onReady && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '2px 9px 9px' }}>
-          <button type="button" data-layer="setup-ready" onClick={onReady} disabled={meReady}
-            aria-label={meReady ? 'You are ready' : 'Ready — done with setup'}
-            style={{
-              font: "600 12.5px Georgia, 'Times New Roman', serif",
-              padding: '7px 18px', borderRadius: 6, letterSpacing: 0.5,
-              cursor: meReady ? 'default' : 'pointer',
-              border: `1px solid ${meReady ? '#27AE60' : '#c9542a'}`,
-              background: meReady ? 'transparent' : '#c9542a',
-              color: meReady ? '#27AE60' : '#fff',
-            }}>
-            {meReady ? '✓ Ready' : 'Ready'}
-          </button>
-        </div>
-      )}
+      {/* THE READY BUTTON IS NOT HERE ANY MORE. It sat bottom-right of this
+          column on the reasoning that pressing it is a statement about the
+          list of seats — but it answers the questions in the setup column on
+          the far side of the board, and players hunted across the screen for
+          it. It now closes that column instead; see SetupWindow. What stays
+          here is the READY tag in each seat's own bubble, which is the status
+          this column is for. */}
     </aside>
   )
 }

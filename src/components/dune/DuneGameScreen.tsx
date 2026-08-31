@@ -1059,6 +1059,7 @@ export function DuneGameScreen({
               advisorPending.territoryId, advisorPending.sector)}
             onPrediction={setup!.onPrediction}
             onTraitor={setup!.onTraitor}
+            onReady={setup!.onReady}
             busy={setup!.busy} refused={setup!.refused} />
         )}
 
@@ -1938,12 +1939,11 @@ export function DuneGameScreen({
               the game, so the players keep the top the rest of the time. */}
           {notices}
 
-          {/* READY LIVES WITH THE PLAYERS, because it is a statement about the
-              list: when every bubble says READY, the game starts. Wired only
-              while setup runs and this client holds a seat. */}
+          {/* THE READY TAG LIVES WITH THE PLAYERS; the button that sets it
+              closes the setup column instead — it answers that column's
+              questions, and across the board from them nobody found it. */}
           <PlayerHud rows={rows} awaiting={state.awaiting} seat={seat}
-            ready={setupWin?.ready ?? []}
-            onReady={setupActive ? setup!.onReady : null} />
+            ready={setupWin?.ready ?? []} />
 
           {/* A spectator has no tray: there is nothing private to show them, and
               an empty one implies a hand they might be holding. */}

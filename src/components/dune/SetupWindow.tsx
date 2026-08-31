@@ -27,8 +27,28 @@
  *
  * NO CLOCK OF ITS OWN. The deadline is on the board where the whole table
  * reads one countdown; and the clock is only the backstop now — setup
- * normally ends when every seat presses Ready, which lives on the players
- * column because it is a statement about the players.
+ * normally ends when every seat presses Ready, which sits at the foot of this
+ * column.
+ *
+ * READY IS THE LAST LINE OF THE COLUMN THAT ASKS. It used to live under the
+ * players, on the reasoning that pressing it is a statement about the list of
+ * seats. That put it diagonally across the screen from the questions it
+ * answers: a player read what they owed on the left and hunted the right-hand
+ * column for the button. Here it is the bottom of the same reading order —
+ * what you owe, then done.
+ *
+ * AND IT IS GATED ON WHAT THIS SEAT OWES. Ready means "I have finished
+ * setting up", so a seat with a decision still outstanding cannot truthfully
+ * press it: the Bene Gesserit who have not stood their advisor, anyone who
+ * has not kept a traitor. Pressing it early was legal and quietly cost them
+ * the decision — Ready does not lock a seat out, but the clock closes on the
+ * defaults, and a seat that had declared itself done had no reason to look
+ * back. Disabled with the reason written beside it is the honest version.
+ *
+ * THE DEADLINE'S ESCAPE HATCH IS NOT THIS BUTTON and must never be gated on
+ * anything: once the clock has run out, any seat may push the game along from
+ * the notices strip, defaults and all. That is what stops a table wedging
+ * when someone walks away, so this gate is deliberately kept clear of it.
  *
  * WHAT IT MAY SEE. The four traitors come in as `dealt`, from this browser's
  * own secrets row and from nowhere else — same rule as the prescience card in
@@ -79,6 +99,14 @@ const REFUSAL_TEXT: Record<string, string> = {
   'not-dealt': 'That is not one of the four you hold.',
   'no-setup': 'Setup is over.',
   stale: 'The table moved while you were deciding. Try again.',
+}
+
+/** What each outstanding decision is called, for the line under a dead Ready. */
+const OWED_TEXT: Record<SetupDecision['kind'], string> = {
+  'fremen-placement': 'your ten forces',
+  'advisor-placement': 'your advisor',
+  prediction: 'your prediction',
+  traitor: 'the traitor you keep',
 }
 
 const territory = (id: string) => DUNE_TERRITORIES.find(t => t.id === id) ?? null
@@ -163,6 +191,8 @@ export interface SetupWindowProps {
   /** Who has pressed Ready. Shown here as a count; the names are on the HUD. */
   ready: readonly FactionId[]
   seated: readonly FactionId[]
+  /** Declares this seat done. Gated on the seat owing nothing — see the head. */
+  onReady(): void
   /** The four traitors, from this seat's own secrets row and nowhere else. */
   dealt?: readonly string[]
   /** The placement so far, added by clicks on the map. */
@@ -184,11 +214,12 @@ export function SetupWindow({
   seat, mode, outstanding, ready, seated, dealt = [],
   pending, onRemove, onConfirmPlacement,
   advisorPending, advisorPosture, onConfirmAdvisor,
-  onPrediction, onTraitor, busy, refused,
+  onPrediction, onTraitor, onReady, busy, refused,
 }: SetupWindowProps) {
   const owed = outstanding.filter(d => d.faction === seat)
   const owes = (kind: SetupDecision['kind']) => owed.some(d => d.kind === kind)
   const advisorBlocked = outstanding.some(d => d.kind === 'fremen-placement')
+  const meReady = ready.includes(seat)
 
   return (
     <aside data-layer="setup-window" aria-label="Setting up" style={{
@@ -214,8 +245,8 @@ export function SetupWindow({
         {owed.length === 0 && (
           <p style={{ ...quiet, marginTop: 10, fontSize: 12.5 }}>
             Nothing is owed by your seat. Look over the board, and press
-            <b> Ready</b> under the players when you are — the game starts when
-            every seat has.
+            <b> Ready</b> below when you are — the game starts when every seat
+            has.
           </p>
         )}
 
@@ -246,6 +277,42 @@ export function SetupWindow({
         {owes('traitor') && (
           <TraitorPick dealt={dealt} busy={busy} onKeep={onTraitor} />
         )}
+      </div>
+
+      {/* THE FOOT OF THE COLUMN THAT ASKED. Outside the scrolling list on
+          purpose: the traitor cards make this column taller than the screen,
+          and a Ready that scrolled away with them is the covered-button
+          failure again in a different costume. Pinned here it is in view
+          whatever the column is showing. */}
+      <div style={{
+        borderTop: '1px solid #ffffff1c', padding: '9px 10px',
+        background: '#0d1220',
+      }}>
+        <button type="button" data-layer="setup-ready" onClick={onReady}
+          disabled={busy || meReady || owed.length > 0}
+          data-ready-blocked={owed.length > 0 ? 'yes' : undefined}
+          aria-label={meReady ? 'You are ready'
+            : owed.length > 0 ? 'Answer what your seat owes before declaring ready'
+            : 'Ready — done with setup'}
+          style={{
+            ...button(true),
+            width: '100%',
+            cursor: meReady || owed.length > 0 ? 'default' : 'pointer',
+            border: `1px solid ${meReady ? '#27AE60' : '#c9542a'}`,
+            background: meReady || owed.length > 0 ? 'transparent' : '#c9542a',
+            color: meReady ? '#27AE60' : owed.length > 0 ? '#f0e2bb66' : '#fff',
+          }}>
+          {meReady ? '✓ Ready' : 'Ready'}
+        </button>
+        {/* WHY IT IS DEAD, in the same breath as the dead button — a control
+            that refuses without saying what it wants reads as broken. */}
+        <p style={{ ...quiet, marginTop: 6, textAlign: 'center' }}>
+          {meReady
+            ? `Waiting on the rest — ${ready.length}/${seated.length} seats are ready.`
+            : owed.length > 0
+              ? `Still to answer: ${owed.map(d => OWED_TEXT[d.kind] ?? d.kind).join(', ')}.`
+              : 'The game starts when every seat has pressed it.'}
+        </p>
       </div>
     </aside>
   )
