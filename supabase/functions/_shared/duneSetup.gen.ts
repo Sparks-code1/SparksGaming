@@ -1405,6 +1405,16 @@ function starredInReserve(faction, mode) {
   const placement = factionById(faction)?.forces.placement;
   return placement?.kind === "distribute" ? 0 : starredOf(faction);
 }
+var UNCHOSEN = "unassigned";
+function judgeSeats(seats) {
+  for (const s of seats) {
+    if (!s.faction || s.faction === UNCHOSEN) return "seat-without-faction";
+    if (!factionById(s.faction)) return "unknown-faction";
+  }
+  if (new Set(seats.map((s) => s.faction)).size !== seats.length) return "duplicate-faction";
+  if (new Set(seats.map((s) => s.playerId)).size !== seats.length) return "duplicate-seat-key";
+  return null;
+}
 function openingPosition(input) {
   const { seats, mode, rng } = input;
   const host = seats.find((s) => s.playerId === input.host)?.faction ?? null;
@@ -1625,6 +1635,7 @@ export {
   distributeAmong,
   fixedPlacement,
   isOutstanding,
+  judgeSeats,
   landPlacement,
   openingPosition,
   postureFor,

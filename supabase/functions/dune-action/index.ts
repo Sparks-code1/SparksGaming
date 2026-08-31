@@ -51,7 +51,7 @@ import {
   answerAdvisorPlacement, shipAdvisor, defaultFremenPlacement, defaultTraitor,
   landPlacement,
   defaultAdvisorPlacement, defaultOrder, settle, answerable, allReady,
-  starredOf, SETUP_SECONDS,
+  starredOf, SETUP_SECONDS, judgeSeats,
 } from '../_shared/duneSetup.gen.ts'
 import {
   charityGrant, isEligibleForCharity, readSpice, CHARITY_TOPS_UP_TO, CHARITY_WINDOW_MS,
@@ -989,6 +989,22 @@ Deno.serve(async req => {
         }))
       if (seats.length < 2) {
         return json({ error: 'a match needs at least two seats', code: 'too-few-seats' }, 409)
+      }
+
+      // THE ROSTER IS JUDGED BEFORE IT IS DEALT. An undealt table can be fixed
+      // in the lobby; a mis-dealt one cannot be fixed at all, because the deal
+      // is one destructive write over six hands. Both refusals below cost a
+      // real game before they existed — see judgeSeats for what each does to a
+      // board that looks finished and is not.
+      const seatFault = judgeSeats(seats)
+      if (seatFault) {
+        const said: Record<string, string> = {
+          'seat-without-faction': 'every seat must choose a faction before the game is dealt',
+          'unknown-faction': 'a seat holds a faction this game does not have',
+          'duplicate-faction': 'two seats hold the same faction',
+          'duplicate-seat-key': 'two seats share the same player id — they would be dealt one hand between them',
+        }
+        return json({ error: said[seatFault] ?? seatFault, code: seatFault }, 409)
       }
 
       // SEEDED FROM THE ROW, like the treachery reshuffle: a deal that used

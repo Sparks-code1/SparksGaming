@@ -305,6 +305,52 @@ export function starredInReserve(faction: FactionId, mode: GameMode): number {
 }
 
 /**
+ * WHY A ROSTER CANNOT BE DEALT — checked before the deal, never after.
+ *
+ * The deal is destructive and silent when its input is wrong, which is how it
+ * cost a real game. Two failures in particular produce a board that looks
+ * finished and is not:
+ *
+ * A SEAT WITH NO REAL FACTION. `faction_id` carries the string 'unassigned'
+ * for a player who has sat down but not chosen, and 'unassigned' is truthy —
+ * so a filter on `!!faction_id` lets it straight through into the deal, where
+ * every lookup misses: no starting treachery, no spice, no forces, no rules
+ * card. The seat plays a faction that does not exist.
+ *
+ * TWO SEATS SHARING A KEY. Secrets are written into an object keyed by
+ * playerId, so two seats with the same key write ONE row and the later seat
+ * silently overwrites the earlier: one player holds nothing of their own —
+ * no treachery card, and no traitors to choose from — while the public row
+ * goes on advertising the hand they were dealt. See the deal below, and the
+ * reason player ids are no longer display names.
+ *
+ * Both are refusals at the door rather than repairs afterwards: an undealt
+ * table is fixable in the lobby, and a mis-dealt one is not fixable at all.
+ */
+export type SeatRefusal =
+  | 'seat-without-faction' | 'unknown-faction' | 'duplicate-faction' | 'duplicate-seat-key'
+
+/**
+ * What a seat with no faction chosen carries, MIRRORED from lib/lobby rather
+ * than imported: this module is bundled into the edge function, and lobby.ts
+ * reaches for the Supabase client, which has no business on the server. The
+ * copy is held to the original by a check in dunesetuptest — a constant in two
+ * places is only safe while something fails when they disagree.
+ */
+const UNCHOSEN = 'unassigned'
+
+export function judgeSeats(seats: readonly { faction: string; playerId: string }[]):
+SeatRefusal | null {
+  for (const s of seats) {
+    if (!s.faction || s.faction === UNCHOSEN) return 'seat-without-faction'
+    if (!factionById(s.faction as FactionId)) return 'unknown-faction'
+  }
+  if (new Set(seats.map(s => s.faction)).size !== seats.length) return 'duplicate-faction'
+  if (new Set(seats.map(s => s.playerId)).size !== seats.length) return 'duplicate-seat-key'
+  return null
+}
+
+/**
  * The whole opening position.
  *
  * `rng` is injected, like every shuffle here: the server seeds it from the

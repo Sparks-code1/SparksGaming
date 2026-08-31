@@ -875,6 +875,107 @@ const deal = (over: Partial<Parameters<typeof openingPosition>[0]> = {}) =>
     /defaultAdvisorPlacement\(decision\.faction, forces\)/.test(answerCase), true)
 }
 
+// ── the roster is judged before it is dealt ───────────────────────────────
+// The deal is one destructive write over every hand: an undealt table can be
+// fixed in the lobby, a mis-dealt one cannot be fixed at all. Two faults in
+// particular produce a board that looks finished and is not, and both cost a
+// real game before this existed.
+{
+  const { judgeSeats } = await import('@/lib/dune/setup')
+  const { UNASSIGNED_FACTION } = await import('@/lib/lobby')
+  const s = (faction: string, playerId: string) => ({ faction, playerId })
+
+  check('a whole roster passes',
+    judgeSeats([s('atreides', 'a'), s('harkonnen', 'h')]), null)
+
+  // THE SENTINEL IS TRUTHY, which is exactly how it got through a !!faction_id
+  // filter and into the deal, where every lookup missed: no treachery card, no
+  // spice, no forces, no rules card.
+  check('the unchosen sentinel is truthy — a filter on it alone lets it past',
+    !!UNASSIGNED_FACTION, true)
+  check('a seat that never chose is refused',
+    judgeSeats([s('atreides', 'a'), s(UNASSIGNED_FACTION, 'h')]), 'seat-without-faction')
+  check('...and so is an empty one', judgeSeats([s('', 'a')]), 'seat-without-faction')
+  check('a faction this game does not have is refused',
+    judgeSeats([s('atreides', 'a'), s('tleilaxu', 'h')]), 'unknown-faction')
+  check('two seats holding one faction are refused',
+    judgeSeats([s('atreides', 'a'), s('atreides', 'h')]), 'duplicate-faction')
+
+  // THE COLLISION THAT COST THE GAME. Secrets are an object keyed by playerId,
+  // so two seats sharing a key write ONE row: the later seat overwrites the
+  // earlier, one player holds nothing of their own, and the public row goes on
+  // advertising the hand they were dealt.
+  check('two seats sharing a key are refused',
+    judgeSeats([s('atreides', 'ryan'), s('harkonnen', 'ryan')]), 'duplicate-seat-key')
+
+  // ...which is worth showing, since the refusal is the only thing standing
+  // between that roster and a silent mis-deal.
+  const collided = openingPosition({
+    seats: [
+      { faction: 'atreides', playerId: 'ryan', seat: 'player-position-1' },
+      { faction: 'harkonnen', playerId: 'ryan', seat: 'player-position-2' },
+    ] as never,
+    mode: 'advanced', rng: counter(7), closesAt: 90_000,
+  })
+  check('...because the deal would write one row for the two of them',
+    [Object.keys(collided.secrets).length, collided.state.players.length],
+    [1, 2])
+
+  // AND THE SERVER ACTUALLY ASKS, before it deals.
+  const start = code('supabase/functions/dune-action/index.ts')
+  // FROM THE CASE TO ITS OWN WRITE — apply_match_write appears six times
+  // before this case, so the end of the slice is searched FROM the start of
+  // it. A backwards slice is the empty string, and every claim about an empty
+  // string that asks "is this absent" passes.
+  const startAt = start.indexOf("case 'START_DUNE'")
+  const startCase = start.slice(startAt, start.indexOf('apply_match_write', startAt))
+  check('the slice actually holds the case', startCase.length > 200, true)
+  check('START judges the roster before dealing',
+    [/judgeSeats\(seats\)/.test(startCase),
+      startCase.indexOf('judgeSeats') < startCase.indexOf('openingPosition')],
+    [true, true])
+  check('...and refuses rather than dealing anyway',
+    /return json\(\{ error: said\[seatFault\][^)]*code: seatFault \}, 409\)/.test(startCase),
+    true)
+}
+
+// ── a seat with no private row is told, not drawn empty ───────────────────
+// Every route to it looks the same on screen: no treachery card, no traitors,
+// and a public row still saying you hold one. The worst of them was a heal
+// that blanked what it meant to restore.
+{
+  const match = code('src/components/dune/DuneMatchScreen.tsx')
+
+  // ONE READ PATH. readOwnSecrets returns the secrets THEMSELVES — reaching
+  // for .data on the result read undefined off a Record<string, unknown>,
+  // which typechecks, and the cast swallowed the rest. Two call sites is what
+  // let them drift, so there is one.
+  check('nothing unwraps the read result a second time',
+    /readOwnSecrets\([^)]*\)[\s\S]{0,120}?fresh\.data/.test(match), false)
+  check('the heal goes through the one read path',
+    /void rereadRef\.current\(\)/.test(match), true)
+  check('...and that path hands setOwn what it was given',
+    /const fresh = await readOwnSecrets\(matchId, seat\.playerId\)[\s\S]{0,300}setOwn\(fresh as DuneSecrets\)/
+      .test(match),
+    true)
+
+  // A MISSED READ IS NOT A MISSING ROW. Only never-arrived raises the alarm.
+  check('a hiccup keeps the hand rather than alarming',
+    /if \(!everSeenOwn\.current\) setOwnMissing\(true\)/.test(match), true)
+  check('...and anything arriving clears it',
+    (match.match(/setOwnMissing\(false\)/g) ?? []).length >= 2, true)
+
+  // SAID OUT LOUD, and only where it means something.
+  check('the alarm is drawn for a seated player in a dealt game',
+    /const handLost = !!seat && !spectating && ownMissing/.test(match), true)
+  check('...and shows the notices strip on its own account',
+    match.includes('|| handLost ||'), true)
+  check('...naming what is missing rather than showing an empty tray',
+    [/data-layer="hand-lost"/.test(match),
+      match.includes('Your cards have not reached this browser')],
+    [true, true])
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.

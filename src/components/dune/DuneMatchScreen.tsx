@@ -118,6 +118,21 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
   const [row, setRow] = useState<PublicRow | null>(null)
   const [feed, setFeed] = useState<FeedStatus>('connecting')
   const [own, setOwn] = useState<DuneSecrets | null>(null)
+  /**
+   * A SEATED PLAYER WITH NO PRIVATE ROW, said out loud instead of drawn as an
+   * empty hand.
+   *
+   * Every way this can happen ends the same on screen: no treachery card, no
+   * traitors to choose from, and a public row that goes on saying you hold
+   * one. Silence there reads as "the game dealt me nothing", which is
+   * indistinguishable from a rule nobody understands — so it is named. The
+   * causes are a heal that blanked what it meant to restore (fixed), a deal
+   * that wrote one row for two seats sharing a key (refused at START now), and
+   * an account whose seat row does not match the session reading it, which no
+   * amount of client code can fix and which the player has to be told about.
+   */
+  const [ownMissing, setOwnMissing] = useState(false)
+  const everSeenOwn = useRef(false)
   const [now, setNow] = useState(() => Date.now())
   const [chat, setChat] = useState<ChatMessage[]>([])
   const [sending, setSending] = useState(false)
@@ -241,7 +256,11 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
     if (!matchId || !seat) return
     const stop = startSecretsSync(matchId, {
       expectPlayerId: seat.playerId,
-      onSecrets: r => setOwn(r.data as DuneSecrets),
+      onSecrets: r => {
+        everSeenOwn.current = true
+        setOwn(r.data as DuneSecrets)
+        setOwnMissing(false)
+      },
       onForeignRow: r => say(`received seat ${r.playerId}'s row — RLS is not holding`),
     })
     return stop
@@ -302,23 +321,46 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
    * own row: one small select, and a missed event is now at most one public
    * change behind instead of permanent.
    */
-  useEffect(() => {
-    if (rowVersion < 0 || !seat) return
-    void (async () => {
-      const fresh = await readOwnSecrets(matchId, seat.playerId)
-      if (fresh) setOwn(fresh.data as DuneSecrets)
-    })()
-    // rereadOwn is declared below and stable per seat; the version is the signal.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rowVersion, seat?.playerId])
-
+  /**
+   * ONE PLACE THAT READS THIS SEAT'S ROW, and one that sets it.
+   *
+   * There were two, and they disagreed. readOwnSecrets returns the secrets
+   * THEMSELVES — it has already unwrapped `data` — and the heal below reached
+   * for `.data` a second time. On a Record<string, unknown> that typechecks,
+   * the cast after it silenced what was left, and the undefined it read went
+   * straight into setOwn. So the heal written to RESTORE a missing hand
+   * blanked one instead, on every public delivery, for any seat whose secrets
+   * arrived before the public row did — a player who opened the match after
+   * the deal. They saw no treachery card and no traitors to choose from while
+   * the table went on saying they held one. It cost a game.
+   *
+   * Two call sites is what let them drift, so there is one now.
+   */
   const rereadOwn = async () => {
     if (!seat) return
     const fresh = await readOwnSecrets(matchId, seat.playerId)
     // KEEP WHAT WE HAD on a failed read. Blanking the tray because one request
     // hiccuped looks exactly like losing your hand.
-    if (fresh) setOwn(fresh as DuneSecrets)
+    if (fresh) {
+      everSeenOwn.current = true
+      setOwn(fresh as DuneSecrets)
+      setOwnMissing(false)
+      return
+    }
+    // NEVER ARRIVED AT ALL is a different thing from went away for a moment,
+    // and only the first is worth alarming about — see the notice.
+    if (!everSeenOwn.current) setOwnMissing(true)
   }
+  const rereadRef = useRef(rereadOwn)
+  rereadRef.current = rereadOwn
+
+  useEffect(() => {
+    if (rowVersion < 0 || !seat) return
+    void rereadRef.current()
+    // The version is the signal; the read itself is held in a ref so this
+    // effect never has to name the seat twice.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowVersion, seat?.playerId])
 
   /** A line for this seat alone. Nothing here is ever sent anywhere. */
   const say = (text: string) => setChat(c => [...c.slice(-40), {
@@ -567,14 +609,36 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
    * corner gains a tenant, which is how it crept in: the menu took top 12, the
    * notices moved to 52, and 52 is where a two-player table keeps its button.
    */
+  // A DEALT GAME IS THE ONLY PLACE THIS MEANS ANYTHING: before the deal there
+  // is no row to be missing, and a spectator is not supposed to have one.
+  const handLost = !!seat && !spectating && ownMissing
+    && !!row && (!!row.setup || (row.players?.length ?? 0) > 0)
+
   const notices = (setup || row?.spiceBlow || expired || spectating || notSeated || feed !== 'live'
     || row?.winner || row?.stormReport?.turn === row?.turn || mayAdvance || hold
-    || (row?.shipping && seat))
+    || handLost || (row?.shipping && seat))
     ? (
         <div data-layer="dune-notices" style={{
           padding: 10, font: `12px ${SERIF}`, color: PALE,
           borderBottom: '1px solid #ffffff22', background: '#0d1220',
         }}>
+          {/* AN EMPTY HAND THAT IS NOT A HAND. Loudest of the notices because
+              it is the only one that means something is actually wrong, rather
+              than something being waited on. */}
+          {handLost && (
+            <div data-layer="hand-lost" style={{
+              margin: '0 0 8px', padding: 8, borderRadius: 5,
+              background: '#43201c', border: '1px solid #c9542a',
+            }}>
+              <b>Your cards have not reached this browser.</b>{' '}
+              The table says you are seated, but the server has no private row
+              for this seat — so your treachery card and your traitors cannot be
+              shown, and an empty tray here is not what you were dealt.
+              Reload first. If it comes back, the game was dealt wrong and
+              needs restarting rather than playing on.
+            </div>
+          )}
+
           {/* A BOARD THAT HAS STOPPED UPDATING LOOKS EXACTLY LIKE A BOARD WHERE
               NOBODY IS MOVING. Which one it is gets said out loud. */}
           {feed !== 'live' && (
