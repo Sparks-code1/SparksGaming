@@ -15,7 +15,7 @@
  * `children` are rendered INSIDE the overlay, in board coordinates, for the
  * things only one caller has — the dev harness's territory picker.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   DUNE_BOARD, DUNE_PLAYER_POSITIONS, DUNE_SECTORS, DUNE_STORM_RING, DUNE_TANKS_AREA,
   DUNE_TERRITORIES, DUNE_TRACK, DUNE_TURN_DIAL,
@@ -223,7 +223,16 @@ export interface DuneBoardStack {
   posture?: 'fighter' | 'advisor'
 }
 
+/** How long the flight into a battle takes, either way. */
+export const BATTLE_ZOOM_MS = 750
+/** How close it flies. */
+export const BATTLE_ZOOM_SCALE = 2.4
+
 export interface DuneBoardProps {
+  /** The territory the view flies into — a picked battle — or null for the
+   *  whole of Arrakis. The flight is board-level, so a spectator with no
+   *  panel of their own rides it too. */
+  zoomTo?: string | null
   /** "The Shield Wall now turns blue as a reminder" — the card's own words. */
   shieldWall?: 'intact' | 'destroyed'
   storm: SectorId
@@ -393,11 +402,14 @@ function AwaitingMark({ faction, seating }: {
 }
 
 export function DuneBoard({
+  zoomTo = null,
   shieldWall = 'intact',
   storm, stacks, spice, seating, deck, mode,
   worms = [], awaiting = null, phase = null, turn = null, interactive = false, children,
   closesAt = null, windowMs, now = 0, tanks = null,
 }: DuneBoardProps) {
+  /** Where the last flight aimed — kept so the flight home retraces it. */
+  const zoomOrigin = useRef('50% 50%')
   const [svg, setSvg] = useState<string | null>(null)
 
   useEffect(() => {
@@ -452,6 +464,24 @@ export function DuneBoard({
       // Risk's map does the same — see SVGMapLayer.
       userSelect: 'none', WebkitUserSelect: 'none',
     }}>
+      {/* THE FLIGHT: scale about the territory's own centroid, held through
+          the flight home — the origin is meaningless at scale one and may
+          jump while idle, but changing it mid-transition would bend the
+          path back. Overflow stays clipped by the pinned box above. */}
+      <div data-board-zoom={zoomTo ?? undefined} style={(() => {
+        const [, , vw, vh] = DUNE_BOARD.viewBox.split(' ').map(Number)
+        const at = zoomTo ? DUNE_TERRITORIES.find(t => t.id === zoomTo) : null
+        if (at?.centroid) {
+          zoomOrigin.current =
+            `${(at.centroid.x / vw * 100).toFixed(2)}% ${(at.centroid.y / vh * 100).toFixed(2)}%`
+        }
+        return {
+          position: 'absolute' as const, inset: 0,
+          transform: zoomTo ? `scale(${BATTLE_ZOOM_SCALE})` : 'none',
+          transformOrigin: zoomOrigin.current,
+          transition: `transform ${BATTLE_ZOOM_MS}ms ease-in-out`,
+        }
+      })()}>
       {svg
         ? <div style={{ position: 'absolute', inset: 0 }}
             dangerouslySetInnerHTML={{ __html: svg }} />
@@ -714,6 +744,7 @@ export function DuneBoard({
 
         {children}
       </svg>
+      </div>
     </div>
   )
 }

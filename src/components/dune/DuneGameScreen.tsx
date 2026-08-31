@@ -46,7 +46,7 @@ import { ChatPanel } from './ChatPanel'
 import type { ChatMessage, ChatSendScope } from './ChatPanel'
 import { PlayerHud } from './PlayerHud'
 import { OwnStrip } from './OwnStrip'
-import { DuneBoard } from './DuneBoard'
+import { DuneBoard, BATTLE_ZOOM_MS } from './DuneBoard'
 import { CHARITY_WINDOW_MS } from '@/lib/dune/charity'
 import { WORM_SECONDS, WORM_RIDE_SECONDS, NEXUS_SECONDS } from '@/lib/dune/spiceBlow'
 import {
@@ -327,6 +327,21 @@ export function DuneGameScreen({
   const [atomicsOpen, setAtomicsOpen] = useState(false)
   /** WHICH card the Karama panel is spending — a worthless one included. */
   const [karamaCard, setKaramaCard] = useState<string | null>(null)
+  /**
+   * THE FLIGHT INTO A BATTLE. When the aggressor's pick lands, the board
+   * flies into the territory first and the battle screen waits behind the
+   * veil until the flight arrives; when the battle settles, the panel is
+   * already gone and the board flies home. Spectators ride the same state.
+   */
+  const battleAt = state.phase === 'Battles'
+    ? state.battles?.current?.territoryId ?? null : null
+  const [battleVeil, setBattleVeil] = useState(false)
+  useEffect(() => {
+    if (!battleAt) { setBattleVeil(false); return }
+    setBattleVeil(true)
+    const t = setTimeout(() => setBattleVeil(false), BATTLE_ZOOM_MS)
+    return () => clearTimeout(t)
+  }, [battleAt])
   /** Forces staged on the rail, waiting for a landing click on the board. */
   const [staged, setStaged] = useState({ plain: 0, starred: 0 })
   const rows = hudRows(state)
@@ -760,6 +775,7 @@ export function DuneGameScreen({
               rectangle. Sizing a box to the board's aspect ratio instead was
               what left the column's height unused. */}
           <DuneBoard
+            zoomTo={battleAt}
             shieldWall={state.shieldWall}
             storm={state.storm} stacks={[...stacks, ...previewStacks]}
             spice={state.spiceOnBoard}
@@ -1110,7 +1126,7 @@ export function DuneGameScreen({
               deadline. Everything it draws is the public battles object plus
               THIS seat's own hand and traitors — the plan leaves through the
               handlers and comes back only at the reveal. */}
-          {state.phase === 'Battles' && state.battles && seat
+          {state.phase === 'Battles' && state.battles && seat && !battleVeil
             && onBattlePick && onBattlePlan && onBattleAnswer && (
             <BattlePanel
               // A FRESH PANEL PER BATTLE. The dial, the chosen disc and the

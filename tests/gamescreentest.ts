@@ -1785,5 +1785,53 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     [true, true])
 }
 
+// ── the flight into a battle ──────────────────────────────────────────────
+// A picked battle flies the whole table into the territory before the
+// battle screen opens — board-level, so a spectator rides it too — and
+// home again when it settles.
+{
+  const { BATTLE_ZOOM_MS, BATTLE_ZOOM_SCALE } = await import('@/components/dune/DuneBoard')
+  const { DUNE_BOARD, DUNE_TERRITORIES } = await import('@/data/dune/boardData')
+  check('the flight is three quarters of a second, at close range',
+    [BATTLE_ZOOM_MS, BATTLE_ZOOM_SCALE], [750, 2.4])
+
+  const battling9 = draw({
+    state: {
+      ...state, phase: 'Battles',
+      battles: {
+        turn: 3, at: 0, fought: [], usedLeaders: {},
+        order: ['atreides', 'harkonnen'], closesAt: 9_999_999,
+        current: {
+          territoryId: 'territory-13', sectors: ['sector-10'],
+          aggressor: 'atreides', defender: 'harkonnen', committed: [],
+          closesAt: 9_999_999,
+        },
+      },
+    } as never,
+    onBattlePick: () => {}, onBattlePlan: () => {}, onBattleAnswer: () => {},
+  } as never)
+  const t13 = DUNE_TERRITORIES.find(t => t.id === 'territory-13')!
+  const [, , vw, vh] = DUNE_BOARD.viewBox.split(' ').map(Number)
+  const origin = `${(t13.centroid.x / vw * 100).toFixed(2)}% ${(t13.centroid.y / vh * 100).toFixed(2)}%`
+  check('a picked battle aims the board at the territory\'s own centroid',
+    [/data-board-zoom="territory-13"/.test(battling9),
+      battling9.includes(`scale(${BATTLE_ZOOM_SCALE})`),
+      battling9.includes(origin)],
+    [true, true, true])
+  check('...and the whole of Arrakis flies nowhere',
+    [/data-board-zoom/.test(draw()), /scale\(2\.4\)/.test(draw())],
+    [false, false])
+
+  const screenZ = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
+  check('the veil holds the battle screen back for exactly the flight',
+    [/setTimeout\(\(\) => setBattleVeil\(false\), BATTLE_ZOOM_MS\)/.test(screenZ),
+      /state\.battles && seat && !battleVeil/.test(screenZ),
+      /zoomTo=\{battleAt\}/.test(screenZ)],
+    [true, true, true])
+  const boardZ = readFileSync('src/components/dune/DuneBoard.tsx', 'utf8')
+  check('...and the flight home retraces the way it came',
+    /const zoomOrigin = useRef\('50% 50%'\)/.test(boardZ), true)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 process.exit(pass ? 0 : 1)
