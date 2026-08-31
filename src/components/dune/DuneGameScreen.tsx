@@ -74,6 +74,9 @@ import { HajrPanel } from './HajrPanel'
 import { WeatherPanel } from './WeatherPanel'
 import { AtomicsPanel } from './AtomicsPanel'
 import { mayAtomics } from '@/lib/dune/storm'
+import { KaramaPanel, KaramaGiveBackPanel } from './KaramaPanel'
+import { isKaramaCardId } from '@/lib/dune/karama'
+import type { KaramaUse } from '@/lib/dune/karama'
 import type { TruthtranceQuestion } from '@/lib/dune/truthtrance'
 import {
   REVIVAL_CAP, STARRED_REVIVALS_PER_TURN, PATRON_EXTRA_REVIVALS,
@@ -216,6 +219,14 @@ export interface DuneGameScreenProps {
   /** Play Family Atomics: bring the Shield Wall down between the beats. */
   onAtomics?: () => void
   atomicsRefusal?: { code: string } | null
+  /** Spend a Karama on one of the holder's own uses. */
+  onKarama?: (cardId: string, use: KaramaUse) => void
+  /** Spend a Karama on stopping a named advantage for this phase. */
+  onKaramaStop?: (cardId: string, target: FactionId, ref: string) => void
+  karamaRefusal?: { code: string } | null
+  /** Pay the Harkonnen give-back — or push it past its clock. */
+  onGiveBack?: (cards: string[]) => void
+  giveBackRefusal?: { code: string } | null
   /** The last NEXUS action's refusal — code and which action, the same
    *  discipline as battleRefusal. */
   nexusRefusal?: { type: string; code: string } | null
@@ -293,6 +304,8 @@ export function DuneGameScreen({
   onTruthtrance, truthtranceRefusal = null,
   onGhola, gholaRefusal = null, onHajr, hajrRefusal = null,
   onWeather, weatherRefusal = null, onAtomics, atomicsRefusal = null,
+  onKarama, onKaramaStop, karamaRefusal = null,
+  onGiveBack, giveBackRefusal = null,
   battleRefusal,
   worms = [], onWormRide, onPassTurn,
   bidding = null, charity = null, setup = null, now,
@@ -306,6 +319,8 @@ export function DuneGameScreen({
   const [hajrOpen, setHajrOpen] = useState(false)
   const [weatherOpen, setWeatherOpen] = useState(false)
   const [atomicsOpen, setAtomicsOpen] = useState(false)
+  /** WHICH card the Karama panel is spending — a worthless one included. */
+  const [karamaCard, setKaramaCard] = useState<string | null>(null)
   /** Forces staged on the rail, waiting for a landing click on the board. */
   const [staged, setStaged] = useState({ plain: 0, starred: 0 })
   const rows = hudRows(state)
@@ -1159,6 +1174,11 @@ export function DuneGameScreen({
               // THE FORESEEN ELEMENT rides this seat's own secrets row — the
               // server wrote it there and nowhere public — and is only shown
               // against the battle it was asked in.
+              // THE KARAMA-SEEN PLAN, this seat's own row and this battle
+              // alone — a stale sighting from a past battle never renders.
+              planSeen={own?.karamaPlanSeen
+                && own.karamaPlanSeen.territoryId === state.battles?.current?.territoryId
+                ? own.karamaPlanSeen : null}
               prescienceAnswer={(() => {
                 const p = (own as (typeof own & {
                   battlePrescience?: { territoryId: string; ask: string; answer: string | number }
@@ -1285,6 +1305,51 @@ export function DuneGameScreen({
               onClose={() => setAtomicsOpen(false)}
               refusal={atomicsRefusal?.code ?? null} />
           )}
+          {karamaCard && seat && onKarama && onKaramaStop
+            && (own?.cards ?? []).includes(karamaCard) && (
+            <KaramaPanel
+              seat={seat} mode={state.mode} cardId={karamaCard}
+              players={state.players}
+              leaders={(state.tanks?.leaders?.[seat] ?? [])
+                .filter(l => !l.faceDown).map(l => l.name)}
+              dead={state.tanks?.forces?.[seat] ?? { plain: 0, starred: 0 }}
+              onUse={onKarama} onStop={onKaramaStop}
+              onClose={() => setKaramaCard(null)}
+              refusal={karamaRefusal?.code ?? null} />
+          )}
+          {/* THE GIVE-BACK IS A DOOR, not an offer: while the debt stands
+              the debtor sees their hand to choose from, and past the clock
+              any seat may push the default. */}
+          {state.karamaGiveBack && seat && onGiveBack
+            && (state.karamaGiveBack.from === seat
+              || now >= state.karamaGiveBack.closesAt) && (
+            <KaramaGiveBackPanel
+              owed={{ to: state.karamaGiveBack.to, count: state.karamaGiveBack.count }}
+              hand={state.karamaGiveBack.from === seat ? (own?.cards ?? []) : []}
+              expired={now >= state.karamaGiveBack.closesAt}
+              onPay={onGiveBack}
+              refusal={giveBackRefusal?.code ?? null} />
+          )}
+          {/* A STOP IS PUBLIC: the current phase's suppressions read to the
+              whole table, by name. */}
+          {(state.suppressed ?? []).filter(s =>
+            s.turn === state.turn && s.phase === state.phase).length > 0 && (
+            <div data-suppressed-line="" style={{
+              position: 'absolute', left: 0, right: 0, bottom: 0,
+              padding: '6px 12px', background: '#0d1220', color: '#e8b04b',
+              borderTop: '1px solid #e8b04b44', font: '13px Georgia, serif',
+            }}>
+              {(state.suppressed ?? [])
+                .filter(s => s.turn === state.turn && s.phase === state.phase)
+                .map((s, i) => (
+                  <span key={i} style={{ marginRight: 14 }}>
+                    Karama — the {FACTION_LOOK[s.faction]?.name ?? s.faction}
+                    {'\u2019'}s advantage ({s.ref.split('.').pop()}) is stopped
+                    this phase, by the {FACTION_LOOK[s.by]?.name ?? s.by}.
+                  </span>
+                ))}
+            </div>
+          )}
           {/* THE SEPARATION BANNER: allies may not share ground, and a pair
               still sharing when the phase ends forfeits the later seat's
               forces there. Said here, before the pass that would be refused
@@ -1378,6 +1443,12 @@ export function DuneGameScreen({
                   && state.stormMoved !== state.turn
                   && mayAtomics(state.forces, seat, state.storm)
                   ? ['familyatomics'] : []),
+                // EVERY KARAMA-CAPABLE CARD ribbons — for the Bene Gesserit
+                // in the advanced game that is their worthless cards too.
+                ...(onKarama && onKaramaStop
+                  ? (own?.cards ?? []).filter(id =>
+                    isKaramaCardId(seat, state.mode, id))
+                  : []),
               ]}
               onPlayCard={id => {
                 if (id === 'truthtrance') setTtOpen(true)
@@ -1385,6 +1456,7 @@ export function DuneGameScreen({
                 if (id === 'hajr') setHajrOpen(true)
                 if (id === 'weathercontrol') setWeatherOpen(true)
                 if (id === 'familyatomics') setAtomicsOpen(true)
+                if (isKaramaCardId(seat, state.mode, id)) setKaramaCard(id)
               }} />
           )}
         </div>

@@ -715,6 +715,21 @@ export default function DuneMultiSeatView() {
         atomicsRefusal={refusedBy === 'FAMILY_ATOMICS' && refused
           ? { code: refused }
           : null}
+        onKarama={mine
+          ? (card, use) => void send(mine, 'KARAMA', { card, use } as never)
+          : undefined}
+        onKaramaStop={mine
+          ? (card, target, ref) => void send(mine, 'KARAMA_STOP', { card, target, ref } as never)
+          : undefined}
+        karamaRefusal={(refusedBy === 'KARAMA' || refusedBy === 'KARAMA_STOP') && refused
+          ? { code: refused }
+          : null}
+        onGiveBack={mine
+          ? cards => void send(mine, 'KARAMA_GIVE_BACK', { cards } as never)
+          : undefined}
+        giveBackRefusal={refusedBy === 'KARAMA_GIVE_BACK' && refused
+          ? { code: refused }
+          : null}
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused
           ? { type: refusedBy, code: refused }
           : null}

@@ -14,6 +14,7 @@ import { SHIPMENT_SECONDS } from '@/lib/dune/shipment'
 import { BID_SECONDS } from '@/lib/dune/bidding'
 import { CHARITY_WINDOW_MS } from '@/lib/dune/charity'
 import { WORM_SECONDS, NEXUS_SECONDS } from '@/lib/dune/spiceBlow'
+import { KARAMA_GIVE_SECONDS } from '@/lib/dune/karama'
 import { SETUP_SECONDS } from '@/lib/dune/setup'
 import {
   BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
@@ -48,6 +49,7 @@ const LENGTHS = {
   mentatSeconds: MENTAT_READY_SECONDS,
   nexusSeconds: NEXUS_SECONDS,
   stormCardSeconds: STORM_CARD_SECONDS,
+  karamaGiveSeconds: KARAMA_GIVE_SECONDS,
 }
 const base = {
   phase: 'Storm', turn: 2, mode: 'basic', storm: 'sector-3',

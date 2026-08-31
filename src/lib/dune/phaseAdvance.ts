@@ -122,6 +122,8 @@ export interface AdvanceState {
   nexus?: { closesAt: number; ready?: string[] }
   /** The storm's between-beat: calculated, the cards deciding, not moved. */
   stormCarry?: { turn: number; roll: number; closesAt: number }
+  /** The Harkonnen's owed return after a Karama take, on its clock. */
+  karamaGiveBack?: { closesAt: number }
   phaseClock?: PhaseClock
 }
 
@@ -149,11 +151,17 @@ export interface AdvanceHold {
   code: 'setup-not-finished' | 'game-over' | 'blow-not-turned'
     | 'worms-pending' | 'charity-open' | 'auction-running' | 'shipping-underway'
     | 'battles-underway' | 'worm-ride' | 'mentat-pause' | 'nexus-open'
-    | 'storm-window'
+    | 'storm-window' | 'karama-give-back'
   until?: number
 }
 
 export function advanceHold(state: AdvanceState, now: number): AdvanceHold | null {
+  // A KARAMA TAKE OWES ITS RETURN before the match moves on, whatever the
+  // phase: cards out of a hand with none yet given back is half a rule.
+  // Past the clock the push settles it, so the hold expires like the rest.
+  if (state.karamaGiveBack && now < state.karamaGiveBack.closesAt) {
+    return { code: 'karama-give-back', until: state.karamaGiveBack.closesAt }
+  }
   // Setup is not a phase, but it parks the match at Storm until it closes.
   // WITH ITS DEADLINE, because past it the hold is answerable: the server
   // closes an expired window on any setup answer at all, so `until` is when
@@ -692,6 +700,7 @@ export function resetDeadlines(
     mentatSeconds: number
     nexusSeconds: number
     stormCardSeconds: number
+    karamaGiveSeconds: number
   },
 ): { patch: Record<string, unknown>; reset: string[] } {
   const patch: Record<string, unknown> = {}
@@ -718,6 +727,12 @@ export function resetDeadlines(
       ...state.stormCarry, closesAt: now + lengths.stormCardSeconds * 1000,
     }
     reset.push('storm-window')
+  }
+  if (state.karamaGiveBack) {
+    patch.karamaGiveBack = {
+      ...state.karamaGiveBack, closesAt: now + lengths.karamaGiveSeconds * 1000,
+    }
+    reset.push('karama-give-back')
   }
   if (state.spiceBlow) {
     patch.spiceBlow = { ...state.spiceBlow, closesAt: now + lengths.wormSeconds * 1000 }

@@ -808,11 +808,13 @@ check('the three windows have their seconds',
     /voiced: voiceNow\?\.done && voiceNow\.command && myFaction === voiceOver/.test(planCase), true)
   check('an expired silence is written to the row the foresight reads',
     /battlePlan: \{ territoryId: c\.territoryId, dial: 0 \},/.test(planCase), true)
-  check('the question opens when the plan it reads commits — ally battles included',
-    /const presNow = \(hasAtreides \|\| presProxy\) && opponentIn && !pres/.test(planCase)
+  check('the question opens when the plan it reads commits — ally battles included, karama-stoppable',
+    /const presWanted = \(hasAtreides \|\| !!presProxy\)/.test(planCase)
+      && /const presNow = presWanted && opponentIn && !pres/.test(planCase)
+      && /'abilities\.battle' as never,/.test(planCase)
       && /over: presOver, done: false,/.test(planCase), true)
-  check('...and the reveal WAITS on it',
-    /const mayReveal = allIn\s*[\r\n]+\s*&& \(\(!hasAtreides && !presProxy\) \|\| \(presNow\?\.done \?\? false\)\)/.test(planCase), true)
+  check('...and the reveal WAITS on it — never on a window a stop keeps shut',
+    /const mayReveal = allIn && \(!presWanted \|\| \(presNow\?\.done \?\? false\)\)/.test(planCase), true)
   const voiceCase = fn.slice(fn.indexOf("case 'BATTLE_VOICE'"), fn.indexOf("case 'BATTLE_PRESCIENCE'"))
   check('the Voice is its speaker\'s alone until the clock frees anyone',
     /code: 'not-your-voice'/.test(voiceCase) && /if \(!expired\) \{/.test(voiceCase), true)

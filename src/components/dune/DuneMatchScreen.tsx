@@ -712,6 +712,7 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
                 'worm-ride': 'Shai-Hulud waits — the Fremen may ride.',
                 'nexus-open': 'A Nexus — the table is talking alliances.',
                 'storm-window': 'The storm is calculated — the cards may answer before it moves.',
+                'karama-give-back': 'The Harkonnen owe cards back for the ones they took.',
                 'mentat-pause': 'the table is readying for the next turn',
                 'game-over': 'The game is over.',
                 'setup-not-finished': 'Setting up.',
@@ -883,6 +884,21 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
           : null}
         onAtomics={seat ? () => void send({ type: 'FAMILY_ATOMICS' }) : undefined}
         atomicsRefusal={refusedBy === 'FAMILY_ATOMICS' && refused
+          ? { code: refused }
+          : null}
+        onKarama={seat
+          ? (card, use) => void send({ type: 'KARAMA', card, use })
+          : undefined}
+        onKaramaStop={seat
+          ? (card, target, ref) => void send({ type: 'KARAMA_STOP', card, target, ref })
+          : undefined}
+        karamaRefusal={(refusedBy === 'KARAMA' || refusedBy === 'KARAMA_STOP') && refused
+          ? { code: refused }
+          : null}
+        onGiveBack={seat
+          ? cards => void send({ type: 'KARAMA_GIVE_BACK', cards })
+          : undefined}
+        giveBackRefusal={refusedBy === 'KARAMA_GIVE_BACK' && refused
           ? { code: refused }
           : null}
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused

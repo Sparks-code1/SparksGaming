@@ -41,6 +41,10 @@ import {
 } from '../_shared/duneSpiceBlow.gen.ts'
 import { bgFollowsShip, POLAR_SINK, POLAR_SINK_SECTOR } from '../_shared/duneShipment.gen.ts'
 import { askTruthtrance, planFromRow } from '../_shared/duneTruthtrance.gen.ts'
+import {
+  isSuppressed, karamaAllowed, playKarama, isKaramaCardId, suppressibleRefs,
+  KARAMA_GIVE_SECONDS,
+} from '../_shared/duneKarama.gen.ts'
 import { prescienceFor, withReveal, PRESCIENT_FACTION } from '../_shared/dunePrescience.gen.ts'
 import {
   openingPosition, answerFremenPlacement, answerPrediction, answerTraitor,
@@ -557,7 +561,12 @@ Deno.serve(async req => {
       // { prescience } alone would take that seat's hand and purse with it —
       // this is the smallest write in the phase and the easiest place to lose
       // everything else.
-      const openIndex = step.status === 'awaiting' ? step.carry.index : -1
+      const openIndex = step.status === 'awaiting'
+        // A STOPPED ADVANTAGE OPENS NOTHING: the Atreides sight of the card
+        // is suppressed for this phase, so no reveal is written at all.
+        && !isSuppressed((state.suppressed ?? []) as never, 'atreides' as never,
+          'abilities.bidding' as never, Number(state.turn ?? 0), 'Bidding' as never)
+        ? step.carry.index : -1
       const openReveal = prescienceFor({ seated: order, lot: deal.drawn, index: openIndex })
       const prescientSeat = seatOfFaction[PRESCIENT_FACTION]
       let openSecrets: Record<string, unknown> = {}
@@ -1560,8 +1569,12 @@ Deno.serve(async req => {
           + (justClosed.winner === BONUS_FACTION ? 1 : 0)
         // The SAME default the settlement uses, so two computations of
         // the due cannot disagree about a missing limit.
-        bonusDue = bonusCardsDue(
-          [justClosed], handAfter, step.carry.limits?.[BONUS_FACTION] ?? Infinity)
+        bonusDue = isSuppressed((state.suppressed ?? []) as never,
+          BONUS_FACTION as never, 'abilities.treachery' as never,
+          Number(state.turn ?? 0), 'Bidding' as never)
+          ? 0
+          : bonusCardsDue(
+            [justClosed], handAfter, step.carry.limits?.[BONUS_FACTION] ?? Infinity)
         // THE ADVANTAGE DEGRADES LIKE THE ROW. The free card is "if there
         // are cards left": an exhausted deck gives fewer, or none, and never
         // refuses the pass that closed the sale.
@@ -1587,8 +1600,18 @@ Deno.serve(async req => {
           // the deck's truth caps the bonus — the degrade above measured it
           deckHolds: bonusDue,
           // Who is in the game, for the Emperor's redirect. From the auction's
-          // own order rather than whoever happens to have a secrets row.
-          seated: step.carry.order,
+          // own order rather than whoever happens to have a secrets row — and
+          // WITHOUT the Emperor while their collection is suppressed: the
+          // payment falls to the bank, which is the stop doing its work.
+          seated: isSuppressed((state.suppressed ?? []) as never,
+            'emperor' as never, 'abilities.bidding' as never,
+            Number(state.turn ?? 0), 'Bidding' as never)
+            ? step.carry.order.filter((f) => f !== 'emperor')
+            : step.carry.order,
+          // THE KARAMA FREE CARD: a winner holding the entitlement pays
+          // nobody, and the entitlement is spent below in the same write.
+          freeFor: (((state.karamaFreeCard ?? []) as string[])
+            .includes(justClosed.winner) ? justClosed.winner : null) as never,
           // The winner's ally, whose purse stands behind the winner's. The
           // split is settleCard's own — both purses come back through
           // writes.secrets like any other settlement.
@@ -1624,9 +1647,13 @@ Deno.serve(async req => {
         // The reveal FOLLOWS THE ROW. A card that has closed is no longer the
         // card up for purchase, and a reveal left pointing at it is one the
         // Atreides can still read after it has been dealt to somebody else.
-        const nextReveal = prescienceFor({
-          seated: step.carry.order, lot, index: outcome.step.carry.index,
-        })
+        const nextReveal = isSuppressed((state.suppressed ?? []) as never,
+          'atreides' as never, 'abilities.bidding' as never,
+          Number(state.turn ?? 0), 'Bidding' as never)
+          ? null
+          : prescienceFor({
+            seated: step.carry.order, lot, index: outcome.step.carry.index,
+          })
         const seatId = seatOfFaction[PRESCIENT_FACTION]
         if (seatId) {
           // MERGED ONTO THE PAYMENT, not written beside it. If this seat also
@@ -1645,6 +1672,8 @@ Deno.serve(async req => {
             // A card sold mid-auction is as public as one sold at the end.
             ...(justClosed
               ? {
+                karamaFreeCard: ((state.karamaFreeCard ?? []) as string[])
+                  .filter((f) => f !== justClosed.winner),
                 lastAuction: {
                   turn: state.turn ?? 0,
                   at: now,
@@ -1893,6 +1922,9 @@ Deno.serve(async req => {
       // An expired charity window is closed by the advance that leaves it, the
       // way CLOSE_CHARITY would have. The claims stand; the window is over.
       if (state.phase === 'CHOAM Charity') delete base.charity
+      // A free-card entitlement never used lapses with the auction — the
+      // card was spent when it was played, as at the table.
+      if (state.phase === 'Bidding') delete base.karamaFreeCard
       // An unridden worm is a ride declined: the advance past the deadline
       // clears it, the same shape as charity's window — and an outlived
       // Nexus goes with it, its private proposals inert by their turn
@@ -2167,7 +2199,11 @@ Deno.serve(async req => {
     // seat is two secrets rows in one transaction.
     case 'SHIP': {
       const w = state.shipping as
-        { turn: number; order: string[]; at: number; done: { shipped?: boolean; moved?: boolean }; closesAt: number } | undefined
+        {
+          turn: number; order: string[]; at: number
+          done: { shipped?: boolean; moved?: boolean; karamaRate?: boolean }
+          closesAt: number
+        } | undefined
       if (state.phase !== 'Shipment and Movement' || !w) {
         return json({ error: 'the turn is not at shipment', code: 'wrong-phase' }, 409)
       }
@@ -2205,19 +2241,51 @@ Deno.serve(async req => {
       const kind = (action.kind ?? 'off-planet') as 'off-planet' | 'cross' | 'to-reserves'
       const count = Number(action.count ?? 0)
       const starred = Number(action.starred ?? 0)
+      // THE GUILD'S KARAMA BAN: an off-planet shipment stopped for this
+      // seat, this turn — refused at the door, whatever else is legal.
+      if (kind === 'off-planet' && ((state.karamaShipBan ?? []) as {
+        faction: string; turn: number
+      }[]).some((b) => b.faction === myFaction && b.turn === Number(state.turn))) {
+        return json({ error: 'a Karama has stopped your shipment', code: 'karama-stopped' }, 409)
+      }
+      const karamaRated = !!w.done.karamaRate
       const judged = judgeShipment({
         faction: myFaction as never, kind, count, starred,
         to: action.to as never, from: action.from as never,
         forces: (state.forces ?? []) as never,
         reserves: me?.reserves ?? 0,
         reservesStarred: me?.reservesStarred ?? 0,
-        spice: readSpice(secrets),
+        // A KARAMA-RATED shipment is affordability-checked below at the
+        // karama price, not the sheet's — the judge sees a bottomless purse.
+        spice: readSpice(secrets) + (karamaRated ? 1_000_000 : 0),
         storm: state.storm as never,
         guildSeated: 'spacing-guild' in seatOfFaction,
         ally: shipAlly as never,
         allySpice: shipAllySpice,
       })
       if (!judged.ok) return json({ error: 'that shipment is not legal', code: judged.refusal }, 409)
+      // ── the fee, as the cards and the stops leave it ────────────────────
+      // Karama rate: half the shipper's OWN rate, paid to the bank and never
+      // the Guild. A suppressed Guild collection also falls to the bank.
+      let shipFee = judged.cost
+      let shipFeeTo: 'bank' | 'guild' = judged.payee
+      if (karamaRated && kind !== 'to-reserves' && action.to) {
+        const k = shipCost({
+          faction: myFaction as never, kind,
+          territoryId: (action.to as { territoryId: string }).territoryId,
+          count, guildSeated: false, guildAllied: true,
+        })
+        shipFee = k.cost
+        shipFeeTo = 'bank'
+        if (shipFee > readSpice(secrets) + shipAllySpice) {
+          return json({ error: 'that shipment is not legal', code: 'cannot-pay' }, 409)
+        }
+      }
+      if (isSuppressed((state.suppressed ?? []) as never,
+        'spacing-guild' as never, 'abilities.shipment' as never,
+        Number(state.turn ?? 0), 'Shipment and Movement' as never)) {
+        shipFeeTo = 'bank'
+      }
 
       // ── the board and the reserves ──────────────────────────────────────
       let forces = (state.forces ?? []) as never[]
@@ -2252,9 +2320,9 @@ Deno.serve(async req => {
       // A PAYMENT TO A SEAT IS TWO ROWS: the payer's purse down, the Guild's
       // up, in the same transaction — the ledger holds the arithmetic.
       const guildSeat = seatOfFaction['spacing-guild']
-      const paySeat = judged.payee === 'guild' && guildSeat && guildSeat !== playerId
+      const paySeat = shipFeeTo === 'guild' && guildSeat && guildSeat !== playerId
       const secretsPatch: Record<string, unknown> = {}
-      if (judged.cost > 0) {
+      if (shipFee > 0) {
         const purses: Record<string, number> = { [playerId]: readSpice(secrets) }
         let guildRow: Record<string, unknown> = {}
         if (paySeat) {
@@ -2271,7 +2339,7 @@ Deno.serve(async req => {
         // settlement uses. An ally who IS the payee (a Guild allied with the
         // shipper) covering the remainder from their own purse nets nothing,
         // so that move is dropped rather than booked.
-        const share = allyShare(judged.cost, readSpice(secrets))
+        const share = allyShare(shipFee, readSpice(secrets))
         const feeTo = paySeat ? guildSeat : BANK
         const moved = applySpiceMoves(purses, ([
           ...(share.own > 0
@@ -2320,7 +2388,7 @@ Deno.serve(async req => {
       })
       if (error) return json({ error: error.message }, 500)
       if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
-      return json({ cost: judged.cost, paidTo: judged.payee, version: data[0].version })
+      return json({ cost: shipFee, paidTo: shipFeeTo, version: data[0].version })
     }
 
     case 'MOVE': {
@@ -2622,6 +2690,10 @@ Deno.serve(async req => {
         // ALLIANCE CARD reaches the same Voice into an ally's battle, over
         // the ally's opponent, from outside it.
         ...(() => {
+          // A STOPPED VOICE never opens: the suppression is the whole phase's.
+          if (isSuppressed((state.suppressed ?? []) as never,
+            'bene-gesserit' as never, 'abilities.battle' as never,
+            Number(state.turn ?? 0), 'Battles' as never)) return null
           const inFight = aggressor === 'bene-gesserit' || opponent === 'bene-gesserit'
           const proxy = allyInterrogator({
             faction: 'bene-gesserit' as never,
@@ -2789,6 +2861,12 @@ Deno.serve(async req => {
         aggressor: c.aggressor as never, defender: c.defender as never,
         players: (state.players ?? []) as never,
       })
+      // A STOPPED QUESTION never opens — and the reveal does not wait on a
+      // window that cannot exist.
+      const presWanted = (hasAtreides || !!presProxy)
+        && !isSuppressed((state.suppressed ?? []) as never,
+          'atreides' as never, 'abilities.battle' as never,
+          Number(state.turn ?? 0), 'Battles' as never)
       const presOver = hasAtreides
         ? combatants.find((f) => f !== 'atreides')
         : presProxy?.over
@@ -2797,7 +2875,7 @@ Deno.serve(async req => {
       const pres = (c as { prescience?: {
         by: string; over?: string; closesAt: number; done: boolean; asked?: string
       } }).prescience
-      const presNow = (hasAtreides || presProxy) && opponentIn && !pres
+      const presNow = presWanted && opponentIn && !pres
         ? {
           by: 'atreides', over: presOver, done: false,
           closesAt: now + BATTLE_PRESCIENCE_SECONDS * 1000,
@@ -2805,8 +2883,7 @@ Deno.serve(async req => {
         : pres
 
       const allIn = combatants.every((f) => !!plans[f])
-      const mayReveal = allIn
-        && ((!hasAtreides && !presProxy) || (presNow?.done ?? false))
+      const mayReveal = allIn && (!presWanted || (presNow?.done ?? false))
       const current = mayReveal
         ? {
           ...c, committed: combatants,
@@ -3162,6 +3239,357 @@ Deno.serve(async req => {
       }
       return await settleBattle(
         b as never, c as never, [...c.revealed.traitor.calls] as never, choice)
+    }
+
+    // ── Karama, spent on the holder's own use ───────────────────────────────
+    // Seven uses — two on the card, five faction powers — each judged by
+    // the shared law and spent only when the use lands. The CARD may be a
+    // worthless one: the Bene Gesserit's advanced power makes those Karamas,
+    // and isKaramaCardId is the one door that knows it.
+    case 'KARAMA': {
+      if (!myFaction) return json({ error: 'your seat has no faction', code: 'no-faction' }, 409)
+      const kCard = String(action.card ?? 'karama')
+      const kUse = (action.use ?? {}) as { id?: string } & Record<string, unknown>
+      const kMode = state.mode === 'advanced' ? 'advanced' : 'basic'
+      if (!isKaramaCardId(myFaction as never, kMode as never, kCard)) {
+        return json({ error: 'that card is no Karama in your hands', code: 'not-a-karama' }, 409)
+      }
+      const kBad = karamaAllowed(myFaction as never, kMode as never, kUse.id as never)
+      if (kBad) return json({ error: 'that use is not yours', code: kBad }, 409)
+      const { data: kRow } = await admin
+        .from('match_secrets').select('data')
+        .eq('match_id', matchId).eq('player_id', playerId).maybeSingle()
+      const kMine = (kRow?.data ?? {}) as { cards?: string[] }
+      if (!(kMine.cards ?? []).includes(kCard)) {
+        return json({ error: 'you do not hold that card', code: 'card-not-held' }, 409)
+      }
+      const kHand = [...(kMine.cards ?? [])]
+      kHand.splice(kHand.indexOf(kCard), 1)
+      /** The spend every use shares: hand, count, discard — merged onto
+       *  whatever else the use writes. */
+      const kSpent = (extra: Record<string, unknown>, secretsExtra: Record<string, unknown> = {}) => ({
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state,
+          ...extra,
+          players: ((extra.players ?? state.players ?? []) as {
+            faction: string; handCount?: number
+          }[]).map((p) => p.faction === myFaction ? { ...p, handCount: kHand.length } : p),
+          treacheryDiscard: [
+            ...((state.treacheryDiscard ?? []) as string[]), kCard,
+          ],
+        },
+        p_secrets: { [playerId]: { ...kMine, cards: kHand }, ...secretsExtra },
+      })
+
+      if (kUse.id === 'guild-rate-shipment') {
+        const kw = state.shipping as {
+          order: string[]; at: number; done: { shipped?: boolean }
+        } | undefined
+        if (state.phase !== 'Shipment and Movement' || !kw
+          || kw.order[kw.at] !== myFaction || kw.done.shipped) {
+          return json({ error: 'your shipment is not open', code: 'no-window' }, 409)
+        }
+        const { data, error } = await admin.rpc('apply_match_write', kSpent({
+          shipping: { ...kw, done: { ...kw.done, karamaRate: true } },
+        }))
+        if (error) return json({ error: error.message }, 500)
+        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+        return json({ karama: kUse.id, version: data[0].version })
+      }
+
+      if (kUse.id === 'free-treachery-card') {
+        if (state.phase !== 'Bidding' || (state.auction as { status?: string } | null)?.status !== 'awaiting') {
+          return json({ error: 'no auction is running', code: 'no-window' }, 409)
+        }
+        if (((state.karamaFreeCard ?? []) as string[]).includes(myFaction)) {
+          return json({ error: 'your entitlement stands already', code: 'already-played' }, 409)
+        }
+        const { data, error } = await admin.rpc('apply_match_write', kSpent({
+          karamaFreeCard: [...((state.karamaFreeCard ?? []) as string[]), myFaction],
+        }))
+        if (error) return json({ error: error.message }, 500)
+        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+        return json({ karama: kUse.id, version: data[0].version })
+      }
+
+      if (kUse.id === 'atreides-see-battle-plan') {
+        const c9 = (state.battles as { current?: {
+          territoryId: string; aggressor: string; defender: string; revealed?: unknown
+        } } | undefined)?.current
+        if (state.phase !== 'Battles' || !c9 || c9.revealed) {
+          return json({ error: 'no plan is there to see', code: 'no-window' }, 409)
+        }
+        const kTarget = String(kUse.target ?? '')
+        if (![c9.aggressor, c9.defender].includes(kTarget)) {
+          return json({ error: 'they are not in this battle', code: 'not-in-battle' }, 409)
+        }
+        const { data: tRow } = await admin
+          .from('match_secrets').select('data')
+          .eq('match_id', matchId).eq('player_id', seatOfFaction[kTarget]).maybeSingle()
+        const theirs9 = (tRow?.data ?? {}) as {
+          battlePlan?: { territoryId?: string } & Record<string, unknown>
+        }
+        if (theirs9.battlePlan?.territoryId !== c9.territoryId) {
+          return json({ error: 'their plan is not in yet', code: 'nothing-to-see' }, 409)
+        }
+        const { territoryId: _t9, ...seenPlan } = theirs9.battlePlan
+        const { data, error } = await admin.rpc('apply_match_write', kSpent({}, {
+          [playerId]: {
+            ...kMine, cards: kHand,
+            karamaPlanSeen: { territoryId: c9.territoryId, target: kTarget, plan: seenPlan },
+          },
+        }))
+        if (error) return json({ error: error.message }, 500)
+        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+        return json({ karama: kUse.id, plan: seenPlan, version: data[0].version })
+      }
+
+      if (kUse.id === 'emperor-free-revival') {
+        const kAsked = playGhola({
+          faction: myFaction as never,
+          tanks: (state.tanks ?? emptyTanks()) as never,
+          choice: kUse.leader
+            ? { leader: String(kUse.leader) }
+            : { plain: Number(kUse.plain ?? 0), starred: Number(kUse.starred ?? 0) },
+          cap: 3,
+        })
+        if (!kAsked.ok) return json({ error: 'that revival is not legal', code: kAsked.refusal }, 409)
+        const { data, error } = await admin.rpc('apply_match_write', kSpent({
+          tanks: kAsked.tanks,
+          ...(kAsked.toReserves
+            ? {
+              players: ((state.players ?? []) as {
+                faction: string; reserves: number; reservesStarred?: number
+              }[]).map((p) => p.faction === myFaction
+                ? {
+                  ...p,
+                  reserves: p.reserves + kAsked.toReserves!.plain,
+                  ...(kAsked.toReserves!.starred > 0
+                    ? { reservesStarred: (p.reservesStarred ?? 0) + kAsked.toReserves!.starred }
+                    : null),
+                }
+                : p),
+            }
+            : null),
+          ...(kAsked.leader
+            ? {
+              revivedLeaders: [...new Set([
+                ...((state.revivedLeaders ?? []) as string[]), kAsked.leader,
+              ])],
+            }
+            : null),
+        }))
+        if (error) return json({ error: error.message }, 500)
+        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+        return json({ karama: kUse.id, version: data[0].version })
+      }
+
+      if (kUse.id === 'fremen-place-worm') {
+        // the standing shield spares the ally here exactly as it does a
+        // worm off the deck — a Karama worm is a normal worm
+        const ps9 = (state.players ?? []) as { faction: string; ally?: string | null }[]
+        const fAlly = ps9.find((p) => p.faction === 'fremen')?.ally ?? null
+        const g9 = ((state.allyGrants ?? {}) as { fremen?: { shield?: boolean } }).fremen ?? {}
+        const spared9 = fAlly && ps9.some((p) => p.faction === fAlly)
+          && g9.shield !== false ? fAlly : null
+        let wormOut
+        try {
+          wormOut = playKarama({
+            faction: myFaction as never, mode: kMode as never,
+            use: { id: 'fremen-place-worm', territoryId: String(kUse.territoryId) } as never,
+            forces: (state.forces ?? []) as never,
+            spiceOnBoard: (state.spiceOnBoard ?? {}) as never,
+            spared: spared9 as never,
+          })
+        } catch (e) {
+          return json({ error: String(e), code: 'bad-territory' }, 409)
+        }
+        const eaten = wormOut.resolved!
+        const { data, error } = await admin.rpc('apply_match_write', kSpent({
+          forces: ((state.forces ?? []) as unknown[])
+            .filter((f) => !eaten.toTanks.includes(f as never)),
+          tanks: bankDead((state.tanks ?? emptyTanks()) as never, eaten.toTanks as never),
+          spiceOnBoard: eaten.spiceOnBoard,
+        }))
+        if (error) return json({ error: error.message }, 500)
+        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+        return json({ karama: kUse.id, devoured: eaten.devoured.territoryId, version: data[0].version })
+      }
+
+      if (kUse.id === 'guild-stop-shipment') {
+        if (state.phase !== 'Shipment and Movement') {
+          return json({ error: 'the turn is not at shipment', code: 'no-window' }, 409)
+        }
+        const kTarget = String(kUse.target ?? '')
+        if (!(kTarget in seatOfFaction)) {
+          return json({ error: 'no such seat', code: 'not-seated' }, 409)
+        }
+        const { data, error } = await admin.rpc('apply_match_write', kSpent({
+          karamaShipBan: [
+            ...((state.karamaShipBan ?? []) as unknown[]),
+            { faction: kTarget, turn: Number(state.turn ?? 0) },
+          ],
+        }))
+        if (error) return json({ error: error.message }, 500)
+        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+        return json({ karama: kUse.id, stopped: kTarget, version: data[0].version })
+      }
+
+      // harkonnen-take-cards
+      const kTarget = String(kUse.target ?? '')
+      if (!(kTarget in seatOfFaction) || kTarget === myFaction) {
+        return json({ error: 'no such hand to take from', code: 'not-seated' }, 409)
+      }
+      const { data: vRow } = await admin
+        .from('match_secrets').select('data')
+        .eq('match_id', matchId).eq('player_id', seatOfFaction[kTarget]).maybeSingle()
+      const victim = (vRow?.data ?? {}) as { cards?: string[] }
+      const kCount = Number(kUse.count ?? 0)
+      if (!Number.isInteger(kCount) || kCount < 1 || kCount > (victim.cards ?? []).length) {
+        return json({ error: 'their hand does not hold that many', code: 'bad-count' }, 409)
+      }
+      // TAKEN WITHOUT LOOKING: the SEED chooses, the same for every retry
+      // of this action_seq — random to everyone, replayable to the record.
+      const orderShuffled = shuffleWithSeed(
+        Number(match.rng_seed) + match.action_seq, [...(victim.cards ?? [])])
+      const taken = orderShuffled.slice(0, kCount)
+      const left = (victim.cards ?? []).filter((id) => !taken.includes(id))
+      const takenBag = [...taken]
+      const kHand2 = [...kHand, ...takenBag]
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state,
+          // THE RETURN IS OWED, on a clock the whole match holds for: one
+          // card back for each taken, chosen AFTER seeing what came.
+          karamaGiveBack: {
+            from: myFaction, to: kTarget, count: kCount,
+            closesAt: now + KARAMA_GIVE_SECONDS * 1000,
+          },
+          players: ((state.players ?? []) as { faction: string; handCount?: number }[])
+            .map((p) => p.faction === myFaction ? { ...p, handCount: kHand2.length }
+              : p.faction === kTarget ? { ...p, handCount: left.length } : p),
+          treacheryDiscard: [
+            ...((state.treacheryDiscard ?? []) as string[]), kCard,
+          ],
+        },
+        p_secrets: {
+          [playerId]: { ...kMine, cards: kHand2 },
+          [seatOfFaction[kTarget]]: { ...victim, cards: left },
+        },
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ karama: kUse.id, taken, version: data[0].version })
+    }
+
+    // ── Karama, spent on stopping an advantage ──────────────────────────────
+    // PUBLIC the moment it is played: whose advantage, which, by whom, for
+    // this turn's this phase — and the win conditions are beyond its reach,
+    // by each faction's own unsuppressable list.
+    case 'KARAMA_STOP': {
+      if (!myFaction) return json({ error: 'your seat has no faction', code: 'no-faction' }, 409)
+      const sCard = String(action.card ?? 'karama')
+      const sMode = state.mode === 'advanced' ? 'advanced' : 'basic'
+      if (!isKaramaCardId(myFaction as never, sMode as never, sCard)) {
+        return json({ error: 'that card is no Karama in your hands', code: 'not-a-karama' }, 409)
+      }
+      const sTarget = String(action.target ?? '')
+      if (!(sTarget in seatOfFaction)) {
+        return json({ error: 'no such seat', code: 'not-seated' }, 409)
+      }
+      const sRef = String(action.ref ?? '')
+      if (!suppressibleRefs(sTarget as never).some((r) => r.ref === sRef)) {
+        return json({ error: 'that advantage cannot be stopped', code: 'not-stoppable' }, 409)
+      }
+      const { data: sRow } = await admin
+        .from('match_secrets').select('data')
+        .eq('match_id', matchId).eq('player_id', playerId).maybeSingle()
+      const sMine = (sRow?.data ?? {}) as { cards?: string[] }
+      if (!(sMine.cards ?? []).includes(sCard)) {
+        return json({ error: 'you do not hold that card', code: 'card-not-held' }, 409)
+      }
+      const sHand = [...(sMine.cards ?? [])]
+      sHand.splice(sHand.indexOf(sCard), 1)
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state,
+          suppressed: [
+            ...((state.suppressed ?? []) as unknown[]),
+            {
+              faction: sTarget, ref: sRef, by: myFaction,
+              turn: Number(state.turn ?? 0), phase: state.phase,
+            },
+          ],
+          players: ((state.players ?? []) as { faction: string; handCount?: number }[])
+            .map((p) => p.faction === myFaction ? { ...p, handCount: sHand.length } : p),
+          treacheryDiscard: [
+            ...((state.treacheryDiscard ?? []) as string[]), sCard,
+          ],
+        },
+        p_secrets: { [playerId]: { ...sMine, cards: sHand } },
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ stopped: { faction: sTarget, ref: sRef }, version: data[0].version })
+    }
+
+    // ── the Harkonnen hand cards back ───────────────────────────────────────
+    // One for each taken, CHOSEN after seeing what came — and past the
+    // clock anyone may push, handing back the first of the hand: the match
+    // does not wait forever on a debtor.
+    case 'KARAMA_GIVE_BACK': {
+      const g = state.karamaGiveBack as {
+        from: string; to: string; count: number; closesAt: number
+      } | undefined
+      if (!g) return json({ error: 'nothing is owed', code: 'no-debt' }, 409)
+      const gExpired = now >= g.closesAt
+      if (!gExpired && myFaction !== g.from) {
+        return json({ error: 'the debt is not yours to pay', code: 'not-your-debt' }, 403)
+      }
+      const fromSeat = seatOfFaction[g.from]
+      const toSeat = seatOfFaction[g.to]
+      const { data: gRows } = await admin
+        .from('match_secrets').select('player_id, data').eq('match_id', matchId)
+      const gOf = Object.fromEntries((gRows ?? []).map((r) => [r.player_id, r.data ?? {}]))
+      const debtor = (gOf[fromSeat] ?? {}) as { cards?: string[] }
+      const owed = (gOf[toSeat] ?? {}) as { cards?: string[] }
+      const given = gExpired && !Array.isArray(action.cards)
+        ? (debtor.cards ?? []).slice(0, g.count)
+        : ((action.cards ?? []) as string[]).map(String)
+      if (given.length !== g.count) {
+        return json({ error: `${g.count} card(s) are owed`, code: 'bad-count' }, 409)
+      }
+      const debtorHand = [...(debtor.cards ?? [])]
+      for (const id of given) {
+        const at9 = debtorHand.indexOf(id)
+        if (at9 < 0) return json({ error: 'a card you do not hold', code: 'card-not-held' }, 409)
+        debtorHand.splice(at9, 1)
+      }
+      const paidHand = [...(owed.cards ?? []), ...given]
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state,
+          karamaGiveBack: undefined,
+          players: ((state.players ?? []) as { faction: string; handCount?: number }[])
+            .map((p) => p.faction === g.from ? { ...p, handCount: debtorHand.length }
+              : p.faction === g.to ? { ...p, handCount: paidHand.length } : p),
+        },
+        p_secrets: {
+          [fromSeat]: { ...debtor, cards: debtorHand },
+          [toSeat]: { ...owed, cards: paidHand },
+        },
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ givenBack: given.length, version: data[0].version })
     }
 
     // ── Weather Control: the holder steers the storm ────────────────────────
@@ -3891,6 +4319,7 @@ Deno.serve(async req => {
         mentatSeconds: MENTAT_READY_SECONDS,
         nexusSeconds: NEXUS_SECONDS,
         stormCardSeconds: STORM_CARD_SECONDS,
+        karamaGiveSeconds: KARAMA_GIVE_SECONDS,
       })
       if (reset.length === 0) {
         return json({ error: 'nothing here holds a clock', code: 'no-clock' }, 409)

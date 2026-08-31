@@ -507,6 +507,27 @@ export interface DuneGameState {
    *  reshuffled. The treachery economy counts them here. */
   removedFromPlay?: string[]
   /**
+   * KARAMA'S REACTIVE HALF, public the moment it is played: whose
+   * advantage is stopped, which, by whom, and for which (turn, phase).
+   * Entries from other moments are inert — the stamp is the cleanup.
+   */
+  suppressed?: {
+    faction: FactionId
+    ref: string
+    by: FactionId
+    turn: number
+    phase: GamePhase
+  }[]
+  /** Seats holding a free-card entitlement this Bidding phase — the basic
+   *  Karama use, consumed when that seat next wins a card. Lapses with
+   *  the phase. */
+  karamaFreeCard?: FactionId[]
+  /** Off-planet shipments stopped by the Guild's Karama, this turn. */
+  karamaShipBan?: { faction: FactionId; turn: number }[]
+  /** The Harkonnen's owed return after taking cards: who owes whom how
+   *  many, on a clock — the phase holds until it is paid. */
+  karamaGiveBack?: { from: FactionId; to: FactionId; count: number; closesAt: number }
+  /**
    * THE TRUTHTRANCE LOG, public and permanent: who asked whom what, the
    * answer, and the moment it was true — an answer is a fact about a
    * moment, and the stamp is what keeps an old yes from reading as a

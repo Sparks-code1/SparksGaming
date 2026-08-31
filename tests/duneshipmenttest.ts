@@ -872,7 +872,7 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
   const shipCut = fn2.slice(fn2.indexOf("case 'SHIP'"), fn2.indexOf("case 'MOVE'"))
   check('SHIP reads the ally once and judges with ground and purse',
     [/ally: shipAlly as never,\s*[\r\n]+\s*allySpice: shipAllySpice,/.test(shipCut),
-      /const share = allyShare\(judged\.cost, readSpice\(secrets\)\)/.test(shipCut)],
+      /const share = allyShare\(shipFee, readSpice\(secrets\)\)/.test(shipCut)],
     [true, true])
   const moveCut = fn2.slice(fn2.indexOf("case 'MOVE'"), fn2.indexOf("case 'PASS_TURN'"))
   check('MOVE hands the judge the ally',

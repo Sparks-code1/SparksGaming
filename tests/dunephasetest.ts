@@ -751,7 +751,7 @@ check('a game is ten turns', TURN_LIMIT, 10)
         battleTraitorSeconds: 1, battleVoiceSeconds: 1,
         battlePrescienceSeconds: 1, battleAllocateSeconds: 1,
         battleCaptureSeconds: 1, mentatSeconds: MENTAT_READY_SECONDS,
-        nexusSeconds: 1, stormCardSeconds: 1,
+        nexusSeconds: 1, stormCardSeconds: 1, karamaGiveSeconds: 1,
       })
       return [(out.patch.mentat as { closesAt: number }).closesAt, out.reset]
     })(),
@@ -816,7 +816,7 @@ check('a game is ten turns', TURN_LIMIT, 10)
           battleTraitorSeconds: 1, battleVoiceSeconds: 1,
           battlePrescienceSeconds: 1, battleAllocateSeconds: 1,
           battleCaptureSeconds: 1, mentatSeconds: 1, nexusSeconds: NEXUS_SECONDS,
-          stormCardSeconds: 1,
+          stormCardSeconds: 1, karamaGiveSeconds: 1,
         })
       return [(out.patch.nexus as { closesAt: number }).closesAt, out.reset]
     })(),
@@ -872,7 +872,7 @@ check('a game is ten turns', TURN_LIMIT, 10)
         battleTraitorSeconds: 1, battleVoiceSeconds: 1,
         battlePrescienceSeconds: 1, battleAllocateSeconds: 1,
         battleCaptureSeconds: 1, mentatSeconds: 1, nexusSeconds: 1,
-        stormCardSeconds: STORM_CARD_SECONDS,
+        stormCardSeconds: STORM_CARD_SECONDS, karamaGiveSeconds: 1,
       })
       return [(out.patch.stormCarry as { closesAt: number }).closesAt, out.reset]
     })(),

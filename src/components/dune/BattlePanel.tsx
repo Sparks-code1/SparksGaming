@@ -139,6 +139,8 @@ export interface BattlePanelProps {
   onPrescience?: (ask: PrescienceAsk | null) => void
   /** The Atreides' own answer, from their row — private until the reveal. */
   prescienceAnswer?: { ask: string; answer: string | number } | null
+  /** A WHOLE plan seen by the Atreides Karama — this seat's own secret. */
+  planSeen?: { territoryId: string; target: FactionId; plan: Record<string, unknown> } | null
   /** ADVANCED: the winner posts which pieces die; null pushes an expired
    *  window to the deterministic first. */
   onAllocate?: (choice: LossAllocation | null) => void
@@ -262,6 +264,7 @@ export function BattlePanel({
   traitorProxy = null, beatEligible = 2,
   refusal = null, refusedAction = null, handCount = null,
   onPick, onPlan, onAnswer, onVoice, onPrescience, prescienceAnswer = null,
+  planSeen = null,
   onAllocate, mode = 'basic', purse = 0,
   kwisatz = null, captured = [], onCapture,
 }: BattlePanelProps) {
@@ -856,6 +859,16 @@ export function BattlePanel({
   // THE FORESEEN ELEMENT — the server wrote it into the asker's own row and
   // nowhere public, so this renders for one seat and no other, and keeps
   // rendering while they wait: what was seen cannot be un-asked.
+  // The Karama sighting: the WHOLE plan, listed plainly for its holder.
+  const sighted = planSeen ? (
+    <p data-karama-seen="" style={{ fontSize: 12.5, color: '#9fd6a0' }}>
+      Karama — the {FACTION_LOOK[planSeen.target].name} plan:{' '}
+      {['leader', 'cheapHero', 'dial', 'spice', 'weapon', 'defence', 'kwisatz']
+        .filter(k => planSeen.plan[k] !== undefined)
+        .map(k => `${k} ${String(planSeen.plan[k])}`).join(', ') || 'nothing at all'}.
+    </p>
+  ) : null
+
   const foresight = prescienceAnswer && iAmIn ? (() => {
     const a = prescienceAnswer.answer
     const shown = a === 'none' ? 'none is played'
@@ -885,6 +898,7 @@ export function BattlePanel({
           ({c.committed.length} of 2 in).
         </p>
         {foresight}
+          {sighted}
         {expired && (
           <button type="button" disabled={busy} data-plan-push=""
             onClick={() => onPlan({ territoryId: c.territoryId, dial: 0 })}

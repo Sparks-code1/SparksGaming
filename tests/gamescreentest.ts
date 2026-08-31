@@ -1643,5 +1643,83 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     [true, true])
 }
 
+// ── Karama on screen ──────────────────────────────────────────────────────
+{
+  const { KaramaPanel, KaramaGiveBackPanel } = await import('@/components/dune/KaramaPanel')
+  const panelK = renderToStaticMarkup(createElement(KaramaPanel, {
+    seat: 'fremen' as never, mode: 'advanced' as never, cardId: 'karama',
+    players: state.players as never, leaders: [], dead: { plain: 0, starred: 0 },
+    onUse: () => {}, onStop: () => {}, onClose: () => {},
+  }))
+  check('the panel offers the law\'s own menu and the stop targets, never itself',
+    [/Place a sandworm/.test(panelK),
+      /data-karama-stop-target="atreides"/.test(panelK),
+      /data-karama-stop-target="fremen"/.test(panelK),
+      /data-karama-play=""/.test(panelK)],
+    [true, true, false, true])
+  const worthless = renderToStaticMarkup(createElement(KaramaPanel, {
+    seat: 'bene-gesserit' as never, mode: 'advanced' as never, cardId: 'baliset',
+    players: state.players as never, leaders: [], dead: { plain: 0, starred: 0 },
+    onUse: () => {}, onStop: () => {}, onClose: () => {},
+  }))
+  check('...and says when a worthless card is doing the spending',
+    /data-karama-worthless/.test(worthless), true)
+
+  const backOwed = renderToStaticMarkup(createElement(KaramaGiveBackPanel, {
+    owed: { to: 'atreides' as never, count: 2 }, hand: ['baliset', 'shield', 'kulon'],
+    expired: false, onPay: () => {},
+  }))
+  check('the give-back is chosen from the hand, the pay gated at the count',
+    [/data-giveback-card="baliset"/.test(backOwed),
+      /data-giveback-pay=""/.test(backOwed), /disabled=""/.test(backOwed)],
+    [true, true, true])
+  const backPush = renderToStaticMarkup(createElement(KaramaGiveBackPanel, {
+    owed: { to: 'atreides' as never, count: 2 }, hand: [],
+    expired: true, onPay: () => {},
+  }))
+  check('...and past the clock a bystander gets the push, never the hand',
+    [/data-giveback-push/.test(backPush), /data-giveback-card/.test(backPush)],
+    [true, false])
+
+  const stoppedDraw = draw({
+    state: {
+      ...state,
+      suppressed: [{
+        faction: 'atreides', ref: 'abilities.bidding', by: 'emperor',
+        turn: state.turn, phase: state.phase,
+      }],
+    } as never,
+  })
+  const stalePhase = draw({
+    state: {
+      ...state,
+      suppressed: [{
+        faction: 'atreides', ref: 'abilities.bidding', by: 'emperor',
+        turn: state.turn, phase: 'Battles',
+      }],
+    } as never,
+  })
+  check('a stop reads publicly for its phase, and only its phase',
+    [/data-suppressed-line/.test(stoppedDraw), /data-suppressed-line/.test(stalePhase)],
+    [true, false])
+
+  const screenK = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
+  check('every Karama-capable card ribbons — the worthless included, by the one door',
+    [/\.filter\(id =>\s*[\r\n]+\s*isKaramaCardId\(seat, state\.mode, id\)\)/.test(screenK),
+      /if \(isKaramaCardId\(seat, state\.mode, id\)\) setKaramaCard\(id\)/.test(screenK)],
+    [true, true])
+  const bp = readFileSync('src/components/dune/BattlePanel.tsx', 'utf8')
+  check('the seen plan renders beside the foresight, this battle alone',
+    [/data-karama-seen/.test(bp), /\{foresight\}\s*[\r\n]+\s*\{sighted\}/.test(bp),
+      /own\.karamaPlanSeen\.territoryId === state\.battles\?\.current\?\.territoryId/.test(screenK)],
+    [true, true, true])
+  const matchK = readFileSync('src/components/dune/DuneMatchScreen.tsx', 'utf8')
+  const harnessK = readFileSync('src/components/dune/DuneMultiSeatView.tsx', 'utf8')
+  check('both drivers post all three moves',
+    [/'KARAMA'/.test(matchK) && /KARAMA_STOP/.test(matchK) && /KARAMA_GIVE_BACK/.test(matchK),
+      /'KARAMA'/.test(harnessK) && /KARAMA_STOP/.test(harnessK) && /KARAMA_GIVE_BACK/.test(harnessK)],
+    [true, true])
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 process.exit(pass ? 0 : 1)

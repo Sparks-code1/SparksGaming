@@ -21,12 +21,15 @@
  * after the card is gone.
  */
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
+import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { FACTIONS } from '@/data/dune/factions'
 import { devourTerritory } from './spiceBlow'
 import type { Devoured } from './spiceBlow'
 import type { FactionId } from '@/types/Dune/Faction'
 import type { TreacheryCard } from '@/types/Dune/Treachery'
-import type { Force, GameMode, TerritoryId } from '@/types/Dune/Game'
+import type { Force, GameMode, GamePhase, TerritoryId } from '@/types/Dune/Game'
+import type { FactionRuleRef } from '@/types/Dune/Faction'
+import { canKaramaStop, factionRuleText } from '@/data/dune/factions'
 
 /**
  * The seven things a Karama can buy.
@@ -97,8 +100,12 @@ const LABELS: Record<string, string> = {
   'harkonnen-take-cards': 'Take cards from a hand',
 }
 
-/** Only the worm has anywhere to happen yet. */
-const RESOLVABLE: readonly KaramaUseId[] = ['fremen-place-worm']
+/** Every phase a use needs now exists — the whole menu resolves. */
+const RESOLVABLE: readonly KaramaUseId[] = [
+  'guild-rate-shipment', 'free-treachery-card', 'atreides-see-battle-plan',
+  'emperor-free-revival', 'fremen-place-worm', 'guild-stop-shipment',
+  'harkonnen-take-cards',
+]
 
 /**
  * What this faction may spend a Karama on.
@@ -178,6 +185,9 @@ export function playKarama(input: {
   /** For the worm. Ignored by every other use. */
   forces?: readonly Force[]
   spiceOnBoard?: Readonly<Record<string, number>>
+  /** The Fremen's shielded ally — a Karama worm is a normal worm, and a
+   *  normal worm spares whom the Fremen protect. */
+  spared?: FactionId | null
 }): KaramaOutcome {
   const { faction, mode, use } = input
 
@@ -205,7 +215,8 @@ export function playKarama(input: {
     // the deck eats by — the Fremen's own forces included, which is to say
     // spared. Shared with the spice blow rather than restated.
     const spice = input.spiceOnBoard ?? {}
-    const devoured = devourTerritory(use.territoryId, input.forces ?? [], spice)
+    const devoured = devourTerritory(
+      use.territoryId, input.forces ?? [], spice, input.spared)
     const after = { ...spice }
     delete after[use.territoryId]
     return {
@@ -238,4 +249,76 @@ export function playKarama(input: {
 export function isKaramaFor(faction: FactionId, mode: GameMode, card: TreacheryCard): boolean {
   if (card.id === 'karama') return true
   return mode === 'advanced' && faction === 'bene-gesserit' && card.kind === 'worthless'
+}
+
+// ── the reactive half: a named advantage, stopped for one phase ───────────
+
+/** How long the Harkonnen have to hand cards back after taking. */
+export const KARAMA_GIVE_SECONDS = 60
+
+/**
+ * One suppression: WHOSE advantage, WHICH one, stopped by whom, and the
+ * (turn, phase) it is stopped for — "stops the use of that advantage
+ * during one game phase", so an entry from any other moment is inert and
+ * needs no cleanup write.
+ */
+export interface Suppression {
+  faction: FactionId
+  ref: FactionRuleRef
+  by: FactionId
+  turn: number
+  phase: GamePhase
+}
+
+/** Whether this advantage is stopped RIGHT NOW — this turn, this phase. */
+export function isSuppressed(
+  list: readonly Suppression[] | undefined,
+  faction: FactionId, ref: FactionRuleRef,
+  turn: number, phase: GamePhase,
+): boolean {
+  return (list ?? []).some(s => s.faction === faction && s.ref === ref
+    && s.turn === turn && s.phase === phase)
+}
+
+/**
+ * What a stop menu may offer against this faction: every rule of theirs
+ * that resolves to text, minus the win conditions the card cannot touch.
+ * Enumerated from the faction's own data, so a rule added later is
+ * stoppable without touching this file.
+ */
+export function suppressibleRefs(
+  faction: FactionId,
+): { ref: FactionRuleRef; text: string }[] {
+  const f = FACTIONS[faction]
+  if (!f) return []
+  const refs: FactionRuleRef[] = [
+    'specialVictory',
+    ...Object.keys(f.abilities).map(k => `abilities.${k}` as FactionRuleRef),
+    ...Object.keys(f.advanced).map(k => `advanced.${k}` as FactionRuleRef),
+  ]
+  return refs.flatMap(ref => {
+    if (!canKaramaStop(f, ref)) return []
+    const text = factionRuleText(f, ref)
+    return text ? [{ ref, text }] : []
+  })
+}
+
+/** Whether this CARD ID may be spent as a Karama by this faction — the
+ *  id-shaped door the server checks a payload against. */
+export function isKaramaCardId(
+  faction: FactionId, mode: GameMode, cardId: string,
+): boolean {
+  const card = TREACHERY_CARDS.find(c => c.id === cardId)
+  return !!card && isKaramaFor(faction, mode, card)
+}
+
+/** A use's permission, as a refusal code rather than a throw — the server's
+ *  door, where a bad payload is a response and never an exception. */
+export function karamaAllowed(
+  faction: FactionId, mode: GameMode, useId: KaramaUseId,
+): 'not-your-power' | 'advanced-only' | null {
+  if (karamaOptions(faction, mode).some(o => o.id === useId)) return null
+  const owner = OWNER[useId]
+  if (owner && owner !== faction) return 'not-your-power'
+  return 'advanced-only'
 }

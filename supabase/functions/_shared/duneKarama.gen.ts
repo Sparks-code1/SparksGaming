@@ -1,46 +1,13 @@
 // AUTO-GENERATED — DO NOT EDIT.
 //
-// Built from src/lib/dune/phaseAdvance.ts by scripts/build-edge-shared.mjs.
+// Built from src/lib/dune/karama.ts by scripts/build-edge-shared.mjs.
 // Edit the source and re-run `npm run build:edge`.
 //
-// This is the exact phase loop the client runs. The server MUST run the same
+// This is the exact karama uses and suppression the client runs. The server MUST run the same
 // bytes: a divergence here is two machines disagreeing while both believe they
 // agree.
 
-// src/types/Dune/Game.ts
-var DUNE_PHASES = [
-  "Storm",
-  "Spice Blow and Nexus",
-  "CHOAM Charity",
-  "Bidding",
-  "Revival",
-  "Shipment and Movement",
-  "Battles",
-  "Spice Collection",
-  "Mentat Pause"
-];
-
 // src/data/dune/boardData.ts
-var DUNE_SECTORS = [
-  { id: "sector-1", number: 1, fromBearing: 189.7, toBearing: 209.6 },
-  { id: "sector-2", number: 2, fromBearing: 169.8, toBearing: 189.7 },
-  { id: "sector-3", number: 3, fromBearing: 150, toBearing: 169.8 },
-  { id: "sector-4", number: 4, fromBearing: 130.1, toBearing: 150 },
-  { id: "sector-5", number: 5, fromBearing: 110.4, toBearing: 130.1 },
-  { id: "sector-6", number: 6, fromBearing: 90.5, toBearing: 110.4 },
-  { id: "sector-7", number: 7, fromBearing: 70.5, toBearing: 90.5 },
-  { id: "sector-8", number: 8, fromBearing: 50.4, toBearing: 70.5 },
-  { id: "sector-9", number: 9, fromBearing: 30.4, toBearing: 50.4 },
-  { id: "sector-10", number: 10, fromBearing: 10.3, toBearing: 30.4 },
-  { id: "sector-11", number: 11, fromBearing: 350.2, toBearing: 10.3 },
-  { id: "sector-12", number: 12, fromBearing: 330.1, toBearing: 350.2 },
-  { id: "sector-13", number: 13, fromBearing: 310, toBearing: 330.1 },
-  { id: "sector-14", number: 14, fromBearing: 290, toBearing: 310 },
-  { id: "sector-15", number: 15, fromBearing: 269.9, toBearing: 290 },
-  { id: "sector-16", number: 16, fromBearing: 249.8, toBearing: 269.9 },
-  { id: "sector-17", number: 17, fromBearing: 229.7, toBearing: 249.8 },
-  { id: "sector-18", number: 18, fromBearing: 209.6, toBearing: 229.7 }
-];
 var DUNE_TERRITORIES = [
   {
     id: "territory-01",
@@ -818,203 +785,288 @@ var DUNE_TERRITORIES = [
     ]
   }
 ];
-var DUNE_PLAYER_POSITIONS = [
-  { id: "player-position-1", x: 484.1, y: 83.46, sectorId: "sector-11" },
-  { id: "player-position-2", x: 895.1, y: 321.46, sectorId: "sector-8" },
-  { id: "player-position-3", x: 896.1, y: 795.46, sectorId: "sector-5" },
-  { id: "player-position-4", x: 484.1, y: 1032.46, sectorId: "sector-2" },
-  { id: "player-position-5", x: 73.1, y: 795.46, sectorId: "sector-17" },
-  { id: "player-position-6", x: 72.1, y: 320.46, sectorId: "sector-14" }
+
+// src/data/dune/treachery.ts
+var KEEP_IF_WON = " You may keep this card if you win this battle.";
+var WORTHLESS = "Play as part of your Battle Plan, in place of a weapon, defense, or both.\n\nThis card has no value in play, and you can discard it only by playing it in your Battle Plan.";
+var PLAY_IN_PLAN = "Play as part of your Battle Plan.";
+var TREACHERY_CARDS = [
+  // ── Projectile weapons ────────────────────────────────────────────────────
+  // Four of them, one copy each, all with the same text and all stopped by a
+  // Shield. They differ only by name — and now by picture. Four of the five
+  // weapon images are square; the Maula Pistol is wide, which is why the art box
+  // fits an image to the whole box rather than to a square inside it.
+  {
+    id: "crysknife",
+    name: "Crysknife",
+    kind: "weapon",
+    subtype: "projectile",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/Crysknife.png",
+    text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved. Opponent may protect leader with a Shield." + KEEP_IF_WON
+  },
+  {
+    id: "stunner",
+    name: "Stunner",
+    kind: "weapon",
+    subtype: "projectile",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/Stunner.png",
+    text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved. Opponent may protect leader with a Shield." + KEEP_IF_WON
+  },
+  {
+    id: "sliptip",
+    name: "Slip Tip",
+    kind: "weapon",
+    subtype: "projectile",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/Slip_tip.png",
+    text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved. Opponent may protect leader with a Shield." + KEEP_IF_WON
+  },
+  {
+    id: "maulapistol",
+    name: "Maula Pistol",
+    kind: "weapon",
+    subtype: "projectile",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/Maula_Pistol.png",
+    text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved. Opponent may protect leader with a Shield." + KEEP_IF_WON
+  },
+  // ── Poison weapons ────────────────────────────────────────────────────────
+  {
+    id: "gomjabbar",
+    name: "Gom Jabbar",
+    kind: "weapon",
+    subtype: "poison",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/Gom_Jabbar.png",
+    text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved. Opponent may protect leader with a Snooper." + KEEP_IF_WON
+  },
+  {
+    id: "ellacadrug",
+    name: "Ellaca Drug",
+    kind: "weapon",
+    subtype: "poison",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/Ellaca_Drug.png",
+    text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved. Opponent may protect leader with a Snooper." + KEEP_IF_WON
+  },
+  {
+    id: "chaumas",
+    name: "Chaumas",
+    kind: "weapon",
+    subtype: "poison",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/Chaumas.jpg",
+    text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved. Opponent may protect leader with a Snooper." + KEEP_IF_WON
+  },
+  {
+    id: "chaumurky",
+    name: "Chaumurky",
+    kind: "weapon",
+    subtype: "poison",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/Chaumurky.jpg",
+    text: PLAY_IN_PLAN + " Kills opponent's leader before battle is resolved. Opponent may protect leader with a Snooper." + KEEP_IF_WON
+  },
+  // ── The one weapon nothing defends against ────────────────────────────────
+  // Its class is its own, and there is no defence card to match it. That is the
+  // card, not a gap in the data: a Shield played in the same battle does not
+  // save anyone, it destroys the territory.
+  //
+  // RULING: "anyone" includes the Lasgun's own owner. A Lasgun and a Shield on
+  // the table together destroy the territory whoever held which — shielding your
+  // own leader behind your own Lasgun sets it off exactly as the defender's
+  // Shield would.
+  //
+  // So the explosion is a property of the PAIR being present, not of who played
+  // what. Battle resolution should ask "were both cards played in this battle",
+  // never "did my opponent play a Shield". The word carrying that is "anyone",
+  // and treacherytest pins it, because nothing else in the repo can enforce a
+  // battle rule while battles do not exist.
+  {
+    id: "lasgun",
+    name: "Lasgun",
+    kind: "weapon",
+    subtype: "lasgun",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/Lasgun.png",
+    text: PLAY_IN_PLAN + "\n\nAutomatically kills opponent's leader regardless of defense card used.\n\nYou may keep this card if you win this battle.\n\nIf anyone plays a Shield in this battle all forces, leaders, and spice in this battle's territory are lost to the Tleilaxu Tanks. Both players lost this battle, no spice is paid for leaders, and all cards played are discarded."
+  },
+  // ── Defences ──────────────────────────────────────────────────────────────
+  {
+    id: "shield",
+    name: "Shield",
+    kind: "defense",
+    subtype: "projectile",
+    timing: "battle-plan",
+    copies: 4,
+    image: "/treachery/Shield.png",
+    text: PLAY_IN_PLAN + "\n\nProtects your leader from a projectile weapon in this battle.\n\nYou may keep this card if you win this battle."
+  },
+  {
+    id: "snooper",
+    name: "Snooper",
+    kind: "defense",
+    subtype: "poison",
+    timing: "battle-plan",
+    copies: 4,
+    image: "/treachery/Snooper.png",
+    text: PLAY_IN_PLAN + "\n\nProtects your leader from a poison weapon in this battle.\n\nYou may keep this card if you win this battle."
+  },
+  // ── Worthless ─────────────────────────────────────────────────────────────
+  // Five cards, one copy each, rather than one card five times. They are
+  // mechanically identical — same text, same timing, same nothing — and differ
+  // only in name and picture, which is the whole joke: five ordinary objects
+  // from a desert planet, none of which will win you a battle.
+  //
+  // The names are the ones Dune prints. Worth checking against your own copy:
+  // they came from memory of the game rather than from anything in this repo,
+  // and this is the second time that has been a way to be wrong.
+  {
+    id: "baliset",
+    name: "Baliset",
+    kind: "worthless",
+    subtype: "none",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/baliset.svg",
+    text: WORTHLESS
+  },
+  {
+    id: "jubbacloak",
+    name: "Jubba Cloak",
+    kind: "worthless",
+    subtype: "none",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/jubba-cloak.svg",
+    text: WORTHLESS
+  },
+  {
+    id: "kulon",
+    name: "Kulon",
+    kind: "worthless",
+    subtype: "none",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/kulon.svg",
+    text: WORTHLESS
+  },
+  {
+    id: "lalala",
+    name: "LA, LA, LA",
+    kind: "worthless",
+    subtype: "none",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/la-la-la.svg",
+    text: WORTHLESS
+  },
+  {
+    id: "triptogamont",
+    name: "Trip to Gamont",
+    kind: "worthless",
+    subtype: "none",
+    timing: "battle-plan",
+    copies: 1,
+    image: "/treachery/trip-to-gamont.svg",
+    text: WORTHLESS
+  },
+  // ── Specials ──────────────────────────────────────────────────────────────
+  {
+    id: "cheaphero",
+    name: "Cheap Hero",
+    kind: "special",
+    subtype: "leader",
+    timing: "battle-plan",
+    copies: 3,
+    image: "/treachery/Cheap_Hero.png",
+    text: "Play as a leader with zero strength on your Battle Plan and discard after the battle.\n\nYou may also play a weapon and a defense. The cheap hero may be played in place of a leader or when you have no leaders available."
+  },
+  {
+    id: "truthtrance",
+    name: "Truthtrance",
+    kind: "special",
+    subtype: "information",
+    timing: "any-time",
+    copies: 2,
+    image: "/treachery/Truthtrance.png",
+    // REWRITTEN, and the only card in the deck whose text is not the printed
+    // one. The printed card asks a player to answer truthfully; nothing can hold
+    // them to it, and the questions worth asking are about intent, which is not
+    // state and never becomes checkable. So the server answers instead of the
+    // player, out of a fixed set of questions it can prove — see
+    // lib/dune/truthtrance.ts for the set and for what had to be given up.
+    text: "Play at any time. Name another player and choose one question from the Truthtrance list.\n\nThe question and its answer are announced to every player. The answer is yes or no, and is always true."
+  },
+  {
+    id: "tleilaxughola",
+    name: "Tleilaxu Ghola",
+    kind: "special",
+    subtype: "revival",
+    timing: "any-time",
+    copies: 1,
+    image: "/treachery/Tleilaxu_Ghola.png",
+    text: "Play at any time to gain an extra revival.\n\nYou may immediately revive 1 of your leaders regardless of how many leaders you have in the tanks, or up to 5 of your forces from the Tleilaxu Tanks to your reserves at no cost in spice."
+  },
+  {
+    id: "hajr",
+    name: "Hajr",
+    kind: "special",
+    subtype: "movement",
+    timing: "movement",
+    copies: 1,
+    image: "/treachery/HAJR.png",
+    text: "Play during Movement Phase.\n\nMake an extra on-planet force movement subject to normal movement rules.\n\nThe forces you move may be a group you've already moved this phase or another group."
+  },
+  {
+    id: "weathercontrol",
+    name: "Weather Control",
+    kind: "special",
+    subtype: "storm",
+    timing: "storm-before-roll",
+    copies: 1,
+    image: "/treachery/weather_control.png",
+    text: "After the first game turn, play during the Storm Phase before the Storm Marker is moved.\n\nWhen you play this card, you control the storm this phase and may move it from 0 to 10 sectors in a counterclockwise direction."
+  },
+  {
+    id: "karama",
+    name: "Karama",
+    kind: "special",
+    subtype: "none",
+    timing: "any-time",
+    copies: 2,
+    // Text by design, not by omission — there is more rules text here than a
+    // picture would leave room for.
+    textOnly: true,
+    // The text below is the BASIC card. In the advanced game it gains a second,
+    // alternative use: instead of stopping an opponent's advantage, spend it on
+    // your own faction's Karama power. Those live on the factions rather than
+    // here — see AdvancedRules.karama — because they differ per faction and the
+    // card is the same card. Either use, not both, and it discards afterwards.
+    text: 'After the factions complete their "At Start" actions and after game set-up, use this card to stop a player from using one of their faction advantages when they attempt to use it. Stops the use of that advantage during one game phase.\n\nOr, this card may be used to do either of these things when appropriate:\n\nPurchase a shipment of forces onto the planet at Guild rates (1/2 normal) not paid to the Spacing Guild, or\n\nPurchase a Treachery Card without paying spice for it.\n\nCannot be used to stop a win condition advantage. Discard after use.'
+  },
+  {
+    id: "familyatomics",
+    name: "Family Atomics",
+    kind: "special",
+    subtype: "storm",
+    timing: "storm-after-roll",
+    copies: 1,
+    image: "/treachery/Family_atomics.png",
+    text: "After the first game turn, play after the storm movement is calculated, but before the storm is moved, but only if you have one or more forces on the Shield Wall or a territory adjacent to the Shield Wall with no storm between your sector and the Wall.\n\nAll forces on the Shield Wall are destroyed.\n\nThe Shield Wall now turns blue as a reminder. The Imperial Basin, Arrakeen, and Carthag are no longer protected from the Storm for the rest of the game."
+  }
 ];
-
-// src/lib/dune/shipment.ts
-var territory = (id) => DUNE_TERRITORIES.find((t) => t.id === id);
-function inStorm(territoryId, sector, storm) {
-  const t = territory(territoryId);
-  if (t?.terrain === "polar-sink") return false;
-  return sector === storm;
-}
-var num = (s) => Number(s.slice("sector-".length));
-var ringAdjacent = (a, b) => {
-  const d = Math.abs(num(a) - num(b));
-  return d === 1 || d === 17;
-};
-function territoryDistance(from, to, storm) {
-  const key = (t, s) => `${t}|${s}`;
-  const blocked = (t, s) => inStorm(t, s, storm);
-  if (blocked(from.territoryId, from.sector) || blocked(to.territoryId, to.sector)) {
-    return Infinity;
-  }
-  const dist = /* @__PURE__ */ new Map([[key(from.territoryId, from.sector), 0]]);
-  const queue = [{ t: from.territoryId, s: from.sector }];
-  while (queue.length) {
-    let bi = 0;
-    for (let i = 1; i < queue.length; i++) {
-      if ((dist.get(key(queue[i].t, queue[i].s)) ?? 0) < (dist.get(key(queue[bi].t, queue[bi].s)) ?? 0)) bi = i;
-    }
-    const [{ t, s }] = queue.splice(bi, 1);
-    const d = dist.get(key(t, s)) ?? 0;
-    const here = territory(t);
-    if (!here) continue;
-    const step = (nt, ns, cost) => {
-      if (blocked(nt, ns)) return;
-      const k = key(nt, ns);
-      if ((dist.get(k) ?? Infinity) > d + cost) {
-        dist.set(k, d + cost);
-        queue.push({ t: nt, s: ns });
-      }
-    };
-    for (const s2 of here.sectors) {
-      if (s2 !== s && ringAdjacent(s, s2)) step(t, s2, 0);
-    }
-    for (const adj of here.adjacent) {
-      const there = territory(adj);
-      if (!there) continue;
-      for (const s2 of there.sectors) {
-        if (s2 === s || ringAdjacent(s, s2)) step(adj, s2, 1);
-      }
-    }
-  }
-  return dist.get(key(to.territoryId, to.sector)) ?? Infinity;
-}
-
-// src/lib/dune/storm.ts
-var SECTOR_COUNT = 18;
-var FIRST_STORM_ROLL = { min: 0, max: 20 };
-var STORM_ROLL = { min: 2, max: 6 };
-var STORM_ROLL_ADVANCED = { min: 1, max: 6 };
-var stormRollRange = (mode) => mode === "advanced" ? STORM_ROLL_ADVANCED : STORM_ROLL;
-var SHIELD_WALL_PROTECTS = [
-  "territory-05",
-  // Imperial Basin — sand
-  "territory-13",
-  // Arrakeen — stronghold
-  "territory-26"
-  // Carthag — stronghold
-];
-var num2 = (id) => Number(id.slice("sector-".length));
-var sectorId = (n) => `sector-${(n - 1) % SECTOR_COUNT + 1}`;
-function sweptSectors(from, count) {
-  if (count <= 0) return [];
-  const start = num2(from);
-  const seen = /* @__PURE__ */ new Set();
-  const out = [];
-  for (let i = 1; i <= Math.min(count, SECTOR_COUNT); i++) {
-    const id = sectorId(start + i);
-    if (seen.has(id)) continue;
-    seen.add(id);
-    out.push(id);
-  }
-  return out;
-}
-function stormDestination(from, count) {
-  return sectorId(num2(from) + Math.max(0, count));
-}
-function isExposedToStorm(cell, swept, shieldWall) {
-  if (!swept.includes(cell.sector)) return false;
-  if (SHIELD_WALL_PROTECTS.includes(cell.territoryId)) return shieldWall === "destroyed";
-  const t = DUNE_TERRITORIES.find((x) => x.id === cell.territoryId);
-  return t?.terrain === "sand";
-}
-function stormLosses(force, mode) {
-  if (mode === "advanced" && force.faction === "fremen") {
-    return Math.ceil(force.count / 2);
-  }
-  return force.count;
-}
-function resolveStorm(from, roll, forces, mode, shieldWall, spiceOnBoard = {}) {
-  const swept = sweptSectors(from, roll);
-  const casualties = [];
-  const forcesAfter = [];
-  for (const force of forces) {
-    if (!isExposedToStorm(force, swept, shieldWall)) {
-      forcesAfter.push(force);
-      continue;
-    }
-    const lost = Math.min(force.count, stormLosses(force, mode));
-    const survived = force.count - lost;
-    casualties.push({ force, lost, survived });
-    if (survived > 0) forcesAfter.push({ ...force, count: survived });
-  }
-  const spiceCleared = [];
-  const spiceAfter = { ...spiceOnBoard };
-  for (const [territoryId, amount] of Object.entries(spiceOnBoard)) {
-    if (!(amount > 0)) continue;
-    const sector = DUNE_TERRITORIES.find((t) => t.id === territoryId)?.spiceSector;
-    if (sector && swept.includes(sector)) {
-      spiceCleared.push({ territoryId, amount });
-      delete spiceAfter[territoryId];
-    }
-  }
-  return {
-    from,
-    to: stormDestination(from, roll),
-    swept,
-    casualties,
-    killed: casualties.filter((c) => c.lost > 0).map((c) => ({ ...c.force, count: c.lost })),
-    forcesAfter,
-    spiceCleared,
-    spiceOnBoard: spiceAfter
-  };
-}
-function firstPlayerAfterStorm(storm, seats) {
-  if (seats.length === 0) return null;
-  const known = new Set(DUNE_SECTORS.map((s) => s.id));
-  if (!known.has(storm)) {
-    throw new Error(`the storm is in no sector this board has: ${String(storm)}`);
-  }
-  const stray = seats.find((s) => !known.has(s.sector));
-  if (stray) {
-    throw new Error(`a seat sits beside no sector this board has: ${String(stray.sector)}`);
-  }
-  const start = num2(storm);
-  for (let i = 1; i <= SECTOR_COUNT; i++) {
-    const id = sectorId(start + i);
-    const seat = seats.find((s) => s.sector === id);
-    if (seat) return seat;
-  }
-  throw new Error("the storm walked all eighteen sectors without reaching a seat");
-}
-function seatsFromPositions(seating) {
-  const seats = DUNE_PLAYER_POSITIONS.flatMap((p) => {
-    const faction = seating[p.id];
-    return faction ? [{ faction, positionId: p.id, sector: p.sectorId }] : [];
-  });
-  const twice = seats.find((s, i) => seats.findIndex((o) => o.faction === s.faction) !== i);
-  if (twice) {
-    throw new Error(`${twice.faction} is seated in more than one position`);
-  }
-  return seats;
-}
-var WEATHER_CONTROL_MAX = 10;
-var STORM_CARD_SECONDS = 45;
-var SHIELD_WALL_TERRITORY = "territory-06";
-function mayAtomics(forces, faction, storm) {
-  const mine = forces.filter((f) => f.faction === faction && f.count > 0);
-  if (mine.some((f) => f.territoryId === SHIELD_WALL_TERRITORY)) return true;
-  const wall = DUNE_TERRITORIES.find((t) => t.id === SHIELD_WALL_TERRITORY);
-  if (!wall) return false;
-  const nextDoor = new Set(wall.adjacent);
-  return mine.some((f) => nextDoor.has(f.territoryId) && wall.sectors.some((sec) => territoryDistance(
-    { territoryId: f.territoryId, sector: f.sector },
-    { territoryId: SHIELD_WALL_TERRITORY, sector: sec },
-    storm
-  ) === 1));
-}
-
-// src/lib/dune/hud.ts
-var STRONGHOLDS = new Set(
-  DUNE_TERRITORIES.filter((t) => t.stronghold).map((t) => t.id)
-);
-function strongholdsHeld(forces, faction) {
-  const held = /* @__PURE__ */ new Set();
-  for (const f of forces) {
-    if (f.faction === faction && f.count > 0 && f.posture !== "advisor" && STRONGHOLDS.has(f.territoryId)) {
-      held.add(f.territoryId);
-    }
-  }
-  return held.size;
-}
 
 // src/data/dune/factions.ts
 var ATREIDES = {
@@ -1266,401 +1318,154 @@ var FACTIONS = {
   harkonnen: HARKONNEN,
   "bene-gesserit": BENE_GESSERIT
 };
-var factionById = (id) => FACTIONS[id] ?? null;
-
-// src/lib/dune/revival.ts
-var emptyTanks = () => ({ forces: {}, leaders: {} });
-function bankDead(tanks, killed) {
-  const next = {
-    ...tanks ?? emptyTanks(),
-    forces: { ...tanks?.forces ?? {} }
-  };
-  for (const k of killed) {
-    if (!k.faction || k.count <= 0) continue;
-    const held = next.forces[k.faction] ?? { plain: 0, starred: 0 };
-    const starred = Math.min(k.count, k.starred ?? 0);
-    next.forces[k.faction] = {
-      plain: held.plain + (k.count - starred),
-      starred: held.starred + starred
-    };
-  }
-  return next;
+function factionRuleText(f, ref) {
+  if (ref === "specialVictory") return f.specialVictory;
+  const [group, key] = ref.split(".");
+  return f[group][key];
+}
+function canKaramaStop(f, ref) {
+  return !f.unsuppressable.includes(ref);
 }
 
-// src/lib/dune/phaseAdvance.ts
-var TURN_LIMIT = 10;
-var WIN_STRONGHOLDS = 3;
-var ALLIANCE_WIN_STRONGHOLDS = 4;
-var MENTAT_READY_SECONDS = 60;
-var PHASE_SECONDS = 30;
-function phaseAfter(phase) {
-  const i = DUNE_PHASES.indexOf(phase);
-  if (i < 0) throw new Error(`no such phase: ${String(phase)}`);
-  const last = i === DUNE_PHASES.length - 1;
-  return { phase: DUNE_PHASES[last ? 0 : i + 1], newTurn: last };
-}
-function advanceHold(state, now) {
-  if (state.karamaGiveBack && now < state.karamaGiveBack.closesAt) {
-    return { code: "karama-give-back", until: state.karamaGiveBack.closesAt };
-  }
-  if (state.setup) return { code: "setup-not-finished", until: state.setup.closesAt };
-  if (state.winner) return { code: "game-over" };
-  if (state.phase === "Spice Blow and Nexus") {
-    if (state.spiceBlow) return { code: "worms-pending", until: state.spiceBlow.closesAt };
-    if (state.spiceDeck?.turn !== state.turn) return { code: "blow-not-turned" };
-    if (state.wormRide && now < state.wormRide.closesAt) {
-      return { code: "worm-ride", until: state.wormRide.closesAt };
-    }
-    if (state.nexus && now < state.nexus.closesAt) {
-      return { code: "nexus-open", until: state.nexus.closesAt };
-    }
-    return null;
-  }
-  if (state.phase === "CHOAM Charity") {
-    const w = state.charity;
-    if (w && w.turn === state.turn && now < w.expiresAt) {
-      return { code: "charity-open", until: w.expiresAt };
-    }
-    return null;
-  }
-  if (state.phase === "Shipment and Movement") {
-    if (state.shipping) return { code: "shipping-underway", until: state.shipping.closesAt };
-    return null;
-  }
-  if (state.phase === "Storm") {
-    if (state.stormCarry && now < state.stormCarry.closesAt) {
-      return { code: "storm-window", until: state.stormCarry.closesAt };
-    }
-    return null;
-  }
-  if (state.phase === "Battles") {
-    if (state.battles) {
-      const c = state.battles.current;
-      return {
-        code: "battles-underway",
-        until: c?.revealed?.allocate?.closesAt ?? c?.revealed?.traitor.closesAt ?? (c?.prescience && !c.prescience.done ? c.prescience.closesAt : void 0) ?? (c?.voice && !c.voice.done ? c.voice.closesAt : void 0) ?? c?.closesAt ?? state.battles.capture?.closesAt ?? state.battles.closesAt
-      };
-    }
-    return null;
-  }
-  if (state.phase === "Bidding") {
-    if (state.auction && state.auction.status === "awaiting") {
-      return { code: "auction-running", until: state.auction.closesAt };
-    }
-    return null;
-  }
-  if (state.phase === "Mentat Pause" && state.mentat) {
-    const everyone = (state.players ?? []).map((p) => p.faction);
-    const ready = state.mentat.ready ?? [];
-    if (now < state.mentat.closesAt && !everyone.every((f) => ready.includes(f))) {
-      return { code: "mentat-pause", until: state.mentat.closesAt };
-    }
-    return null;
-  }
-  return null;
-}
-function phaseWindowOpen(state, now) {
-  const c = state.phaseClock;
-  return !!c && c.phase === state.phase && c.turn === state.turn && now < c.closesAt;
-}
-function rollStorm(turn, mode, rng) {
-  const range = turn <= 1 ? FIRST_STORM_ROLL : stormRollRange(mode);
-  return range.min + Math.floor(rng() * (range.max - range.min + 1));
-}
-function stormEntry(state, roll) {
-  const outcome = resolveStorm(
-    state.storm,
-    roll,
-    state.forces ?? [],
-    state.mode,
-    state.shieldWall,
-    state.spiceOnBoard ?? {}
-  );
+// src/lib/dune/spiceBlow.ts
+function devourTerritory(territoryId, forces, spiceOnBoard, spared) {
+  const inTerritory = forces.filter((f) => f.territoryId === territoryId);
+  const safe = (f) => f.faction === "fremen" || spared != null && f.faction === spared;
   return {
-    outcome,
-    patch: {
-      storm: outcome.to,
-      forces: outcome.forcesAfter,
-      spiceOnBoard: outcome.spiceOnBoard,
-      // INTO THE TANKS, not into thin air. Revival reads this; a storm that
-      // reports its dead without banking them is a storm that cremates.
-      tanks: bankDead(state.tanks, outcome.killed),
-      stormMoved: state.turn,
-      stormReport: {
-        turn: state.turn,
-        roll,
-        from: outcome.from,
-        to: outcome.to,
-        swept: outcome.swept,
-        killed: outcome.killed,
-        spiceCleared: outcome.spiceCleared
-      }
-    }
+    territoryId,
+    forcesKilled: inTerritory.filter((f) => !safe(f)),
+    forcesSpared: inTerritory.filter(safe),
+    spiceRemoved: spiceOnBoard[territoryId] ?? 0
   };
 }
-function stormOrder(storm, players) {
-  const seats = seatsFromPositions(Object.fromEntries(
-    players.map((p) => [p.seat, p.faction])
-  ));
-  const first = firstPlayerAfterStorm(storm, seats);
-  if (!first) throw new Error("a turn order with nobody at the table");
-  const counter = [...seats].reverse();
-  const at = counter.findIndex((s) => s.faction === first.faction);
-  return [...counter.slice(at), ...counter.slice(0, at)].map((s) => s.faction);
+
+// src/lib/dune/karama.ts
+var OWNER = {
+  "atreides-see-battle-plan": "atreides",
+  "emperor-free-revival": "emperor",
+  "fremen-place-worm": "fremen",
+  "guild-stop-shipment": "spacing-guild",
+  "harkonnen-take-cards": "harkonnen"
+};
+var BASIC = [
+  {
+    id: "guild-rate-shipment",
+    label: "Ship at Guild rates",
+    text: "Purchase a shipment of forces onto the planet at Guild rates (1/2 normal) not paid to the Spacing Guild."
+  },
+  {
+    id: "free-treachery-card",
+    label: "Take a Treachery Card free",
+    text: "Purchase a Treachery Card without paying spice for it."
+  }
+];
+var LABELS = {
+  "atreides-see-battle-plan": "Look at a player's Battle Plan",
+  "emperor-free-revival": "Revive free",
+  "fremen-place-worm": "Place a sandworm",
+  "guild-stop-shipment": "Stop an off-planet shipment",
+  "harkonnen-take-cards": "Take cards from a hand"
+};
+var RESOLVABLE = [
+  "guild-rate-shipment",
+  "free-treachery-card",
+  "atreides-see-battle-plan",
+  "emperor-free-revival",
+  "fremen-place-worm",
+  "guild-stop-shipment",
+  "harkonnen-take-cards"
+];
+function karamaOptions(faction, mode) {
+  const options = BASIC.map((o) => ({ ...o, resolvable: RESOLVABLE.includes(o.id) }));
+  if (mode !== "advanced") return options;
+  const own = Object.keys(OWNER).find((id) => OWNER[id] === faction);
+  const text = FACTIONS[faction]?.advanced.karama;
+  if (own && text) {
+    options.push({ id: own, label: LABELS[own], text, resolvable: RESOLVABLE.includes(own) });
+  }
+  return options;
 }
-function biddingOpening(input) {
-  const order = stormOrder(input.storm, input.players);
-  const hands = {};
-  const limits = {};
-  for (const f of order) {
-    hands[f] = input.cards[f] ?? 0;
-    limits[f] = factionById(f)?.handLimit ?? 4;
+var PENDING = {
+  "guild-rate-shipment": "a shipment at half rate, paid to the bank rather than the Guild \u2014 needs the shipment phase",
+  "free-treachery-card": "one treachery card at no cost \u2014 needs bidding",
+  "atreides-see-battle-plan": "sight of one player's whole battle plan \u2014 needs battle plans",
+  "emperor-free-revival": "a free revival of up to three forces or one leader \u2014 needs the revival phase",
+  "fremen-place-worm": "",
+  "guild-stop-shipment": "one player's off-planet shipment stopped \u2014 needs the shipment phase",
+  "harkonnen-take-cards": "cards taken blind from a hand, one given back for each \u2014 needs hidden hands"
+};
+function playKarama(input) {
+  const { faction, mode, use } = input;
+  const allowed = karamaOptions(faction, mode).some((o) => o.id === use.id);
+  if (!allowed) {
+    const owner = OWNER[use.id];
+    throw new Error(
+      owner && owner !== faction ? `${use.id} is the ${owner} power; ${faction} cannot play it` : owner ? `${use.id} is an advanced power and this is the ${mode} game` : `${faction} cannot play ${use.id}`
+    );
   }
-  return { order, hands, limits };
+  if (use.id === "fremen-place-worm") {
+    const t = DUNE_TERRITORIES.find((x) => x.id === use.territoryId);
+    if (!t) throw new Error(`no such territory to place a worm in: ${use.territoryId}`);
+    if (t.terrain !== "sand") {
+      throw new Error(`a Karama worm goes in sand; ${t.displayName} is ${t.terrain}`);
+    }
+    const spice = input.spiceOnBoard ?? {};
+    const devoured = devourTerritory(
+      use.territoryId,
+      input.forces ?? [],
+      spice,
+      input.spared
+    );
+    const after = { ...spice };
+    delete after[use.territoryId];
+    return {
+      use,
+      discarded: true,
+      resolved: { kind: "worm-placed", devoured, spiceOnBoard: after, toTanks: devoured.forcesKilled },
+      pending: null
+    };
+  }
+  return { use, discarded: true, resolved: null, pending: PENDING[use.id] };
 }
-function spiceHarvest(state) {
-  const board = { ...state.spiceOnBoard ?? {} };
-  const collected = [];
-  const occupies2 = (faction, territoryId) => (state.forces ?? []).some((f) => f.faction === faction && f.territoryId === territoryId && f.count > 0 && f.posture !== "advisor");
-  const CITY_RATE_HOLDS = ["territory-13", "territory-26"];
-  const order = stormOrder(state.storm, state.players);
-  for (const t of DUNE_TERRITORIES) {
-    let pile = board[t.id] ?? 0;
-    if (pile <= 0 || !t.spiceSector) continue;
-    for (const faction of order) {
-      if (pile <= 0) break;
-      const standing = (state.forces ?? []).filter((f) => f.faction === faction && f.territoryId === t.id && f.sector === t.spiceSector && f.posture !== "advisor").reduce((n, f) => n + f.count, 0);
-      if (standing <= 0) continue;
-      const rate = CITY_RATE_HOLDS.some((c) => occupies2(faction, c)) ? 3 : 2;
-      const take = Math.min(pile, rate * standing);
-      pile -= take;
-      collected.push({ faction, territoryId: t.id, amount: take });
-    }
-    if (pile > 0) board[t.id] = pile;
-    else delete board[t.id];
-  }
-  return { collected, spiceOnBoard: board };
+function isKaramaFor(faction, mode, card) {
+  if (card.id === "karama") return true;
+  return mode === "advanced" && faction === "bene-gesserit" && card.kind === "worthless";
 }
-function cityIncome(state) {
-  if (state.mode !== "advanced") return [];
-  const paid = [];
-  for (const t of DUNE_TERRITORIES) {
-    if (!t.spiceIncome) continue;
-    const occupants = /* @__PURE__ */ new Set();
-    for (const f of state.forces ?? []) {
-      if (f.territoryId === t.id && f.count > 0 && f.posture !== "advisor") {
-        occupants.add(f.faction);
-      }
-    }
-    for (const faction of occupants) {
-      paid.push({ faction, territoryId: t.id, amount: t.spiceIncome });
-    }
-  }
-  return paid;
+var KARAMA_GIVE_SECONDS = 60;
+function isSuppressed(list, faction, ref, turn, phase) {
+  return (list ?? []).some((s) => s.faction === faction && s.ref === ref && s.turn === turn && s.phase === phase);
 }
-var SIETCH_TABR = "territory-40";
-var HABBANYA_SIETCH = "territory-38";
-var TUEKS_SIETCH = "territory-33";
-var occupies = (forces, faction, territoryId) => forces.some((f) => f.faction === faction && f.territoryId === territoryId && f.count > 0 && f.posture !== "advisor");
-function mentatVerdict(state, prediction, spice) {
-  const forces = state.forces ?? [];
-  const seated = (state.players ?? []).map((p) => p.faction);
-  const allyOf = (f) => (state.players ?? []).find((p) => p.faction === f)?.ally ?? null;
-  const solo = seated.filter((f) => {
-    const a = allyOf(f);
-    return !a || !seated.includes(a);
-  });
-  const byStrongholds = solo.filter((f) => strongholdsHeld(forces, f) >= WIN_STRONGHOLDS);
-  const strongholdIds = DUNE_TERRITORIES.filter((t) => t.stronghold).map((t) => t.id);
-  const pairs = seated.flatMap((f) => {
-    const a = allyOf(f);
-    return a && seated.includes(a) && String(f) < String(a) ? [[f, a]] : [];
-  });
-  const byAlliance = pairs.filter(([x, y]) => strongholdIds.filter((t) => occupies(forces, x, t) || occupies(forces, y, t)).length >= ALLIANCE_WIN_STRONGHOLDS);
-  const crown = (factions, reason) => {
-    if (prediction?.faction && prediction.turn === state.turn && factions.includes(prediction.faction) && seated.includes("bene-gesserit")) {
-      return { factions: ["bene-gesserit"], reason: "prediction", turn: state.turn };
-    }
-    return { factions, reason, turn: state.turn };
-  };
-  if (byStrongholds.length > 0 || byAlliance.length > 0) {
-    return crown([...byStrongholds, ...byAlliance.flat()], "strongholds");
-  }
-  if (state.turn < TURN_LIMIT) return null;
-  const fremenOrEmpty = (territoryId) => !forces.some((f) => f.faction !== "fremen" && f.territoryId === territoryId && f.count > 0 && f.posture !== "advisor");
-  const withAlly = (f) => {
-    const a = allyOf(f);
-    return a && seated.includes(a) ? [f, a] : [f];
-  };
-  if (seated.includes("fremen") && fremenOrEmpty(SIETCH_TABR) && fremenOrEmpty(HABBANYA_SIETCH) && !["harkonnen", "atreides", "emperor"].some((rival) => occupies(forces, rival, TUEKS_SIETCH))) {
-    return crown(withAlly("fremen"), "fremen-default");
-  }
-  if (seated.includes("spacing-guild")) {
-    return crown(withAlly("spacing-guild"), "guild-default");
-  }
-  const units = [
-    ...solo.map((f) => ({ factions: [f], n: strongholdsHeld(forces, f) })),
-    ...pairs.map(([x, y]) => ({
-      factions: [x, y],
-      n: strongholdIds.filter((t) => occupies(forces, x, t) || occupies(forces, y, t)).length
-    }))
+function suppressibleRefs(faction) {
+  const f = FACTIONS[faction];
+  if (!f) return [];
+  const refs = [
+    "specialVictory",
+    ...Object.keys(f.abilities).map((k) => `abilities.${k}`),
+    ...Object.keys(f.advanced).map((k) => `advanced.${k}`)
   ];
-  const best = Math.max(0, ...units.map((u) => u.n));
-  const tied = units.filter((u) => u.n === best);
-  if (tied.length > 1 && spice) {
-    const purseOf = (u) => u.factions.reduce((n, f) => n + (spice[f] ?? 0), 0);
-    const richest = Math.max(...tied.map(purseOf));
-    const byPurse = tied.filter((u) => purseOf(u) === richest);
-    if (byPurse.length < tied.length) {
-      return crown(byPurse.flatMap((u) => u.factions), "most-spice");
-    }
-  }
-  return crown(tied.flatMap((u) => u.factions), "most-strongholds");
+  return refs.flatMap((ref) => {
+    if (!canKaramaStop(f, ref)) return [];
+    const text = factionRuleText(f, ref);
+    return text ? [{ ref, text }] : [];
+  });
 }
-function resetDeadlines(state, now, lengths) {
-  const patch = {};
-  const reset = [];
-  if (state.setup) {
-    patch.setup = { ...state.setup, closesAt: now + lengths.setupSeconds * 1e3 };
-    reset.push("setup");
-  }
-  if (state.charity) {
-    patch.charity = { ...state.charity, expiresAt: now + lengths.charityMs };
-    reset.push("charity");
-  }
-  if (state.mentat) {
-    patch.mentat = { ...state.mentat, closesAt: now + lengths.mentatSeconds * 1e3 };
-    reset.push("mentat");
-  }
-  if (state.nexus) {
-    patch.nexus = { ...state.nexus, closesAt: now + lengths.nexusSeconds * 1e3 };
-    reset.push("nexus");
-  }
-  if (state.stormCarry) {
-    patch.stormCarry = {
-      ...state.stormCarry,
-      closesAt: now + lengths.stormCardSeconds * 1e3
-    };
-    reset.push("storm-window");
-  }
-  if (state.karamaGiveBack) {
-    patch.karamaGiveBack = {
-      ...state.karamaGiveBack,
-      closesAt: now + lengths.karamaGiveSeconds * 1e3
-    };
-    reset.push("karama-give-back");
-  }
-  if (state.spiceBlow) {
-    patch.spiceBlow = { ...state.spiceBlow, closesAt: now + lengths.wormSeconds * 1e3 };
-    reset.push("worm-pause");
-  }
-  if (state.auction && state.auction.status === "awaiting") {
-    patch.auction = { ...state.auction, closesAt: now + lengths.bidSeconds * 1e3 };
-    reset.push("bid");
-  }
-  if (state.shipping) {
-    patch.shipping = { ...state.shipping, closesAt: now + lengths.shipmentSeconds * 1e3 };
-    reset.push("shipping");
-  }
-  if (state.battles) {
-    const b = state.battles;
-    if (b.current?.revealed?.allocate) {
-      patch.battles = {
-        ...b,
-        current: {
-          ...b.current,
-          revealed: {
-            ...b.current.revealed,
-            allocate: {
-              ...b.current.revealed.allocate,
-              closesAt: now + lengths.battleAllocateSeconds * 1e3
-            }
-          }
-        }
-      };
-      reset.push("allocate");
-    } else if (b.current?.revealed) {
-      patch.battles = {
-        ...b,
-        current: {
-          ...b.current,
-          revealed: {
-            ...b.current.revealed,
-            traitor: {
-              ...b.current.revealed.traitor,
-              closesAt: now + lengths.battleTraitorSeconds * 1e3
-            }
-          }
-        }
-      };
-      reset.push("traitor-beat");
-    } else if (b.current?.prescience && !b.current.prescience.done) {
-      patch.battles = {
-        ...b,
-        current: {
-          ...b.current,
-          prescience: {
-            ...b.current.prescience,
-            closesAt: now + lengths.battlePrescienceSeconds * 1e3
-          }
-        }
-      };
-      reset.push("prescience");
-    } else if (b.current?.voice && !b.current.voice.done) {
-      patch.battles = {
-        ...b,
-        current: {
-          ...b.current,
-          voice: { ...b.current.voice, closesAt: now + lengths.battleVoiceSeconds * 1e3 },
-          closesAt: now + lengths.battlePlanSeconds * 1e3
-        }
-      };
-      reset.push("voice");
-    } else if (b.current) {
-      patch.battles = {
-        ...b,
-        current: { ...b.current, closesAt: now + lengths.battlePlanSeconds * 1e3 }
-      };
-      reset.push("battle-plan");
-    } else if (b.capture) {
-      patch.battles = {
-        ...b,
-        capture: { ...b.capture, closesAt: now + lengths.battleCaptureSeconds * 1e3 }
-      };
-      reset.push("capture");
-    } else {
-      patch.battles = { ...b, closesAt: now + lengths.battlePickSeconds * 1e3 };
-      reset.push("battle-pick");
-    }
-  }
-  if (state.phaseClock) {
-    patch.phaseClock = { ...state.phaseClock, closesAt: now + PHASE_SECONDS * 1e3 };
-    reset.push("phase-clock");
-  }
-  return { patch, reset };
+function isKaramaCardId(faction, mode, cardId) {
+  const card = TREACHERY_CARDS.find((c) => c.id === cardId);
+  return !!card && isKaramaFor(faction, mode, card);
+}
+function karamaAllowed(faction, mode, useId) {
+  if (karamaOptions(faction, mode).some((o) => o.id === useId)) return null;
+  const owner = OWNER[useId];
+  if (owner && owner !== faction) return "not-your-power";
+  return "advanced-only";
 }
 export {
-  ALLIANCE_WIN_STRONGHOLDS,
-  HABBANYA_SIETCH,
-  MENTAT_READY_SECONDS,
-  PHASE_SECONDS,
-  SHIELD_WALL_TERRITORY,
-  SIETCH_TABR,
-  STORM_CARD_SECONDS,
-  TUEKS_SIETCH,
-  TURN_LIMIT,
-  WEATHER_CONTROL_MAX,
-  WIN_STRONGHOLDS,
-  advanceHold,
-  biddingOpening,
-  cityIncome,
-  mayAtomics,
-  mentatVerdict,
-  phaseAfter,
-  phaseWindowOpen,
-  resetDeadlines,
-  rollStorm,
-  spiceHarvest,
-  stormEntry,
-  stormOrder
+  KARAMA_GIVE_SECONDS,
+  isKaramaCardId,
+  isKaramaFor,
+  isSuppressed,
+  karamaAllowed,
+  karamaOptions,
+  playKarama,
+  suppressibleRefs
 };

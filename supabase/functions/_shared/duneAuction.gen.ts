@@ -47,7 +47,7 @@ function bonusCardsDue(awards, handAfter, limit) {
 function settleCard(input) {
   const { award, card, hands, purses, seated } = input;
   const bonus = input.bonus ?? [];
-  const moves = payForAuction([award], seated).flatMap((m) => {
+  const moves = (award.winner === input.freeFor ? [] : payForAuction([award], seated)).flatMap((m) => {
     if (m.from !== award.winner || !input.ally) return [m];
     const share = allyShare(m.amount, purses[award.winner] ?? 0);
     if (share.ally <= 0) return [m];

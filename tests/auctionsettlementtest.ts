@@ -409,6 +409,30 @@ check('a winner spending their last spice is fine',
     true)
 }
 
+// ── the Karama free card ──────────────────────────────────────────────────
+{
+  const free = settleCard({
+    award: { index: 0, winner: 'atreides' as FactionId, price: 6 }, card: 'card-f',
+    hands: { atreides: [] }, purses: { atreides: 3 },
+    seated: ['atreides', 'emperor'] as FactionId[], limits: { atreides: 4 }, bonus: [],
+    freeFor: 'atreides' as FactionId,
+  })
+  check('a Karama-free winner pays nobody — the card is simply taken',
+    free.ok
+      ? [free.writes.secrets['atreides'].spice, free.writes.secrets['atreides'].hand,
+        'emperor' in free.writes.secrets]
+      : null,
+    [3, ['card-f'], false])
+  const charged = settleCard({
+    award: { index: 0, winner: 'atreides' as FactionId, price: 2 }, card: 'card-f',
+    hands: { atreides: [] }, purses: { atreides: 3 },
+    seated: ['atreides'] as FactionId[], limits: { atreides: 4 }, bonus: [],
+    freeFor: 'harkonnen' as FactionId,
+  })
+  check('...and an entitlement held by someone else changes nothing',
+    charged.ok ? charged.writes.secrets['atreides'].spice : null, 1)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.

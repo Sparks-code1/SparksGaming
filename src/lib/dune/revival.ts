@@ -247,6 +247,9 @@ export function playGhola(input: {
   faction: FactionId
   tanks: Tanks
   choice: { leader: string } | { plain: number; starred: number }
+  /** The free revival's reach — the Ghola's five, or the Emperor Karama's
+   *  three. Same law either way: gate waived, cycle honoured, no cost. */
+  cap?: number
 }): {
   ok: true
   tanks: Tanks
@@ -274,7 +277,7 @@ export function playGhola(input: {
   const { plain, starred } = choice
   const want = plain + starred
   if (want <= 0 || plain < 0 || starred < 0) return { ok: false, refusal: 'nothing-asked' }
-  if (want > GHOLA_FORCES) return { ok: false, refusal: 'over-the-cap' }
+  if (want > (input.cap ?? GHOLA_FORCES)) return { ok: false, refusal: 'over-the-cap' }
   const held = tanks.forces[faction] ?? { plain: 0, starred: 0 }
   if (held.plain < plain || held.starred < starred) {
     return { ok: false, refusal: 'nothing-there' }

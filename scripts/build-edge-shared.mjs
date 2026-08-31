@@ -94,6 +94,16 @@ const TARGETS = [
     exportName: 'charityGrant',
   },
   {
+    entry: 'src/lib/dune/karama.ts',
+    out: 'supabase/functions/_shared/duneKarama.gen.ts',
+    what: 'karama uses and suppression',
+    // isSuppressed is the reactive half's whole promise: a stopped
+    // advantage stays stopped wherever it would have fired, and a second
+    // copy of the judgment is a second chance to let one through.
+    mustExport: /export\s*\{[^}]*isSuppressed/,
+    exportName: 'isSuppressed',
+  },
+  {
     entry: 'src/lib/dune/truthtrance.ts',
     out: 'supabase/functions/_shared/duneTruthtrance.gen.ts',
     what: 'truthtrance questions',

@@ -72,6 +72,8 @@ export interface DuneSecrets extends Secrets {
    */
   nexusProposal?: { to: FactionId; turn: number }
   nexusOffers?: { from: FactionId; turn: number }[]
+  /** A whole battle plan seen by the Atreides Karama — theirs alone. */
+  karamaPlanSeen?: { territoryId: string; target: FactionId; plan: Record<string, unknown> }
 }
 
 /** Claiming brings a player UP TO this, it does not add it. */

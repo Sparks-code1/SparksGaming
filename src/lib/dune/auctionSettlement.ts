@@ -110,6 +110,9 @@ export function settleCard(input: {
   deckHolds?: number
   /** The winner's ally, whose purse stands behind the winner's — or null. */
   ally?: FactionId | null
+  /** A seat holding the Karama free-card entitlement: when THEY are the
+   *  winner, nothing is paid to anyone — the card is simply taken. */
+  freeFor?: FactionId | null
 }): SettlementResult {
   const { award, card, hands, purses, seated } = input
   const bonus = input.bonus ?? []
@@ -121,7 +124,10 @@ export function settleCard(input: {
   // ally's only for what is left, in the same settlement. A move from a seat
   // to itself — the Emperor collecting from an allied buyer out of the
   // Emperor's own purse — nets nothing and is dropped rather than booked.
-  const moves = payForAuction([award], seated).flatMap(m => {
+  // A KARAMA-FREE WINNER pays nobody at all: no move is booked, and the
+  // card is simply taken.
+  const moves = (award.winner === input.freeFor
+    ? [] : payForAuction([award], seated)).flatMap(m => {
     if (m.from !== award.winner || !input.ally) return [m]
     const share = allyShare(m.amount, purses[award.winner] ?? 0)
     if (share.ally <= 0) return [m]
