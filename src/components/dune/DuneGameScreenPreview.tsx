@@ -15,6 +15,7 @@ import { useEffect, useState } from 'react'
 import type { FactionId } from '@/types/Dune/Faction'
 import type { DuneGameState, GameMode, Force } from '@/types/Dune/Game'
 import type { DuneSecrets } from '@/lib/dune/charity'
+import { stormEntry } from '@/lib/dune/phaseAdvance'
 import {
   openingPosition, settle, defaultSector, postureFor, defaultFremenPlacement, SETUP_SECONDS,
 } from '@/lib/dune/setup'
@@ -168,7 +169,7 @@ export default function DuneGameScreenPreview() {
   // preview of one frame.
   const [card, setCard] = useState(
     q.get('auction') === 'off' || q.has('battle') || q.has('nexus')
-      || q.has('truthtrance')
+      || q.has('truthtrance') || q.has('stormshow')
       ? -1 : BIDDING.ask.index)
   const running = card >= 0 && card < BIDDING.ask.cardCount
 
@@ -283,6 +284,28 @@ export default function DuneGameScreenPreview() {
   } as unknown as DuneGameState
   const truthOwn: DuneSecrets = { ...OWN, cards: [...(OWN.cards ?? []), 'truthtrance'] }
 
+  // ── the storm's replay, at ?dune-game&stormshow ───────────────────────────
+  // Press the button and the SERVER'S ruling (the law, run locally here)
+  // lands whole — then the screen replays it: dials, then the walk, the
+  // fallen leaving as the marker passes. &stormshow=first is the opening
+  // storm: eight seconds of dials and fourteen sectors.
+  const storming = q.has('stormshow')
+  const stormFirst = q.get('stormshow') === 'first'
+  const [stormFired, setStormFired] = useState(false)
+  const stormPre = {
+    ...STATE, phase: 'Storm', storm: 'sector-2', awaiting: null,
+    turn: stormFirst ? 1 : 4,
+    forces: [
+      ...STATE.forces,
+      f('harkonnen', 'territory-02', 'sector-4', 5),
+    ],
+  } as unknown as DuneGameState
+  const stormPost = (() => {
+    if (!storming) return stormPre
+    const { patch: sp } = stormEntry(stormPre as never, stormFirst ? 14 : 4)
+    return { ...stormPre, ...sp } as unknown as DuneGameState
+  })()
+
   const setupState: DuneGameState & { setup?: SetupWindow } = dealt
     ? { ...dealt.state, mode: 'advanced',
         forces: [...dealt.state.forces, ...placedForces],
@@ -296,6 +319,7 @@ export default function DuneGameScreenPreview() {
           : battling ? battleState
           : nexusing ? nexusState
           : truthing ? truthState
+          : storming ? (stormFired ? stormPost : stormPre)
           : { ...STATE, mode }}
         seat={seat}
         own={settling && seat
@@ -385,7 +409,16 @@ export default function DuneGameScreenPreview() {
           THE PREVIEW'S OWN CONTROL, not the game's — a real match never draws
           it — and the staged views stand down too: a battle or a Nexus is not
           a place to restart the auction demo from. */}
-      {!running && !battling && !nexusing && !settling && !truthing && (
+      {storming && !stormFired && (
+        <button type="button" onClick={() => setStormFired(true)}
+          style={{
+            position: 'fixed', left: '50%', transform: 'translateX(-50%)', bottom: 10, zIndex: 5,
+            background: '#1b2337', color: '#f0e2bb', border: '1px solid #c9542a',
+            borderRadius: 4, padding: '5px 11px', cursor: 'pointer',
+            font: '12px Georgia, "Times New Roman", serif',
+          }}>roll the storm</button>
+      )}
+      {!running && !battling && !nexusing && !settling && !truthing && !storming && (
         <button type="button" onClick={() => setCard(0)}
           style={{
             // Bottom centre, over the board: the right-hand column is the tray now

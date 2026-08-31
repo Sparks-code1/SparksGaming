@@ -1833,5 +1833,36 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     /const zoomOrigin = useRef\('50% 50%'\)/.test(boardZ), true)
 }
 
+// ── the storm's replay ────────────────────────────────────────────────────
+// The dials spin eight seconds for the first storm and five after; the
+// marker then walks a sector at a time, the fallen leaving as it passes.
+// A late joiner replays nothing, and the spin's own flicker cannot reset
+// its clock.
+{
+  const { STORM_SPIN_FIRST_MS, STORM_SPIN_MS, STORM_STEP_MS } =
+    await import('@/components/dune/DuneGameScreen')
+  check('the lengths are the spec\'s',
+    [STORM_SPIN_FIRST_MS, STORM_SPIN_MS, STORM_STEP_MS], [8000, 5000, 600])
+
+  const screenS = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
+  check('a late joiner replays nothing — the first look records what happened',
+    [/r\.ready = true/.test(screenS),
+      /r\.seenTurn = report\?\.turn \?\? -1/.test(screenS)],
+    [true, true])
+  check('the spin\'s clock is keyed on the stage, never the flicker',
+    /\}, \[spinning, spinFirst\]\)/.test(screenS), true)
+  check('the walk overrides what the board SHOWS: the marker mid-stride, the fallen still standing',
+    [/storm=\{stormFace\}/.test(screenS),
+      /forcesShown\.reduce/.test(screenS),
+      /stormShow\.swept\.indexOf\(k\.sector\) >= stormShow\.step/.test(screenS)],
+    [true, true, true])
+  check('the two-beat storm spins at the calculation and holds the number for the cards',
+    [/walkAfter: false, from: state\.storm, swept: \[\], killed: \[\], step: 0,/.test(screenS),
+      /kind: s\.walkAfter \? 'walk' : 'held'/.test(screenS),
+      /data-storm-spin=\{stormShow\.kind\}/.test(screenS),
+      /data-storm-walk=""/.test(screenS)],
+    [true, true, true, true])
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 process.exit(pass ? 0 : 1)

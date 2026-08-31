@@ -37,9 +37,9 @@
  * who is standing next to your spice. A player who cannot see the territory
  * cannot price the card they are bidding on.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FactionId } from '@/types/Dune/Faction'
-import type { DuneGameState } from '@/types/Dune/Game'
+import type { DuneGameState, Force, SectorId } from '@/types/Dune/Game'
 import type { DuneSecrets } from '@/lib/dune/charity'
 import { hudRows, allyOf } from '@/lib/dune/hud'
 import { ChatPanel } from './ChatPanel'
@@ -47,6 +47,12 @@ import type { ChatMessage, ChatSendScope } from './ChatPanel'
 import { PlayerHud } from './PlayerHud'
 import { OwnStrip } from './OwnStrip'
 import { DuneBoard, BATTLE_ZOOM_MS } from './DuneBoard'
+
+/** The dials spin for eight seconds on the first storm, five after. */
+export const STORM_SPIN_FIRST_MS = 8000
+export const STORM_SPIN_MS = 5000
+/** The marker walks one sector at a time, at this pace. */
+export const STORM_STEP_MS = 600
 import { CHARITY_WINDOW_MS } from '@/lib/dune/charity'
 import { WORM_SECONDS, WORM_RIDE_SECONDS, NEXUS_SECONDS } from '@/lib/dune/spiceBlow'
 import {
@@ -342,6 +348,100 @@ export function DuneGameScreen({
     const t = setTimeout(() => setBattleVeil(false), BATTLE_ZOOM_MS)
     return () => clearTimeout(t)
   }, [battleAt])
+
+  /**
+   * THE STORM'S REPLAY. The server rules in one write; the table watches it
+   * happen: the dials spin to the rolled number, then the marker walks the
+   * swept sectors one at a time, the fallen leaving the board as it passes.
+   * The two-beat storm spins at the CALCULATION and walks at the move; the
+   * one-shot storm does both back to back. A late joiner replays nothing —
+   * the first look records what already happened.
+   */
+  const [stormShow, setStormShow] = useState<{
+    kind: 'spin' | 'held' | 'walk'
+    roll: number
+    flick: number
+    first: boolean
+    walkAfter: boolean
+    from: SectorId
+    swept: readonly SectorId[]
+    killed: readonly Force[]
+    step: number
+  } | null>(null)
+  const stormSeen = useRef({ ready: false, seenTurn: -1, spunTurn: -1 })
+  useEffect(() => {
+    const r = stormSeen.current
+    const report = state.stormReport
+    const carry = state.stormCarry
+    if (!r.ready) {
+      r.ready = true
+      r.seenTurn = report?.turn ?? -1
+      r.spunTurn = carry?.turn ?? r.seenTurn
+      return
+    }
+    if (carry && carry.turn !== r.spunTurn && state.stormMoved !== state.turn) {
+      r.spunTurn = carry.turn
+      setStormShow({
+        kind: 'spin', roll: carry.roll, flick: 0, first: carry.turn === 1,
+        walkAfter: false, from: state.storm, swept: [], killed: [], step: 0,
+      })
+      return
+    }
+    if (report && report.turn !== r.seenTurn) {
+      r.seenTurn = report.turn
+      const needSpin = r.spunTurn !== report.turn
+      r.spunTurn = report.turn
+      setStormShow({
+        kind: needSpin ? 'spin' : 'walk',
+        roll: report.roll, flick: 0, first: report.turn === 1,
+        walkAfter: true, from: report.from,
+        swept: report.swept, killed: report.killed, step: 0,
+      })
+    }
+  }, [state.stormReport, state.stormCarry, state.storm, state.stormMoved, state.turn])
+  // KEYED ON THE STAGE, never the whole object: the flick updates the state
+  // every 90ms, and an effect depending on it would reset the spin's own
+  // clock with every flick — a slot machine that can never stop.
+  const spinning = stormShow?.kind === 'spin'
+  const spinFirst = stormShow?.first ?? false
+  useEffect(() => {
+    if (!spinning) return
+    const spinMs = spinFirst ? STORM_SPIN_FIRST_MS : STORM_SPIN_MS
+    const flicker = setInterval(() => {
+      setStormShow(s => s && s.kind === 'spin'
+        ? { ...s, flick: Math.floor(Math.random() * (s.first ? 21 : 7)) }
+        : s)
+    }, 90)
+    const done = setTimeout(() => {
+      setStormShow(s => s && s.kind === 'spin'
+        ? { ...s, kind: s.walkAfter ? 'walk' : 'held' }
+        : s)
+    }, spinMs)
+    return () => { clearInterval(flicker); clearTimeout(done) }
+  }, [spinning, spinFirst])
+  const walking = stormShow?.kind === 'walk'
+  const walkStep = stormShow?.kind === 'walk' ? stormShow.step : -1
+  useEffect(() => {
+    if (!walking) return
+    if (stormShow && walkStep >= stormShow.swept.length) {
+      const t = setTimeout(() => setStormShow(null), 500)
+      return () => clearTimeout(t)
+    }
+    const t = setTimeout(() =>
+      setStormShow(s => s && s.kind === 'walk' ? { ...s, step: s.step + 1 } : s),
+    STORM_STEP_MS)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walking, walkStep])
+  /** What the board SHOWS while the storm walks: the marker mid-stride, and
+   *  the fallen still standing in the sectors it has not reached. */
+  const stormFace = stormShow && stormShow.kind === 'walk'
+    ? (stormShow.step === 0 ? stormShow.from : stormShow.swept[stormShow.step - 1])
+    : state.storm
+  const forcesShown = stormShow && stormShow.kind === 'walk'
+    ? [...state.forces, ...stormShow.killed.filter(k =>
+      stormShow.swept.indexOf(k.sector) >= stormShow.step)]
+    : state.forces
   /** Forces staged on the rail, waiting for a landing click on the board. */
   const [staged, setStaged] = useState({ plain: 0, starred: 0 })
   const rows = hudRows(state)
@@ -395,7 +495,7 @@ export function DuneGameScreen({
   // advisor entry marks the whole cell's stack — a faction cannot have an
   // advisor and a fighter standing as one pile.
   const stacks = Object.values(
-    state.forces.reduce<Record<string, {
+    forcesShown.reduce<Record<string, {
       territoryId: string; sector: string; faction: FactionId; count: number
       starred?: number; posture?: 'fighter' | 'advisor'
     }>>((acc, f) => {
@@ -777,7 +877,7 @@ export function DuneGameScreen({
           <DuneBoard
             zoomTo={battleAt}
             shieldWall={state.shieldWall}
-            storm={state.storm} stacks={[...stacks, ...previewStacks]}
+            storm={stormFace} stacks={[...stacks, ...previewStacks]}
             spice={state.spiceOnBoard}
             seating={seating} deck={state.spiceDeck} mode={state.mode}
             awaiting={state.awaiting} phase={state.phase} turn={state.turn}
@@ -1351,6 +1451,47 @@ export function DuneGameScreen({
               expired={now >= state.karamaGiveBack.closesAt}
               onPay={onGiveBack}
               refusal={giveBackRefusal?.code ?? null} />
+          )}
+          {/* THE STORM'S FACE: the dials spinning, the revealed number
+              held through the atomics window, and the walk's own count. */}
+          {stormShow && stormShow.kind !== 'walk' && (
+            <div data-storm-spin={stormShow.kind} style={{
+              position: 'absolute', inset: 0, display: 'grid',
+              placeItems: 'center', pointerEvents: 'none', zIndex: 6,
+            }}>
+              <div style={{
+                background: '#0d1220ee', color: '#f0e2bb', borderRadius: 10,
+                border: '2px solid #c9542a', padding: '18px 34px',
+                font: '15px Georgia, serif', textAlign: 'center',
+                boxShadow: '0 0 40px #c9542a55',
+              }}>
+                <div style={{ letterSpacing: 2, opacity: 0.8 }}>
+                  {stormShow.first ? 'THE STORM RISES' : 'THE STORM TURNS'}
+                </div>
+                <b data-storm-face="" style={{
+                  display: 'block', fontSize: 64, lineHeight: 1.1,
+                  fontVariantNumeric: 'tabular-nums',
+                  color: stormShow.kind === 'held' ? '#e8b04b' : '#f0e2bb',
+                }}>
+                  {stormShow.kind === 'held' ? stormShow.roll : stormShow.flick}
+                </b>
+                <div style={{ opacity: 0.7 }}>
+                  {stormShow.kind === 'held'
+                    ? 'sectors — the cards may answer before it moves'
+                    : 'sectors…'}
+                </div>
+              </div>
+            </div>
+          )}
+          {stormShow?.kind === 'walk' && (
+            <div data-storm-walk="" style={{
+              position: 'absolute', left: 0, right: 0, top: 0,
+              padding: '6px 12px', background: '#0d1220ee', color: '#f0e2bb',
+              borderBottom: '1px solid #c9542a88', font: '14px Georgia, serif',
+              textAlign: 'center', pointerEvents: 'none', zIndex: 6,
+            }}>
+              The storm moves {stormShow.roll} — {stormShow.step} of {stormShow.swept.length}
+            </div>
           )}
           {/* THE ROBES TURN: what the Sisterhood could flip right now, by
               the law's own menu — fighters out of advisors in the open
