@@ -229,6 +229,69 @@ export function reviveLeader(input: {
   }
 }
 
+/** What the Tleilaxu Ghola may bring back at once. */
+export const GHOLA_FORCES = 5
+
+/**
+ * The Tleilaxu Ghola: one free revival, played at any time.
+ *
+ * "Revive 1 of your leaders REGARDLESS of how many leaders you have in the
+ * tanks" — the card waives the gate that normally waits for the roster to
+ * die, and the one-a-turn ledger and every cost in spice go with it; the
+ * revival phase's own limits are simply not consulted. It does NOT waive
+ * the face-down cycle: a leader waiting out the rotation is a rule about
+ * the rotation, not about how many are dead. Or up to five forces from the
+ * Tanks to reserves, free, outside the turn's three.
+ */
+export function playGhola(input: {
+  faction: FactionId
+  tanks: Tanks
+  choice: { leader: string } | { plain: number; starred: number }
+}): {
+  ok: true
+  tanks: Tanks
+  leader?: string
+  toReserves?: { plain: number; starred: number }
+} | { ok: false; refusal: RevivalRefusal } {
+  const { faction, tanks, choice } = input
+  if ('leader' in choice) {
+    const dead = tanks.leaders[faction] ?? []
+    const found = dead.find(l => l.name === choice.leader)
+    if (!found) return { ok: false, refusal: 'not-in-tanks' }
+    if (found.faceDown) return { ok: false, refusal: 'face-down' }
+    return {
+      ok: true,
+      leader: choice.leader,
+      tanks: {
+        ...tanks,
+        leaders: {
+          ...tanks.leaders,
+          [faction]: dead.filter(l => l.name !== choice.leader),
+        },
+      },
+    }
+  }
+  const { plain, starred } = choice
+  const want = plain + starred
+  if (want <= 0 || plain < 0 || starred < 0) return { ok: false, refusal: 'nothing-asked' }
+  if (want > GHOLA_FORCES) return { ok: false, refusal: 'over-the-cap' }
+  const held = tanks.forces[faction] ?? { plain: 0, starred: 0 }
+  if (held.plain < plain || held.starred < starred) {
+    return { ok: false, refusal: 'nothing-there' }
+  }
+  return {
+    ok: true,
+    toReserves: { plain, starred },
+    tanks: {
+      ...tanks,
+      forces: {
+        ...tanks.forces,
+        [faction]: { plain: held.plain - plain, starred: held.starred - starred },
+      },
+    },
+  }
+}
+
 /**
  * A leader dies — the killers' entry point, wired when battles land.
  *

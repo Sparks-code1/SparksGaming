@@ -926,6 +926,38 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
     } as never) as { cost: number }).cost, 1)
 }
 
+// ── Hajr ──────────────────────────────────────────────────────────────────
+// An extra on-planet movement riding the SAME shipping turn: playable only
+// while the holder's turn is open to a closing move, and the MOVE that
+// would have closed the turn leaves it standing until the debt is paid.
+{
+  const { hajrMayPlay } = await import('@/lib/dune/shipment')
+  const hw = (over: object = {}) =>
+    ({ order: ['atreides', 'harkonnen'], at: 0, done: {}, ...over })
+  check('Hajr rides the holder\'s own open turn and no other moment',
+    [hajrMayPlay(hw() as never, 'atreides' as never),
+      hajrMayPlay(hw({ done: { moved: true } }) as never, 'atreides' as never),
+      hajrMayPlay(hw() as never, 'harkonnen' as never),
+      hajrMayPlay(null, 'atreides' as never)],
+    [true, false, false, false])
+
+  const fnh = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  const mv = fnh.slice(fnh.indexOf("case 'MOVE'"), fnh.indexOf("case 'PASS_TURN'"))
+  check('the closing move stands down while Hajr owes a movement',
+    [/const closes = w\.done\.moved \|\| !w\.done\.hajr/.test(mv),
+      /if \(w\.done\.moved && !\(w\.done\.hajr && !w\.done\.hajrMoved\)\) \{/.test(mv),
+      /\? \{ \.\.\.w\.done, hajrMoved: true \}/.test(mv),
+      /: \{ \.\.\.rest, shipping: \{ \.\.\.w, done: done2 \} \}/.test(mv)],
+    [true, true, true, true])
+  const hj = fnh.slice(fnh.indexOf("case 'HAJR'"), fnh.indexOf("case 'TRUTHTRANCE'"))
+  check('the HAJR case rides the law\'s own gate and spends the card once',
+    [/if \(!hajrMayPlay\(hw as never, myFaction as never\)\) \{/.test(hj),
+      /code: 'already-played'/.test(hj),
+      /hjHand\.splice\(hjHand\.indexOf\('hajr'\), 1\)/.test(hj),
+      /shipping: \{ \.\.\.hw, done: \{ \.\.\.hw\.done, hajr: true \} \}/.test(hj)],
+    [true, true, true, true])
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.

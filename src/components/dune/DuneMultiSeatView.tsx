@@ -695,6 +695,16 @@ export default function DuneMultiSeatView() {
         truthtranceRefusal={refusedBy === 'TRUTHTRANCE' && refused
           ? { code: refused }
           : null}
+        onGhola={mine
+          ? choice => void send(mine, 'TLEILAXU_GHOLA', choice as never)
+          : undefined}
+        gholaRefusal={refusedBy === 'TLEILAXU_GHOLA' && refused
+          ? { code: refused }
+          : null}
+        onHajr={mine ? () => void send(mine, 'HAJR') : undefined}
+        hajrRefusal={refusedBy === 'HAJR' && refused
+          ? { code: refused }
+          : null}
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused
           ? { type: refusedBy, code: refused }
           : null}

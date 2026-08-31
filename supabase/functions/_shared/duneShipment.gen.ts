@@ -1066,6 +1066,9 @@ function nextSeat(w, closesAt) {
   if (at < w.order.length) return { ...w, at, done: {}, closesAt };
   return null;
 }
+function hajrMayPlay(w, faction) {
+  return !!w && w.order[w.at] === faction && !w.done.moved;
+}
 var SHIPMENT_PHASE = "Shipment and Movement";
 export {
   FREMEN_SHIP_RADIUS,
@@ -1082,6 +1085,7 @@ export {
   bgFollowsShip,
   coOccupied,
   fremenShipTargets,
+  hajrMayPlay,
   inStorm,
   judgeMove,
   judgeShipment,

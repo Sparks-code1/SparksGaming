@@ -60,13 +60,17 @@ import { BiddingPanel } from './BiddingPanel'
 import { CharityModal } from './CharityModal'
 import { SetupWindow, SetupBoardTargets } from './SetupWindow'
 import { ShipRail } from './ShipRail'
-import { coOccupied, inStorm, moveTargets, strongholdClosed } from '@/lib/dune/shipment'
+import {
+  coOccupied, hajrMayPlay, inStorm, moveTargets, strongholdClosed,
+} from '@/lib/dune/shipment'
 import { RideRail } from './RideRail'
 import { RevivalRail } from './RevivalRail'
 import { BattlePanel } from './BattlePanel'
 import { NexusPanel } from './NexusPanel'
 import type { NexusMove } from './NexusPanel'
 import { TruthtrancePanel } from './TruthtrancePanel'
+import { GholaPanel } from './GholaPanel'
+import { HajrPanel } from './HajrPanel'
 import type { TruthtranceQuestion } from '@/lib/dune/truthtrance'
 import {
   REVIVAL_CAP, STARRED_REVIVALS_PER_TURN, PATRON_EXTRA_REVIVALS,
@@ -197,6 +201,12 @@ export interface DuneGameScreenProps {
    *  server answers out of the secret store and publishes both. */
   onTruthtrance?: (target: FactionId, question: TruthtranceQuestion) => void
   truthtranceRefusal?: { code: string } | null
+  /** Play the Tleilaxu Ghola: one free revival, a leader or up to five. */
+  onGhola?: (choice: { leader: string } | { plain: number; starred: number }) => void
+  gholaRefusal?: { code: string } | null
+  /** Play Hajr: an extra movement riding this seat's open shipping turn. */
+  onHajr?: () => void
+  hajrRefusal?: { code: string } | null
   /** The last NEXUS action's refusal — code and which action, the same
    *  discipline as battleRefusal. */
   nexusRefusal?: { type: string; code: string } | null
@@ -271,7 +281,8 @@ export function DuneGameScreen({
   onShipSpecial, onRevive, onBattlePick, onBattlePlan, onBattleAnswer,
   onBattleVoice, onBattlePrescience, onBattleAllocate, onBattleCapture,
   onMentatReady, onNexus, nexusRefusal = null, onAllyGrant,
-  onTruthtrance, truthtranceRefusal = null, battleRefusal,
+  onTruthtrance, truthtranceRefusal = null,
+  onGhola, gholaRefusal = null, onHajr, hajrRefusal = null, battleRefusal,
   worms = [], onWormRide, onPassTurn,
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
@@ -280,6 +291,8 @@ export function DuneGameScreen({
    *  dismissed — a new answer re-raises the line for everyone. */
   const [ttOpen, setTtOpen] = useState(false)
   const [ttSeen, setTtSeen] = useState(0)
+  const [gholaOpen, setGholaOpen] = useState(false)
+  const [hajrOpen, setHajrOpen] = useState(false)
   /** Forces staged on the rail, waiting for a landing click on the board. */
   const [staged, setStaged] = useState({ plain: 0, starred: 0 })
   const rows = hudRows(state)
@@ -1214,12 +1227,34 @@ export function DuneGameScreen({
               </div>
             )
           })()}
-          {ttOpen && seat && onTruthtrance && (
+          {/* EACH PANEL RIDES THE CARD: rendered only while the card is
+              still in the hand, so a landed play closes its own panel — the
+              card leaving is the success signal. */}
+          {ttOpen && seat && onTruthtrance
+            && (own?.cards ?? []).includes('truthtrance') && (
             <TruthtrancePanel
               seat={seat} players={state.players}
               onAsk={(t, q) => onTruthtrance(t, q)}
               onClose={() => setTtOpen(false)}
               refusal={truthtranceRefusal?.code ?? null} />
+          )}
+          {gholaOpen && seat && onGhola
+            && (own?.cards ?? []).includes('tleilaxughola') && (
+            <GholaPanel
+              leaders={(state.tanks?.leaders?.[seat] ?? [])
+                .filter(l => !l.faceDown).map(l => l.name)}
+              dead={state.tanks?.forces?.[seat] ?? { plain: 0, starred: 0 }}
+              onLeader={name => onGhola({ leader: name })}
+              onForces={(plain, starred) => onGhola({ plain, starred })}
+              onClose={() => setGholaOpen(false)}
+              refusal={gholaRefusal?.code ?? null} />
+          )}
+          {hajrOpen && seat && onHajr
+            && (own?.cards ?? []).includes('hajr') && (
+            <HajrPanel
+              onPlay={onHajr}
+              onClose={() => setHajrOpen(false)}
+              refusal={hajrRefusal?.code ?? null} />
           )}
           {/* THE SEPARATION BANNER: allies may not share ground, and a pair
               still sharing when the phase ends forfeits the later seat's
@@ -1296,8 +1331,19 @@ export function DuneGameScreen({
               onGrant={onAllyGrant}
               // THE CARD IS THE BUTTON: a special with a flow open right now
               // is played by clicking it in the hand, no chrome beside it.
-              playableCards={onTruthtrance ? ['truthtrance'] : []}
-              onPlayCard={id => { if (id === 'truthtrance') setTtOpen(true) }} />
+              // Hajr's ribbon lights only while its moment stands — this
+              // seat's own shipping turn, before the closing move.
+              playableCards={[
+                ...(onTruthtrance ? ['truthtrance'] : []),
+                ...(onGhola ? ['tleilaxughola'] : []),
+                ...(onHajr && state.shipping
+                  && hajrMayPlay(state.shipping as never, seat) ? ['hajr'] : []),
+              ]}
+              onPlayCard={id => {
+                if (id === 'truthtrance') setTtOpen(true)
+                if (id === 'tleilaxughola') setGholaOpen(true)
+                if (id === 'hajr') setHajrOpen(true)
+              }} />
           )}
         </div>
       </div>

@@ -1508,10 +1508,16 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     [false, true])
   const screen4 = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
   check('the screen wires the hand to the flow, and the old chrome button is gone',
-    [/playableCards=\{onTruthtrance \? \['truthtrance'\] : \[\]\}/.test(screen4),
-      /onPlayCard=\{id => \{ if \(id === 'truthtrance'\) setTtOpen\(true\) \}\}/.test(screen4),
+    [/\.\.\.\(onTruthtrance \? \['truthtrance'\] : \[\]\),/.test(screen4),
+      /\.\.\.\(onGhola \? \['tleilaxughola'\] : \[\]\),/.test(screen4),
+      // HAJR'S RIBBON LIGHTS ONLY WHILE ITS MOMENT STANDS — the law's own
+      // gate, not a re-derivation of it.
+      /&& hajrMayPlay\(state\.shipping as never, seat\) \? \['hajr'\] : \[\]\),/.test(screen4),
+      /if \(id === 'truthtrance'\) setTtOpen\(true\)/.test(screen4),
+      /if \(id === 'tleilaxughola'\) setGholaOpen\(true\)/.test(screen4),
+      /if \(id === 'hajr'\) setHajrOpen\(true\)/.test(screen4),
       /data-truthtrance-open/.test(screen4)],
-    [true, true, false])
+    [true, true, true, true, true, true, false])
 
   const answered = draw({
     state: {
@@ -1557,6 +1563,42 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   const harness3 = readFileSync('src/components/dune/DuneMultiSeatView.tsx', 'utf8')
   check('both drivers post the play',
     [/TRUTHTRANCE/.test(match3), /TRUTHTRANCE/.test(harness3)], [true, true])
+}
+
+// ── the Ghola and Hajr panels ─────────────────────────────────────────────
+{
+  const { GholaPanel } = await import('@/components/dune/GholaPanel')
+  const { HajrPanel } = await import('@/components/dune/HajrPanel')
+  const ghola = renderToStaticMarkup(createElement(GholaPanel, {
+    leaders: ['Duncan Idaho'], dead: { plain: 3, starred: 1 },
+    onLeader: () => {}, onForces: () => {}, onClose: () => {},
+  }))
+  check('the Ghola panel offers the reachable leaders and the free forces',
+    [/data-ghola-leader="Duncan Idaho"/.test(ghola),
+      /data-ghola-forces/.test(ghola),
+      /Tleilaxu Ghola/.test(ghola)],
+    [true, true, true])
+  const bare = renderToStaticMarkup(createElement(GholaPanel, {
+    leaders: [], dead: { plain: 0, starred: 0 },
+    onLeader: () => {}, onForces: () => {}, onClose: () => {},
+  }))
+  check('...and says so when the Tanks hold nothing of yours',
+    [/nobody to bring back/.test(bare), /data-ghola-leader/.test(bare)],
+    [true, false])
+  const hajr = renderToStaticMarkup(createElement(HajrPanel, {
+    onPlay: () => {}, onClose: () => {}, refusal: 'not-your-turn',
+  }))
+  check('the Hajr panel is one deliberate press, its refusals in words',
+    [/data-hajr-play=""/.test(hajr),
+      /data-hajr-refusal="not-your-turn"/.test(hajr),
+      /rides your own turn/.test(hajr)],
+    [true, true, true])
+  const match5 = readFileSync('src/components/dune/DuneMatchScreen.tsx', 'utf8')
+  const harness5 = readFileSync('src/components/dune/DuneMultiSeatView.tsx', 'utf8')
+  check('both drivers post both plays',
+    [/TLEILAXU_GHOLA/.test(match5) && /'HAJR'/.test(match5),
+      /TLEILAXU_GHOLA/.test(harness5) && /'HAJR'/.test(harness5)],
+    [true, true])
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

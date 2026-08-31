@@ -53,9 +53,11 @@ import {
   charityGrant, isEligibleForCharity, readSpice, CHARITY_TOPS_UP_TO, CHARITY_WINDOW_MS,
 } from '../_shared/duneCharity.gen.ts'
 import {
+  playGhola,
   bankDead, reviveForces, reviveLeader, emptyTanks, returnLeaderToTanks,
 } from '../_shared/duneRevival.gen.ts'
 import {
+  hajrMayPlay,
   judgeShipment, judgeMove, landForces, liftForces, nextSeat, SHIPMENT_SECONDS,
   coOccupied,
 } from '../_shared/duneShipment.gen.ts'
@@ -2267,14 +2269,23 @@ Deno.serve(async req => {
 
     case 'MOVE': {
       const w = state.shipping as
-        { turn: number; order: string[]; at: number; done: { shipped?: boolean; moved?: boolean }; closesAt: number } | undefined
+        {
+          turn: number; order: string[]; at: number
+          done: { shipped?: boolean; moved?: boolean; hajr?: boolean; hajrMoved?: boolean }
+          closesAt: number
+        } | undefined
       if (state.phase !== 'Shipment and Movement' || !w) {
         return json({ error: 'the turn is not at movement', code: 'wrong-phase' }, 409)
       }
       if (w.order[w.at] !== myFaction) {
         return json({ error: 'not your turn to move', code: 'not-your-turn' }, 403)
       }
-      if (w.done.moved) return json({ error: 'you have moved', code: 'already-moved' }, 409)
+      // HAJR HOLDS THE TURN OPEN: a played Hajr owes one more movement, so
+      // the first move does not close the turn and a second is taken like
+      // the first — the same group again, or another.
+      if (w.done.moved && !(w.done.hajr && !w.done.hajrMoved)) {
+        return json({ error: 'you have moved', code: 'already-moved' }, 409)
+      }
 
       const gather = (Array.isArray(action.gather) ? action.gather : []) as
         { sector: string; count: number; starred?: number }[]
@@ -2303,17 +2314,26 @@ Deno.serve(async req => {
 
       // MOVEMENT CLOSES THE SEAT'S TURN — shipment came first or not at
       // all — so the rotation steps on in the same write; off the end of the
-      // order the window is deleted.
-      const stepped = nextSeat(
-        { ...w, done: { ...w.done, moved: true } } as never,
-        now + SHIPMENT_SECONDS * 1000)
-      const rest = { ...state, forces, awaiting: stepped ? stepped.order[stepped.at] : null }
-      if (!stepped) delete (rest as Record<string, unknown>).shipping
+      // order the window is deleted. UNLESS a Hajr still owes its movement:
+      // then this move marks the ordinary one taken and the turn stands.
+      const closes = w.done.moved || !w.done.hajr
+      const done2 = w.done.moved
+        ? { ...w.done, hajrMoved: true }
+        : { ...w.done, moved: true }
+      const stepped = closes
+        ? nextSeat({ ...w, done: done2 } as never, now + SHIPMENT_SECONDS * 1000)
+        : null
+      const rest = closes
+        ? { ...state, forces, awaiting: stepped ? stepped.order[stepped.at] : null }
+        : { ...state, forces, awaiting: myFaction }
+      if (closes && !stepped) delete (rest as Record<string, unknown>).shipping
 
       const { data, error } = await admin.rpc('apply_match_write', {
         p_match_id: matchId,
         p_expected_version: match.version,
-        p_state: stepped ? { ...rest, shipping: stepped } : rest,
+        p_state: closes
+          ? (stepped ? { ...rest, shipping: stepped } : rest)
+          : { ...rest, shipping: { ...w, done: done2 } },
         p_secrets: {},
       })
       if (error) return json({ error: error.message }, 500)
@@ -3086,6 +3106,124 @@ Deno.serve(async req => {
       }
       return await settleBattle(
         b as never, c as never, [...c.revealed.traitor.calls] as never, choice)
+    }
+
+    // ── the Tleilaxu Ghola: one free revival, at any time ───────────────────
+    // The card waives the gate, the ledger and the cost — never the
+    // face-down cycle — and is spent only when the revival lands.
+    case 'TLEILAXU_GHOLA': {
+      if (!myFaction) return json({ error: 'your seat has no faction', code: 'no-faction' }, 409)
+      const { data: ghRow } = await admin
+        .from('match_secrets').select('data')
+        .eq('match_id', matchId).eq('player_id', playerId).maybeSingle()
+      const ghMine = (ghRow?.data ?? {}) as { cards?: string[] }
+      if (!(ghMine.cards ?? []).includes('tleilaxughola')) {
+        return json({ error: 'you do not hold the Tleilaxu Ghola', code: 'card-not-held' }, 409)
+      }
+      const ghAsked = playGhola({
+        faction: myFaction as never,
+        tanks: (state.tanks ?? emptyTanks()) as never,
+        choice: action.leader
+          ? { leader: String(action.leader) }
+          : { plain: Number(action.plain ?? 0), starred: Number(action.starred ?? 0) },
+      })
+      if (!ghAsked.ok) {
+        return json({ error: 'that revival is not legal', code: ghAsked.refusal }, 409)
+      }
+      const ghHand = [...(ghMine.cards ?? [])]
+      ghHand.splice(ghHand.indexOf('tleilaxughola'), 1)
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state,
+          tanks: ghAsked.tanks,
+          // TO RESERVES, never the board — the same door every revival uses.
+          ...(ghAsked.toReserves
+            ? {
+              players: ((state.players ?? []) as {
+                faction: string; reserves: number; reservesStarred?: number
+                handCount?: number
+              }[]).map((p) => p.faction === myFaction
+                ? {
+                  ...p,
+                  reserves: p.reserves + ghAsked.toReserves!.plain,
+                  ...(ghAsked.toReserves!.starred > 0
+                    ? { reservesStarred: (p.reservesStarred ?? 0) + ghAsked.toReserves!.starred }
+                    : null),
+                  handCount: ghHand.length,
+                }
+                : p),
+            }
+            : {
+              players: ((state.players ?? []) as { faction: string; handCount?: number }[])
+                .map((p) => p.faction === myFaction ? { ...p, handCount: ghHand.length } : p),
+            }),
+          // A GHOLA-REVIVED LEADER is as revived as any other: killed again
+          // it returns face down and waits out the rotation.
+          ...(ghAsked.leader
+            ? {
+              revivedLeaders: [...new Set([
+                ...((state.revivedLeaders ?? []) as string[]), ghAsked.leader,
+              ])],
+            }
+            : null),
+          treacheryDiscard: [
+            ...((state.treacheryDiscard ?? []) as string[]), 'tleilaxughola',
+          ],
+        },
+        p_secrets: { [playerId]: { ...ghMine, cards: ghHand } },
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({
+        ...(ghAsked.leader ? { leader: ghAsked.leader } : { toReserves: ghAsked.toReserves }),
+        version: data[0].version,
+      })
+    }
+
+    // ── Hajr: an extra movement, riding the same shipping turn ──────────────
+    // Playable only while the holder's own turn is still open to a closing
+    // move; the MOVE case honours the debt by not stepping the rotation.
+    case 'HAJR': {
+      if (!myFaction) return json({ error: 'your seat has no faction', code: 'no-faction' }, 409)
+      const hw = state.shipping as {
+        order: string[]; at: number
+        done: { moved?: boolean; hajr?: boolean }
+      } | undefined
+      if (state.phase !== 'Shipment and Movement' || !hw) {
+        return json({ error: 'the turn is not at shipment', code: 'wrong-phase' }, 409)
+      }
+      if (!hajrMayPlay(hw as never, myFaction as never)) {
+        return json({ error: 'the moment for Hajr has passed', code: 'not-your-turn' }, 409)
+      }
+      if (hw.done.hajr) return json({ error: 'Hajr is already in play', code: 'already-played' }, 409)
+      const { data: hjRow } = await admin
+        .from('match_secrets').select('data')
+        .eq('match_id', matchId).eq('player_id', playerId).maybeSingle()
+      const hjMine = (hjRow?.data ?? {}) as { cards?: string[] }
+      if (!(hjMine.cards ?? []).includes('hajr')) {
+        return json({ error: 'you do not hold Hajr', code: 'card-not-held' }, 409)
+      }
+      const hjHand = [...(hjMine.cards ?? [])]
+      hjHand.splice(hjHand.indexOf('hajr'), 1)
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state,
+          shipping: { ...hw, done: { ...hw.done, hajr: true } },
+          players: ((state.players ?? []) as { faction: string; handCount?: number }[])
+            .map((p) => p.faction === myFaction ? { ...p, handCount: hjHand.length } : p),
+          treacheryDiscard: [
+            ...((state.treacheryDiscard ?? []) as string[]), 'hajr',
+          ],
+        },
+        p_secrets: { [playerId]: { ...hjMine, cards: hjHand } },
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ hajr: true, version: data[0].version })
     }
 
     // ── Truthtrance: one question, answered by the table itself ─────────────

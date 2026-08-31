@@ -566,5 +566,22 @@ export function nextSeat(w: ShippingWindow, closesAt: number): ShippingWindow | 
   return null
 }
 
+/**
+ * Whether Hajr may be PLAYED: the holder's own shipping turn, before the
+ * move that would close it. The card grants "an extra on-planet force
+ * movement subject to normal movement rules" — the same group again or
+ * another — and the extra ride the SAME turn: once the closing move has
+ * stepped the rotation, the moment is gone.
+ */
+export function hajrMayPlay(
+  w: {
+    order: readonly string[]; at: number
+    done: { moved?: boolean }
+  } | null | undefined,
+  faction: FactionId,
+): boolean {
+  return !!w && w.order[w.at] === faction && !w.done.moved
+}
+
 /** The nine-phase name this module serves, for guards. */
 export const SHIPMENT_PHASE: GamePhase = 'Shipment and Movement'

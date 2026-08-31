@@ -351,6 +351,46 @@ function reviveLeader(input) {
     done: { ...soFar, leader }
   };
 }
+var GHOLA_FORCES = 5;
+function playGhola(input) {
+  const { faction, tanks, choice } = input;
+  if ("leader" in choice) {
+    const dead = tanks.leaders[faction] ?? [];
+    const found = dead.find((l) => l.name === choice.leader);
+    if (!found) return { ok: false, refusal: "not-in-tanks" };
+    if (found.faceDown) return { ok: false, refusal: "face-down" };
+    return {
+      ok: true,
+      leader: choice.leader,
+      tanks: {
+        ...tanks,
+        leaders: {
+          ...tanks.leaders,
+          [faction]: dead.filter((l) => l.name !== choice.leader)
+        }
+      }
+    };
+  }
+  const { plain, starred } = choice;
+  const want = plain + starred;
+  if (want <= 0 || plain < 0 || starred < 0) return { ok: false, refusal: "nothing-asked" };
+  if (want > GHOLA_FORCES) return { ok: false, refusal: "over-the-cap" };
+  const held = tanks.forces[faction] ?? { plain: 0, starred: 0 };
+  if (held.plain < plain || held.starred < starred) {
+    return { ok: false, refusal: "nothing-there" };
+  }
+  return {
+    ok: true,
+    toReserves: { plain, starred },
+    tanks: {
+      ...tanks,
+      forces: {
+        ...tanks.forces,
+        [faction]: { plain: held.plain - plain, starred: held.starred - starred }
+      }
+    }
+  };
+}
 function returnLeaderToTanks(tanks, faction, leader, opts = {}) {
   const dead = [...tanks.leaders[faction] ?? []];
   if (dead.some((l) => l.name === leader)) return tanks;
@@ -371,6 +411,7 @@ function returnLeaderToTanks(tanks, faction, leader, opts = {}) {
   };
 }
 export {
+  GHOLA_FORCES,
   GRANTED_FREE_REVIVALS,
   PATRON_EXTRA_REVIVALS,
   REVIVAL_CAP,
@@ -378,6 +419,7 @@ export {
   STARRED_REVIVALS_PER_TURN,
   bankDead,
   emptyTanks,
+  playGhola,
   returnLeaderToTanks,
   revivableLeaders,
   reviveForces,

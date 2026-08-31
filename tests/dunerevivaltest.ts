@@ -15,6 +15,7 @@ import {
   bankDead, emptyTanks, reviveForces, reviveLeader, returnLeaderToTanks,
   revivableLeaders, REVIVAL_CAP, REVIVAL_SPICE, STARRED_REVIVALS_PER_TURN,
   PATRON_EXTRA_REVIVALS, GRANTED_FREE_REVIVALS,
+  playGhola, GHOLA_FORCES,
 } from '@/lib/dune/revival'
 import { stormEntry } from '@/lib/dune/phaseAdvance'
 import type { AdvanceState } from '@/lib/dune/phaseAdvance'
@@ -316,6 +317,66 @@ check('...all within the cap',
     [/\? \['shield', 'revivals'\]/.test(fn),
       /: myFaction === 'emperor' \? \['revivals'\] : \[\]/.test(fn),
       /code: 'not-your-grant'/.test(fn)],
+    [true, true, true])
+}
+
+// ── the Tleilaxu Ghola ────────────────────────────────────────────────────
+// One free revival, at any time: a leader back REGARDLESS of the gate the
+// ordinary revival waits behind — but never through the face-down cycle —
+// or up to five forces, free, outside the turn's three.
+{
+  const T2 = {
+    ...emptyTanks(),
+    forces: { atreides: { plain: 4, starred: 2 } },
+    leaders: { atreides: [
+      { name: 'Duncan Idaho' },
+      { name: 'Gurney Halleck', faceDown: true },
+    ] },
+    // THE GATE IS SHUT — no leaderRevivalOpen — and the Ghola does not care.
+  }
+  const lead = playGhola({
+    faction: 'atreides', tanks: T2 as never, choice: { leader: 'Duncan Idaho' },
+  })
+  check('a leader walks out with the gate still shut',
+    lead.ok && [lead.leader, lead.tanks.leaders.atreides.map(l => l.name)],
+    ['Duncan Idaho', ['Gurney Halleck']])
+  check('...but the face-down cycle is not the gate, and holds',
+    (playGhola({
+      faction: 'atreides', tanks: T2 as never, choice: { leader: 'Gurney Halleck' },
+    }) as { refusal: string }).refusal, 'face-down')
+  check('...and a leader not in the Tanks is refused',
+    (playGhola({
+      faction: 'atreides', tanks: T2 as never, choice: { leader: 'Lady Jessica' },
+    }) as { refusal: string }).refusal, 'not-in-tanks')
+
+  const five = playGhola({
+    faction: 'atreides', tanks: T2 as never, choice: { plain: 3, starred: 2 },
+  })
+  check('up to five forces come back free, elites among them',
+    five.ok && [five.toReserves, five.tanks.forces.atreides],
+    [{ plain: 3, starred: 2 }, { plain: 1, starred: 0 }])
+  check('...six is over the card, none is nothing, and the Tanks bound it',
+    [(playGhola({ faction: 'atreides', tanks: {
+      ...T2, forces: { atreides: { plain: 9, starred: 0 } } } as never,
+    choice: { plain: GHOLA_FORCES + 1, starred: 0 } }) as { refusal: string }).refusal,
+      (playGhola({ faction: 'atreides', tanks: T2 as never,
+        choice: { plain: 0, starred: 0 } }) as { refusal: string }).refusal,
+      (playGhola({ faction: 'atreides', tanks: T2 as never,
+        choice: { plain: 5, starred: 0 } }) as { refusal: string }).refusal],
+    ['over-the-cap', 'nothing-asked', 'nothing-there'])
+
+  // ── the server slice ────────────────────────────────────────────────────
+  const fng = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  const gh = fng.slice(fng.indexOf("case 'TLEILAXU_GHOLA'"), fng.indexOf("case 'HAJR'"))
+  check('the Ghola case needs the card, refuses before spending, spends one',
+    [/code: 'card-not-held'/.test(gh),
+      gh.indexOf('ghAsked.ok') < gh.indexOf('ghHand.splice'),
+      /ghHand\.splice\(ghHand\.indexOf\('tleilaxughola'\), 1\)/.test(gh)],
+    [true, true, true])
+  check('...revives to reserves or the roster, remembered for the cycle',
+    [/reserves: p\.reserves \+ ghAsked\.toReserves!\.plain,/.test(gh),
+      /revivedLeaders: \[\.\.\.new Set\(\[/.test(gh),
+      /'tleilaxughola',\s*[\r\n]+\s*\]/.test(gh)],
     [true, true, true])
 }
 

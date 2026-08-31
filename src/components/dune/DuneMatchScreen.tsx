@@ -864,6 +864,16 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
         truthtranceRefusal={refusedBy === 'TRUTHTRANCE' && refused
           ? { code: refused }
           : null}
+        onGhola={seat
+          ? choice => void send({ type: 'TLEILAXU_GHOLA', ...choice })
+          : undefined}
+        gholaRefusal={refusedBy === 'TLEILAXU_GHOLA' && refused
+          ? { code: refused }
+          : null}
+        onHajr={seat ? () => void send({ type: 'HAJR' }) : undefined}
+        hajrRefusal={refusedBy === 'HAJR' && refused
+          ? { code: refused }
+          : null}
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused
           ? { type: refusedBy, code: refused }
           : null}
