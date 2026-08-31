@@ -23,3 +23,8 @@ node_modules/.test-build/
 # Regenerated exactly by scripts/build-dune-board.mjs; the board SVG and the
 # data module ARE committed, because those are what the app loads.
 public/dune-cards/
+
+# Playwright
+e2e/.state/
+e2e-report/
+test-results/

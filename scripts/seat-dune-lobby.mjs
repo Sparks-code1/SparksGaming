@@ -227,8 +227,14 @@ if (mErr || !match) {
   process.exit(1)
 }
 
+// player_id IS THE ACCOUNT, matching createDuneLobby and join_dune_lobby. It
+// was `host.seat` — the harness's own 'p1' — back when the browser put a typed
+// name there too. Two seats keyed by anything a human chooses can collide, and
+// a collision writes ONE secrets row for the two of them, so the key is the
+// account everywhere now. The harness reads each seat's key off its roster row
+// rather than assuming this one.
 const { error: hostErr } = await host.client.from('match_players').insert({
-  match_id: match.id, seat: 0, player_id: host.seat, user_id: host.userId,
+  match_id: match.id, seat: 0, player_id: host.userId, user_id: host.userId,
   name: host.seat, faction_id: 'unassigned', is_ai: false, ai_difficulty: null, ready: false,
 })
 if (hostErr) {

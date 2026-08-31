@@ -60,6 +60,20 @@ export interface SeatSession {
   client: SupabaseClient
   /** The authenticated user's id, which is what RLS matches rows against. */
   userId: string | null
+  /**
+   * THIS SEAT'S KEY IN THIS MATCH, read off its own match_players row.
+   *
+   * It used to be taken from VITE_DEV_SEATS, on the assumption that the line
+   * naming the account also named its player_id. That held while the seat key
+   * was something a script chose — the seeder still writes 'p1'..'p6' — but a
+   * table opened through the LOBBY keys its seats by the account now, so the
+   * env's answer is a guess and the guess reads an empty hand.
+   *
+   * Null until the row is read; the secrets channel does not open before then,
+   * because a channel opened on the wrong key delivers nothing and says
+   * nothing about why.
+   */
+  playerId: string | null
   secrets: Secrets | null
   status: SecretsStatus | 'signing-in' | 'failed'
   error?: string
@@ -138,7 +152,7 @@ export function startMultiSeat(
 
   const sessions: SeatSession[] = logins.map(login => ({
     login, client: createSeatClient(login.seat), userId: null,
-    secrets: null, status: 'signing-in',
+    playerId: null, secrets: null, status: 'signing-in',
   }))
   const stops: Array<() => void> = []
   let cancelled = false
@@ -148,7 +162,7 @@ export function startMultiSeat(
   for (const session of sessions) {
     void session.client.auth
       .signInWithPassword({ email: session.login.email, password: session.login.password })
-      .then(({ data, error }) => {
+      .then(async ({ data, error }) => {
         if (cancelled) return
         if (error) {
           session.status = 'failed'
@@ -158,12 +172,32 @@ export function startMultiSeat(
         }
         session.userId = data.user?.id ?? null
 
+        // THE SEAT'S KEY, ASKED FOR RATHER THAN ASSUMED. RLS returns this
+        // account's own roster row and no other, so the answer is this seat's
+        // by construction. A match this account is not in returns nothing,
+        // which is a failure worth saying out loud rather than a channel that
+        // opens on a guessed key and stays silent forever.
+        const { data: mine } = await session.client
+          .from('match_players')
+          .select('player_id')
+          .eq('match_id', matchId)
+          .maybeSingle()
+        if (cancelled) return
+        const playerId = (mine as { player_id?: string } | null)?.player_id ?? null
+        if (!playerId) {
+          session.status = 'failed'
+          session.error = 'this account holds no seat in that match'
+          publish()
+          return
+        }
+        session.playerId = playerId
+
         stops.push(startSecretsSync(matchId, {
           client: session.client,
           // Its OWN seat. Passed so a row for anybody else is recognised as the
           // RLS failure it would be — the harness is the one place several
           // seats are in play at once, so it is the best place to notice.
-          expectPlayerId: session.login.seat,
+          expectPlayerId: playerId,
           onSecrets: row => {
             session.secrets = row.data
             publish()
@@ -191,11 +225,12 @@ export function startMultiSeat(
     },
     async refresh(faction) {
       const session = sessions.find(s => s.login.faction === faction)
-      if (!session || cancelled) return
+      if (!session || cancelled || !session.playerId) return
       // THE SHARED READER, so the harness and the real screen cannot come to
       // disagree about what "read my own row" means. It goes through this
-      // SEAT'S own client, which is what makes the harness safe.
-      const row = await readOwnSecrets(matchId, session.login.seat, session.client)
+      // SEAT'S own client, which is what makes the harness safe, and on the key
+      // the roster gave rather than the one the env guessed.
+      const row = await readOwnSecrets(matchId, session.playerId, session.client)
       if (!row || cancelled) return
       // THE SAME OBJECTS the changefeed mutates, so the two paths cannot
       // disagree about what this seat holds. A copy kept beside them would be

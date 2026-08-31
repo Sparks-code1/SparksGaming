@@ -516,8 +516,13 @@ const code = (path: string) => readFileSync(path, 'utf8')
   // THE READER IS SHARED with the real screen — see readOwnSecrets — so the
   // check follows it there. What the harness supplies is its own seat and its
   // own client; what the reader does is ask for that seat's row.
+  // ON THE KEY THE ROSTER GAVE, not the one the env line guessed. That line
+  // names an account and used to be trusted to name its player_id too, which
+  // held only while a script chose the key — a table opened through the LOBBY
+  // keys its seats by the account now, and a read on the guess returns nothing
+  // and says nothing about why.
   check('...for that seat\'s row alone',
-    /readOwnSecrets\(matchId, session\.login\.seat, session\.client\)/.test(refreshFn), true)
+    /readOwnSecrets\(matchId, session\.playerId, session\.client\)/.test(refreshFn), true)
   const reader = code('src/lib/secretsSync.ts')
   check('...and the reader asks for exactly that row',
     /\.eq\('player_id', playerId\)/.test(reader), true)

@@ -20,7 +20,9 @@
     "build:board": "node scripts/build-dune-board.mjs",
     "verify:board": "node scripts/build-dune-board.mjs --check",
     "build:strategy": "node scripts/build-strategy.mjs",
-    "verify:strategy": "node scripts/build-strategy.mjs --check"
+    "verify:strategy": "node scripts/build-strategy.mjs --check",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "@pixi/react": "^7.1.2",
@@ -34,6 +36,7 @@
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",
     "@typescript-eslint/eslint-plugin": "^6.14.0",

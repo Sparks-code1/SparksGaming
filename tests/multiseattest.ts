@@ -163,7 +163,14 @@ const read = (p: string) => SRC.find(f => f.path === p)?.text ?? ''
   // place several seats are live at once, so it is the best placed to notice
   // RLS failing — and it passes its own seat in so that it does.
   const harness = read('src/dev/multiSeat.ts')
-  check('each seat says which row is its own', /expectPlayerId: session\.login\.seat/.test(harness), true)
+  check('each seat says which row is its own', /expectPlayerId: playerId/.test(harness), true)
+  // AND IT ASKS THE ROSTER WHICH ROW THAT IS. The env line names an account;
+  // it named the player_id too until the lobby began keying seats by the
+  // account, at which point the guess read an empty hand in silence.
+  check('...having read the key off its own roster row',
+    [/from\('match_players'\)[\s\S]{0,120}select\('player_id'\)/.test(harness),
+      /this account holds no seat in that match/.test(harness)],
+    [true, true])
   check('...and treats another seat\'s row as a failure',
     /onForeignRow[\s\S]{0,200}RLS is not holding/.test(harness), true)
 }
