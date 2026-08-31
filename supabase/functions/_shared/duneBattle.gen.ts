@@ -1407,7 +1407,7 @@ function pendingBattles(forces, storm) {
   const out = [];
   for (const t of DUNE_TERRITORIES) {
     if (t.terrain === "polar-sink") continue;
-    const occupied = forces.filter((f) => f.territoryId === t.id && f.count > 0);
+    const occupied = forces.filter((f) => f.territoryId === t.id && f.count > 0 && f.posture !== "advisor");
     if (occupied.length === 0) continue;
     const open = t.sectors.filter((s) => s !== storm);
     const seen = /* @__PURE__ */ new Set();

@@ -63,7 +63,7 @@ import {
 import {
   hajrMayPlay,
   judgeShipment, judgeMove, landForces, liftForces, nextSeat, SHIPMENT_SECONDS,
-  coOccupied,
+  coOccupied, bgAdvancedFollow, landAdvisor, judgeBgFlip, flipBgForces,
 } from '../_shared/duneShipment.gen.ts'
 import {
   allyInterrogator,
@@ -2366,22 +2366,39 @@ Deno.serve(async req => {
         p_expected_version: match.version,
         p_state: {
           ...state,
-          // THE WATCHERS FOLLOW: any other faction's off-planet shipment
-          // ships one Bene Gesserit force free into the Polar Sink, in the
-          // SAME write — automatic, because the basic game leaves them no
-          // decision to make. See bgFollowsShip for who triggers it.
-          ...(bgFollowsShip(myFaction as never, kind,
-            state.mode === 'advanced' ? 'advanced' : 'basic')
-            && players.some((p) => p?.faction === 'bene-gesserit' && p.reserves > 0)
-            ? {
-              forces: landForces(
-                forces as never, 'bene-gesserit' as never,
-                POLAR_SINK, POLAR_SINK_SECTOR as never, 1, 0),
-              players: players.map((p) => p?.faction === 'bene-gesserit'
-                ? { ...p, reserves: p.reserves - 1 }
-                : p),
+          // THE WATCHERS FOLLOW. Basic: one fighter into the Polar Sink,
+          // automatic — the basic game leaves them no decision. ADVANCED:
+          // one ADVISOR into the shipper's own territory, under the
+          // Sisterhood's standing order (on unless turned off), stamped
+          // with the turn — a fresh watcher may not flip while anyone else
+          // stands there. Never the Fremen's walks, in either game.
+          ...(() => {
+            const bgMode = state.mode === 'advanced' ? 'advanced' : 'basic'
+            const bgHasReserves = players.some((p) =>
+              p?.faction === 'bene-gesserit' && p.reserves > 0)
+            const bgSpend = () => players.map((p) => p?.faction === 'bene-gesserit'
+              ? { ...p, reserves: p.reserves - 1 }
+              : p)
+            if (bgFollowsShip(myFaction as never, kind, bgMode) && bgHasReserves) {
+              return {
+                forces: landForces(
+                  forces as never, 'bene-gesserit' as never,
+                  POLAR_SINK, POLAR_SINK_SECTOR as never, 1, 0),
+                players: bgSpend(),
+              }
             }
-            : { forces, players }),
+            if (bgAdvancedFollow(myFaction as never, kind, bgMode)
+              && bgHasReserves && state.bgFollowShips !== false && judged.sector) {
+              return {
+                forces: landAdvisor(
+                  forces as never,
+                  (action.to as { territoryId: string }).territoryId,
+                  judged.sector, Number(state.turn ?? 0)) as never,
+                players: bgSpend(),
+              }
+            }
+            return { forces, players }
+          })(),
           shipping: { ...w, done: { ...w.done, shipped: true } },
         },
         p_secrets: secretsPatch,
@@ -3239,6 +3256,59 @@ Deno.serve(async req => {
       }
       return await settleBattle(
         b as never, c as never, [...c.revealed.traitor.calls] as never, choice)
+    }
+
+    // ── the Bene Gesserit flip ──────────────────────────────────────────────
+    // TO FIGHTERS in the open window — phases three to five, no pause, they
+    // have to find the time — never a follow-fresh advisor with company.
+    // TO ADVISORS during shipment, where their fighters share ground: the
+    // intrusion is the trigger, and it lasts as long as the sharing does.
+    case 'BG_FLIP': {
+      if (myFaction !== 'bene-gesserit') {
+        return json({ error: 'the robes are not yours', code: 'not-your-power' }, 403)
+      }
+      if (state.mode !== 'advanced') {
+        return json({ error: 'the advisors are the advanced game\'s', code: 'advanced-only' }, 409)
+      }
+      const direction = action.direction === 'to-advisor' ? 'to-advisor' : 'to-fighter'
+      const flipAt = String(action.territoryId ?? '')
+      const flipBad = judgeBgFlip({
+        direction, territoryId: flipAt,
+        forces: (state.forces ?? []) as never,
+        phase: String(state.phase), turn: Number(state.turn ?? 0),
+      })
+      if (flipBad) return json({ error: 'that flip is not open', code: flipBad }, 409)
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: {
+          ...state,
+          forces: flipBgForces((state.forces ?? []) as never, flipAt, direction),
+        },
+        p_secrets: {},
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ flipped: flipAt, direction, version: data[0].version })
+    }
+
+    // ── the Sisterhood's standing order ─────────────────────────────────────
+    case 'BG_POLICY': {
+      if (myFaction !== 'bene-gesserit') {
+        return json({ error: 'the order is not yours', code: 'not-your-power' }, 403)
+      }
+      if (state.mode !== 'advanced') {
+        return json({ error: 'the advisors are the advanced game\'s', code: 'advanced-only' }, 409)
+      }
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: { ...state, bgFollowShips: action.follow === true },
+        p_secrets: {},
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ follow: action.follow === true, version: data[0].version })
     }
 
     // ── Karama, spent on the holder's own use ───────────────────────────────

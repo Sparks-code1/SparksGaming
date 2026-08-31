@@ -1696,6 +1696,19 @@ check('the three windows have their seconds',
     [true, true])
 }
 
+// ── advisors do not fight ─────────────────────────────────────────────────
+{
+  const rows9 = (posture?: string) => [
+    { faction: 'harkonnen', territoryId: 'territory-13', sector: 'sector-10', count: 3 },
+    { faction: 'bene-gesserit', territoryId: 'territory-13', sector: 'sector-10',
+      count: 2, ...(posture ? { posture } : null) },
+  ] as never
+  check('no battle opens over an advisor — and one does over a fighter',
+    [pendingBattles(rows9('advisor'), 'sector-1' as never).length,
+      pendingBattles(rows9(), 'sector-1' as never).length],
+    [0, 1])
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.

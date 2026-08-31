@@ -730,6 +730,16 @@ export default function DuneMultiSeatView() {
         giveBackRefusal={refusedBy === 'KARAMA_GIVE_BACK' && refused
           ? { code: refused }
           : null}
+        onBgFlip={mine
+          ? (territoryId, direction) =>
+            void send(mine, 'BG_FLIP', { territoryId, direction } as never)
+          : undefined}
+        bgFlipRefusal={refusedBy === 'BG_FLIP' && refused
+          ? { code: refused }
+          : null}
+        onBgPolicy={mine
+          ? on => void send(mine, 'BG_POLICY', { follow: on } as never)
+          : undefined}
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused
           ? { type: refusedBy, code: refused }
           : null}

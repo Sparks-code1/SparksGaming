@@ -85,6 +85,9 @@ export interface Force {
    * it was given until something is written that changes it.
    */
   posture?: ForcePosture
+  /** The turn an advisor arrived by the advanced follow-ship: it may not
+   *  flip to a fighter THAT turn unless it stands alone. Dropped on flip. */
+  freshTurn?: number
 }
 
 /**
@@ -527,6 +530,10 @@ export interface DuneGameState {
   /** The Harkonnen's owed return after taking cards: who owes whom how
    *  many, on a clock — the phase holds until it is paid. */
   karamaGiveBack?: { from: FactionId; to: FactionId; count: number; closesAt: number }
+  /** The Bene Gesserit's STANDING ORDER for the advanced follow-ship:
+   *  absent means following (one free advisor into the shipper's own
+   *  territory); false stands the watchers down. Set once, held. */
+  bgFollowShips?: boolean
   /**
    * THE TRUTHTRANCE LOG, public and permanent: who asked whom what, the
    * answer, and the moment it was true — an answer is a fact about a

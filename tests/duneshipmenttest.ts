@@ -958,6 +958,122 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
     [true, true, true, true])
 }
 
+// ── the Bene Gesserit advanced advisor flow ───────────────────────────────
+// The follow rides another faction's off-planet shipment — never the
+// Fremen's walks — as ONE advisor into that same territory. Fighters flip
+// to advisors where ground is shared; advisors flip to fighters in the open
+// window, phases three to five — and never the turn they followed, unless
+// they stand alone.
+{
+  const { bgAdvancedFollow, landAdvisor, judgeBgFlip, flipBgForces,
+    bgFlippable, BG_FLIP_WINDOW, strongholdClosed: sc2 } =
+    await import('@/lib/dune/shipment')
+  check('the window is phases three to five',
+    BG_FLIP_WINDOW, ['CHOAM Charity', 'Bidding', 'Revival'])
+  check('the advanced follow: another faction\'s off-planet shipment, never the Fremen\'s',
+    [bgAdvancedFollow('atreides' as never, 'off-planet', 'advanced'),
+      bgAdvancedFollow('fremen' as never, 'off-planet', 'advanced'),
+      bgAdvancedFollow('bene-gesserit' as never, 'off-planet', 'advanced'),
+      bgAdvancedFollow('atreides' as never, 'cross', 'advanced'),
+      bgAdvancedFollow('atreides' as never, 'off-planet', 'basic')],
+    [true, false, false, false, false])
+
+  const R2 = (faction: string, territoryId: string, sector: string, count: number,
+    over: object = {}) => ({ faction, territoryId, sector, count, ...over })
+  const landed = landAdvisor([
+    R2('harkonnen', 'territory-11', 'sector-13', 4),
+  ] as never, 'territory-11', 'sector-13' as never, 5)
+  check('a followed advisor lands stamped with its turn',
+    landed[1], {
+      faction: 'bene-gesserit', territoryId: 'territory-11',
+      sector: 'sector-13', count: 1, posture: 'advisor', freshTurn: 5,
+    })
+  check('...and merges into a standing advisor row, restamped',
+    landAdvisor(landed as never, 'territory-11', 'sector-13' as never, 6)[1],
+    {
+      faction: 'bene-gesserit', territoryId: 'territory-11',
+      sector: 'sector-13', count: 2, posture: 'advisor', freshTurn: 6,
+    })
+
+  const watchers = [
+    R2('bene-gesserit', 'territory-11', 'sector-13', 2, { posture: 'advisor' }),
+    R2('harkonnen', 'territory-11', 'sector-13', 4),
+    R2('bene-gesserit', 'territory-20', 'sector-16', 3),
+    R2('emperor', 'territory-20', 'sector-16', 2),
+    R2('bene-gesserit', 'territory-27', 'sector-9', 1),
+  ] as never
+  check('advisors become fighters in the window, and only there',
+    [judgeBgFlip({ direction: 'to-fighter', territoryId: 'territory-11',
+      forces: watchers, phase: 'Bidding', turn: 4 }),
+      judgeBgFlip({ direction: 'to-fighter', territoryId: 'territory-11',
+        forces: watchers, phase: 'Shipment and Movement', turn: 4 }),
+      judgeBgFlip({ direction: 'to-fighter', territoryId: 'territory-20',
+        forces: watchers, phase: 'Bidding', turn: 4 })],
+    [null, 'wrong-phase', 'nothing-there'])
+  const fresh = [
+    R2('bene-gesserit', 'territory-11', 'sector-13', 1,
+      { posture: 'advisor', freshTurn: 4 }),
+    R2('harkonnen', 'territory-11', 'sector-13', 4),
+    R2('bene-gesserit', 'territory-12', 'sector-11', 1,
+      { posture: 'advisor', freshTurn: 4 }),
+  ] as never
+  check('a follow-fresh advisor may not flip with company — alone it may',
+    [judgeBgFlip({ direction: 'to-fighter', territoryId: 'territory-11',
+      forces: fresh, phase: 'Bidding', turn: 4 }),
+      judgeBgFlip({ direction: 'to-fighter', territoryId: 'territory-11',
+        forces: fresh, phase: 'Bidding', turn: 5 }),
+      judgeBgFlip({ direction: 'to-fighter', territoryId: 'territory-12',
+        forces: fresh, phase: 'Bidding', turn: 4 })],
+    ['fresh-advisors', null, null])
+  check('fighters become advisors where ground is shared, during shipment',
+    [judgeBgFlip({ direction: 'to-advisor', territoryId: 'territory-20',
+      forces: watchers, phase: 'Shipment and Movement', turn: 4 }),
+      judgeBgFlip({ direction: 'to-advisor', territoryId: 'territory-27',
+        forces: watchers, phase: 'Shipment and Movement', turn: 4 }),
+      judgeBgFlip({ direction: 'to-advisor', territoryId: 'territory-20',
+        forces: watchers, phase: 'Bidding', turn: 4 })],
+    [null, 'nobody-there', 'wrong-phase'])
+
+  const turned = flipBgForces(fresh, 'territory-11', 'to-fighter')
+  check('a flip swaps the robes and drops the freshness stamp',
+    turned.find(f => f.faction === 'bene-gesserit' && f.territoryId === 'territory-11'),
+    {
+      faction: 'bene-gesserit', territoryId: 'territory-11',
+      sector: 'sector-13', count: 1, posture: 'fighter',
+    })
+  const menu = bgFlippable(watchers, 'Bidding', 4)
+  check('the menu is the judge\'s own answer',
+    [menu.toFighter, menu.toAdvisor], [['territory-11'], []])
+
+  // ── advisors do not occupy: the stronghold slot ─────────────────────────
+  check('an advisor holds no stronghold slot against the cap',
+    [sc2([
+      R2('harkonnen', 'territory-13', 'sector-10', 2),
+      R2('bene-gesserit', 'territory-13', 'sector-10', 1, { posture: 'advisor' }),
+    ] as never, 'emperor' as never, 'territory-13'),
+      sc2([
+        R2('harkonnen', 'territory-13', 'sector-10', 2),
+        R2('bene-gesserit', 'territory-13', 'sector-10', 1),
+      ] as never, 'emperor' as never, 'territory-13')],
+    [false, true])
+
+  // ── the server slice ────────────────────────────────────────────────────
+  const fnb = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  check('the advanced follow rides the SHIP write, under the standing order',
+    [/bgAdvancedFollow\(myFaction as never, kind, bgMode\)/.test(fnb),
+      /&& bgHasReserves && state\.bgFollowShips !== false && judged\.sector/.test(fnb),
+      /landAdvisor\(/.test(fnb)],
+    [true, true, true])
+  const bf = fnb.slice(fnb.indexOf("case 'BG_FLIP'"), fnb.indexOf("case 'BG_POLICY'"))
+  check('the flip case is the Sisterhood\'s, advanced, judged by the law',
+    [/code: 'not-your-power'/.test(bf), /code: 'advanced-only'/.test(bf),
+      /judgeBgFlip\(\{/.test(bf), /flipBgForces\(/.test(bf)],
+    [true, true, true, true])
+  const bp2 = fnb.slice(fnb.indexOf("case 'BG_POLICY'"), fnb.indexOf("case 'KARAMA'"))
+  check('the standing order is one public boolean',
+    /bgFollowShips: action\.follow === true/.test(bp2), true)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.

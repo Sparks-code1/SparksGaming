@@ -139,8 +139,11 @@ export function strongholdClosed(
 ): boolean {
   const t = territory(territoryId)
   if (!t?.stronghold) return false
+  // ADVISORS DO NOT OCCUPY — a watcher holds no stronghold slot against
+  // the cap, here as everywhere occupation is asked about.
   const inside = new Set(
-    forces.filter(f => f.territoryId === territoryId && f.count > 0).map(f => f.faction))
+    forces.filter(f => f.territoryId === territoryId && f.count > 0
+      && f.posture !== 'advisor').map(f => f.faction))
   return !inside.has(faction) && inside.size >= STRONGHOLD_CAP
 }
 
@@ -585,3 +588,129 @@ export function hajrMayPlay(
 
 /** The nine-phase name this module serves, for guards. */
 export const SHIPMENT_PHASE: GamePhase = 'Shipment and Movement'
+
+// ── the Bene Gesserit advanced advisor flow ───────────────────────────────
+
+/**
+ * The ADVANCED follow-ship: when another faction ships from off-planet —
+ * never the Fremen, whose reserves are on-planet and whose shipments are
+ * walks — the Bene Gesserit may ship one free advisor into that SAME
+ * territory, instead of the basic game's Polar Sink.
+ */
+export function bgAdvancedFollow(
+  shipper: FactionId, kind: GuildShipKind, mode: 'basic' | 'advanced',
+): boolean {
+  return mode === 'advanced' && kind === 'off-planet'
+    && shipper !== 'bene-gesserit' && shipper !== 'fremen'
+}
+
+/** Land ONE followed advisor: merged into a standing advisor row at the
+ *  cell, or a new row — stamped with its arrival turn either way, because
+ *  the fresh-advisor rule reads the stamp. */
+export function landAdvisor(
+  forces: readonly Force[], territoryId: string, sector: SectorId, turn: number,
+): Force[] {
+  const at = forces.findIndex(f =>
+    f.faction === 'bene-gesserit' && f.territoryId === territoryId
+    && f.sector === sector && f.posture === 'advisor')
+  if (at >= 0) {
+    return forces.map((f, i) => i === at
+      ? { ...f, count: f.count + 1, freshTurn: turn }
+      : f)
+  }
+  return [...forces, {
+    faction: 'bene-gesserit' as FactionId,
+    territoryId: territoryId as Force['territoryId'],
+    sector, count: 1, posture: 'advisor' as const, freshTurn: turn,
+  }]
+}
+
+/** The open window for announcing a flip TO FIGHTERS: after the Spice Blow
+ *  and Nexus, before any shipment — phases three to five, no pause. They
+ *  have to find the time. */
+export const BG_FLIP_WINDOW: readonly string[] =
+  ['CHOAM Charity', 'Bidding', 'Revival']
+
+export type BgFlipRefusal =
+  | 'wrong-phase' | 'nothing-there' | 'fresh-advisors' | 'nobody-there'
+
+/**
+ * Judge one flip, by territory and direction.
+ *
+ * TO FIGHTERS: inside the window, and never advisors who arrived by this
+ * turn's follow-ship while any other faction stands in the territory.
+ * TO ADVISORS: during shipment and movement, where the Bene Gesserit's
+ * fighters share ground with somebody — the intrusion is the trigger, and
+ * it lasts as long as the sharing does.
+ */
+export function judgeBgFlip(input: {
+  direction: 'to-fighter' | 'to-advisor'
+  territoryId: string
+  forces: readonly Force[]
+  phase: string
+  turn: number
+}): BgFlipRefusal | null {
+  const { direction, territoryId, forces, phase, turn } = input
+  const here = forces.filter(f =>
+    f.faction === 'bene-gesserit' && f.territoryId === territoryId && f.count > 0)
+  const rivals = forces.some(f =>
+    f.faction !== 'bene-gesserit' && f.territoryId === territoryId && f.count > 0)
+  if (direction === 'to-fighter') {
+    if (!BG_FLIP_WINDOW.includes(phase)) return 'wrong-phase'
+    const advisors = here.filter(f => f.posture === 'advisor')
+    if (advisors.length === 0) return 'nothing-there'
+    if (advisors.some(f => f.freshTurn === turn) && rivals) return 'fresh-advisors'
+    return null
+  }
+  if (phase !== 'Shipment and Movement') return 'wrong-phase'
+  if (!here.some(f => f.posture !== 'advisor')) return 'nothing-there'
+  if (!rivals) return 'nobody-there'
+  return null
+}
+
+/** Apply one flip: every Bene Gesserit row in the territory swaps posture,
+ *  merged per sector, the freshness stamp dropped with the robes. */
+export function flipBgForces(
+  forces: readonly Force[], territoryId: string,
+  direction: 'to-fighter' | 'to-advisor',
+): Force[] {
+  const fromAdvisor = direction === 'to-fighter'
+  const flipping = forces.filter(f =>
+    f.faction === 'bene-gesserit' && f.territoryId === territoryId && f.count > 0
+    && (fromAdvisor ? f.posture === 'advisor' : f.posture !== 'advisor'))
+  let out = forces.filter(f => !flipping.includes(f))
+  for (const f of flipping) {
+    const at = out.findIndex(x =>
+      x.faction === 'bene-gesserit' && x.territoryId === territoryId
+      && x.sector === f.sector
+      && (fromAdvisor ? x.posture !== 'advisor' : x.posture === 'advisor'))
+    if (at >= 0) {
+      out = out.map((x, i) => i === at ? { ...x, count: x.count + f.count } : x)
+    } else {
+      const { freshTurn: _fresh, ...rest } = f
+      out = [...out, {
+        ...rest,
+        ...(fromAdvisor ? { posture: 'fighter' as const } : { posture: 'advisor' as const }),
+      }]
+    }
+  }
+  return out
+}
+
+/** What the Bene Gesserit could flip RIGHT NOW, for a menu — the law's own
+ *  answer, so the buttons cannot offer what the judge would refuse. */
+export function bgFlippable(
+  forces: readonly Force[], phase: string, turn: number,
+): { toFighter: string[]; toAdvisor: string[] } {
+  const territories = [...new Set(forces
+    .filter(f => f.faction === 'bene-gesserit' && f.count > 0)
+    .map(f => f.territoryId))]
+  return {
+    toFighter: territories.filter(t => judgeBgFlip({
+      direction: 'to-fighter', territoryId: t, forces, phase, turn,
+    }) === null).sort(),
+    toAdvisor: territories.filter(t => judgeBgFlip({
+      direction: 'to-advisor', territoryId: t, forces, phase, turn,
+    }) === null).sort(),
+  }
+}

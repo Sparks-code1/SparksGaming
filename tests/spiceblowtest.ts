@@ -813,7 +813,8 @@ function awaitingAgain(carry: Parameters<typeof placeFremenWorms>[0]) {
     bgFollowsShip('atreides' as never, 'off-planet', 'advanced'), false)
   const fn2 = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
   check('...and the endpoint names the mode from the row',
-    /bgFollowsShip\(myFaction as never, kind,\s*[\r\n]+\s*state\.mode === 'advanced' \? 'advanced' : 'basic'\)/.test(fn2),
+    /const bgMode = state\.mode === 'advanced' \? 'advanced' : 'basic'/.test(fn2)
+      && /bgFollowsShip\(myFaction as never, kind, bgMode\)/.test(fn2),
     true)
 }
 

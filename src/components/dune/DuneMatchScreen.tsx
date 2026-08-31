@@ -901,6 +901,15 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
         giveBackRefusal={refusedBy === 'KARAMA_GIVE_BACK' && refused
           ? { code: refused }
           : null}
+        onBgFlip={seat
+          ? (territoryId, direction) => void send({ type: 'BG_FLIP', territoryId, direction })
+          : undefined}
+        bgFlipRefusal={refusedBy === 'BG_FLIP' && refused
+          ? { code: refused }
+          : null}
+        onBgPolicy={seat
+          ? on => void send({ type: 'BG_POLICY', follow: on })
+          : undefined}
         battleRefusal={refusedBy?.startsWith('BATTLE') && refused
           ? { type: refusedBy, code: refused }
           : null}

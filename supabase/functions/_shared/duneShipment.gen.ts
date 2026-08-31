@@ -819,7 +819,7 @@ function strongholdClosed(forces, faction, territoryId) {
   const t = territory(territoryId);
   if (!t?.stronghold) return false;
   const inside = new Set(
-    forces.filter((f) => f.territoryId === territoryId && f.count > 0).map((f) => f.faction)
+    forces.filter((f) => f.territoryId === territoryId && f.count > 0 && f.posture !== "advisor").map((f) => f.faction)
   );
   return !inside.has(faction) && inside.size >= STRONGHOLD_CAP;
 }
@@ -1070,7 +1070,79 @@ function hajrMayPlay(w, faction) {
   return !!w && w.order[w.at] === faction && !w.done.moved;
 }
 var SHIPMENT_PHASE = "Shipment and Movement";
+function bgAdvancedFollow(shipper, kind, mode) {
+  return mode === "advanced" && kind === "off-planet" && shipper !== "bene-gesserit" && shipper !== "fremen";
+}
+function landAdvisor(forces, territoryId, sector, turn) {
+  const at = forces.findIndex((f) => f.faction === "bene-gesserit" && f.territoryId === territoryId && f.sector === sector && f.posture === "advisor");
+  if (at >= 0) {
+    return forces.map((f, i) => i === at ? { ...f, count: f.count + 1, freshTurn: turn } : f);
+  }
+  return [...forces, {
+    faction: "bene-gesserit",
+    territoryId,
+    sector,
+    count: 1,
+    posture: "advisor",
+    freshTurn: turn
+  }];
+}
+var BG_FLIP_WINDOW = ["CHOAM Charity", "Bidding", "Revival"];
+function judgeBgFlip(input) {
+  const { direction, territoryId, forces, phase, turn } = input;
+  const here = forces.filter((f) => f.faction === "bene-gesserit" && f.territoryId === territoryId && f.count > 0);
+  const rivals = forces.some((f) => f.faction !== "bene-gesserit" && f.territoryId === territoryId && f.count > 0);
+  if (direction === "to-fighter") {
+    if (!BG_FLIP_WINDOW.includes(phase)) return "wrong-phase";
+    const advisors = here.filter((f) => f.posture === "advisor");
+    if (advisors.length === 0) return "nothing-there";
+    if (advisors.some((f) => f.freshTurn === turn) && rivals) return "fresh-advisors";
+    return null;
+  }
+  if (phase !== "Shipment and Movement") return "wrong-phase";
+  if (!here.some((f) => f.posture !== "advisor")) return "nothing-there";
+  if (!rivals) return "nobody-there";
+  return null;
+}
+function flipBgForces(forces, territoryId, direction) {
+  const fromAdvisor = direction === "to-fighter";
+  const flipping = forces.filter((f) => f.faction === "bene-gesserit" && f.territoryId === territoryId && f.count > 0 && (fromAdvisor ? f.posture === "advisor" : f.posture !== "advisor"));
+  let out = forces.filter((f) => !flipping.includes(f));
+  for (const f of flipping) {
+    const at = out.findIndex((x) => x.faction === "bene-gesserit" && x.territoryId === territoryId && x.sector === f.sector && (fromAdvisor ? x.posture !== "advisor" : x.posture === "advisor"));
+    if (at >= 0) {
+      out = out.map((x, i) => i === at ? { ...x, count: x.count + f.count } : x);
+    } else {
+      const { freshTurn: _fresh, ...rest } = f;
+      out = [...out, {
+        ...rest,
+        ...fromAdvisor ? { posture: "fighter" } : { posture: "advisor" }
+      }];
+    }
+  }
+  return out;
+}
+function bgFlippable(forces, phase, turn) {
+  const territories = [...new Set(forces.filter((f) => f.faction === "bene-gesserit" && f.count > 0).map((f) => f.territoryId))];
+  return {
+    toFighter: territories.filter((t) => judgeBgFlip({
+      direction: "to-fighter",
+      territoryId: t,
+      forces,
+      phase,
+      turn
+    }) === null).sort(),
+    toAdvisor: territories.filter((t) => judgeBgFlip({
+      direction: "to-advisor",
+      territoryId: t,
+      forces,
+      phase,
+      turn
+    }) === null).sort()
+  };
+}
 export {
+  BG_FLIP_WINDOW,
   FREMEN_SHIP_RADIUS,
   GREAT_FLAT,
   GUILD_RETURN_PER,
@@ -1082,13 +1154,18 @@ export {
   SHIP_STRONGHOLD_SPICE,
   STRONGHOLD_CAP,
   allyOccupies,
+  bgAdvancedFollow,
+  bgFlippable,
   bgFollowsShip,
   coOccupied,
+  flipBgForces,
   fremenShipTargets,
   hajrMayPlay,
   inStorm,
+  judgeBgFlip,
   judgeMove,
   judgeShipment,
+  landAdvisor,
   landForces,
   liftForces,
   moveTargets,

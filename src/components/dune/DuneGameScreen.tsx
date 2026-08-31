@@ -61,7 +61,7 @@ import { CharityModal } from './CharityModal'
 import { SetupWindow, SetupBoardTargets } from './SetupWindow'
 import { ShipRail } from './ShipRail'
 import {
-  coOccupied, hajrMayPlay, inStorm, moveTargets, strongholdClosed,
+  bgFlippable, coOccupied, hajrMayPlay, inStorm, moveTargets, strongholdClosed,
 } from '@/lib/dune/shipment'
 import { RideRail } from './RideRail'
 import { RevivalRail } from './RevivalRail'
@@ -227,6 +227,11 @@ export interface DuneGameScreenProps {
   /** Pay the Harkonnen give-back — or push it past its clock. */
   onGiveBack?: (cards: string[]) => void
   giveBackRefusal?: { code: string } | null
+  /** Flip the Bene Gesserit's pieces in one territory, either way. */
+  onBgFlip?: (territoryId: string, direction: 'to-fighter' | 'to-advisor') => void
+  bgFlipRefusal?: { code: string } | null
+  /** The Sisterhood's standing order for the advanced follow-ship. */
+  onBgPolicy?: (on: boolean) => void
   /** The last NEXUS action's refusal — code and which action, the same
    *  discipline as battleRefusal. */
   nexusRefusal?: { type: string; code: string } | null
@@ -306,6 +311,7 @@ export function DuneGameScreen({
   onWeather, weatherRefusal = null, onAtomics, atomicsRefusal = null,
   onKarama, onKaramaStop, karamaRefusal = null,
   onGiveBack, giveBackRefusal = null,
+  onBgFlip, bgFlipRefusal = null, onBgPolicy,
   battleRefusal,
   worms = [], onWormRide, onPassTurn,
   bidding = null, charity = null, setup = null, now,
@@ -1330,6 +1336,45 @@ export function DuneGameScreen({
               onPay={onGiveBack}
               refusal={giveBackRefusal?.code ?? null} />
           )}
+          {/* THE ROBES TURN: what the Sisterhood could flip right now, by
+              the law's own menu — fighters out of advisors in the open
+              window, advisors out of fighters where ground is shared. No
+              pause anywhere; they have to find the time. */}
+          {seat === 'bene-gesserit' && state.mode === 'advanced' && onBgFlip && (() => {
+            const flip = bgFlippable(state.forces, state.phase, state.turn)
+            if (flip.toFighter.length === 0 && flip.toAdvisor.length === 0) return null
+            const nameOfT = (t: string) =>
+              DUNE_TERRITORIES.find(d => d.id === t)?.displayName ?? t
+            return (
+              <div data-bg-flip-bar="" style={{
+                position: 'absolute', top: 42, right: 10, zIndex: 5,
+                maxWidth: 280, padding: '8px 10px', borderRadius: 6,
+                background: '#131c2eee', color: '#f0e2bb',
+                border: '1px solid #f0e2bb44', font: '12.5px Georgia, serif',
+                display: 'flex', flexDirection: 'column', gap: 5,
+              }}>
+                {flip.toFighter.map(t => (
+                  <button key={t} type="button" data-bg-flip-fighter={t}
+                    onClick={() => onBgFlip(t, 'to-fighter')}
+                    style={{ padding: '4px 8px', borderRadius: 4, border: 'none', cursor: 'pointer' }}>
+                    {nameOfT(t)} — advisors become fighters
+                  </button>
+                ))}
+                {flip.toAdvisor.map(t => (
+                  <button key={t} type="button" data-bg-flip-advisor={t}
+                    onClick={() => onBgFlip(t, 'to-advisor')}
+                    style={{ padding: '4px 8px', borderRadius: 4, border: 'none', cursor: 'pointer' }}>
+                    {nameOfT(t)} — fighters become advisors
+                  </button>
+                ))}
+                {bgFlipRefusal && (
+                  <span data-bg-flip-refusal={bgFlipRefusal.code} style={{ color: '#e8b04b' }}>
+                    Refused: {bgFlipRefusal.code}
+                  </span>
+                )}
+              </div>
+            )
+          })()}
           {/* A STOP IS PUBLIC: the current phase's suppressions read to the
               whole table, by name. */}
           {(state.suppressed ?? []).filter(s =>
@@ -1423,6 +1468,8 @@ export function DuneGameScreen({
               grants={seat === 'fremen' || seat === 'emperor'
                 ? state.allyGrants?.[seat] ?? null : null}
               onGrant={onAllyGrant}
+              bgFollow={state.bgFollowShips ?? null}
+              onBgPolicy={onBgPolicy}
               // THE CARD IS THE BUTTON: a special with a flow open right now
               // is played by clicking it in the hand, no chrome beside it.
               // Hajr's ribbon lights only while its moment stands — this

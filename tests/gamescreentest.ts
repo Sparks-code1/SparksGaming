@@ -1721,5 +1721,69 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     [true, true])
 }
 
+// ── the advisor flow on screen ────────────────────────────────────────────
+{
+  const rows3 = hudRows(state)
+  const bgRow = rows3.find(r => r.faction === 'bene-gesserit')
+    ?? rows3.find(r => r.faction === 'atreides')!
+  const stripBg = renderToStaticMarkup(createElement(OwnStrip, {
+    seat: 'bene-gesserit' as never, mode: 'advanced' as const, own,
+    player: bgRow, ally: null, onBgPolicy: () => {},
+  }))
+  check('the standing order is offered to the Sisterhood, ON by default',
+    [/data-bg-follow="" checked=""/.test(stripBg),
+      /data-bg-follow="" checked=""/.test(renderToStaticMarkup(createElement(OwnStrip, {
+        seat: 'bene-gesserit' as never, mode: 'advanced' as const, own,
+        player: bgRow, ally: null, bgFollow: false, onBgPolicy: () => {},
+      })))],
+    [true, false])
+  check('...and to nobody else',
+    /data-bg-follow/.test(renderToStaticMarkup(createElement(OwnStrip, {
+      seat: 'atreides' as never, mode: 'advanced' as const, own,
+      player: bgRow, ally: null, onBgPolicy: () => {},
+    }))), false)
+
+  // a bene-gesserit ADVISOR beside a rival army, in the window — exactly
+  // one flip on offer
+  const bgSeat = draw({
+    seat: 'bene-gesserit',
+    state: {
+      ...state, mode: 'advanced',
+      forces: [
+        ...state.forces,
+        { faction: 'bene-gesserit', territoryId: 'territory-20',
+          sector: 'sector-16', count: 1, posture: 'advisor' },
+        { faction: 'emperor', territoryId: 'territory-20',
+          sector: 'sector-16', count: 4 },
+      ],
+    } as never,
+    onBgFlip: () => {},
+  } as never)
+  check('the flip bar offers what the law answers, by name',
+    [/data-bg-flip-bar/.test(bgSeat), /data-bg-flip-fighter="territory-20"/.test(bgSeat)],
+    [true, true])
+  const bgShipping = draw({
+    seat: 'bene-gesserit',
+    state: {
+      ...state, mode: 'advanced', phase: 'Shipment and Movement',
+      forces: [
+        ...state.forces,
+        { faction: 'bene-gesserit', territoryId: 'territory-13',
+          sector: 'sector-10', count: 2 },
+      ],
+    } as never,
+    onBgFlip: () => {},
+  } as never)
+  check('...and during shipment, the robes go on where ground is shared',
+    /data-bg-flip-advisor="territory-13"/.test(bgShipping), true)
+
+  const matchB = readFileSync('src/components/dune/DuneMatchScreen.tsx', 'utf8')
+  const harnessB = readFileSync('src/components/dune/DuneMultiSeatView.tsx', 'utf8')
+  check('both drivers post the flip and the order',
+    [/BG_FLIP/.test(matchB) && /BG_POLICY/.test(matchB),
+      /BG_FLIP/.test(harnessB) && /BG_POLICY/.test(harnessB)],
+    [true, true])
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 process.exit(pass ? 0 : 1)

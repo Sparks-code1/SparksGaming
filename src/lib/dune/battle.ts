@@ -188,7 +188,10 @@ export function pendingBattles(
   const out: PendingBattle[] = []
   for (const t of DUNE_TERRITORIES) {
     if (t.terrain === 'polar-sink') continue
-    const occupied = forces.filter(f => f.territoryId === t.id && f.count > 0)
+    // ADVISORS DO NOT FIGHT: no battle opens over a watcher, and a
+    // territory of one advisor and one army holds no fight at all.
+    const occupied = forces.filter(f => f.territoryId === t.id && f.count > 0
+      && f.posture !== 'advisor')
     if (occupied.length === 0) continue
 
     // The territory's sectors, chained by ring adjacency, cut at the storm.

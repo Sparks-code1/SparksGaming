@@ -105,6 +105,10 @@ export interface OwnStripProps {
    *  button in the drawer. See PrivateView.playable. */
   playableCards?: readonly string[]
   onPlayCard?: (cardId: string) => void
+  /** The Bene Gesserit standing order: follow shipments with an advisor.
+   *  Absent reads as ON — the policy's own default. */
+  bgFollow?: boolean | null
+  onBgPolicy?: (on: boolean) => void
 }
 
 /** A titled block along the strip. */
@@ -398,6 +402,7 @@ export function PrivateView(
 
 export function OwnStrip({
   seat, mode, own, player, ally, grants, onGrant, playableCards, onPlayCard,
+  bgFollow, onBgPolicy,
 }: OwnStripProps) {
   const [open, setOpen] = useState<'treachery' | 'traitors' | null>(null)
   // The two floating panels, and the one card blown up to be readable. All
@@ -536,6 +541,18 @@ export function OwnStrip({
         {mode === 'advanced' && seat === KWISATZ_FACTION && (
           <Panel label="KWISATZ HADERACH">
             <KwisatzTracker battleLosses={player.battleLosses ?? 0} />
+          </Panel>
+        )}
+        {/* THE SISTERHOOD'S STANDING ORDER: the advanced follow-ship, on
+            unless turned off — a policy, never a prompt per shipment. */}
+        {seat === 'bene-gesserit' && mode === 'advanced' && onBgPolicy && (
+          <Panel label="STANDING ORDERS">
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', fontSize: 12 }}>
+              <input type="checkbox" data-bg-follow=""
+                checked={bgFollow !== false}
+                onChange={e => onBgPolicy(e.target.checked)} />
+              Follow shipments with an advisor
+            </label>
           </Panel>
         )}
         {/* THE STANDING GRANTS: a policy, not a prompt — flipped here once
