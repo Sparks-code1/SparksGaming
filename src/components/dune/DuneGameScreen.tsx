@@ -57,7 +57,7 @@ export const ATOMICS_TEXT_MS = 4000
 
 /** The blow's beats: the sandstorm clearing, a card held up, the zoom to
  *  its ground — and the worm's longer stare before the devour. */
-export const BLOW_SANDSTORM_MS = 2200
+export const BLOW_SANDSTORM_MS = 4000
 export const BLOW_CARD_MS = 1600
 export const BLOW_ZOOM_MS = 1600
 export const BLOW_WORM_CARD_MS = 1800
@@ -1691,19 +1691,16 @@ export function DuneGameScreen({
               position: 'absolute', inset: 0, zIndex: 7, pointerEvents: 'none',
               overflow: 'hidden',
             }}>
-              <style>{`@keyframes duneSand {
-                0% { transform: translateX(0) translateY(0); opacity: 1 }
-                70% { opacity: 0.9 }
-                100% { transform: translateX(-8%) translateY(3%); opacity: 0 }
-              }`}</style>
-              <div style={{
-                position: 'absolute', inset: '-20%',
-                background:
-                  'repeating-radial-gradient(circle at 30% 40%, #d8b06a 0 2px, #c49b52 2px 5px, #b98e46 5px 9px),'
-                  + ' radial-gradient(circle at 60% 60%, #e2bd7a, #a87f3d)',
-                backgroundBlendMode: 'multiply',
-                animation: `duneSand ${BLOW_SANDSTORM_MS}ms ease-in forwards`,
-              }} />
+              <style>{`@keyframes duneSandClear { to { opacity: 0 } }`}</style>
+              {/* muted: the Blow recording carries the sound, and autoplay
+                  only starts silent video without a gesture. Translucent, so
+                  the board reads through the blowing sand. */}
+              <video src="/Dune_effects/Sandstorm.mp4" autoPlay muted playsInline
+                style={{
+                  position: 'absolute', inset: 0, width: '100%', height: '100%',
+                  objectFit: 'cover', opacity: 0.8,
+                  animation: `duneSandClear 700ms ease ${BLOW_SANDSTORM_MS - 700}ms forwards`,
+                }} />
             </div>
           )}
           {blowShow && blowShow.stage !== 'sandstorm' && (() => {

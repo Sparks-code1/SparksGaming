@@ -1874,7 +1874,7 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     BLOW_DEVOUR_MS } = await import('@/components/dune/DuneGameScreen')
   check('the beats are the spec\'s',
     [BLOW_SANDSTORM_MS, BLOW_CARD_MS, BLOW_ZOOM_MS, BLOW_WORM_CARD_MS, BLOW_DEVOUR_MS],
-    [2200, 1600, 1600, 1800, 1000])
+    [4000, 1600, 1600, 1800, 1000])
 
   const screenB = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
   check('a reshuffle resyncs and performs nothing',
@@ -1891,6 +1891,19 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     [/data-blow-sandstorm/.test(screenB), /data-blow-card=\{beat\.kind\}/.test(screenB),
       /SHAI-HULUD/.test(screenB)],
     [true, true, true])
+  // the sandstorm is the recording — silent (Blow.mp3 carries the sound,
+  // and autoplay only starts muted video), translucent so the board reads
+  // through the blowing sand, cleared into the card
+  const sandVideoAt = screenB.indexOf('data-blow-sandstorm')
+  const sandVideo = screenB.slice(sandVideoAt, sandVideoAt + 900)
+  check('the sandstorm is the recording, cleared into the card',
+    [sandVideo.includes("'/Dune_effects/Sandstorm.mp4'")
+      || sandVideo.includes('"/Dune_effects/Sandstorm.mp4"'),
+      /autoPlay muted playsInline/.test(sandVideo),
+      /duneSandClear/.test(sandVideo),
+      sandVideo.includes('BLOW_SANDSTORM_MS - 700'),
+      sandVideo.includes('opacity: 0.8')],
+    [true, true, true, true, true])
   check('the ride is announced after the replay, to a table with Fremen in it',
     [/const ridePop = !blowShow/.test(screenB),
       /state\.players\.some\(p => p\.faction === 'fremen'\)/.test(screenB)],
