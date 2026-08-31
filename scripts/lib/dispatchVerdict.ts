@@ -26,14 +26,30 @@ export function classifyDispatch(r: {
   /** Match version before the dispatch, and after it — the database's word. */
   before: number
   after: number
-}): { verdict: 'ok' | 'ok-through-blip' | 'refused' | 'violation' | 'unreachable'
+  /**
+   * Whether the turn pointer moved — phase or turn number — across this
+   * dispatch. The endpoint sweeps a finished phase forward off whatever action
+   * arrived, so an accepted action can legitimately write TWICE: its own write
+   * and the advance behind it. Nothing else may.
+   */
+  phaseMoved?: boolean
+}): { verdict: 'ok' | 'ok-swept' | 'ok-through-blip' | 'refused' | 'violation' | 'unreachable'
   detail?: string } {
   const moved = r.after - r.before
 
   if (r.expect === 'ok') {
     if (r.spoke && r.ok) {
-      return moved === 1
-        ? { verdict: 'ok' }
+      if (moved === 1) return { verdict: 'ok' }
+      // TWO WRITES, AND ONLY FOR THE ONE REASON. A finished phase rolls
+      // forward off whatever action arrived — the endpoint's answer to having
+      // no scheduler — so the action's own write is followed by the advance.
+      // The second bump is allowed only with the turn pointer actually moved
+      // to show for it: an extra write with the phase standing still is the
+      // thing this invariant exists to catch, and loosening it to "one or two"
+      // would have stopped catching it.
+      if (moved === 2 && r.phaseMoved) return { verdict: 'ok-swept' }
+      return moved === 2
+        ? { verdict: 'violation', detail: `accepted write moved the version ${r.before} → ${r.after} without moving the phase` }
         : { verdict: 'violation', detail: `accepted write moved the version ${r.before} → ${r.after}, not by one` }
     }
     // THE BLIP'S WRITE MAY HAVE LANDED while its answer died in the

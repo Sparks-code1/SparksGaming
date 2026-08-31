@@ -422,8 +422,13 @@ const at = (phase: GamePhase, over: Partial<AdvanceState> = {}): AdvanceState =>
 // ── the endpoint drives it ────────────────────────────────────────────────
 {
   const fn = code('supabase/functions/dune-action/index.ts')
-  const advCase = fn.slice(fn.indexOf("case 'ADVANCE_PHASE'"), fn.indexOf("case 'SHIP'"))
-  check('the endpoint has the advance', advCase.length > 800, true)
+  // THE ADVANCE IS A FUNCTION NOW, not a case body: the sweep that rolls a
+  // finished phase forward off somebody else's action calls the same code the
+  // button does, so it was lifted out rather than copied. Everything below is
+  // a claim about that function.
+  const advAt = fn.indexOf('async function advancePhase(')
+  const advCase = fn.slice(advAt, fn.indexOf('  switch (action.type) {', advAt))
+  check('the endpoint has the advance', advAt > 0 && advCase.length > 800, true)
 
   // WHO. The host's faction from the state; the row's creator for a match
   // dealt before hosts existed; anybody for a row with neither.
@@ -910,6 +915,48 @@ check('a game is ten turns', TURN_LIMIT, 10)
   const bag9 = readFileSync('scripts/local-invariants.mjs', 'utf8')
   check('the harness counts the removed as part of the economy',
     /\.\.\.\(snap\.state\.removedFromPlay \?\? \[\]\),/.test(bag9), true)
+}
+
+// ── the phase moves without a press ───────────────────────────────────────
+// Nothing here can happen on a timer, so a finished phase used to sit until
+// the host pressed a button between every single one. It now rolls forward off
+// whatever action arrived next — the same trick setup uses to close an expired
+// window — and the press stays for moving EARLY.
+{
+  const src = code('supabase/functions/dune-action/index.ts')
+
+  // ONE IMPLEMENTATION, TWO CALLERS. The press and the sweep must not be able
+  // to disagree about what advancing means, so the case body was lifted into a
+  // function rather than copied.
+  check('advancing is one function',
+    [/async function advancePhase\(/.test(src),
+      (src.match(/await advancePhase\(/g) ?? []).length],
+    [true, 2])
+  check('...which the deliberate press calls',
+    /case 'ADVANCE_PHASE':\s*return await advancePhase\(state, match\)/.test(src), true)
+
+  // THE SWEEP'S GATES ARE THE BUTTON'S GATES.
+  const sweepAt = src.indexOf("if (answer.ok && action.type !== 'ADVANCE_PHASE')")
+  check('the sweep runs after the action, and never after a press',
+    sweepAt > 0, true)
+  const sweep = src.slice(sweepAt, sweepAt + 900)
+  check('...only when the phase owes nothing and the look window has shut',
+    [/!advanceHold\(fresh as never, at\)/.test(sweep),
+      /!phaseWindowOpen\(fresh as never, at\)/.test(sweep)],
+    [true, true])
+  // ON THE ROW AS IT IS NOW. The action just wrote: the version to build on and
+  // the action_seq the storm is seeded from have both moved.
+  check('...on the row as it stands after the action wrote',
+    [/from\('matches'\)/.test(sweep), /action_seq/.test(sweep),
+      /await advancePhase\(fresh, after as never\)/.test(sweep)],
+    [true, true, true])
+  // AND IT NEVER TURNS A COMMITTED ACTION INTO AN ERROR.
+  check('a failed sweep leaves the action standing',
+    [/try \{/.test(sweep), /\} catch \{/.test(sweep),
+      /return answer/.test(src.slice(sweepAt, sweepAt + 1200))],
+    [true, true, true])
+  // A REFUSED ACTION SWEEPS NOTHING: answer.ok is the whole test.
+  check('a refused action moves no phase', /answer\.ok &&/.test(src), true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

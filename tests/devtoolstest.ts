@@ -339,6 +339,25 @@ const base = {
   check('a clean accept is ok, and only a one-step version is clean',
     [D({}).verdict, D({ after: 6 }).verdict],
     ['ok', 'violation'])
+
+  // ── the sweep's second write, allowed for one reason only ───────────────
+  // A finished phase now rolls forward off whatever action arrived — the
+  // endpoint's answer to having no scheduler — so an accepted action can write
+  // twice: its own write, and the advance behind it. The allowance is narrow
+  // on purpose. An extra write with the turn pointer standing still is exactly
+  // what this invariant exists to catch, and "one or two is fine" would have
+  // stopped catching it.
+  check('two writes pass only with a moved phase to show for them',
+    [D({ after: 6, phaseMoved: true }).verdict,
+      D({ after: 6, phaseMoved: false }).verdict],
+    ['ok-swept', 'violation'])
+  check('...and the violation says which of the two it was',
+    D({ after: 6, phaseMoved: false }).detail,
+    'accepted write moved the version 4 → 6 without moving the phase')
+  check('a moved phase never excuses a THIRD write',
+    D({ after: 7, phaseMoved: true }).verdict, 'violation')
+  check('...nor a write that landed nothing',
+    D({ after: 4, phaseMoved: true }).verdict, 'violation')
   check('a genuine refusal against an expected ok is a violation, code named',
     D({ ok: false, code: 'cannot-pay', error: 'no' }),
     { verdict: 'violation', detail: "expected ok, refused: no (cannot-pay)" })
@@ -374,6 +393,15 @@ const base = {
       /process\.exit\(2\)/.test(harness),
       /if \(ruled\.verdict === 'violation'\) fail\(label, ruled\.detail\)/.test(harness)],
     [true, true, true, true, true])
+  // AND IT FEEDS THE VERDICT THE POINTER, or every swept action reads as a
+  // violation and the harness cries wolf on its own endpoint.
+  check('the harness remembers the turn pointer across a dispatch',
+    [/let lastPointer = null/.test(harness),
+      /const pointerOf = \(snap\) =>/.test(harness),
+      /phaseMoved: beforePointer !== null && beforePointer !== afterPointer/.test(harness)],
+    [true, true, true])
+  check('...and says so when a phase moved with nobody pressing anything',
+    /ok \+ swept to \$\{afterPointer\}/.test(harness), true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

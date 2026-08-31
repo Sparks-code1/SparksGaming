@@ -908,6 +908,427 @@ Deno.serve(async req => {
       })
   }
 
+  /**
+   * MOVE THE TURN ON — the press, and the sweep.
+   *
+   * Lifted out of its case so that something OTHER than a deliberate press
+   * can run it: see the sweep after the switch, which rolls a finished phase
+   * forward off whatever action arrived next. The body is unchanged, and the
+   * parameters are named `state` and `match` so that it stays that way — the
+   * sweep hands in the row as it is AFTER its action wrote, because the
+   * version it must build on and the action_seq the storm is seeded from
+   * have both moved by then.
+   */
+  async function advancePhase(
+    state: Record<string, unknown>,
+    match: { version: number; rng_seed: unknown; action_seq: number; created_by?: string },
+  ): Promise<Response> {
+      // WHO MAY PRESS. The host's faction, from the state the deal wrote; a
+      // match dealt before hosts existed falls back to the row's creator, and
+      // a row with neither is anybody's — an old table with no host is a table
+      // with no host, not a locked one.
+      const hostFaction = state.host as string | undefined
+      const isHost = hostFaction ? myFaction === hostFaction
+        : match.created_by ? match.created_by === user.id : true
+
+      // THE HOLDS STOP EVERYBODY, the host included: each is a pause the rules
+      // gave to a player, and each has its own after-deadline push any seat
+      // may fire. Advancing over one would play their decision ahead of the
+      // clock that protects it.
+      const hold = advanceHold(state as never, now)
+      if (hold) {
+        const said: Record<string, string> = {
+          'setup-not-finished': 'setup has not finished',
+          'game-over': 'the game is over',
+          'blow-not-turned': 'the spice blow has not been turned',
+          'worms-pending': 'the blow is waiting on the Fremen',
+          'charity-open': 'the charity window is still open',
+          'auction-running': 'the auction is still running',
+        }
+        return json({
+          error: said[hold.code] ?? hold.code, code: hold.code,
+          ...(hold.until ? { until: hold.until } : null),
+        }, 409)
+      }
+
+      // THE LOOK-WINDOW stops only the table: the host is the one seat trusted
+      // to decide the table has seen enough of a phase with nothing left in it.
+      if (!isHost && phaseWindowOpen(state as never, now)) {
+        const clock = state.phaseClock as { closesAt: number }
+        return json({
+          error: 'only the host moves on this early', code: 'phase-window-open',
+          until: clock.closesAt,
+        }, 403)
+      }
+
+      const stamp = (turn: number, phase: string) =>
+        ({ turn, phase, closesAt: now + PHASE_SECONDS * 1000 })
+
+      // ── THE OWED STORM. A match is DEALT into Storm, so nothing ever
+      // entered the phase and nothing rolled. The first press pays that debt
+      // and stays put — the table sees the weather before the turn moves on —
+      // and the stamp below makes the second press subject to the same look-
+      // window as any other phase.
+      if (state.phase === 'Storm' && state.stormMoved !== state.turn) {
+        const carried = state.stormCarry as {
+          turn: number; roll: number; closesAt: number
+          steered?: string; atomics?: string
+        } | undefined
+        if (carried && carried.turn === Number(state.turn)) {
+          // ── SECOND BEAT: the window has run out — advanceHold gated the
+          // early press — and the storm moves AS CALCULATED, against the
+          // Wall as it stands NOW: a detonation in between is exactly what
+          // the beat exists for.
+          const { patch } = stormEntry(state as never, carried.roll)
+          const moved9 = {
+            ...state, ...patch, awaiting: null,
+            stormReport: {
+              ...(patch.stormReport as object),
+              ...(carried.steered ? { steered: carried.steered } : null),
+              ...(carried.atomics ? { atomics: carried.atomics } : null),
+            },
+            phaseClock: stamp(Number(state.turn), 'Storm'),
+          } as Record<string, unknown>
+          delete moved9.stormCarry
+          const { data, error } = await admin.rpc('apply_match_write', {
+            p_match_id: matchId,
+            p_expected_version: match.version,
+            p_state: moved9,
+            p_secrets: {},
+          })
+          if (error) return json({ error: error.message }, 500)
+          if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+          return json({ phase: 'Storm', turn: state.turn, stormReport: moved9.stormReport, version: data[0].version })
+        }
+        const roll = rollStorm(
+          Number(state.turn), state.mode as never,
+          seededRng(Number(match.rng_seed) + match.action_seq))
+        // THE PRINTED BEAT between calculated and moved: from turn two,
+        // when some seat could legally answer with Family Atomics, the roll
+        // is PUBLISHED — as the dials are at the table — and the marker
+        // waits its window. With nobody in reach of the Wall the storm
+        // moves in the same press, as it always did.
+        const anyAtomics = Number(state.turn) >= 2
+          && ((state.players ?? []) as { faction: string }[]).some((p) =>
+            mayAtomics((state.forces ?? []) as never, p.faction as never, state.storm as never))
+        if (anyAtomics) {
+          const { data, error } = await admin.rpc('apply_match_write', {
+            p_match_id: matchId,
+            p_expected_version: match.version,
+            p_state: {
+              ...state, awaiting: null,
+              stormCarry: {
+                turn: Number(state.turn), roll,
+                closesAt: now + STORM_CARD_SECONDS * 1000,
+              },
+            },
+            p_secrets: {},
+          })
+          if (error) return json({ error: error.message }, 500)
+          if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+          return json({ phase: 'Storm', stormCalculated: roll, version: data[0].version })
+        }
+        const { patch } = stormEntry(state as never, roll)
+        const { data, error } = await admin.rpc('apply_match_write', {
+          p_match_id: matchId,
+          p_expected_version: match.version,
+          p_state: {
+            ...state, ...patch, awaiting: null,
+            phaseClock: stamp(Number(state.turn), 'Storm'),
+          },
+          p_secrets: {},
+        })
+        if (error) return json({ error: error.message }, 500)
+        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+        return json({ phase: 'Storm', turn: state.turn, stormReport: patch.stormReport, version: data[0].version })
+      }
+
+      const target = phaseAfter(state.phase as never)
+      const turn = target.newTurn ? Number(state.turn) + 1 : Number(state.turn)
+
+      // A MATCH FROM BEFORE THE LOOP can sit at Mentat Pause of turn ten with
+      // no winner written — the check below never ran for it. Ending the game
+      // now is the rule it missed, not an eleventh turn.
+      const overrun = target.newTurn && Number(state.turn) >= TURN_LIMIT
+
+      const base: Record<string, unknown> = {
+        ...state, phase: target.phase, turn, awaiting: null,
+        phaseClock: stamp(turn, target.phase),
+      }
+      // An expired charity window is closed by the advance that leaves it, the
+      // way CLOSE_CHARITY would have. The claims stand; the window is over.
+      if (state.phase === 'CHOAM Charity') delete base.charity
+      // A free-card entitlement never used lapses with the auction — the
+      // card was spent when it was played, as at the table.
+      if (state.phase === 'Bidding') delete base.karamaFreeCard
+      // An unridden worm is a ride declined: the advance past the deadline
+      // clears it, the same shape as charity's window — and an outlived
+      // Nexus goes with it, its private proposals inert by their turn
+      // stamps without a cleanup write.
+      if (state.phase === 'Spice Blow and Nexus') {
+        delete base.wormRide
+        delete base.nexus
+      }
+      // The pause's ready-up window ends with the pause: the advance that
+      // moves the turn marker is what it was counting down to.
+      if (state.phase === 'Mentat Pause') delete base.mentat
+      // ── ALLIES SEPARATE, OR ARE SEPARATED ───────────────────────────────
+      // Leaving the shipment phase with a pair still sharing ground (the
+      // Polar Sink excepted), the rule's teeth close: the ally LATER in
+      // storm order abandons the shared territories, those forces to the
+      // tanks. The live pass refused while they shared — this is what
+      // running the clock out instead costs. Advisors are not forces and
+      // neither share ground nor are swept.
+      if (state.phase === 'Shipment and Movement') {
+        const seatedPairs = ((state.players ?? []) as {
+          faction: string; ally?: string | null
+        }[]).flatMap((p) =>
+          p.ally && String(p.faction) < String(p.ally)
+            ? [[p.faction, p.ally] as const] : [])
+        if (seatedPairs.length > 0) {
+          const order = stormOrder(state.storm as never, (state.players ?? []) as never)
+          for (const [x, y] of seatedPairs) {
+            const shared = coOccupied((base.forces ?? []) as never, x as never, y as never)
+            if (shared.length === 0) continue
+            const later = order.indexOf(x as never) > order.indexOf(y as never) ? x : y
+            const rows = (base.forces ?? []) as {
+              faction: string; territoryId: string; posture?: string
+            }[]
+            const leaving = rows.filter((f) => f.faction === later
+              && shared.includes(f.territoryId) && f.posture !== 'advisor')
+            base.forces = rows.filter((f) => !leaving.includes(f))
+            base.tanks = bankDead(
+              (base.tanks ?? emptyTanks()) as never, leaving as never)
+          }
+        }
+      }
+
+      /** The plain write most entries need: the pointer, and nothing else. */
+      const plainly = async (
+        extra: Record<string, unknown> = {}, status?: string,
+        secrets: Record<string, unknown> = {},
+      ) => {
+        const { data, error } = await admin.rpc('apply_match_write', {
+          p_match_id: matchId,
+          p_expected_version: match.version,
+          p_state: { ...base, ...extra },
+          p_secrets: secrets,
+          p_decks: {},
+          ...(status ? { p_status: status } : null),
+        })
+        if (error) return json({ error: error.message }, 500)
+        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+        return json({ phase: target.phase, turn, ...extra, version: data[0].version })
+      }
+
+      /**
+       * What the verdict needs from the secrets: the Bene Gesserit's
+       * prediction, and every purse for the strongholds tiebreak.
+       *
+       * READ HERE, JUDGED IN THE BUNDLE, PUBLISHED ONLY WHEN THE GAME ENDS.
+       * The verdict itself carries no amount — the pure function returns only
+       * { factions, reason, turn }, and the suite holds it to that shape. The
+       * purses go public exactly once, in the same write as the winner:
+       * screens come down at the table, and a shared or spice-broken victory
+       * is legible only against the numbers. A finish that failed to write
+       * leaves them secret, because the reveal rides the winner or not at all.
+       */
+      const heldForVerdict = async () => {
+        const { data: rows } = await admin
+          .from('match_secrets').select('player_id, data').eq('match_id', matchId)
+        const spice: Record<string, number> = {}
+        let prediction: { faction?: string; turn?: number } | null = null
+        for (const r of rows ?? []) {
+          const fac = factionOfSeat[r.player_id as string]
+          if (!fac) continue
+          const d = (r.data ?? {}) as DuneSecrets & { prediction?: { faction?: string; turn?: number } }
+          spice[fac] = readSpice(d)
+          if (fac === 'bene-gesserit') prediction = d.prediction ?? null
+        }
+        return { spice, prediction }
+      }
+
+      /** End the game: the verdict into state, the row to 'complete', one write. */
+      const finish = async (onState: Record<string, unknown>) => {
+        const held = await heldForVerdict()
+        const verdict = mentatVerdict(onState as never, held.prediction, held.spice)
+        if (!verdict) return null
+        return await plainly({ winner: verdict, spiceRevealed: held.spice }, 'complete')
+      }
+
+      if (overrun) {
+        // The verdict reads the board as it stands, at the turn it stands at.
+        const ended = await finish({ ...state })
+        if (ended) return ended
+      }
+
+      switch (target.phase) {
+        // ── a new turn's weather, rolled as it is entered ──────────────────
+        case 'Storm': {
+          const roll = rollStorm(
+            turn, state.mode as never,
+            seededRng(Number(match.rng_seed) + match.action_seq))
+          const { patch } = stormEntry({ ...base, turn } as never, roll)
+          return await plainly({ ...patch })
+        }
+
+        // ── the cards are turned in the same write as the pointer ──────────
+        case 'Spice Blow and Nexus': {
+          baseState = base
+          return await turnTheBlow()
+        }
+
+        // ── the claim window opens with the phase ──────────────────────────
+        case 'CHOAM Charity': {
+          return await plainly({
+            charity: { expiresAt: now + CHARITY_WINDOW_MS, claims: [], turn },
+          })
+        }
+
+        // ── the lot is drawn with inputs computed from the match ───────────
+        case 'Bidding': {
+          const { data: handRows } = await admin
+            .from('match_secrets').select('player_id, data').eq('match_id', matchId)
+          const cards: Record<string, number> = {}
+          for (const r of handRows ?? []) {
+            const f = factionOfSeat[r.player_id as string]
+            if (f) cards[f] = (((r.data ?? {}) as { cards?: unknown[] }).cards ?? []).length
+          }
+          const opening = biddingOpening({
+            storm: state.storm as never,
+            players: (state.players ?? []) as never,
+            cards,
+          })
+          // EVERY HAND FULL is not a refusal here, the way it is for the
+          // harness's OPEN_BIDDING: the phase still happens, there is simply
+          // nothing to sell, and the turn must not wedge on that.
+          if (cardsOnOffer(opening.order, opening.hands, opening.limits) === 0) {
+            return await plainly({ biddingSkipped: true })
+          }
+          baseState = base
+          return await openTheAuction(opening.order, opening.hands, opening.limits)
+        }
+
+        // ── the documented half of collection pays out ─────────────────────
+        case 'Spice Collection': {
+          // THE HARVEST FIRST — the basic game's whole phase: stacks on the
+          // blows' markers lift spice off the board. Then the advanced
+          // cities' printed income. Both land in ONE write, and the same
+          // write shrinks the piles the harvest emptied.
+          const harvest = spiceHarvest(base as never)
+          const paid = cityIncome(base as never)
+          if (harvest.collected.length === 0 && paid.length === 0) return await plainly()
+          const { data: rows } = await admin
+            .from('match_secrets').select('player_id, data').eq('match_id', matchId)
+          const byId = Object.fromEntries(
+            (rows ?? []).map(r => [r.player_id as string, (r.data ?? {}) as DuneSecrets]))
+          const purses = Object.fromEntries(
+            Object.entries(byId).map(([id, d]) => [id, readSpice(d)]))
+          // Through the ledger, like charity: one mover, auditable by
+          // reason — the harvest as 'spice-harvest', the income as
+          // 'city-income'.
+          const moved = applySpiceMoves(purses, [
+            ...harvest.collected.flatMap(p => {
+              const seatId = seatOfFaction[p.faction]
+              return seatId
+                ? [{ from: BANK, to: seatId, amount: p.amount, reason: 'spice-harvest' }]
+                : []
+            }),
+            ...paid.flatMap(p => {
+              const seatId = seatOfFaction[p.faction]
+              return seatId
+                ? [{ from: BANK, to: seatId, amount: p.amount, reason: 'city-income' }]
+                : []
+            }),
+          ])
+          if (!moved.ok) return json({ error: 'income could not be paid', code: moved.refusal }, 500)
+          const secretsPatch = Object.fromEntries(
+            Object.entries(byId)
+              .filter(([id]) => moved.purses[id] !== purses[id])
+              .map(([id, d]) => [id, { ...d, spice: moved.purses[id] }]))
+          // THE RECEIPTS ARE PUBLIC on purpose: the piles and the stacks are
+          // on the board and the rates are printed, so the amounts tell
+          // nobody anything their eyes could not.
+          return await plainly({
+            spiceOnBoard: harvest.spiceOnBoard,
+            ...(harvest.collected.length
+              ? { spiceCollection: { turn, collected: harvest.collected } }
+              : null),
+            ...(paid.length ? { cityIncome: { turn, paid } } : null),
+          }, undefined, secretsPatch)
+        }
+
+        // ── the pause that counts strongholds ──────────────────────────────
+        case 'Mentat Pause': {
+          const ended = await finish(base)
+          // NO WINNER: one minute for the table to think about its next
+          // move. Everyone ready — or the clock — frees the advance that
+          // moves the turn marker.
+          return ended ?? await plainly({
+            mentat: { turn, closesAt: now + MENTAT_READY_SECONDS * 1000, ready: [] },
+          })
+        }
+
+        // ── the rotation opens with the phase ──────────────────────────────
+        case 'Shipment and Movement': {
+          const order = stormOrder(state.storm as never, (state.players ?? []) as never)
+          const shipping = {
+            turn, order, at: 0, done: {},
+            closesAt: now + SHIPMENT_SECONDS * 1000,
+          }
+          // THE ATREIDES SEE THE TOP OF THE SPICE DECK — their movement
+          // prescience, the same shape as their bidding one: written into
+          // their own secrets row, reaching no other seat and no shared
+          // state. Stamped with the turn so a stale glimpse reads as stale.
+          let seer: Record<string, unknown> = {}
+          const seerSeat = seatOfFaction['atreides']
+          if (seerSeat) {
+            const { data: deckRow } = await admin
+              .from('match_decks').select('cards')
+              .eq('match_id', matchId).eq('deck', 'spice').maybeSingle()
+            const top = ((deckRow?.cards ?? []) as unknown[])[0]
+            if (top) {
+              const { data: theirs } = await admin
+                .from('match_secrets').select('data')
+                .eq('match_id', matchId).eq('player_id', seerSeat).maybeSingle()
+              seer = { [seerSeat]: { ...(theirs?.data ?? {}), spiceReveal: { turn, card: top } } }
+            }
+          }
+          // THE RING FOLLOWS THE CLOCK. awaiting is how the board marks the
+          // seat the game waits on — the worm pause uses it — and a rotation
+          // that never set it left the circle unlit while a timer ran.
+          return await plainly({ shipping, awaiting: order[0] }, undefined, seer)
+        }
+
+        // ── Battles: the board demands them, the rotation fights them ─────
+        case 'Battles': {
+          const order = stormOrder(state.storm as never, (state.players ?? []) as never)
+          const pending = pendingBattles((base.forces ?? []) as never, base.storm as never)
+          const first = nextAggressor(order as never, pending, 0)
+          // A board with nothing to fight over passes straight through.
+          if (!first) return await plainly()
+          const battles = {
+            turn, order, at: first.at, current: null, fought: [],
+            usedLeaders: {}, closesAt: now + BATTLE_PICK_SECONDS * 1000,
+          }
+          return await plainly({ battles, awaiting: first.faction })
+        }
+
+        // ── The rest: not built, and said ──────────────────────────────────
+        // They enter, hold the look-window so the table sees where the turn
+        // is, and advance. Rules land here later; the loop does not wait for
+        // them.
+        default:
+          return await plainly({ placeholder: true })
+      }
+  }
+
+  /**
+   * WHAT THE ACTION ITSELF DID. Wrapped so the phase sweep below can run
+   * after it — the switch's own `return` is the action's answer, not the
+   * end of the request.
+   */
+  const answer = await (async (): Promise<Response> => {
   switch (action.type) {
     // ── Open the charity window ──────────────────────────────────────────────
     // The DEADLINE IS STAMPED HERE, not supplied by the caller. Clients count
@@ -1802,406 +2223,8 @@ Deno.serve(async req => {
     // the same write — see lib/dune/phaseAdvance for the whole design, and for
     // why the holds below stop the host too while the look-window stops only
     // everybody else.
-    case 'ADVANCE_PHASE': {
-      // WHO MAY PRESS. The host's faction, from the state the deal wrote; a
-      // match dealt before hosts existed falls back to the row's creator, and
-      // a row with neither is anybody's — an old table with no host is a table
-      // with no host, not a locked one.
-      const hostFaction = state.host as string | undefined
-      const isHost = hostFaction ? myFaction === hostFaction
-        : match.created_by ? match.created_by === user.id : true
-
-      // THE HOLDS STOP EVERYBODY, the host included: each is a pause the rules
-      // gave to a player, and each has its own after-deadline push any seat
-      // may fire. Advancing over one would play their decision ahead of the
-      // clock that protects it.
-      const hold = advanceHold(state as never, now)
-      if (hold) {
-        const said: Record<string, string> = {
-          'setup-not-finished': 'setup has not finished',
-          'game-over': 'the game is over',
-          'blow-not-turned': 'the spice blow has not been turned',
-          'worms-pending': 'the blow is waiting on the Fremen',
-          'charity-open': 'the charity window is still open',
-          'auction-running': 'the auction is still running',
-        }
-        return json({
-          error: said[hold.code] ?? hold.code, code: hold.code,
-          ...(hold.until ? { until: hold.until } : null),
-        }, 409)
-      }
-
-      // THE LOOK-WINDOW stops only the table: the host is the one seat trusted
-      // to decide the table has seen enough of a phase with nothing left in it.
-      if (!isHost && phaseWindowOpen(state as never, now)) {
-        const clock = state.phaseClock as { closesAt: number }
-        return json({
-          error: 'only the host moves on this early', code: 'phase-window-open',
-          until: clock.closesAt,
-        }, 403)
-      }
-
-      const stamp = (turn: number, phase: string) =>
-        ({ turn, phase, closesAt: now + PHASE_SECONDS * 1000 })
-
-      // ── THE OWED STORM. A match is DEALT into Storm, so nothing ever
-      // entered the phase and nothing rolled. The first press pays that debt
-      // and stays put — the table sees the weather before the turn moves on —
-      // and the stamp below makes the second press subject to the same look-
-      // window as any other phase.
-      if (state.phase === 'Storm' && state.stormMoved !== state.turn) {
-        const carried = state.stormCarry as {
-          turn: number; roll: number; closesAt: number
-          steered?: string; atomics?: string
-        } | undefined
-        if (carried && carried.turn === Number(state.turn)) {
-          // ── SECOND BEAT: the window has run out — advanceHold gated the
-          // early press — and the storm moves AS CALCULATED, against the
-          // Wall as it stands NOW: a detonation in between is exactly what
-          // the beat exists for.
-          const { patch } = stormEntry(state as never, carried.roll)
-          const moved9 = {
-            ...state, ...patch, awaiting: null,
-            stormReport: {
-              ...(patch.stormReport as object),
-              ...(carried.steered ? { steered: carried.steered } : null),
-              ...(carried.atomics ? { atomics: carried.atomics } : null),
-            },
-            phaseClock: stamp(Number(state.turn), 'Storm'),
-          } as Record<string, unknown>
-          delete moved9.stormCarry
-          const { data, error } = await admin.rpc('apply_match_write', {
-            p_match_id: matchId,
-            p_expected_version: match.version,
-            p_state: moved9,
-            p_secrets: {},
-          })
-          if (error) return json({ error: error.message }, 500)
-          if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
-          return json({ phase: 'Storm', turn: state.turn, stormReport: moved9.stormReport, version: data[0].version })
-        }
-        const roll = rollStorm(
-          Number(state.turn), state.mode as never,
-          seededRng(Number(match.rng_seed) + match.action_seq))
-        // THE PRINTED BEAT between calculated and moved: from turn two,
-        // when some seat could legally answer with Family Atomics, the roll
-        // is PUBLISHED — as the dials are at the table — and the marker
-        // waits its window. With nobody in reach of the Wall the storm
-        // moves in the same press, as it always did.
-        const anyAtomics = Number(state.turn) >= 2
-          && ((state.players ?? []) as { faction: string }[]).some((p) =>
-            mayAtomics((state.forces ?? []) as never, p.faction as never, state.storm as never))
-        if (anyAtomics) {
-          const { data, error } = await admin.rpc('apply_match_write', {
-            p_match_id: matchId,
-            p_expected_version: match.version,
-            p_state: {
-              ...state, awaiting: null,
-              stormCarry: {
-                turn: Number(state.turn), roll,
-                closesAt: now + STORM_CARD_SECONDS * 1000,
-              },
-            },
-            p_secrets: {},
-          })
-          if (error) return json({ error: error.message }, 500)
-          if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
-          return json({ phase: 'Storm', stormCalculated: roll, version: data[0].version })
-        }
-        const { patch } = stormEntry(state as never, roll)
-        const { data, error } = await admin.rpc('apply_match_write', {
-          p_match_id: matchId,
-          p_expected_version: match.version,
-          p_state: {
-            ...state, ...patch, awaiting: null,
-            phaseClock: stamp(Number(state.turn), 'Storm'),
-          },
-          p_secrets: {},
-        })
-        if (error) return json({ error: error.message }, 500)
-        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
-        return json({ phase: 'Storm', turn: state.turn, stormReport: patch.stormReport, version: data[0].version })
-      }
-
-      const target = phaseAfter(state.phase as never)
-      const turn = target.newTurn ? Number(state.turn) + 1 : Number(state.turn)
-
-      // A MATCH FROM BEFORE THE LOOP can sit at Mentat Pause of turn ten with
-      // no winner written — the check below never ran for it. Ending the game
-      // now is the rule it missed, not an eleventh turn.
-      const overrun = target.newTurn && Number(state.turn) >= TURN_LIMIT
-
-      const base: Record<string, unknown> = {
-        ...state, phase: target.phase, turn, awaiting: null,
-        phaseClock: stamp(turn, target.phase),
-      }
-      // An expired charity window is closed by the advance that leaves it, the
-      // way CLOSE_CHARITY would have. The claims stand; the window is over.
-      if (state.phase === 'CHOAM Charity') delete base.charity
-      // A free-card entitlement never used lapses with the auction — the
-      // card was spent when it was played, as at the table.
-      if (state.phase === 'Bidding') delete base.karamaFreeCard
-      // An unridden worm is a ride declined: the advance past the deadline
-      // clears it, the same shape as charity's window — and an outlived
-      // Nexus goes with it, its private proposals inert by their turn
-      // stamps without a cleanup write.
-      if (state.phase === 'Spice Blow and Nexus') {
-        delete base.wormRide
-        delete base.nexus
-      }
-      // The pause's ready-up window ends with the pause: the advance that
-      // moves the turn marker is what it was counting down to.
-      if (state.phase === 'Mentat Pause') delete base.mentat
-      // ── ALLIES SEPARATE, OR ARE SEPARATED ───────────────────────────────
-      // Leaving the shipment phase with a pair still sharing ground (the
-      // Polar Sink excepted), the rule's teeth close: the ally LATER in
-      // storm order abandons the shared territories, those forces to the
-      // tanks. The live pass refused while they shared — this is what
-      // running the clock out instead costs. Advisors are not forces and
-      // neither share ground nor are swept.
-      if (state.phase === 'Shipment and Movement') {
-        const seatedPairs = ((state.players ?? []) as {
-          faction: string; ally?: string | null
-        }[]).flatMap((p) =>
-          p.ally && String(p.faction) < String(p.ally)
-            ? [[p.faction, p.ally] as const] : [])
-        if (seatedPairs.length > 0) {
-          const order = stormOrder(state.storm as never, (state.players ?? []) as never)
-          for (const [x, y] of seatedPairs) {
-            const shared = coOccupied((base.forces ?? []) as never, x as never, y as never)
-            if (shared.length === 0) continue
-            const later = order.indexOf(x as never) > order.indexOf(y as never) ? x : y
-            const rows = (base.forces ?? []) as {
-              faction: string; territoryId: string; posture?: string
-            }[]
-            const leaving = rows.filter((f) => f.faction === later
-              && shared.includes(f.territoryId) && f.posture !== 'advisor')
-            base.forces = rows.filter((f) => !leaving.includes(f))
-            base.tanks = bankDead(
-              (base.tanks ?? emptyTanks()) as never, leaving as never)
-          }
-        }
-      }
-
-      /** The plain write most entries need: the pointer, and nothing else. */
-      const plainly = async (
-        extra: Record<string, unknown> = {}, status?: string,
-        secrets: Record<string, unknown> = {},
-      ) => {
-        const { data, error } = await admin.rpc('apply_match_write', {
-          p_match_id: matchId,
-          p_expected_version: match.version,
-          p_state: { ...base, ...extra },
-          p_secrets: secrets,
-          p_decks: {},
-          ...(status ? { p_status: status } : null),
-        })
-        if (error) return json({ error: error.message }, 500)
-        if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
-        return json({ phase: target.phase, turn, ...extra, version: data[0].version })
-      }
-
-      /**
-       * What the verdict needs from the secrets: the Bene Gesserit's
-       * prediction, and every purse for the strongholds tiebreak.
-       *
-       * READ HERE, JUDGED IN THE BUNDLE, PUBLISHED ONLY WHEN THE GAME ENDS.
-       * The verdict itself carries no amount — the pure function returns only
-       * { factions, reason, turn }, and the suite holds it to that shape. The
-       * purses go public exactly once, in the same write as the winner:
-       * screens come down at the table, and a shared or spice-broken victory
-       * is legible only against the numbers. A finish that failed to write
-       * leaves them secret, because the reveal rides the winner or not at all.
-       */
-      const heldForVerdict = async () => {
-        const { data: rows } = await admin
-          .from('match_secrets').select('player_id, data').eq('match_id', matchId)
-        const spice: Record<string, number> = {}
-        let prediction: { faction?: string; turn?: number } | null = null
-        for (const r of rows ?? []) {
-          const fac = factionOfSeat[r.player_id as string]
-          if (!fac) continue
-          const d = (r.data ?? {}) as DuneSecrets & { prediction?: { faction?: string; turn?: number } }
-          spice[fac] = readSpice(d)
-          if (fac === 'bene-gesserit') prediction = d.prediction ?? null
-        }
-        return { spice, prediction }
-      }
-
-      /** End the game: the verdict into state, the row to 'complete', one write. */
-      const finish = async (onState: Record<string, unknown>) => {
-        const held = await heldForVerdict()
-        const verdict = mentatVerdict(onState as never, held.prediction, held.spice)
-        if (!verdict) return null
-        return await plainly({ winner: verdict, spiceRevealed: held.spice }, 'complete')
-      }
-
-      if (overrun) {
-        // The verdict reads the board as it stands, at the turn it stands at.
-        const ended = await finish({ ...state })
-        if (ended) return ended
-      }
-
-      switch (target.phase) {
-        // ── a new turn's weather, rolled as it is entered ──────────────────
-        case 'Storm': {
-          const roll = rollStorm(
-            turn, state.mode as never,
-            seededRng(Number(match.rng_seed) + match.action_seq))
-          const { patch } = stormEntry({ ...base, turn } as never, roll)
-          return await plainly({ ...patch })
-        }
-
-        // ── the cards are turned in the same write as the pointer ──────────
-        case 'Spice Blow and Nexus': {
-          baseState = base
-          return await turnTheBlow()
-        }
-
-        // ── the claim window opens with the phase ──────────────────────────
-        case 'CHOAM Charity': {
-          return await plainly({
-            charity: { expiresAt: now + CHARITY_WINDOW_MS, claims: [], turn },
-          })
-        }
-
-        // ── the lot is drawn with inputs computed from the match ───────────
-        case 'Bidding': {
-          const { data: handRows } = await admin
-            .from('match_secrets').select('player_id, data').eq('match_id', matchId)
-          const cards: Record<string, number> = {}
-          for (const r of handRows ?? []) {
-            const f = factionOfSeat[r.player_id as string]
-            if (f) cards[f] = (((r.data ?? {}) as { cards?: unknown[] }).cards ?? []).length
-          }
-          const opening = biddingOpening({
-            storm: state.storm as never,
-            players: (state.players ?? []) as never,
-            cards,
-          })
-          // EVERY HAND FULL is not a refusal here, the way it is for the
-          // harness's OPEN_BIDDING: the phase still happens, there is simply
-          // nothing to sell, and the turn must not wedge on that.
-          if (cardsOnOffer(opening.order, opening.hands, opening.limits) === 0) {
-            return await plainly({ biddingSkipped: true })
-          }
-          baseState = base
-          return await openTheAuction(opening.order, opening.hands, opening.limits)
-        }
-
-        // ── the documented half of collection pays out ─────────────────────
-        case 'Spice Collection': {
-          // THE HARVEST FIRST — the basic game's whole phase: stacks on the
-          // blows' markers lift spice off the board. Then the advanced
-          // cities' printed income. Both land in ONE write, and the same
-          // write shrinks the piles the harvest emptied.
-          const harvest = spiceHarvest(base as never)
-          const paid = cityIncome(base as never)
-          if (harvest.collected.length === 0 && paid.length === 0) return await plainly()
-          const { data: rows } = await admin
-            .from('match_secrets').select('player_id, data').eq('match_id', matchId)
-          const byId = Object.fromEntries(
-            (rows ?? []).map(r => [r.player_id as string, (r.data ?? {}) as DuneSecrets]))
-          const purses = Object.fromEntries(
-            Object.entries(byId).map(([id, d]) => [id, readSpice(d)]))
-          // Through the ledger, like charity: one mover, auditable by
-          // reason — the harvest as 'spice-harvest', the income as
-          // 'city-income'.
-          const moved = applySpiceMoves(purses, [
-            ...harvest.collected.flatMap(p => {
-              const seatId = seatOfFaction[p.faction]
-              return seatId
-                ? [{ from: BANK, to: seatId, amount: p.amount, reason: 'spice-harvest' }]
-                : []
-            }),
-            ...paid.flatMap(p => {
-              const seatId = seatOfFaction[p.faction]
-              return seatId
-                ? [{ from: BANK, to: seatId, amount: p.amount, reason: 'city-income' }]
-                : []
-            }),
-          ])
-          if (!moved.ok) return json({ error: 'income could not be paid', code: moved.refusal }, 500)
-          const secretsPatch = Object.fromEntries(
-            Object.entries(byId)
-              .filter(([id]) => moved.purses[id] !== purses[id])
-              .map(([id, d]) => [id, { ...d, spice: moved.purses[id] }]))
-          // THE RECEIPTS ARE PUBLIC on purpose: the piles and the stacks are
-          // on the board and the rates are printed, so the amounts tell
-          // nobody anything their eyes could not.
-          return await plainly({
-            spiceOnBoard: harvest.spiceOnBoard,
-            ...(harvest.collected.length
-              ? { spiceCollection: { turn, collected: harvest.collected } }
-              : null),
-            ...(paid.length ? { cityIncome: { turn, paid } } : null),
-          }, undefined, secretsPatch)
-        }
-
-        // ── the pause that counts strongholds ──────────────────────────────
-        case 'Mentat Pause': {
-          const ended = await finish(base)
-          // NO WINNER: one minute for the table to think about its next
-          // move. Everyone ready — or the clock — frees the advance that
-          // moves the turn marker.
-          return ended ?? await plainly({
-            mentat: { turn, closesAt: now + MENTAT_READY_SECONDS * 1000, ready: [] },
-          })
-        }
-
-        // ── the rotation opens with the phase ──────────────────────────────
-        case 'Shipment and Movement': {
-          const order = stormOrder(state.storm as never, (state.players ?? []) as never)
-          const shipping = {
-            turn, order, at: 0, done: {},
-            closesAt: now + SHIPMENT_SECONDS * 1000,
-          }
-          // THE ATREIDES SEE THE TOP OF THE SPICE DECK — their movement
-          // prescience, the same shape as their bidding one: written into
-          // their own secrets row, reaching no other seat and no shared
-          // state. Stamped with the turn so a stale glimpse reads as stale.
-          let seer: Record<string, unknown> = {}
-          const seerSeat = seatOfFaction['atreides']
-          if (seerSeat) {
-            const { data: deckRow } = await admin
-              .from('match_decks').select('cards')
-              .eq('match_id', matchId).eq('deck', 'spice').maybeSingle()
-            const top = ((deckRow?.cards ?? []) as unknown[])[0]
-            if (top) {
-              const { data: theirs } = await admin
-                .from('match_secrets').select('data')
-                .eq('match_id', matchId).eq('player_id', seerSeat).maybeSingle()
-              seer = { [seerSeat]: { ...(theirs?.data ?? {}), spiceReveal: { turn, card: top } } }
-            }
-          }
-          // THE RING FOLLOWS THE CLOCK. awaiting is how the board marks the
-          // seat the game waits on — the worm pause uses it — and a rotation
-          // that never set it left the circle unlit while a timer ran.
-          return await plainly({ shipping, awaiting: order[0] }, undefined, seer)
-        }
-
-        // ── Battles: the board demands them, the rotation fights them ─────
-        case 'Battles': {
-          const order = stormOrder(state.storm as never, (state.players ?? []) as never)
-          const pending = pendingBattles((base.forces ?? []) as never, base.storm as never)
-          const first = nextAggressor(order as never, pending, 0)
-          // A board with nothing to fight over passes straight through.
-          if (!first) return await plainly()
-          const battles = {
-            turn, order, at: first.at, current: null, fought: [],
-            usedLeaders: {}, closesAt: now + BATTLE_PICK_SECONDS * 1000,
-          }
-          return await plainly({ battles, awaiting: first.faction })
-        }
-
-        // ── The rest: not built, and said ──────────────────────────────────
-        // They enter, hold the look-window so the table sees where the turn
-        // is, and advance. Rules land here later; the loop does not wait for
-        // them.
-        default:
-          return await plainly({ placeholder: true })
-      }
-    }
+    case 'ADVANCE_PHASE':
+      return await advancePhase(state, match)
 
     // ── Revival: the Tanks pay out ───────────────────────────────────────────
     // Forces to RESERVES, never the board; spice to the BANK, never the
@@ -4572,4 +4595,51 @@ Deno.serve(async req => {
     default:
       return json({ error: `unknown action ${action.type}`, code: 'unknown-action' }, 400)
   }
+  })()
+
+  /**
+   * THE PHASE ROLLS FORWARD OFF WHATEVER ARRIVED — no press required.
+   *
+   * There is no scheduler here: nothing can happen unless a request happens,
+   * which is why setup closes an expired window on whatever setup answer
+   * turns up rather than on a timer. Phases were the one thing that never
+   * got the same treatment, so a finished phase sat there until somebody —
+   * in practice the host — pressed a button between every single one.
+   *
+   * WHAT MAKES IT SAFE IS ALREADY WRITTEN. advanceHold enumerates every
+   * reason a phase must not move: a window somebody is owed, an auction
+   * running, battles underway, the blow unturned, the ride open. The
+   * look-window is the table's own pause — thirty seconds to see where the
+   * turn is — and advancing before it shuts is exactly the thing only the
+   * host may do. So the sweep fires when the phase owes nothing AND the
+   * table has had its look, which is the same test the button obeys.
+   *
+   * ON THE ROW AS IT IS NOW, not as it was when this request started: the
+   * action just wrote, so the version to build on and the action_seq the
+   * storm is seeded from have both moved.
+   *
+   * ONE PHASE PER ACTION. Entering a phase stamps its own look-window, so
+   * the next sweep cannot fire until that has run — the turn walks forward
+   * at the table's pace instead of unwinding in a single request.
+   *
+   * BEST EFFORT, ALWAYS. The caller's action has already committed and been
+   * answered; a sweep that fails — someone else advanced first, the row
+   * moved under it — must not turn their successful action into an error.
+   */
+  if (answer.ok && action.type !== 'ADVANCE_PHASE') {
+    try {
+      const { data: after } = await admin
+        .from('matches')
+        .select('state, version, rng_seed, action_seq, created_by')
+        .eq('id', matchId)
+        .maybeSingle()
+      const fresh = (after?.state ?? {}) as Record<string, unknown>
+      const at = Date.now()
+      if (after && !advanceHold(fresh as never, at) && !phaseWindowOpen(fresh as never, at)) {
+        await advancePhase(fresh, after as never)
+      }
+    } catch { /* the action stands whatever the sweep does */ }
+  }
+
+  return answer
 })

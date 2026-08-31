@@ -653,6 +653,54 @@ const seat = (over: Partial<LobbySeat> = {}): LobbySeat => {
     /replaceState\(null, '', window\.location\.pathname\)/.test(app), true)
 }
 
+// ── the seat's key is the account, never the typed name ───────────────────
+// player_id is what a secrets row is keyed by, and the deal builds those into
+// an object — so two seats sharing a key write ONE row, the later seat
+// overwrites the earlier, and one player holds nothing of their own while the
+// public row goes on advertising their hand. Both seating paths put a DISPLAY
+// NAME in that column, which two people can type identically. It cost a game.
+{
+  const src = code('src/lib/dune/duneLobby.ts')
+  check('the host\'s seat is keyed by the account',
+    /player_id: user\.id, user_id: user\.id/.test(src), true)
+  check('...and no display name reaches that column',
+    /player_id: input\.playerId/.test(src), false)
+
+  // AND THE SCREEN STOPPED HANDING ONE OVER.
+  const screen = code('src/components/dune/DuneLobbyScreen.tsx')
+  check('the lobby screen passes no player id at all',
+    /playerId: name\.trim\(\)/.test(screen), false)
+
+  // THE JOIN PATH IS THE DATABASE'S, so the claim is about the migration.
+  const sql = readFileSync(
+    'supabase/migrations/20260831120000_dune_seat_key_is_the_account.sql', 'utf8')
+  check('the join RPC keys the seat by the caller\'s account',
+    /values \(m\.id, n, auth\.uid\(\)::text, auth\.uid\(\)/.test(sql), true)
+  check('...and the typed name goes to the name column instead',
+    /auth\.uid\(\)::text, auth\.uid\(\), p_name,/.test(sql), true)
+  check('...with the old name-keyed insert gone',
+    /values \(m\.id, n, p_name, auth\.uid\(\)/.test(sql), false)
+  // IT REPLACES THE CURRENT FUNCTION, NOT AN OLDER ONE. A create-or-replace
+  // written against a superseded version quietly reverts everything added
+  // since — here, the optional faction and its parameter default. Postgres
+  // refuses to drop the default outright, which is what caught it; the
+  // placeholder would have gone silently.
+  check('the optional faction survives the replace',
+    [/p_faction text default null/.test(sql),
+      /coalesce\(want, 'unassigned'\)/.test(sql)],
+    [true, true])
+  // A MIGRATION THAT SILENTLY DID NOTHING would be worse than none: the
+  // collision would go on being typeable while the file said it could not.
+  check('the migration fails loudly if it did not take',
+    [/raise exception 'join_dune_lobby still keys the seat/.test(sql),
+      /raise exception 'join_dune_lobby lost its optional faction'/.test(sql)],
+    [true, true])
+  // AND IT LEAVES DEALT TABLES ALONE — secrets rows are keyed to the ids they
+  // were dealt with, and rewriting one side would orphan every hand.
+  check('...and backfills nothing',
+    /update match_players|update match_secrets/i.test(sql), false)
+}
+
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.

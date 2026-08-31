@@ -234,8 +234,15 @@ const checkInvariants = (snap, label) => {
 // ── one dispatch, one audit ───────────────────────────────────────────────
 let matchId = null
 let lastVersion = null
+// THE TURN POINTER BESIDE THE VERSION. The endpoint sweeps a finished phase
+// forward off whatever action arrived, so an accepted action may write TWICE —
+// its own write and the advance behind it. The verdict allows that second bump
+// only when the pointer actually moved, so the pointer has to be remembered.
+let lastPointer = null
+const pointerOf = (snap) => `${snap.state.turn ?? '?'}/${snap.state.phase ?? '?'}`
 const act = async (faction, action, expect = 'ok') => {
   const before = lastVersion
+  const beforePointer = lastPointer
   // RETRIES on a response that is not the endpoint's — the local edge
   // runtime occasionally 502s through the gateway WHILE THE WRITE LANDS
   // (at-least-once delivery; the app's own dispatch treats a network
@@ -282,10 +289,13 @@ const act = async (faction, action, expect = 'ok') => {
   const label = `${action.type} by ${faction}`
   const snap = await snapshot(matchId)
   lastVersion = snap.version
+  const afterPointer = pointerOf(snap)
   const ruled = classifyDispatch({
     expect, spoke, ok: !!res.ok, code: body.code, error: body.error,
     blipped, before, after: snap.version,
+    phaseMoved: beforePointer !== null && beforePointer !== afterPointer,
   })
+  lastPointer = afterPointer
   if (ruled.verdict === 'unreachable') {
     // INFRASTRUCTURE, NOT A RULES VIOLATION — and not silently a pass
     // either: the steps after this one assume this one happened, so the
@@ -299,6 +309,10 @@ const act = async (faction, action, expect = 'ok') => {
   if (ruled.verdict === 'violation') fail(label, ruled.detail)
   checkInvariants(snap, label)
   const said = ruled.verdict === 'ok-through-blip' ? 'ok (through a blip)'
+    // SAID OUT LOUD, because a phase that moved without anybody pressing
+    // anything is the sort of thing you want to see happening rather than
+    // discover later.
+    : ruled.verdict === 'ok-swept' ? `ok + swept to ${afterPointer}`
     : ruled.verdict === 'refused' ? `refused ${body.code}`
     : res.ok ? 'ok      ' : `refused ${body.code ?? '?'}`
   console.log(`  ${said}  ${label}  (v${snap.version})`)
@@ -309,6 +323,7 @@ const open = async (phase) => {
   matchId = seed(phase)
   const snap = await snapshot(matchId)
   lastVersion = snap.version
+  lastPointer = pointerOf(snap)
   rebaseline(snap)
   checkInvariants(snap, `${phase} seed`)
   console.log(`\n━━ ${phase} match ${matchId.slice(0, 8)}… seeded (v${snap.version})`)

@@ -282,7 +282,15 @@ export async function joinDuneByCode(
  */
 export async function createDuneLobby(input: {
   name: string
-  playerId: string
+  /**
+   * IGNORED FOR THE SEAT'S KEY, and kept only so callers do not have to change.
+   *
+   * The seat is keyed by the account, not by this — see the insert below. A
+   * caller that passes a display name here gets a seat keyed by their user id
+   * regardless, which is the whole point: the name is not unique and the key
+   * has to be.
+   */
+  playerId?: string
   /** How many humans the host is waiting for, including themselves. */
   seats: number
   /** Which game the table is playing. Everybody sees it before it is dealt. */
@@ -319,7 +327,18 @@ export async function createDuneLobby(input: {
   if (error || !match) throw new Error(`Could not open the table: ${error?.message ?? 'no row returned'}`)
 
   const { error: sErr } = await supabase.from('match_players').insert({
-    match_id: match.id, seat: 0, player_id: input.playerId, user_id: user.id,
+    // THE ACCOUNT IS THE KEY, never the display name.
+    //
+    // player_id is what a secrets row is keyed by, and the deal writes those
+    // into an object — so two seats sharing a key write ONE row and the later
+    // seat silently overwrites the earlier. With the typed name as the key,
+    // two players called the same thing were one hand between them: no
+    // treachery card and no traitors for whoever lost the race, while the
+    // public row went on advertising what they had been dealt. A user id is
+    // unique by construction and is already the thing RLS joins against, so
+    // the collision cannot be typed into existence. START refuses a duplicate
+    // key as well — see judgeSeats — because old rows are still name-keyed.
+    match_id: match.id, seat: 0, player_id: user.id, user_id: user.id,
     // THE HOST CHOOSES AT THE TABLE TOO. Opening one is not a reason to pick
     // blind, and it keeps one rule about when a faction is chosen rather than
     // two that will disagree.

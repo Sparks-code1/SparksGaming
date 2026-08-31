@@ -439,7 +439,9 @@ export function DuneLobbyScreen({ onPlay, onExit }: DuneLobbyScreenProps) {
         <button type="button" disabled={busy || !name.trim()} style={button(true)}
           onClick={() => void attempt(async () => {
             const made = await createDuneLobby({
-              name: name.trim(), playerId: name.trim(), seats,
+              // NO playerId: the seat is keyed by the account, and passing a
+              // typed name here is what let two players share one hand.
+              name: name.trim(), seats,
             })
             setMatchId(made.matchId)
           })}>
