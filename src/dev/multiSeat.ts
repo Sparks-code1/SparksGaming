@@ -222,10 +222,22 @@ export function startMultiSeat(
   }
 
   return {
+    /**
+     * Stop LISTENING. Deliberately not signing out.
+     *
+     * Each seat's client persists its session under a per-seat storage key, and
+     * StrictMode runs this whole effect twice in development — so the first
+     * run's cleanup fires while the second run is live on the SAME keys. A
+     * signOut here therefore did not end this harness's sessions, it ended the
+     * other copy's: four of six seats came up holding no session at all and
+     * every action they sent was refused as `unauthenticated`, while whichever
+     * seat won the race went on working. A harness that signs out the harness
+     * is worse than one that leaves a dev token in localStorage, which is
+     * replaced by the next sign-in anyway.
+     */
     stop() {
       cancelled = true
       for (const stop of stops) stop()
-      for (const session of sessions) void session.client.auth.signOut()
     },
     async refresh(faction) {
       const session = sessions.find(s => s.login.faction === faction)
