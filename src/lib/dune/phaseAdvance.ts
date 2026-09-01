@@ -78,6 +78,58 @@ export const MENTAT_READY_SECONDS = 60
  */
 export const PHASE_SECONDS = 30
 
+/**
+ * WHO FIRES THE ADVANCE WHEN NOBODY IS PLAYING, and how long they wait.
+ *
+ * The endpoint sweeps a finished phase forward off any successful action —
+ * but a quiet phase has no actions, and "the look window expired" is not one.
+ * Two phases can never produce one at all: Storm and Spice Collection do all
+ * their work as they are ENTERED, so once the entering write returns there is
+ * no further event of any kind. The rest go the same way in a turn where
+ * nobody revives, nobody fights and nobody claims. That is the whole reason a
+ * human was still pressing a button between phases.
+ *
+ * There is no scheduler behind the server, but the BROWSERS are not subject to
+ * that: they tick, and they already recompute this every second. So the client
+ * allowed to press sends it without being asked.
+ *
+ * STAGGERED, so six machines do not all fire at once. The host goes first —
+ * the same seat the manual override belongs to — and the other seats follow in
+ * board order, each a step later. In the ordinary case the host advances the
+ * phase and nobody else ever reaches their timer. If the host has walked away,
+ * the next seat does it a second and a half later, which is exactly the
+ * protection the old "anyone may press once the window shuts" rule gave, now
+ * applied without anybody pressing anything. The version CAS makes a race
+ * harmless: the losers are refused and their action changes nothing.
+ *
+ * A SPECTATOR NEVER FIRES IT. They hold no seat, the server would refuse them,
+ * and a watcher silently driving somebody else's game is wrong even when the
+ * server would catch it.
+ */
+export const AUTO_ADVANCE_HOST_MS = 400
+export const AUTO_ADVANCE_SEAT_MS = 1_500
+export const AUTO_ADVANCE_STEP_MS = 750
+
+export function autoAdvanceDelay(input: {
+  /** This client holds a seat in the match. */
+  seated: boolean
+  /** ...and is watching rather than playing. */
+  spectating: boolean
+  isHost: boolean
+  /** A hold is a pause somebody is owed; never advance over one. */
+  held: boolean
+  /** The table has not had its look at this phase yet. */
+  windowOpen: boolean
+  gameOver: boolean
+  /** Where this seat sits in board order, for the stagger. */
+  seatIndex: number
+}): number | null {
+  if (!input.seated || input.spectating) return null
+  if (input.gameOver || input.held || input.windowOpen) return null
+  if (input.isHost) return AUTO_ADVANCE_HOST_MS
+  return AUTO_ADVANCE_SEAT_MS + Math.max(0, input.seatIndex) * AUTO_ADVANCE_STEP_MS
+}
+
 /** Stamped on every phase entry. Which (turn, phase) it belongs to is in it
  *  because a clock outliving its phase must read as expired, not as fresh. */
 export interface PhaseClock { turn: number; phase: GamePhase; closesAt: number }

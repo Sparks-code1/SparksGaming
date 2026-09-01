@@ -1293,6 +1293,15 @@ var WIN_STRONGHOLDS = 3;
 var ALLIANCE_WIN_STRONGHOLDS = 4;
 var MENTAT_READY_SECONDS = 60;
 var PHASE_SECONDS = 30;
+var AUTO_ADVANCE_HOST_MS = 400;
+var AUTO_ADVANCE_SEAT_MS = 1500;
+var AUTO_ADVANCE_STEP_MS = 750;
+function autoAdvanceDelay(input) {
+  if (!input.seated || input.spectating) return null;
+  if (input.gameOver || input.held || input.windowOpen) return null;
+  if (input.isHost) return AUTO_ADVANCE_HOST_MS;
+  return AUTO_ADVANCE_SEAT_MS + Math.max(0, input.seatIndex) * AUTO_ADVANCE_STEP_MS;
+}
 function phaseAfter(phase) {
   const i = DUNE_PHASES.indexOf(phase);
   if (i < 0) throw new Error(`no such phase: ${String(phase)}`);
@@ -1641,6 +1650,9 @@ function resetDeadlines(state, now, lengths) {
 }
 export {
   ALLIANCE_WIN_STRONGHOLDS,
+  AUTO_ADVANCE_HOST_MS,
+  AUTO_ADVANCE_SEAT_MS,
+  AUTO_ADVANCE_STEP_MS,
   HABBANYA_SIETCH,
   MENTAT_READY_SECONDS,
   PHASE_SECONDS,
@@ -1652,6 +1664,7 @@ export {
   WEATHER_CONTROL_MAX,
   WIN_STRONGHOLDS,
   advanceHold,
+  autoAdvanceDelay,
   biddingOpening,
   cityIncome,
   mayAtomics,

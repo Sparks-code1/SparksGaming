@@ -58,7 +58,9 @@ import type { DuneAction } from '@/lib/dune/duneDispatch'
 import type { DuneSecrets } from '@/lib/dune/charity'
 import type { FactionId } from '@/types/Dune/Faction'
 import type { BidRefusal } from '@/lib/dune/bidding'
-import { advanceHold, phaseWindowOpen, phaseAfter } from '@/lib/dune/phaseAdvance'
+import {
+  advanceHold, phaseWindowOpen, phaseAfter, autoAdvanceDelay,
+} from '@/lib/dune/phaseAdvance'
 
 import { ShipmentPanel } from './ShipmentPanel'
 import { DuneGameScreen } from './DuneGameScreen'
@@ -423,8 +425,65 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
   const hold = row && !row.winner ? advanceHold(row, now) : null
   const amHost = row?.host ? seat?.faction === row.host : true
   const stormOwed = row?.phase === 'Storm' && row.stormMoved !== row.turn
-  const mayAdvance = !!seat && !!row && !row.winner
-    && !hold && (amHost || !phaseWindowOpen(row, now))
+  /**
+   * THE BUTTON IS THE HOST'S ALONE, and it is an override rather than the way
+   * the turn moves. Phases advance by themselves now (see the effect below),
+   * so what a press is FOR is moving a finished phase on EARLY, before the
+   * table has had its look — and that has always been the host's call. Every
+   * other seat just watches the phases go by.
+   *
+   * The old rule offered the button to anybody once the window shut, so a
+   * walked-away host could not wedge the table. That protection has not been
+   * dropped: it moved into the auto-press, which falls through to the other
+   * seats on a stagger. Nobody has to press anything for it any more.
+   */
+  const mayAdvance = !!seat && !!row && !row.winner && !hold && amHost
+
+  /**
+   * THE PHASE ADVANCES WITHOUT ANYBODY PRESSING ANYTHING.
+   *
+   * The server sweeps a finished phase forward off any successful action, but
+   * a quiet phase produces none — and Storm and Spice Collection can never
+   * produce one at all, since their whole content is the write that enters
+   * them. There is no scheduler behind the server; this browser is the clock.
+   *
+   * KEYED ON PRIMITIVES. `now` ticks every second, and an effect that took it
+   * as a dependency would restart its timer on every tick and never fire —
+   * the same reset that once stopped the storm animation dead. What it
+   * watches instead is the turn, the phase, and two BOOLEANS which flip once.
+   */
+  // The same test `spectating` makes further down, hoisted because the effect
+  // below runs before that declaration. A seat of null is a watcher; undefined
+  // is "not looked up yet", which must not count as watching.
+  const watchingOnly = seat === null
+  const windowShut = !!row && !phaseWindowOpen(row, now)
+  const holdCode = hold?.code ?? ''
+  const advanceFired = useRef('')
+  useEffect(() => {
+    if (!row || !seat) return
+    const delay = autoAdvanceDelay({
+      seated: !!seat,
+      spectating: watchingOnly,
+      isHost: amHost,
+      held: !!holdCode,
+      windowOpen: !windowShut,
+      gameOver: !!row.winner,
+      seatIndex: (row.players ?? []).findIndex(p => p.faction === seat.faction),
+    })
+    if (delay == null) return
+    // ONCE PER PHASE. Without this the refusal of a lost race would be
+    // retried for as long as the phase stood still.
+    const key = `${row.turn}:${row.phase}`
+    if (advanceFired.current === key) return
+    const t = setTimeout(() => {
+      advanceFired.current = key
+      void send({ type: 'ADVANCE_PHASE' })
+    }, delay)
+    return () => clearTimeout(t)
+    // `send` is recreated every render; the turn, phase and the two booleans are
+    // the signal.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [row?.turn, row?.phase, windowShut, holdCode, watchingOnly, amHost, seat?.faction])
 
   /**
    * ONE PRESS, ONE FORCE. The server prices every press — the sheet's free

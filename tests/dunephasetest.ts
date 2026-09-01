@@ -9,7 +9,8 @@
 // and that the game ends on turn ten and not before or after.
 import { readFileSync } from 'node:fs'
 import {
-  phaseAfter, advanceHold, phaseWindowOpen, rollStorm, stormEntry, cityIncome,
+  phaseAfter, advanceHold, phaseWindowOpen, autoAdvanceDelay,
+  AUTO_ADVANCE_HOST_MS, AUTO_ADVANCE_SEAT_MS, AUTO_ADVANCE_STEP_MS, rollStorm, stormEntry, cityIncome,
   mentatVerdict, biddingOpening, PHASE_SECONDS, TURN_LIMIT, WIN_STRONGHOLDS,
   SIETCH_TABR, HABBANYA_SIETCH, TUEKS_SIETCH,
 } from '@/lib/dune/phaseAdvance'
@@ -960,6 +961,69 @@ check('a game is ten turns', TURN_LIMIT, 10)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
+
+// ── the phase advances with nobody pressing anything ──────────────────────
+// The server sweeps a finished phase forward off any successful action — but
+// a quiet phase produces none, and Storm and Spice Collection can never
+// produce one at all: their whole content is the write that ENTERS them, so
+// once it returns there is no further event. There is no scheduler behind the
+// server, so the browsers are the clock.
+{
+  const D = (over: Record<string, unknown> = {}) => autoAdvanceDelay({
+    seated: true, spectating: false, isHost: false, held: false,
+    windowOpen: false, gameOver: false, seatIndex: 0, ...over,
+  } as never)
+
+  // A SPECTATOR NEVER FIRES IT. They hold no seat, the server would refuse
+  // them, and a watcher silently driving somebody else game is wrong even
+  // where the server would catch it.
+  check('a spectator never fires the advance', D({ spectating: true }), null)
+  check('...and neither does a client holding no seat', D({ seated: false }), null)
+
+  // THE HOLDS AND THE LOOK WINDOW STOP IT, exactly as they stop the button:
+  // a hold is a pause somebody is owed, and the window is the table getting
+  // to see where the turn is before it moves.
+  check('a hold stops it', D({ held: true }), null)
+  check('an open look window stops it', D({ windowOpen: true }), null)
+  check('a finished game stops it', D({ gameOver: true }), null)
+
+  // STAGGERED, so six machines do not all fire at once. The host goes first;
+  // the others follow in board order and normally never reach their timer.
+  check('the host goes first', D({ isHost: true }), AUTO_ADVANCE_HOST_MS)
+  check('...and the host is not staggered by where they sit',
+    D({ isHost: true, seatIndex: 4 }), AUTO_ADVANCE_HOST_MS)
+  check('every other seat waits longer than the host',
+    (D({ seatIndex: 0 }) ?? 0) > AUTO_ADVANCE_HOST_MS, true)
+  check('...and they queue behind each other in board order',
+    [D({ seatIndex: 0 }), D({ seatIndex: 1 }), D({ seatIndex: 2 })],
+    [AUTO_ADVANCE_SEAT_MS,
+      AUTO_ADVANCE_SEAT_MS + AUTO_ADVANCE_STEP_MS,
+      AUTO_ADVANCE_SEAT_MS + 2 * AUTO_ADVANCE_STEP_MS])
+  // A SEAT THE ROSTER DOES NOT LIST comes back as -1 from findIndex; it must
+  // not become a negative delay that fires instantly, ahead of the host.
+  check('an unplaced seat does not jump the queue',
+    D({ seatIndex: -1 }), AUTO_ADVANCE_SEAT_MS)
+
+  // WIRED, AND KEYED ON PRIMITIVES. `now` ticks every second; an effect that
+  // depended on it would restart its timer on every tick and never fire — the
+  // same reset that once stopped the storm animation dead.
+  const screen = code('src/components/dune/DuneMatchScreen.tsx')
+  check('the screen fires it on a timer',
+    screen.includes('setTimeout(') && screen.includes("ADVANCE_PHASE'"), true)
+  check('...asking the rule who may, and how long they wait',
+    screen.includes('const delay = autoAdvanceDelay({'), true)
+  check('...once per phase, not once per refusal',
+    screen.includes('advanceFired.current === key'), true)
+  check('...and never keyed on the ticking clock',
+    screen.includes('[row?.turn, row?.phase, windowShut, holdCode, watchingOnly, amHost, seat?.faction])'),
+    true)
+
+  // THE BUTTON IS THE HOST'S ALONE now — an override for moving a finished
+  // phase on EARLY. The protection the old anyone-may-press rule gave did not
+  // go away; it moved into the stagger above, where nobody presses anything.
+  check('only the host is offered the button',
+    screen.includes('const mayAdvance = !!seat && !!row && !row.winner && !hold && amHost'), true)
+}
 
 // Not optional: without an exit code the runner counts a failing suite green.
 process.exit(pass ? 0 : 1)
