@@ -9,7 +9,7 @@
 // and that the game ends on turn ten and not before or after.
 import { readFileSync } from 'node:fs'
 import {
-  phaseAfter, advanceHold, phaseWindowOpen, autoAdvanceDelay,
+  phaseAfter, advanceHold, phaseWindowOpen, autoAdvanceDelay, autoPushDelay,
   AUTO_ADVANCE_HOST_MS, AUTO_ADVANCE_SEAT_MS, AUTO_ADVANCE_STEP_MS, rollStorm, stormEntry, cityIncome,
   mentatVerdict, biddingOpening, PHASE_SECONDS, TURN_LIMIT, WIN_STRONGHOLDS,
   SIETCH_TABR, HABBANYA_SIETCH, TUEKS_SIETCH,
@@ -1023,6 +1023,64 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
   // go away; it moved into the stagger above, where nobody presses anything.
   check('only the host is offered the button',
     screen.includes('const mayAdvance = !!seat && !!row && !row.winner && !hold && amHost'), true)
+}
+
+// ── the expired auction pushes itself ─────────────────────────────────────
+// The phase sweep cannot help here and must not: a live auction is a HOLD,
+// and advancing over one would throw a lot away mid-sale. So the auction has
+// its own deadline and its own push — silence is a pass, and the server
+// applies it for whoever it is waiting on regardless of who asked. Bid and
+// Pass reach only the seat to act, so one absence could stall five people.
+{
+  const P = (over: Record<string, unknown> = {}) => autoPushDelay({
+    seated: true, spectating: false, isHost: false,
+    expired: true, gameOver: false, seatIndex: 0, ...over,
+  } as never)
+
+  // IT NEVER FIRES EARLY. The auction's own clock is the only thing that
+  // says a seat has run out of time, and nothing here shortens it.
+  check('a live auction is never pushed', P({ expired: false }), null)
+  check('a finished game is never pushed', P({ gameOver: true }), null)
+
+  // AND A WATCHER NEVER DRIVES — the same rule the phase advance obeys, and
+  // it matters more here, because this one spends somebody's turn to bid.
+  check('a spectator never pushes the auction', P({ spectating: true }), null)
+  check('...and neither does a client holding no seat', P({ seated: false }), null)
+
+  // THE SAME STAGGER, so the two nudges cannot disagree about who goes first.
+  check('the host pushes first', P({ isHost: true }), AUTO_ADVANCE_HOST_MS)
+  check('...and the other seats queue behind in board order',
+    [P({ seatIndex: 0 }), P({ seatIndex: 1 })],
+    [AUTO_ADVANCE_SEAT_MS, AUTO_ADVANCE_SEAT_MS + AUTO_ADVANCE_STEP_MS])
+  check('...an unplaced seat does not jump the queue',
+    P({ seatIndex: -1 }), AUTO_ADVANCE_SEAT_MS)
+  // ONE RULE, TWO CALLERS: whoever the advance sends first, the push sends
+  // first too. Two staggers drifting apart would put a race back in.
+  check('both nudges agree on who goes first',
+    [P({ isHost: true }), autoAdvanceDelay({
+      seated: true, spectating: false, isHost: true, held: false,
+      windowOpen: false, gameOver: false, seatIndex: 0,
+    } as never)],
+    [AUTO_ADVANCE_HOST_MS, AUTO_ADVANCE_HOST_MS])
+
+  // WIRED, once per window and never on the ticking clock.
+  const screen2 = code('src/components/dune/DuneMatchScreen.tsx')
+  check('the screen pushes the auction on a timer',
+    screen2.includes('const delay = autoPushDelay({'), true)
+  check('...sending a pass, which is what silence already means',
+    screen2.includes("void bid({ kind: 'pass' })"), true)
+  check('...once per deadline, keyed on the auction own clock',
+    screen2.includes('pushFired.current === key'), true)
+  check('...and never keyed on the ticking clock',
+    screen2.includes('[row?.turn, auction?.closesAt, expired, watchingOnly, amHost, seat?.faction, row?.winner])'),
+    true)
+
+  // THE BUTTON IS THE HOST'S NOW. The walked-away case it existed for is
+  // covered by the stagger above, with nobody clicking. The seat check stays
+  // because amHost defaults TRUE on a match dealt before hosts existed, so
+  // without it a spectator at such a table would be offered the button.
+  check('only the host is offered the end-the-wait button',
+    screen2.includes('{expired && !spectating && amHost && ('), true)
 }
 
 // Not optional: without an exit code the runner counts a failing suite green.

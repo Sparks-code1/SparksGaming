@@ -1296,11 +1296,18 @@ var PHASE_SECONDS = 30;
 var AUTO_ADVANCE_HOST_MS = 400;
 var AUTO_ADVANCE_SEAT_MS = 1500;
 var AUTO_ADVANCE_STEP_MS = 750;
-function autoAdvanceDelay(input) {
+function nudgeDelay(input) {
   if (!input.seated || input.spectating) return null;
-  if (input.gameOver || input.held || input.windowOpen) return null;
   if (input.isHost) return AUTO_ADVANCE_HOST_MS;
   return AUTO_ADVANCE_SEAT_MS + Math.max(0, input.seatIndex) * AUTO_ADVANCE_STEP_MS;
+}
+function autoAdvanceDelay(input) {
+  if (input.gameOver || input.held || input.windowOpen) return null;
+  return nudgeDelay(input);
+}
+function autoPushDelay(input) {
+  if (!input.expired || input.gameOver) return null;
+  return nudgeDelay(input);
 }
 function phaseAfter(phase) {
   const i = DUNE_PHASES.indexOf(phase);
@@ -1665,6 +1672,7 @@ export {
   WIN_STRONGHOLDS,
   advanceHold,
   autoAdvanceDelay,
+  autoPushDelay,
   biddingOpening,
   cityIncome,
   mayAtomics,

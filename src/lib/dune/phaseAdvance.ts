@@ -110,6 +110,19 @@ export const AUTO_ADVANCE_HOST_MS = 400
 export const AUTO_ADVANCE_SEAT_MS = 1_500
 export const AUTO_ADVANCE_STEP_MS = 750
 
+/** Which client acts for the table, and after how long. Shared by both
+ *  nudges below so there is ONE answer to who goes first. */
+function nudgeDelay(input: {
+  seated: boolean; spectating: boolean; isHost: boolean; seatIndex: number
+}): number | null {
+  // A WATCHER NEVER DRIVES. They hold no seat, the server would refuse them,
+  // and a spectator silently moving somebody else's game along is wrong even
+  // where the server would catch it.
+  if (!input.seated || input.spectating) return null
+  if (input.isHost) return AUTO_ADVANCE_HOST_MS
+  return AUTO_ADVANCE_SEAT_MS + Math.max(0, input.seatIndex) * AUTO_ADVANCE_STEP_MS
+}
+
 export function autoAdvanceDelay(input: {
   /** This client holds a seat in the match. */
   seated: boolean
@@ -124,10 +137,39 @@ export function autoAdvanceDelay(input: {
   /** Where this seat sits in board order, for the stagger. */
   seatIndex: number
 }): number | null {
-  if (!input.seated || input.spectating) return null
   if (input.gameOver || input.held || input.windowOpen) return null
-  if (input.isHost) return AUTO_ADVANCE_HOST_MS
-  return AUTO_ADVANCE_SEAT_MS + Math.max(0, input.seatIndex) * AUTO_ADVANCE_STEP_MS
+  return nudgeDelay(input)
+}
+
+/**
+ * THE EXPIRED AUCTION, PUSHED WITHOUT ANYBODY CLICKING.
+ *
+ * The phase sweep cannot help here and must not: a live auction is a HOLD,
+ * and advancing over one would throw a lot away mid-sale. So the auction has
+ * its own deadline and its own push — silence is a pass, and the server
+ * applies it for whoever it is waiting on regardless of who asked.
+ *
+ * Which left one seat's absence able to stall six people, because only the
+ * bidder to act is offered Bid and Pass. The button that covered that was
+ * shown to everyone; now the CLIENTS cover it, on the same stagger as the
+ * phase advance, and the button goes back to being the host's override.
+ *
+ * AUTOMATING CHANGES WHO CLICKS, NOT THE OUTCOME. The deadline already means
+ * a pass and the server already applies it. What it must never do is fire
+ * EARLY: `expired` is the auction's own clock, read from the public row, and
+ * nothing here shortens it.
+ */
+export function autoPushDelay(input: {
+  seated: boolean
+  spectating: boolean
+  isHost: boolean
+  /** The auction's own bid deadline has passed. */
+  expired: boolean
+  gameOver: boolean
+  seatIndex: number
+}): number | null {
+  if (!input.expired || input.gameOver) return null
+  return nudgeDelay(input)
 }
 
 /** Stamped on every phase entry. Which (turn, phase) it belongs to is in it

@@ -59,7 +59,7 @@ import type { DuneSecrets } from '@/lib/dune/charity'
 import type { FactionId } from '@/types/Dune/Faction'
 import type { BidRefusal } from '@/lib/dune/bidding'
 import {
-  advanceHold, phaseWindowOpen, phaseAfter, autoAdvanceDelay,
+  advanceHold, phaseWindowOpen, phaseAfter, autoAdvanceDelay, autoPushDelay,
 } from '@/lib/dune/phaseAdvance'
 
 import { ShipmentPanel } from './ShipmentPanel'
@@ -590,6 +590,44 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
   }
 
   /**
+   * THE EXPIRED AUCTION PUSHES ITSELF.
+   *
+   * Bid and Pass are offered only to the seat whose turn it is, so one
+   * player walking away used to stall the other five until somebody pressed
+   * "End the wait". The rule was already that silence is a pass and that the
+   * server applies it for whoever it is waiting on, whoever asked — so what
+   * this changes is who clicks, not what happens.
+   *
+   * ONCE PER WINDOW, keyed on the auction's own deadline: each card and each
+   * bidder gets a fresh closesAt, so this fires once for each one that runs
+   * out and never retries a refusal in a loop.
+   *
+   * KEYED ON PRIMITIVES, like the phase advance beside it — `expired` is a
+   * boolean that flips once, and `now` is deliberately not a dependency.
+   */
+  const pushFired = useRef('')
+  useEffect(() => {
+    if (!row || !seat || !auction) return
+    const delay = autoPushDelay({
+      seated: !!seat,
+      spectating: watchingOnly,
+      isHost: amHost,
+      expired,
+      gameOver: !!row.winner,
+      seatIndex: (row.players ?? []).findIndex(p => p.faction === seat.faction),
+    })
+    if (delay == null) return
+    const key = `${row.turn}:${auction.closesAt}`
+    if (pushFired.current === key) return
+    const t = setTimeout(() => {
+      pushFired.current = key
+      void bid({ kind: 'pass' })
+    }, delay)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [row?.turn, auction?.closesAt, expired, watchingOnly, amHost, seat?.faction, row?.winner])
+
+  /**
    * One setup answer, as this seat.
    *
    * THROUGH THE SAME send() AS EVERYTHING ELSE, so a refusal lands in `refused`
@@ -906,13 +944,17 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
               onChosen={setWormPicks} />
           )}
 
-          {/* PAST THE DEADLINE, ANYBODY MAY PUSH IT ALONG. The panel offers Bid
-              and Pass only to the seat whose turn it is, so a player who has
-              walked away leaves nobody able to press anything and the auction
-              cannot end. The server's timeout path answers for whoever is to
-              act regardless of who asked — but something has to ask, and on six
-              separate machines this is the only thing that can. */}
-          {expired && !spectating && (
+          {/* THE HOST'S OVERRIDE, past the deadline. Every seat used to be
+              offered this, because Bid and Pass go only to the seat whose turn
+              it is and one absence could stall the other five — something had
+              to be able to ask, and a button on six machines was the only
+              thing that could. The clients do it themselves now, on a stagger
+              (see the push effect above), so the walked-away case is covered
+              without anybody clicking and this goes back to being what the
+              host presses to get on with it. A spectator is offered nothing:
+              amHost is true by default on a match dealt before hosts existed,
+              so the seat check has to stay. */}
+          {expired && !spectating && amHost && (
             <>
               <b style={{ display: 'block', margin: '8px 0 6px' }}>The clock has run out</b>
               <button onClick={() => void bid({ kind: 'pass' })} disabled={busy}>
