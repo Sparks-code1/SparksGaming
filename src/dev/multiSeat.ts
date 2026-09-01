@@ -172,15 +172,19 @@ export function startMultiSeat(
         }
         session.userId = data.user?.id ?? null
 
-        // THE SEAT'S KEY, ASKED FOR RATHER THAN ASSUMED. RLS returns this
-        // account's own roster row and no other, so the answer is this seat's
-        // by construction. A match this account is not in returns nothing,
-        // which is a failure worth saying out loud rather than a channel that
-        // opens on a guessed key and stays silent forever.
+        // THE SEAT'S KEY, ASKED FOR RATHER THAN ASSUMED — and narrowed BY
+        // USER, which is not something RLS does here.
+        //
+        // match_secrets is read-your-own; match_players is read-your-TABLE's,
+        // because six people round a table can see who is sitting at it. So a
+        // query filtered only by match returns all six rows, maybeSingle()
+        // refuses a set that size, and every seat concludes it holds no seat
+        // at all — six empty hands from a lookup that was one clause short.
         const { data: mine } = await session.client
           .from('match_players')
           .select('player_id')
           .eq('match_id', matchId)
+          .eq('user_id', data.user?.id ?? '')
           .maybeSingle()
         if (cancelled) return
         const playerId = (mine as { player_id?: string } | null)?.player_id ?? null

@@ -167,10 +167,17 @@ const read = (p: string) => SRC.find(f => f.path === p)?.text ?? ''
   // AND IT ASKS THE ROSTER WHICH ROW THAT IS. The env line names an account;
   // it named the player_id too until the lobby began keying seats by the
   // account, at which point the guess read an empty hand in silence.
+  // ...OFF ITS OWN ROSTER ROW, NARROWED BY USER. match_secrets is
+  // read-your-own; match_players is read-your-TABLE's, because six people can
+  // see who is sitting at it. A lookup filtered only by match therefore
+  // returns all six rows, maybeSingle() refuses a set that size, and every
+  // seat concludes it holds no seat — six empty hands from one missing clause.
   check('...having read the key off its own roster row',
-    [/from\('match_players'\)[\s\S]{0,120}select\('player_id'\)/.test(harness),
+    [/from\('match_players'\)[\s\S]{0,200}select\('player_id'\)/.test(harness),
       /this account holds no seat in that match/.test(harness)],
     [true, true])
+  check('...narrowed by user, which RLS does not do for the roster',
+    /select\('player_id'\)[\s\S]{0,160}\.eq\('user_id',/.test(harness), true)
   check('...and treats another seat\'s row as a failure',
     /onForeignRow[\s\S]{0,200}RLS is not holding/.test(harness), true)
 }
