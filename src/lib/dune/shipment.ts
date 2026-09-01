@@ -189,6 +189,17 @@ export function shipCost(input: {
   guildSeated: boolean
   /** Allied to the Guild: their half rate, off-planet and cross alike. */
   guildAllied?: boolean
+  /**
+   * This shipper's OWN shipment advantage, cancelled by a Karama.
+   *
+   * Only the Fremen's free radius reads it here: suppressed, they pay the
+   * ordinary rate for the desert like anybody else. Their payee does NOT
+   * change with it — the fee stays with the bank, because that follows from
+   * their reserves being ON PLANET (Faction.reservesHeld, data) and not from
+   * the advantage a Karama cancels. The Guild's own suppression is applied at
+   * the call site, where it redirects the payee rather than the rate.
+   */
+  suppressed?: boolean
 }): { cost: number; payee: 'bank' | 'guild' } {
   const { faction, kind, territoryId, count, guildSeated } = input
   if (kind === 'to-reserves') {
@@ -199,7 +210,7 @@ export function shipCost(input: {
   if (faction === 'fremen') {
     // The Guild's ally pays half of whatever their OWN rate would be — a
     // Fremen walk-in within their radius stays free, halved or not.
-    const base = fremenShipTargets().has(territoryId) ? 0 : full
+    const base = !input.suppressed && fremenShipTargets().has(territoryId) ? 0 : full
     return { cost: input.guildAllied ? Math.ceil(base / 2) : base, payee: 'bank' }
   }
   if (faction === 'spacing-guild') return { cost: Math.ceil(full / 2), payee: 'bank' }
@@ -235,6 +246,9 @@ export function judgeShipment(input: {
   ally?: FactionId | null
   /** The ally's purse, standing behind the shipper's for the fee. */
   allySpice?: number
+  /** This shipper's own shipment advantage, cancelled by a Karama. Forwarded
+   *  to shipCost, where the Fremen's free radius reads it. */
+  suppressed?: boolean
 }): { ok: true; cost: number; payee: 'bank' | 'guild'; sector?: SectorId }
   | { ok: false; refusal: ShipRefusal } {
   const { faction, kind, count, forces, storm } = input
@@ -261,6 +275,7 @@ export function judgeShipment(input: {
     }
     const { cost, payee } = shipCost({
       faction, kind, territoryId: from.territoryId, count, guildSeated: input.guildSeated,
+      suppressed: input.suppressed,
     })
     if (cost > input.spice + (input.allySpice ?? 0)) return { ok: false, refusal: 'cannot-pay' }
     return { ok: true, cost, payee }
@@ -299,6 +314,7 @@ export function judgeShipment(input: {
   const { cost, payee } = shipCost({
     faction, kind, territoryId: input.to.territoryId, count, guildSeated: input.guildSeated,
     guildAllied: input.ally === 'spacing-guild',
+    suppressed: input.suppressed,
   })
   if (cost > input.spice + (input.allySpice ?? 0)) return { ok: false, refusal: 'cannot-pay' }
   return { ok: true, cost, payee, sector: settled.sector }

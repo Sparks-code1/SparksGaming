@@ -20,12 +20,15 @@
  *   Revival          — the Tanks pay out: see lib/dune/revival and the
  *                      REVIVE action. The phase itself holds nothing — reviving
  *                      is optional — so the look-window is its clock.
- *   Shipment and Movement, Battles — NOT BUILT YET, and honest about it: they
- *                      enter, hold a short window so the table sees where the
- *                      turn is, and advance. Placeholders, not rules.
- *   Spice Collection — pays the documented city income (advanced game); the
- *                      board-spice half of the phase is not built and is
- *                      SAID to be not built rather than guessed at.
+ *   Shipment and Movement — opens the rotation: each seat ships and moves in
+ *                      storm order, on its own window. (Built 2026-08; this
+ *                      note said 'NOT BUILT YET' for weeks after it was.)
+ *   Battles          — the board demands them and the rotation fights them:
+ *                      the aggressor picks, both sides commit a plan, the
+ *                      reveal settles it. Built.
+ *   Spice Collection — BOTH halves: the harvest lifts spice off the blows'
+ *                      markers, then the advanced cities pay their printed
+ *                      income, in one write.
  *   Mentat Pause     — checks victory, and ends the game on turn ten.
  *
  * WHO PRESSES. The host, ahead of the clock; anyone, once the phase's window

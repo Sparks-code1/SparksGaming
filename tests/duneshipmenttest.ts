@@ -1076,5 +1076,46 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
+// ── a Karama cancels the Fremen desert ────────────────────────────────────
+// Their free radius is an ADVANTAGE and stoppable like any other. It shipped
+// without a suppression check, against the rule in the suppression doc that an
+// ability gets its check when the ability is built — so the one faction power
+// that most changes who can reach where could not be cancelled at all.
+{
+  const desert = { kind: 'off-planet' as const, guildSeated: true }
+  // territory-22 sits inside the radius: free normally, priced once stopped.
+  const inside = {
+    ...desert, faction: 'fremen' as FactionId, territoryId: 'territory-22', count: 3,
+  }
+  check('the desert is free while the advantage stands', shipCost(inside).cost, 0)
+  check('...and costs the ordinary rate once a Karama has stopped it',
+    shipCost({ ...inside, suppressed: true }).cost > 0, true)
+  // THE PAYEE DOES NOT MOVE WITH IT. That the desert never feeds the Guild
+  // follows from Fremen reserves being on planet — data, not an advantage —
+  // so cancelling the radius must not hand the Guild an income they never had.
+  check('...still paid to the bank, never the Guild',
+    [shipCost(inside).payee, shipCost({ ...inside, suppressed: true }).payee],
+    ['bank', 'bank'])
+  // AND ONLY THEIRS: suppressing one seat must not reprice another.
+  const other = {
+    ...desert, faction: 'atreides' as FactionId, territoryId: 'territory-22', count: 3,
+  }
+  check('a suppressed Fremen leaves every other fare alone',
+    shipCost({ ...other, suppressed: true }).cost, shipCost(other).cost)
+
+  // WIRED WHERE IT FIRES, and to BOTH prices — the judge and the karama-rated
+  // recompute — or the two disagree about what is owed.
+  const endpoint = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  const shipAt = endpoint.indexOf('const ownShipSuppressed')
+  check('the endpoint asks whether the shipper own advantage is stopped',
+    shipAt > 0, true)
+  const nearShip = endpoint.slice(shipAt, shipAt + 2600)
+  check('...against abilities.shipment, in Shipment and Movement',
+    [/abilities.shipment/.test(nearShip), /Shipment and Movement/.test(nearShip)],
+    [true, true])
+  check('...and hands it to both prices',
+    (nearShip.match(/suppressed: ownShipSuppressed/g) ?? []).length, 2)
+}
+
 // Not optional: without an exit code the runner counts a failing suite green.
 process.exit(pass ? 0 : 1)

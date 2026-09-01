@@ -2309,7 +2309,18 @@ Deno.serve(async req => {
         return json({ error: 'a Karama has stopped your shipment', code: 'karama-stopped' }, 409)
       }
       const karamaRated = !!w.done.karamaRate
+      // THE FREMEN'S FREE DESERT, CANCELLED. Their radius is an ADVANTAGE —
+      // 'abilities.shipment' — and a Karama may stop it like any other. The
+      // rule that their fee never reaches the Guild is NOT an advantage but a
+      // consequence of their reserves being on planet, so the payee is left
+      // alone. This check was missing while the radius itself shipped: the
+      // suppression doc says an ability gets its check WHEN it is built, and
+      // this one got built without it.
+      const ownShipSuppressed = isSuppressed((state.suppressed ?? []) as never,
+        myFaction as never, 'abilities.shipment' as never,
+        Number(state.turn ?? 0), 'Shipment and Movement' as never)
       const judged = judgeShipment({
+        suppressed: ownShipSuppressed,
         faction: myFaction as never, kind, count, starred,
         to: action.to as never, from: action.from as never,
         forces: (state.forces ?? []) as never,
@@ -2334,6 +2345,8 @@ Deno.serve(async req => {
           faction: myFaction as never, kind,
           territoryId: (action.to as { territoryId: string }).territoryId,
           count, guildSeated: false, guildAllied: true,
+          // the same cancellation the judge saw, or the two prices disagree
+          suppressed: ownShipSuppressed,
         })
         shipFee = k.cost
         shipFeeTo = 'bank'

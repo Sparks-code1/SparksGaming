@@ -80,9 +80,13 @@ for which phase of which turn. It expires when the phase does.
 
 **This is the part worth holding to.** The instinct is to do it as a single
 sweep: enumerate every ability, give each an id, add a check to each. That would
-mostly be adding checks to code that does not exist — of the abilities across six
-factions, only the storm and spice-blow ones have any implementation at all. The
-rest are prose describing phases nobody has written.
+mostly be adding checks to code that does not exist. The alternative produces a
+large diff of hooks guarding nothing, which then has to be revisited anyway.
+
+**(Superseded 2026-09-01.)** The sentence that used to stand here — "only the
+storm and spice-blow ones have any implementation at all" — was true when this
+was written and is long false: every phase is built now. See the audit below for
+where that leaves the checks.
 
 So: each ability gets its id and its suppression check **when the ability itself
 is implemented**, as part of implementing it. The alternative produces a large
@@ -155,3 +159,58 @@ when the phase they act in is not their own.
 
 **Whether a suppressed ability is announced.** Stopping the Atreides looking at a
 card is visible. Stopping something passive may not be.
+
+---
+
+## The audit, 2026-09-01
+
+Taken after a live playtest found the Fremen desert unguarded. Counted from
+`factions.ts` and `canKaramaStop`, against the `isSuppressed` call sites in
+`dune-action`.
+
+**40 addressable rules across the six factions. 37 are stoppable.** The three a
+Karama may never touch are the Fremen special victory, the Guild special
+victory, and the Bene Gesserit prediction (`abilities.beforeGame`) — the win
+conditions, exactly as the section above says.
+
+**Seven of the 37 are checked where they fire:**
+
+| Faction | Rule | Where |
+|---|---|---|
+| Atreides | `abilities.bidding` | the auction card they alone see |
+| Atreides | `abilities.battle` | the one element of a plan they may demand |
+| Emperor | `abilities.bidding` | their cut of what the auction pays |
+| Harkonnen | `abilities.treachery` | the bonus card |
+| Spacing Guild | `abilities.shipment` | the fee redirected to the bank |
+| Bene Gesserit | `abilities.battle` | the Voice |
+| Fremen | `abilities.shipment` | the free desert radius — **added 2026-09-01** |
+
+The Fremen one is the reason for this audit. Their radius shipped without a
+check, so the single power that most changes who can reach where could not be
+cancelled at all — against this document's own rule that an ability gets its
+check WHEN it is built. Note what the check does and does not touch: it prices
+the desert at the ordinary rate, and leaves the payee with the bank, because
+the Fremen fee never reaching the Guild follows from their reserves being on
+planet (`Faction.reservesHeld`, data) and not from the advantage being stopped.
+
+**The other 30 have no check.** Some are correctly unchecked — the rule above
+is that a check arrives with its ability, and not every one of these is built.
+But several ARE built and are unguarded, and those are debt rather than
+deferral. The ones known to be built and unchecked:
+
+- Fremen `abilities.movement` — two territories instead of one
+- Fremen `advanced.forces` / Emperor `advanced.forces` — Fedaykin and Sardaukar
+  counting double in battle and in losses
+- Harkonnen `abilities.traitors` — keeping all four
+- Harkonnen `advanced.capturedLeaders` — taking a leader after a win
+- Bene Gesserit `advanced.charity` — always collecting, whatever they hold
+- Bene Gesserit `advanced.advisors` / `advanced.fighters` — the advisor flow
+- Atreides `advanced.kwisatzHaderach` — the counter and what it protects
+- Spacing Guild `advanced.shipment` — cross-planet and shipping home
+
+None of those is hard on its own; each is one `isSuppressed` call at the site
+where the rule fires, plus a test in both directions — that stopping it changes
+the outcome, and that stopping one seat leaves the others alone. What makes
+them worth doing together is that they are all now findable: the list above is
+the whole of it.
+

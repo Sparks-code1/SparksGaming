@@ -848,7 +848,7 @@ function shipCost(input) {
   const rate = territory(territoryId)?.stronghold ? SHIP_STRONGHOLD_SPICE : SHIP_OPEN_SPICE;
   const full = rate * count;
   if (faction === "fremen") {
-    const base = fremenShipTargets().has(territoryId) ? 0 : full;
+    const base = !input.suppressed && fremenShipTargets().has(territoryId) ? 0 : full;
     return { cost: input.guildAllied ? Math.ceil(base / 2) : base, payee: "bank" };
   }
   if (faction === "spacing-guild") return { cost: Math.ceil(full / 2), payee: "bank" };
@@ -880,7 +880,8 @@ function judgeShipment(input) {
       kind,
       territoryId: from.territoryId,
       count,
-      guildSeated: input.guildSeated
+      guildSeated: input.guildSeated,
+      suppressed: input.suppressed
     });
     if (cost2 > input.spice + (input.allySpice ?? 0)) return { ok: false, refusal: "cannot-pay" };
     return { ok: true, cost: cost2, payee: payee2 };
@@ -916,7 +917,8 @@ function judgeShipment(input) {
     territoryId: input.to.territoryId,
     count,
     guildSeated: input.guildSeated,
-    guildAllied: input.ally === "spacing-guild"
+    guildAllied: input.ally === "spacing-guild",
+    suppressed: input.suppressed
   });
   if (cost > input.spice + (input.allySpice ?? 0)) return { ok: false, refusal: "cannot-pay" };
   return { ok: true, cost, payee, sector: settled.sector };

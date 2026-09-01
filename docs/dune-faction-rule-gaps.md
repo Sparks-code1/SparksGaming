@@ -1,5 +1,24 @@
 # What the faction data cannot say
 
+> **HISTORICAL, as of 2026-09-01. Do not plan from this file.**
+>
+> It was written just after the six factions were entered, when the phases were
+> prose. Almost everything it calls missing has since been built: forces carry
+> an owner, a posture (advisor/fighter) and an elite flag; territory adjacency
+> is generated from the SVG and drives movement and the Fremen radius; leaders
+> are objects with stable ids that can die, be captured and be revealed as
+> traitors; battle plans commit four elements simultaneously and resolve. All
+> nine phases are implemented.
+>
+> It is kept because the REASONING is still good — it is the record of what was
+> foreseen before it was built, and section 1's judgement that adjacency belongs
+> in the generator rather than hand-written is exactly what happened. Read it as
+> history. For what is actually outstanding, see
+> `docs/dune-karama-suppression.md` (the 2026-09-01 audit).
+>
+> The one thing here that is still live is the ambiguity list at the bottom of
+> `factions.ts` — those rules readings were never settled.
+
 `src/data/dune/factions.ts` holds numbers and prose. The prose describes rules
 that need somewhere to live. This is that list, recorded now so the gaps are
 known rather than discovered when a phase is half-built.
