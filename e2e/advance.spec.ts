@@ -13,7 +13,9 @@
 import { test, expect } from '@playwright/test'
 import { createClient } from '@supabase/supabase-js'
 import { readRun, stackOf } from './support/run'
-import { seedPhase, advanceTo, phaseOf, dealMatch } from './support/stack'
+import {
+  seedPhase, advanceTo, phaseOf, dealMatch, openBidding, auctionOf, expireBidWindow,
+} from './support/stack'
 import { signInSeat, openMatch } from './support/seat'
 
 const run = readRun()
@@ -74,4 +76,38 @@ test('a spectator watches and never drives', async ({ page, context }) => {
 
   expect(await phaseOf(stack, matchId),
     'a spectator advanced somebody else\'s game').toBe(before)
+})
+
+test('the expired auction pushes itself, with nobody clicking', async ({ page, context }) => {
+  const matchId = seedPhase(stack, 'bidding')
+  await openBidding(stack, matchId)
+
+  const before = await auctionOf(stack, matchId)
+  expect(before?.toAct, 'the auction did not open with a seat to act').toBeTruthy()
+
+  // THE AUCTION'S OWN CLOCK, set rather than waited out. Fifteen seconds per
+  // bidder is the rule; what is under test is that the client ANSWERS an
+  // expired window, not that it can tell the time.
+  await expireBidWindow(stack, matchId)
+
+  // A seat that is NOT the one being waited on — the whole point is that the
+  // table is not held hostage by the absent bidder.
+  const bystander = stack.factions.find(f => f !== before!.toAct)!
+  await signInSeat(context, stack, bystander)
+  await openMatch(page, matchId)
+
+  // NOT A CLICK ANYWHERE. Silence is a pass and the server applies it for
+  // whoever it is waiting on; all that changed is who asks.
+  await expect.poll(
+    async () => {
+      const a = await auctionOf(stack, matchId)
+      // either the next bidder is up, or the card settled and the auction closed
+      return a === null || a.toAct !== before!.toAct
+    },
+    {
+      message: 'the expired auction was never pushed — the client is not firing',
+      timeout: 30_000,
+      intervals: [500, 1000, 1000, 2000],
+    },
+  ).toBe(true)
 })

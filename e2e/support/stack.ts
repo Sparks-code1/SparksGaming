@@ -222,3 +222,58 @@ export async function advanceTo(
     throw new Error(`gave up short of ${want}, stuck at ${await phaseOf(stack, matchId)}`)
   }
 }
+
+/**
+ * Open an auction on a seeded Bidding fixture.
+ *
+ * OPEN_BIDDING is told the storm's rotation, what each seat already holds and
+ * each seat's limit — without them the endpoint concludes every hand is full
+ * and auctions nothing. The rotation comes from the game's OWN walk, off the
+ * same bundle the server runs, so the fixture cannot disagree with the entry
+ * it imitates about who bids first.
+ */
+export async function openBidding(stack: Stack, matchId: string): Promise<void> {
+  const { stormOrder } = await import(
+    '../../supabase/functions/_shared/dunePhase.gen.ts') as {
+      stormOrder: (storm: string, players: unknown[]) => string[]
+    }
+  const admin = createClient(stack.api, stack.service, { auth: { persistSession: false } })
+  const { data } = await admin.from('matches').select('state').eq('id', matchId).single()
+  const state = (data?.state ?? {}) as {
+    storm: string; players: { faction: string; handCount?: number }[]
+  }
+  const order = stormOrder(state.storm, state.players)
+  const hands = Object.fromEntries(state.players.map(p => [p.faction, p.handCount ?? 0]))
+  const limits = {
+    atreides: 4, fremen: 4, harkonnen: 8, emperor: 4,
+    'spacing-guild': 4, 'bene-gesserit': 4,
+  }
+  const res = await act(stack, order[0], matchId, { type: 'OPEN_BIDDING', order, hands, limits })
+  if (res.status >= 400) {
+    throw new Error(`the auction would not open: ${JSON.stringify(res.body).slice(0, 200)}`)
+  }
+}
+
+/** The auction's carry, as the public row has it. */
+export async function auctionOf(stack: Stack, matchId: string): Promise<{
+  toAct?: string; closesAt?: number; status?: string
+} | null> {
+  const admin = createClient(stack.api, stack.service, { auth: { persistSession: false } })
+  const { data } = await admin.from('matches').select('state').eq('id', matchId).single()
+  const a = ((data?.state ?? {}) as {
+    auction?: { status?: string; closesAt?: number; carry?: { toAct?: string } }
+  }).auction
+  return a ? { toAct: a.carry?.toAct, closesAt: a.closesAt, status: a.status } : null
+}
+
+/** Push an auction's bid deadline into the past, without touching anything else. */
+export async function expireBidWindow(stack: Stack, matchId: string): Promise<void> {
+  const admin = createClient(stack.api, stack.service, { auth: { persistSession: false } })
+  const { data } = await admin.from('matches').select('state').eq('id', matchId).single()
+  const state = (data?.state ?? {}) as Record<string, unknown>
+  const auction = state.auction as Record<string, unknown> | undefined
+  if (!auction) throw new Error('no auction to expire')
+  await admin.from('matches')
+    .update({ state: { ...state, auction: { ...auction, closesAt: Date.now() - 1000 } } })
+    .eq('id', matchId)
+}
