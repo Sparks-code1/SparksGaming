@@ -97,12 +97,21 @@ const EMPTY: PublicRow = {
   // ── charity ─────────────────────────────────────────────────────────────
   const window_ = { turn: 4, expiresAt: 500, claims: [] }
   const withCharity = { ...EMPTY, charity: window_ } as PublicRow
-  check('an open window with no answer yet is open', openCharity(withCharity, null)?.turn, 4)
-  check('...and shut once this seat has answered it', openCharity(withCharity, 4), null)
+  check('an open window with no answer yet is open', openCharity(withCharity, null, 499)?.turn, 4)
+  check('...and shut once this seat has answered it', openCharity(withCharity, 4, 499), null)
   // THE TURN, NOT A FLAG. Next turn's window must open by itself, or a seat
   // that passed once never sees charity again.
-  check('...but open again next turn', openCharity(withCharity, 3)?.turn, 4)
-  check('no window, nothing to answer', openCharity(EMPTY, null), null)
+  check('...but open again next turn', openCharity(withCharity, 3, 499)?.turn, 4)
+  check('no window, nothing to answer', openCharity(EMPTY, null, 499), null)
+  // AND SHUT BY THE CLOCK, which it did not used to be: the modal stayed up
+  // past the deadline with Claim CHOAM live, and pressing it earned
+  // `window-closed` and nothing else. A control whose only outcome left is a
+  // refusal reads as the app being broken, not as the moment having passed.
+  check('...and shut once the clock has run out',
+    [openCharity(withCharity, null, 500), openCharity(withCharity, null, 9e12)],
+    [null, null])
+  check('...open right up to the last instant',
+    openCharity(withCharity, null, 499)?.turn, 4)
 
   // ── who is in the match ─────────────────────────────────────────────────
   const seated = {

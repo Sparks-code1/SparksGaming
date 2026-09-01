@@ -229,8 +229,11 @@ const code = (path: string) => readFileSync(path, 'utf8')
   // THE RECORD IS THE HARNESS'S, THE COMPARISON IS THE READER'S. openCharity
   // lives in lib/dune/publicRow because the real screen asks the same question
   // — and it is the same question only while both hand it the same thing.
+  // ...AND THE CLOCK GOES WITH IT. The window carries a deadline the server
+  // enforces; asking only whether one exists left the modal up past it with
+  // Claim CHOAM live, and pressing it earned `window-closed` and nothing else.
   check('...and is remembered per seat',
-    /openCharity\(publicRow, answered\[session\.login\.faction\]\)/.test(view), true)
+    /openCharity\(publicRow, answered\[session\.login\.faction\], now\)/.test(view), true)
   check('...for that turn only, so next turn asks again',
     /\[session\.login\.faction\]: window_\.turn/.test(view), true)
   check('...with the reader comparing it against the window\'s own turn',

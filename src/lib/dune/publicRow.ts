@@ -129,13 +129,22 @@ export function auctionExpired(row: PublicRow | null, now: number): boolean {
  * PASSING SENDS NOTHING — a claim declined and a claim never made are the same
  * thing to the rules — so there is nothing on the server to read back, and the
  * caller's own record is the only one there is.
+ *
+ * AND NULL ONCE THE CLOCK HAS RUN OUT, which it did not used to be. The window
+ * carries a deadline the server enforces, but this only asked whether one
+ * existed — so the modal stayed up past it with Claim CHOAM live, and pressing
+ * it earned `window-closed` and nothing else. A control whose only remaining
+ * outcome is a refusal is worse than no control: it reads as the app being
+ * broken rather than as the moment having passed. `auctionExpired` above has
+ * always taken `now` for exactly this reason; this is the one that forgot.
  */
 export function openCharity(
-  row: PublicRow | null, answeredTurn: number | null | undefined,
+  row: PublicRow | null, answeredTurn: number | null | undefined, now: number,
 ): CharityWindow | null {
   const window_ = row?.charity
   if (!window_) return null
   if (answeredTurn != null && answeredTurn === window_.turn) return null
+  if (typeof window_.expiresAt === 'number' && now >= window_.expiresAt) return null
   return window_
 }
 

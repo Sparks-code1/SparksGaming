@@ -1930,10 +1930,31 @@ Deno.serve(async req => {
       }
 
       const expired = typeof step.closesAt === 'number' && now >= step.closesAt
+
+      // A LATE BID IS REFUSED, NOT QUIETLY TURNED INTO A PASS.
+      //
+      // Honouring it would make the deadline advisory, and a window that only
+      // sometimes shuts is not a window — that much was always right. What was
+      // wrong was answering 2xx to it. The bidder was told their bid stood,
+      // their client said so, and the settlement then recorded no award and
+      // took no spice: a bid accepted and ignored, which is worse than one
+      // refused, because a refusal can be seen and a silent pass cannot.
+      //
+      // A LATE PASS STILL GOES THROUGH, and must: it is the push that ends a
+      // window whose seat has walked away, and any seat may send it. So the
+      // deadline refuses the answer that could change the outcome and accepts
+      // the one that only ever ends the wait.
+      if (expired && action.bid?.kind === 'bid') {
+        return json({
+          error: 'the bidding window has closed — pass to move it along',
+          code: 'window-closed',
+          closedAt: step.closesAt,
+        }, 409)
+      }
+
       const actingFaction = expired ? step.carry.toAct : myFaction
-      // A PASS, whoever asked and whatever they sent. Honouring a late bid
-      // would make the deadline advisory, and a window that only sometimes
-      // shuts is not a window.
+      // PAST THE DEADLINE IT IS A PASS, whoever asked: the seat that is to act
+      // is answered for, because that is the only answer silence can mean.
       const answer = expired ? { kind: 'pass' } : action.bid
       // The purse is read for the CALLER, and on the timeout path the caller is
       // not the seat being answered for. A pass spends nothing and answerBid

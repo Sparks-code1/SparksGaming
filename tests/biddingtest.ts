@@ -5,6 +5,7 @@
 // nothing this phase writes down names a card, a purse or a deck. The second is
 // the one no amount of playing the game would reveal, because a leak in the
 // carry looks exactly like a correct auction from every seat.
+import { readFileSync } from 'node:fs'
 import {
   beginAuction, answerBid, silenceAnswers, cardsOnOffer, MINIMUM_OPENING_BID,
   BID_SECONDS, BETWEEN_CARDS_SECONDS,
@@ -531,6 +532,35 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
   check('...and a dry deck settles the auction unasked',
     start({ cardCap: 0 }).status, 'settled')
 }
+
+// ── a late bid is refused, not quietly turned into a pass ─────────────────
+// The endpoint used to answer 2xx to a bid that arrived after the window shut,
+// rewriting it into a pass for whoever was to act. The bidder was told their
+// bid stood, their client said so, and the settlement then recorded no award
+// and took no spice — a bid accepted and ignored, which is worse than one
+// refused, because a refusal can be seen and a silent pass cannot. It cost a
+// live playtest its whole first auction.
+//
+// A LATE PASS STILL GOES THROUGH, and must: it is the push that ends a window
+// whose seat has walked away, and any seat may send it. So the deadline
+// refuses the answer that could change the outcome and accepts the one that
+// only ever ends the wait.
+{
+  const endpoint = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  const at = endpoint.indexOf('const expired = typeof step.closesAt')
+  check('the bid case still knows when its window shut', at > 0, true)
+  const near = endpoint.slice(at, at + 1600)
+  check('a bid past the deadline is refused in the endpoint\'s own voice',
+    [/if \(expired && action\.bid\?\.kind === 'bid'\)/.test(near),
+      /code: 'window-closed'/.test(near)],
+    [true, true])
+  check('...refused before anything is answered for anybody',
+    near.indexOf('window-closed') < near.indexOf('const actingFaction'), true)
+  check('...while a late pass still ends the wait',
+    /const answer = expired \? \{ kind: 'pass' \} : action\.bid/.test(near), true)
+}
+
+console.log(pass ? '\nALL PASS (late-bid pins included)' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.
 process.exit(pass ? 0 : 1)

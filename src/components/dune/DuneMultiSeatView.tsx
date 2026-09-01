@@ -360,7 +360,7 @@ export default function DuneMultiSeatView() {
    */
   const charityFor = (session: SeatSession | null) => {
     if (!session?.client) return null
-    const window_ = openCharity(publicRow, answered[session.login.faction])
+    const window_ = openCharity(publicRow, answered[session.login.faction], now)
     if (!window_) return null
     return {
       onClaim: () => void send(session, 'CLAIM_CHARITY'),

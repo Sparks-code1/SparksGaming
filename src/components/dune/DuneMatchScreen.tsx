@@ -464,7 +464,7 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
   }
 
   const auction = useMemo(() => openAuction(row), [row])
-  const charityWindow = openCharity(row, answeredTurn)
+  const charityWindow = openCharity(row, answeredTurn, now)
   const expired = auctionExpired(row, now)
 
   /** One action as this seat, with a refusal shown rather than thrown. */
