@@ -313,6 +313,20 @@ export function judgePlan(input: {
    *  it — awake at seven losses, dead in the tanks, or already ridden into
    *  one territory this turn. */
   kwisatz?: { available: boolean; dead: boolean; usedTerritory?: string | null }
+  /**
+   * Faction advantages a Karama has stopped for this battle.
+   *
+   * PASSED IN, NOT LOOKED UP: this judges a plan and has no business
+   * reading match state. The endpoint asks isSuppressed at the moment the
+   * plan arrives and hands the answers down — see the KARAMA-STOP markers
+   * in dune-action, which karamatest holds to these two flags.
+   */
+  stopped?: {
+    /** Sardaukar and Fedaykin count as ordinary pieces. */
+    elites?: boolean
+    /** The Fremen must pay spice for full strength like anybody else. */
+    freeFull?: boolean
+  }
   /** ADVANCED, Harkonnen: captured leaders this seat may field once. */
   borrowed?: readonly string[]
 }): { ok: true } | { ok: false; refusal: PlanRefusal } {
@@ -333,17 +347,18 @@ export function judgePlan(input: {
     if (purse != null && spice > purse) {
       return { ok: false, refusal: 'more-spice-than-you-hold' }
     }
-    if (fullWithoutSpice(faction) && spice > 0) {
+    if (fullWithoutSpice(faction, input.stopped?.freeFull) && spice > 0) {
       return { ok: false, refusal: 'fremen-need-no-spice' }
     }
     const pieces = piecesInBattle(forces, faction, battle.territoryId, battle.sectors)
-    const worth = eliteWorth(faction, input.opponent ?? faction)
+    const worth = eliteWorth(faction, input.opponent ?? faction, input.stopped?.elites)
     if (plan.dial < 0 || plan.dial > battleStrengthCap(pieces, worth)
       || !Number.isInteger(plan.dial * 2)) {
       return { ok: false, refusal: 'dial-out-of-range' }
     }
     if (allocationsFor({
-      pieces, dial: plan.dial, spice, worth, freeFull: fullWithoutSpice(faction),
+      pieces, dial: plan.dial, spice, worth,
+      freeFull: fullWithoutSpice(faction, input.stopped?.freeFull),
     }).length === 0) {
       return { ok: false, refusal: 'dial-spice-mismatch' }
     }
@@ -668,12 +683,25 @@ export function piecesInBattle(
  * What one ELITE is worth in this battle: Fedaykin two against everyone,
  * Sardaukar two — except against the Fremen, where they count as one.
  */
-export function eliteWorth(faction: FactionId, opponent: FactionId): 1 | 2 {
+/**
+ * What one elite piece is worth, and whether a Karama has taken it.
+ *
+ * SUPPRESSED, THEY COUNT AS ORDINARY — worth one in battle and one in taking
+ * losses, which is the whole of what the advantage gives. The Emperor being
+ * worth one against the Fremen is NOT the advantage being stopped; it is the
+ * rule that the advantage never applied there in the first place, so it
+ * stands whatever a Karama says.
+ */
+export function eliteWorth(
+  faction: FactionId, opponent: FactionId, suppressed = false,
+): 1 | 2 {
+  if (suppressed) return 1
   return faction === 'emperor' && opponent === 'fremen' ? 1 : 2
 }
 
 /** The Fremen never need spice: every piece of theirs counts at full. */
-export const fullWithoutSpice = (faction: FactionId): boolean => faction === 'fremen'
+export const fullWithoutSpice = (faction: FactionId, suppressed = false): boolean =>
+  faction === 'fremen' && !suppressed
 
 /** One way to pay the dial in dead pieces: how many of each class die at
  *  full strength (a spice on each) and how many at half. */

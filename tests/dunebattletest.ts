@@ -1757,4 +1757,40 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
     fn.includes('winnerChoices.length === 1 ? winnerChoices[0] as never : null'), true)
 }
 
+// ── a Karama takes the elites, and the free full strength ─────────────────
+// Both fire as a plan is judged, so both are asked there. Tested in BOTH
+// directions, which is the half that matters: that stopping it changes the
+// outcome, and that it still works when nobody stopped it.
+{
+  check('Sardaukar count double, and count one once stopped',
+    [eliteWorth('emperor', 'atreides'), eliteWorth('emperor', 'atreides', true)],
+    [2, 1])
+  check('Fedaykin the same',
+    [eliteWorth('fremen', 'atreides'), eliteWorth('fremen', 'atreides', true)],
+    [2, 1])
+  // THE EMPEROR AGAINST THE FREMEN IS NOT A SUPPRESSION. Sardaukar were
+  // never worth two there, so that one is unchanged either way.
+  check('...and the Fremen exception is not a Karama',
+    [eliteWorth('emperor', 'fremen'), eliteWorth('emperor', 'fremen', true)],
+    [1, 1])
+
+  check('the Fremen need no spice, until they do',
+    [fullWithoutSpice('fremen'), fullWithoutSpice('fremen', true)],
+    [true, false])
+  check('...and stopping theirs leaves everybody else where they were',
+    [fullWithoutSpice('atreides'), fullWithoutSpice('atreides', true)],
+    [false, false])
+
+  // AND THE ENDPOINT ASKS BEFORE IT JUDGES, handing the answers down rather
+  // than letting judgePlan reach for match state it has no business reading.
+  const fn2 = code('supabase/functions/dune-action/index.ts')
+  const at2 = fn2.indexOf('const elitesStopped')
+  check('the endpoint asks about both before judging a plan',
+    [at2 > 0, fn2.indexOf('const freeFullStopped') > at2,
+      at2 < fn2.indexOf('const verdict = judgePlan({')],
+    [true, true, true])
+  check('...and hands them to the judge',
+    fn2.includes('stopped: { elites: elitesStopped, freeFull: freeFullStopped },'), true)
+}
+
 process.exit(pass ? 0 : 1)

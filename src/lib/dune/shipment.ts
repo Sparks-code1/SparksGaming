@@ -366,12 +366,17 @@ const ringAdjacent = (a: string, b: string) => {
  * the move starts grants the range wherever the moving group stands. The
  * Fremen walk two where everyone else walks one, and fly the same three.
  */
-export function movementRange(faction: FactionId, forces: readonly Force[]): number {
+export function movementRange(
+  faction: FactionId, forces: readonly Force[], suppressed = false,
+): number {
   const flies = forces.some(f =>
     f.faction === faction && f.count > 0
     && (f.territoryId === ARRAKEEN || f.territoryId === CARTHAG))
   if (flies) return 3
-  return faction === 'fremen' ? 2 : 1
+  // A KARAMA TAKES THE SECOND TERRITORY, not the ornithopters: flying is a
+  // property of holding Arrakeen or Carthag and belongs to whoever holds
+  // them, while the extra step is the Fremen advantage and is stoppable.
+  return faction === 'fremen' && !suppressed ? 2 : 1
 }
 
 /**

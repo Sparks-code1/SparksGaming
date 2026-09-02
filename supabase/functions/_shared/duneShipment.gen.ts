@@ -936,10 +936,10 @@ var ringAdjacent = (a, b) => {
   const d = Math.abs(num(a) - num(b));
   return d === 1 || d === 17;
 };
-function movementRange(faction, forces) {
+function movementRange(faction, forces, suppressed = false) {
   const flies = forces.some((f) => f.faction === faction && f.count > 0 && (f.territoryId === ARRAKEEN || f.territoryId === CARTHAG));
   if (flies) return 3;
-  return faction === "fremen" ? 2 : 1;
+  return faction === "fremen" && !suppressed ? 2 : 1;
 }
 function territoryDistance(from, to, storm) {
   const key = (t, s) => `${t}|${s}`;

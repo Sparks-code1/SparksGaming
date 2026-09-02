@@ -1152,7 +1152,7 @@ var EMPEROR = {
   unsuppressable: [],
   karamaStops: {
     "abilities.bidding": { stops: "Being paid the spice other factions spend on Treachery Cards.", enforced: true },
-    "advanced.forces": { stops: "Sardaukar counting double in battle and in taking losses.", enforced: false }
+    "advanced.forces": { stops: "Sardaukar counting double in battle and in taking losses.", enforced: true }
   },
   leaders: [
     { name: "Hasimir Fenring", strength: 6 },
@@ -1215,8 +1215,8 @@ var FREMEN = {
     "advanced.storm": { stops: "Knowing the storm distance a turn early.", enforced: false },
     "advanced.spiceBlow": { stops: "Placing every sandworm after the first, and half losses in a storm.", enforced: false },
     "advanced.shipment": { stops: "Shipping into a storm at half losses.", enforced: false },
-    "advanced.forces": { stops: "Fedaykin counting double in battle and in taking losses.", enforced: false },
-    "advanced.battle": { stops: "Fighting at full strength without spice.", enforced: false }
+    "advanced.forces": { stops: "Fedaykin counting double in battle and in taking losses.", enforced: true },
+    "advanced.battle": { stops: "Fighting at full strength without spice.", enforced: true }
   },
   leaders: [
     { name: "Stilgar", strength: 7 },
@@ -1498,11 +1498,11 @@ function judgePlan(input) {
     if (purse != null && spice > purse) {
       return { ok: false, refusal: "more-spice-than-you-hold" };
     }
-    if (fullWithoutSpice(faction) && spice > 0) {
+    if (fullWithoutSpice(faction, input.stopped?.freeFull) && spice > 0) {
       return { ok: false, refusal: "fremen-need-no-spice" };
     }
     const pieces = piecesInBattle(forces, faction, battle.territoryId, battle.sectors);
-    const worth = eliteWorth(faction, input.opponent ?? faction);
+    const worth = eliteWorth(faction, input.opponent ?? faction, input.stopped?.elites);
     if (plan.dial < 0 || plan.dial > battleStrengthCap(pieces, worth) || !Number.isInteger(plan.dial * 2)) {
       return { ok: false, refusal: "dial-out-of-range" };
     }
@@ -1511,7 +1511,7 @@ function judgePlan(input) {
       dial: plan.dial,
       spice,
       worth,
-      freeFull: fullWithoutSpice(faction)
+      freeFull: fullWithoutSpice(faction, input.stopped?.freeFull)
     }).length === 0) {
       return { ok: false, refusal: "dial-spice-mismatch" };
     }
@@ -1690,10 +1690,11 @@ function piecesInBattle(forces, faction, territoryId, sectors) {
   const elite = mine.reduce((n, f) => n + Math.min(f.count, f.starred ?? 0), 0);
   return { plain: total - elite, elite };
 }
-function eliteWorth(faction, opponent) {
+function eliteWorth(faction, opponent, suppressed = false) {
+  if (suppressed) return 1;
   return faction === "emperor" && opponent === "fremen" ? 1 : 2;
 }
-var fullWithoutSpice = (faction) => faction === "fremen";
+var fullWithoutSpice = (faction, suppressed = false) => faction === "fremen" && !suppressed;
 function allocationsFor(input) {
   const { pieces, dial, spice, worth, freeFull } = input;
   const dial2 = Math.round(dial * 2);

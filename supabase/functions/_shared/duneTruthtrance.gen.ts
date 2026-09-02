@@ -373,7 +373,7 @@ var EMPEROR = {
   unsuppressable: [],
   karamaStops: {
     "abilities.bidding": { stops: "Being paid the spice other factions spend on Treachery Cards.", enforced: true },
-    "advanced.forces": { stops: "Sardaukar counting double in battle and in taking losses.", enforced: false }
+    "advanced.forces": { stops: "Sardaukar counting double in battle and in taking losses.", enforced: true }
   },
   leaders: [
     { name: "Hasimir Fenring", strength: 6 },
@@ -436,8 +436,8 @@ var FREMEN = {
     "advanced.storm": { stops: "Knowing the storm distance a turn early.", enforced: false },
     "advanced.spiceBlow": { stops: "Placing every sandworm after the first, and half losses in a storm.", enforced: false },
     "advanced.shipment": { stops: "Shipping into a storm at half losses.", enforced: false },
-    "advanced.forces": { stops: "Fedaykin counting double in battle and in taking losses.", enforced: false },
-    "advanced.battle": { stops: "Fighting at full strength without spice.", enforced: false }
+    "advanced.forces": { stops: "Fedaykin counting double in battle and in taking losses.", enforced: true },
+    "advanced.battle": { stops: "Fighting at full strength without spice.", enforced: true }
   },
   leaders: [
     { name: "Stilgar", strength: 7 },

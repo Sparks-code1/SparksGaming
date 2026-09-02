@@ -3068,7 +3068,25 @@ Deno.serve(async req => {
           ...(action.weapon ? { weapon: String(action.weapon) } : null),
           ...(action.defence ? { defence: String(action.defence) } : null),
         }
+        // THE ELITES, AND THE FREMEN FULL STRENGTH. Both fire as the plan is
+        // judged, so both are asked here and handed down — judgePlan reads no
+        // match state of its own.
+        //
+        // ONE CHECK SERVES TWO FACTIONS. Sardaukar and Fedaykin are the same
+        // rule wearing two names, so the marker names both: whichever seat is
+        // dialling, it is their own elites that stop counting double.
+        // KARAMA-STOP: emperor advanced.forces
+        // KARAMA-STOP: fremen advanced.forces
+        const elitesStopped = isSuppressed((state.suppressed ?? []) as never,
+          myFaction as never,
+          'advanced.forces' as never,
+          Number(state.turn ?? 0), 'Battles' as never)
+        // KARAMA-STOP: fremen advanced.battle
+        const freeFullStopped = isSuppressed((state.suppressed ?? []) as never,
+          'fremen' as never, 'advanced.battle' as never,
+          Number(state.turn ?? 0), 'Battles' as never)
         const verdict = judgePlan({
+          stopped: { elites: elitesStopped, freeFull: freeFullStopped },
           faction: myFaction as never,
           battle: c, forces: (state.forces ?? []) as never,
           hand: ((mine as { cards?: string[] }).cards ?? []),
