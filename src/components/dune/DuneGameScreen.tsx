@@ -1175,6 +1175,17 @@ export function DuneGameScreen({
             storm={stormFace} stacks={[...stacks, ...previewStacks]}
             spice={state.spiceOnBoard}
             seating={seating} deck={state.spiceDeck} mode={state.mode}
+            // THE ATREIDES SEE THE TOP OF THE SPICE DECK, from the phase it is
+            // written in and no longer. It comes off THIS seat's own secrets
+            // row, so there is nothing to hand any other screen even if it
+            // asked, and it is drawn on the deck itself rather than said in a
+            // sentence: what they have is a look at a card, and a look at a
+            // card is a card.
+            foreseeSpice={seat === 'atreides'
+              && state.phase === 'Shipment and Movement'
+              && own?.spiceReveal?.turn === state.turn
+              ? own.spiceReveal.card
+              : null}
             awaiting={state.awaiting} phase={state.phase} turn={state.turn}
             closesAt={closesAt} windowMs={windowMs} now={now}
             tanks={state.tanks ?? null}

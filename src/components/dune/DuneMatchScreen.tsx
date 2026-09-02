@@ -949,18 +949,12 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
               Every seat sees where it stands; the acting one gets the forms.
               The Atreides' glimpse rides above it, theirs alone — it came off
               their own secrets row and no other seat has the field. */}
+          {/* THE ATREIDES' GLIMPSE IS ON THE DECK NOW, face up in the box the
+              spice deck is drawn in — see SpiceDeckArea's `foresee`. It was a
+              sentence here saying which card it was, which is a description of
+              a card sitting six inches away from where the card sits. */}
           {row?.shipping && seat && (
             <>
-              {seat.faction === 'atreides' && own?.spiceReveal?.turn === row.turn && (
-                <p style={{
-                  margin: '0 0 8px', padding: 7, borderRadius: 5, background: '#2a2440',
-                }}>
-                  <b>You foresee the next spice blow:</b>{' '}
-                  {own.spiceReveal.card.kind === 'shai-hulud'
-                    ? 'Shai-Hulud.'
-                    : `${own.spiceReveal.card.name ?? 'a territory'}.`}
-                </p>
-              )}
               <ShipmentPanel
                 shipping={row.shipping}
                 forces={row.forces ?? []}

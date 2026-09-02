@@ -425,6 +425,65 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
   check('...and never into the shared row',
     /await plainly\(\{ shipping, awaiting: order\[0\] \}, undefined, seer\)/.test(entry), true)
 
+  // ── and it is drawn as a card, on the deck it came off ─────────────────
+  // A SENTENCE SAYING WHICH CARD IT IS is a description of a card sitting six
+  // inches away from where the card sits. The deck slot turns face up instead,
+  // drawn exactly as a discard is drawn, for the one seat entitled to it.
+  {
+    const deckState = {
+      storm: CALM, turn: 4, phase: 'Shipment and Movement', shieldWall: 'intact',
+      mode: 'basic',
+      spiceDeck: { remaining: 9, discardA: [], discardB: [] },
+      players: [
+        { faction: 'atreides', seat: 'player-position-1', reserves: 8, handCount: 0, battleLosses: 0 },
+        { faction: 'harkonnen', seat: 'player-position-3', reserves: 8, handCount: 0, battleLosses: 0 },
+      ],
+      forces: [], spiceOnBoard: {}, awaiting: null,
+      shipping: {
+        turn: 4, order: ['atreides', 'harkonnen'], stage: 'ship', at: 0,
+        done: {}, closesAt: 9_999_999_999_999,
+      },
+    } as unknown as DuneGameState
+    const glimpse = { turn: 4, card: { kind: 'territory', name: 'Cielago North', spice: 8 } }
+    const paint = (seat: string, over: Record<string, unknown> = {}) =>
+      renderToStaticMarkup(createElement(DuneGameScreen, {
+        state: deckState, seat: seat as never, chat: [], now: 1,
+        own: { spice: 7, spiceReveal: glimpse } as never,
+        onShipReserves: () => {}, ...over,
+      } as never))
+
+    const seer = paint('atreides')
+    check('the deck turns face up for the Atreides',
+      [seer.includes('data-foreseen'), seer.includes('CIELAGO')], [true, true])
+    check('...and the deck still says how much of it is left',
+      seer.includes('9 LEFT'), true)
+
+    // NOBODY ELSE, EVER. The field is on their secrets row, so another seat
+    // has nothing to draw — but the gate is checked rather than assumed,
+    // because a screen handed the wrong `own` would otherwise paint it.
+    const blind = paint('harkonnen')
+    check('the deck stays face down for everybody else',
+      [blind.includes('data-foreseen'), blind.includes('CIELAGO')], [false, false])
+
+    // ONCE SHIPMENT STARTS, AND NOT AFTER. The stamp outlives the phase in
+    // the secrets row, and a glimpse still showing in Battles is a card the
+    // seat was not given a second look at.
+    const later = renderToStaticMarkup(createElement(DuneGameScreen, {
+      state: { ...deckState, phase: 'Battles', shipping: undefined } as never,
+      seat: 'atreides', chat: [], now: 1,
+      own: { spice: 7, spiceReveal: glimpse } as never,
+    } as never))
+    check('the deck turns back down when the phase moves on',
+      later.includes('data-foreseen'), false)
+
+    // A STALE STAMP IS NOT A GLIMPSE. Last turn's card is not on the deck any
+    // more, and drawing it would be showing them a card that is gone.
+    check('a glimpse from an older turn is not drawn',
+      paint('atreides', {
+        own: { spice: 7, spiceReveal: { ...glimpse, turn: 3 } } as never,
+      }).includes('data-foreseen'), false)
+  }
+
   const shipCase = fn.slice(fn.indexOf("case 'SHIP'"), fn.indexOf("case 'MOVE'"))
   check('shipping is the acting seat\'s alone', /'not-your-turn'/.test(shipCase), true)
   check('...one per turn', /'already-shipped'/.test(shipCase), true)

@@ -242,23 +242,51 @@ export interface SpiceDeckAreaProps {
   deck: SpiceDeckPublic
   /** Basic draws one discard pile, advanced two. */
   mode: GameMode
+  /**
+   * The top of the deck, turned over for the seat looking at it.
+   *
+   * THE ATREIDES ONLY, and their caller decides that — this component draws
+   * what it is handed. Passing it turns the DECK slot face up rather than
+   * adding a fourth card to the box: what they see is the actual top of the
+   * actual deck, in the place that deck sits, which is the difference
+   * between a glimpse and an extra pile.
+   */
+  foresee?: SpiceCard | null
 }
 
-export function SpiceDeckArea({ deck, mode }: SpiceDeckAreaProps) {
+export function SpiceDeckArea({ deck, mode, foresee = null }: SpiceDeckAreaProps) {
   const advanced = mode === 'advanced'
   const L = SPICE_DECK_LAYOUT
   return (
     <g data-layer="spice-deck" data-mode={mode}>
       {/* The deck itself: face down, and the only thing said about it is how
           much of it is left. */}
-      <g>
-        <CardBack x={L.deck.x} y={L.deck.y} w={L.deck.w} h={L.deck.h} />
+      <g data-foreseen={foresee ? '' : undefined}>
+        {/* FACE UP FOR THE ONE SEAT THAT MAY SEE IT. Drawn exactly as a
+            discard is drawn, because it is the same card at the same size in
+            the same box — the only difference is that this one has not been
+            turned over yet for anybody else. */}
+        {foresee
+          ? <CardFace card={foresee} x={L.deck.x} y={L.deck.y} w={L.deck.w} h={L.deck.h} />
+          : <CardBack x={L.deck.x} y={L.deck.y} w={L.deck.w} h={L.deck.h} />}
+        {/* THE MARK THAT SAYS WHOSE IT IS. A card sitting face up on the deck
+            where the table can see a face-down one is the sort of thing a
+            player rechecks mid-turn; the ring says it once. */}
+        {foresee && (
+          <rect x={L.deck.x - 2.5} y={L.deck.y - 2.5}
+            width={L.deck.w + 5} height={L.deck.h + 5} rx={7} fill="none"
+            stroke="#7b6bd6" strokeWidth={1.6} strokeDasharray="3 2.5" />
+        )}
         {/* UNDER THE CARD, not on it. A badge over the back covered the mark
             that says which deck this is, to report a number that changes every
             turn — the two were competing for the same square inch. */}
         <Caption x={L.deck.x} y={L.deck.y + L.deck.h + 3} w={L.deck.w}
           text={`${deck.remaining} LEFT`} />
-        <title>{`Spice deck: ${deck.remaining} card${deck.remaining === 1 ? '' : 's'} face down`}</title>
+        <title>{foresee
+          ? `Spice deck, and you alone see the top of it: `
+            + `${foresee.kind === 'shai-hulud' ? 'Shai-Hulud' : foresee.name}`
+            + ` (${deck.remaining} card${deck.remaining === 1 ? '' : 's'} left)`
+          : `Spice deck: ${deck.remaining} card${deck.remaining === 1 ? '' : 's'} face down`}</title>
       </g>
 
       {/* NO LETTER on the stacked piles. Two cards one above the other beside a

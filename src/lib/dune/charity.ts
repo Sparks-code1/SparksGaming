@@ -17,7 +17,7 @@
  * screen.
  */
 import type { Secrets } from '../secretsSync'
-import type { GamePhase } from '@/types/Dune/Game'
+import type { GamePhase, SpiceCard } from '@/types/Dune/Game'
 import type { FactionId } from '@/types/Dune/Faction'
 
 /** What a Dune seat keeps hidden. One number, for now. */
@@ -56,7 +56,7 @@ export interface DuneSecrets extends Secrets {
   prescience?: string
   /** The Atreides' movement glimpse: the top of the spice deck, written by
    *  the phase entry into their row alone, stamped with its turn. */
-  spiceReveal?: { turn: number; card: { kind: string; name?: string } }
+  spiceReveal?: { turn: number; card: SpiceCard }
   /**
    * ADVANCED, Fremen: how far NEXT turn's storm will move.
    *

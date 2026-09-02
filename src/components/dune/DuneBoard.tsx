@@ -24,7 +24,7 @@ import { LeaderDisc, LeaderDiscBack } from './LeaderDisc'
 import { factionById } from '@/data/dune/factions'
 import { DUNE_PHASES } from '@/types/Dune/Game'
 import type { FactionId } from '@/types/Dune/Faction'
-import type { GameMode, GamePhase, SectorId, SpiceDeckPublic, TerritoryId } from '@/types/Dune/Game'
+import type { GameMode, GamePhase, SectorId, SpiceDeckPublic, TerritoryId, SpiceCard } from '@/types/Dune/Game'
 import { SeatLayer, FACTION_LOOK } from './SeatLayer'
 import { SpiceDeckArea } from './SpiceDeckArea'
 import { PhaseTimer } from './PhaseTimer'
@@ -241,6 +241,9 @@ export interface DuneBoardProps {
   spice: Readonly<Record<string, number>>
   seating: Readonly<Record<string, FactionId | null | undefined>>
   deck: SpiceDeckPublic
+  /** The top of the spice deck, turned over for a seat entitled to see it —
+   *  the Atreides during shipment. Nobody else is ever handed one. */
+  foreseeSpice?: SpiceCard | null
   mode: GameMode
   /** Territories a worm surfaced in this turn. */
   worms?: readonly TerritoryId[]
@@ -404,7 +407,7 @@ function AwaitingMark({ faction, seating }: {
 export function DuneBoard({
   zoomTo = null,
   shieldWall = 'intact',
-  storm, stacks, spice, seating, deck, mode,
+  storm, stacks, spice, seating, deck, mode, foreseeSpice = null,
   worms = [], awaiting = null, phase = null, turn = null, interactive = false, children,
   closesAt = null, windowMs, now = 0, tanks = null,
 }: DuneBoardProps) {
@@ -727,7 +730,7 @@ export function DuneBoard({
         {awaiting && <AwaitingMark faction={awaiting} seating={seating} />}
 
         {/* The spice deck and its discards, in the box on the surround. */}
-        <SpiceDeckArea mode={mode} deck={deck} />
+        <SpiceDeckArea mode={mode} deck={deck} foresee={foreseeSpice} />
         {/* Between the two off-board boxes, in the one band of the lower board
             with nothing printed in it. */}
         {phase && <PhaseTimer phase={phase} closesAt={closesAt} windowMs={windowMs} now={now} />}
