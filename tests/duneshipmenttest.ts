@@ -1290,6 +1290,7 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
       DuneGameScreen,
       { state: base, seat, now: when, chat: [], onGuildOrder: () => {} } as never))
 
+    const screenSrc = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
     const guild = draw('spacing-guild')
     check('the Guild is offered a slot for every seat, first through last',
       (guild.match(/data-guild-slot=/g) ?? []).length, 6)
@@ -1305,6 +1306,13 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
     // A SHUT WINDOW IS NO WINDOW. The rail is the phase's, and this phase
     // has ten seconds of it.
+    // AND NOBODY ELSE IS HOLDING LIVE CONTROLS meanwhile. The server refuses
+    // a shipment sent inside those ten seconds, so a first seat whose bubbles
+    // were live would be pressing something that answers with a refusal.
+    check('the first seat in the rotation has no live window yet',
+      screenSrc.includes('const rotationOpen = !guildHolding(state.shipping as never, now)')
+      && (screenSrc.match(/state\.shipping && rotationOpen/g) ?? []).length, 2)
+
     check('the rail is gone once the window has closed',
       draw('spacing-guild', 9e12 + 1).includes('data-layer="guild-order-rail"'), false)
   }

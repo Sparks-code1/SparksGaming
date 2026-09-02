@@ -84,6 +84,7 @@ import { ShipRail } from './ShipRail'
 import {
   bgFlippable, coOccupied, hajrMayPlay, inStorm, moveTargets, strongholdClosed,
   mayShipIntoStorm, stormShipLosses,
+  guildHolding,
 } from '@/lib/dune/shipment'
 import { RideRail } from './RideRail'
 import { MentatRail } from './MentatRail'
@@ -675,12 +676,18 @@ export function DuneGameScreen({
   const mine = state.players.find(p => p.faction === seat) ?? null
   /** Whether the rail's bubbles are live: this seat's turn, shipment not
    *  yet made and movement not yet made — shipment comes first. */
-  const myShipWindow = !!(state.shipping
+  // THE ROTATION HAS NOT STARTED while the Guild is choosing where in it they
+  // stand, so neither window is anybody's yet. The server refuses a shipment
+  // sent inside those ten seconds either way — this is so the first seat in
+  // storm order is not shown live bubbles that answer with a refusal, which
+  // is the exact shape of a control that is present and does nothing.
+  const rotationOpen = !guildHolding(state.shipping as never, now)
+  const myShipWindow = !!(state.shipping && rotationOpen
     && state.shipping.order[state.shipping.at] === seat
     && !state.shipping.done.shipped
     && !state.shipping.done.moved)
   /** Whether a stack click starts a move: this seat's turn, move unspent. */
-  const myMoveWindow = !!(state.shipping
+  const myMoveWindow = !!(state.shipping && rotationOpen
     && state.shipping.order[state.shipping.at] === seat
     && !state.shipping.done.moved)
   /** The stack picked as a move's source, waiting for its destination. */
