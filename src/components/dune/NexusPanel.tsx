@@ -69,11 +69,16 @@ export function NexusPanel({
     p.ally && String(p.faction) < String(p.ally) ? [[p.faction, p.ally] as const] : [])
 
   return (
-    <div data-layer="nexus-bar" style={{
-      position: 'absolute', left: 0, right: 0, bottom: 0,
+    // IN THE RAIL, with everything else this table presses. It was a bar
+    // across the foot of the board; the proposals and the Ready are
+    // controls, and the controls live in the strip between the chat and the
+    // board. Wider than the bubble rails because a proposal names a seat
+    // and a name does not fit in a circle — the rail is a slot, not a width.
+    <div data-layer="nexus-rail" style={{
+      flex: '0 0 auto', width: 232, overflowY: 'auto',
       display: 'flex', flexDirection: 'column', gap: 6,
-      padding: '8px 12px', background: '#0d1220', color: '#f0e2bb',
-      borderTop: '1px solid #f0e2bb44', font: '14px Georgia, serif',
+      padding: '10px 10px', background: '#111a2c', color: '#f0e2bb',
+      borderRight: '1px solid #ffffff1f', font: '12.5px Georgia, serif',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <strong>Nexus</strong>

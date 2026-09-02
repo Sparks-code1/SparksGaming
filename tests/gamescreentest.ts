@@ -1339,7 +1339,7 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     onNexus,
   } as never)
   check('the bar opens with the Nexus and counts its ready',
-    [/data-layer="nexus-bar"/.test(html), /1 of 4 ready/.test(html)], [true, true])
+    [/data-layer="nexus-rail"/.test(html), /1 of 4 ready/.test(html)], [true, true])
   check('...a free seat may propose to the free, never to itself',
     [/data-nexus-propose="harkonnen"/.test(html), /data-nexus-propose="atreides"/.test(html)],
     [true, false])
@@ -1394,7 +1394,7 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   } as never)
   const spectator = draw({ state: nexusState } as never)
   check('an outlived Nexus draws nothing, and neither does a handlerless view',
-    [/data-layer="nexus-bar"/.test(outlived), /data-layer="nexus-bar"/.test(spectator)],
+    [/data-layer="nexus-rail"/.test(outlived), /data-layer="nexus-rail"/.test(spectator)],
     [false, false])
 
   // ── the drivers ─────────────────────────────────────────────────────────
@@ -1759,9 +1759,12 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     } as never,
     onBgFlip: () => {},
   } as never)
-  check('the flip bar offers what the law answers, by name',
-    [/data-bg-flip-bar/.test(bgSeat), /data-bg-flip-fighter="territory-20"/.test(bgSeat)],
+  check('the flip rail offers what the law answers, by name',
+    [/data-layer="bg-flip-rail"/.test(bgSeat), /data-bg-flip-fighter="territory-20"/.test(bgSeat)],
     [true, true])
+  // OFF THE BOARD. It floated over the top-right corner — the one the HUD
+  // already occupies, and the one a notice once covered a Ready button in.
+  check('...and no longer floats over the board', /data-bg-flip-bar/.test(bgSeat), false)
   const bgShipping = draw({
     seat: 'bene-gesserit',
     state: {

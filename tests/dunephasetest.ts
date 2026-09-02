@@ -781,10 +781,17 @@ check('a game is ten turns', TURN_LIMIT, 10)
     /mentatSeconds: MENTAT_READY_SECONDS,/.test(fn), true)
 
   // ── the table's bar ─────────────────────────────────────────────────────
+  const mentatRail = readFileSync('src/components/dune/MentatRail.tsx', 'utf8')
   const game = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
   check('the screen offers Ready, says when a seat is, and counts the minute',
-    [/data-mentat-ready=""/.test(game), /data-mentat-waiting=""/.test(game),
+    [/<MentatRail/.test(game), /data-mentat-waiting=""/.test(mentatRail),
       /state\.mentat\?\.closesAt/.test(game)], [true, true, true])
+  // AND IT IS A BUBBLE, which is the rail's grammar — a plain rectangle in
+  // that column reads as something that arrived from somewhere else.
+  check('...as a bubble in the rail, not a button on the board',
+    [/<ForceBubble/.test(mentatRail), /data-mentat-count=""/.test(mentatRail),
+      /data-layer="mentat-bar"/.test(game)],
+    [true, true, false])
   const match = readFileSync('src/components/dune/DuneMatchScreen.tsx', 'utf8')
   const harness = readFileSync('src/components/dune/DuneMultiSeatView.tsx', 'utf8')
   check('both drivers post the ready, and the hold has its sentence',

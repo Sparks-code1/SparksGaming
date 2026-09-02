@@ -85,6 +85,8 @@ import {
   bgFlippable, coOccupied, hajrMayPlay, inStorm, moveTargets, strongholdClosed,
 } from '@/lib/dune/shipment'
 import { RideRail } from './RideRail'
+import { MentatRail } from './MentatRail'
+import { BgFlipRail } from './BgFlipRail'
 import { RevivalRail } from './RevivalRail'
 import { BattlePanel } from './BattlePanel'
 import { NexusPanel } from './NexusPanel'
@@ -1063,6 +1065,48 @@ export function DuneGameScreen({
             busy={setup!.busy} refused={setup!.refused} />
         )}
 
+        {/* THE NEXUS BAR: private halves filtered to THIS Nexus's turn
+            here, so a stale record from a past Nexus never renders — the
+            turn stamp is the cleanup. */}
+        {state.phase === 'Spice Blow and Nexus' && state.nexus
+          && now < state.nexus.closesAt && seat && onNexus && (
+          <NexusPanel
+            nexus={state.nexus} players={state.players} seat={seat}
+            proposal={own?.nexusProposal?.turn === state.nexus.turn
+              ? own.nexusProposal.to : null}
+            offers={(own?.nexusOffers ?? [])
+              .filter(o => o.turn === state.nexus!.turn).map(o => o.from)}
+            onMove={onNexus} refusal={nexusRefusal} now={now} />
+        )}
+
+        {/* THE PAUSE'S READY, in the rail with every other control this table
+            presses — the reserves it ships, the forces it revives, the riders
+            it puts on a worm. One place to look. */}
+        {state.phase === 'Mentat Pause' && state.mentat && seat && onMentatReady && (
+          <MentatRail
+            faction={seat}
+            ready={(state.mentat.ready ?? []).length}
+            seated={state.players.length}
+            iAmReady={(state.mentat.ready ?? []).includes(seat)}
+            onReady={onMentatReady} />
+        )}
+
+        {/* THE BENE GESSERIT STAND UP AND SIT DOWN, one bubble per territory:
+            the choice really is per-territory, since advisors may become
+            fighters in one place and stay advisors in another. */}
+        {seat === 'bene-gesserit' && state.mode === 'advanced' && onBgFlip && (() => {
+          const flip = bgFlippable(state.forces, state.phase, state.turn)
+          if (flip.toFighter.length === 0 && flip.toAdvisor.length === 0) return null
+          return (
+            <BgFlipRail
+              faction={seat}
+              toFighter={flip.toFighter}
+              toAdvisor={flip.toAdvisor}
+              refusal={bgFlipRefusal?.code ?? null}
+              onFlip={onBgFlip} />
+          )
+        })()}
+
         <main style={{
           // ITS BASIS IS THE BOARD'S IDEAL WIDTH — the width a board as tall as
           // the window would need. Without it the side columns' flex-grow took
@@ -1523,37 +1567,9 @@ export function DuneGameScreen({
               Only while the window is actually open, and only for a seat that
               has not already answered — `charity` is withdrawn by the caller
               once this seat has claimed or passed. */}
-          {/* THE PAUSE'S BAR: no winner, one minute, the table readies.
-              A bar rather than a modal — there is nothing to decide, only
-              a moment to take, and the board is what to think about. */}
-          {state.phase === 'Mentat Pause' && state.mentat && seat && onMentatReady && (
-            <div data-layer="mentat-bar" style={{
-              position: 'absolute', left: 0, right: 0, bottom: 0,
-              display: 'flex', alignItems: 'center', gap: 12,
-              padding: '8px 12px', background: '#0d1220', color: '#f0e2bb',
-              borderTop: '1px solid #f0e2bb44', font: '14px Georgia, serif',
-            }}>
-              <span>
-                Mentat Pause — no winner; the table readies for the next turn
-                {' '}({(state.mentat.ready ?? []).length} of {state.players.length} ready)
-              </span>
-              <span style={{ flex: 1 }} />
-              {(state.mentat.ready ?? []).includes(seat) ? (
-                <span data-mentat-waiting="" style={{ opacity: 0.75 }}>
-                  ready — waiting on the table
-                </span>
-              ) : (
-                <button type="button" data-mentat-ready=""
-                  onClick={onMentatReady}
-                  style={{
-                    padding: '5px 14px', borderRadius: 4, border: 'none',
-                    cursor: 'pointer',
-                  }}>
-                  Ready
-                </button>
-              )}
-            </div>
-          )}
+          {/* THE PAUSE MOVED TO THE RAIL. It was a bar across the foot of the
+              board, which is where a notice goes and not where a control goes.
+              See MentatRail. */}
           {/* THE TRUTH, read to the whole table: the latest Truthtrance
               answer, stamped with the moment it was true — an old yes must
               not read as a standing one. Dismissable, until the next. */}
@@ -1826,41 +1842,10 @@ export function DuneGameScreen({
               the law's own menu — fighters out of advisors in the open
               window, advisors out of fighters where ground is shared. No
               pause anywhere; they have to find the time. */}
-          {seat === 'bene-gesserit' && state.mode === 'advanced' && onBgFlip && (() => {
-            const flip = bgFlippable(state.forces, state.phase, state.turn)
-            if (flip.toFighter.length === 0 && flip.toAdvisor.length === 0) return null
-            const nameOfT = (t: string) =>
-              DUNE_TERRITORIES.find(d => d.id === t)?.displayName ?? t
-            return (
-              <div data-bg-flip-bar="" style={{
-                position: 'absolute', top: 42, right: 10, zIndex: 5,
-                maxWidth: 280, padding: '8px 10px', borderRadius: 6,
-                background: '#131c2eee', color: '#f0e2bb',
-                border: '1px solid #f0e2bb44', font: '12.5px Georgia, serif',
-                display: 'flex', flexDirection: 'column', gap: 5,
-              }}>
-                {flip.toFighter.map(t => (
-                  <button key={t} type="button" data-bg-flip-fighter={t}
-                    onClick={() => onBgFlip(t, 'to-fighter')}
-                    style={{ padding: '4px 8px', borderRadius: 4, border: 'none', cursor: 'pointer' }}>
-                    {nameOfT(t)} — advisors become fighters
-                  </button>
-                ))}
-                {flip.toAdvisor.map(t => (
-                  <button key={t} type="button" data-bg-flip-advisor={t}
-                    onClick={() => onBgFlip(t, 'to-advisor')}
-                    style={{ padding: '4px 8px', borderRadius: 4, border: 'none', cursor: 'pointer' }}>
-                    {nameOfT(t)} — fighters become advisors
-                  </button>
-                ))}
-                {bgFlipRefusal && (
-                  <span data-bg-flip-refusal={bgFlipRefusal.code} style={{ color: '#e8b04b' }}>
-                    Refused: {bgFlipRefusal.code}
-                  </span>
-                )}
-              </div>
-            )
-          })()}
+          {/* THE FLIPS MOVED TO THE RAIL. They floated over the top-right of
+              the board — the corner the HUD already occupies, and the corner a
+              notice once covered a Ready button in. See BgFlipRail, in the
+              strip between the chat and the board with every other control. */}
           {/* A STOP IS PUBLIC: the current phase's suppressions read to the
               whole table, by name. */}
           {(state.suppressed ?? []).filter(s =>
@@ -1899,19 +1884,8 @@ export function DuneGameScreen({
               forces to the tanks when the phase ends.
             </div>
           )}
-          {/* THE NEXUS BAR: private halves filtered to THIS Nexus's turn
-              here, so a stale record from a past Nexus never renders — the
-              turn stamp is the cleanup. */}
-          {state.phase === 'Spice Blow and Nexus' && state.nexus
-            && now < state.nexus.closesAt && seat && onNexus && (
-            <NexusPanel
-              nexus={state.nexus} players={state.players} seat={seat}
-              proposal={own?.nexusProposal?.turn === state.nexus.turn
-                ? own.nexusProposal.to : null}
-              offers={(own?.nexusOffers ?? [])
-                .filter(o => o.turn === state.nexus!.turn).map(o => o.from)}
-              onMove={onNexus} refusal={nexusRefusal} now={now} />
-          )}
+          {/* THE NEXUS MOVED TO THE RAIL — see the slot above, beside every
+              other control this table presses. */}
           {charity && seat && timed.charity && (
             <CharityModal
               faction={seat} own={own}
