@@ -18,10 +18,10 @@ import { FACTION_LOOK } from './SeatLayer'
 import { TreacheryCardFace } from './TreacheryCardFace'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
-import { karamaOptions, suppressibleRefs } from '@/lib/dune/karama'
+import { karamaOptions, suppressibleRefs, stoppablePhases } from '@/lib/dune/karama'
 import type { KaramaUse, KaramaUseId } from '@/lib/dune/karama'
 import type { FactionId } from '@/types/Dune/Faction'
-import type { GameMode } from '@/types/Dune/Game'
+import type { GameMode, GamePhase } from '@/types/Dune/Game'
 
 export interface KaramaPanelProps {
   seat: FactionId
@@ -33,7 +33,12 @@ export interface KaramaPanelProps {
   leaders: readonly string[]
   dead: { plain: number; starred: number }
   onUse: (cardId: string, use: KaramaUse) => void
-  onStop: (cardId: string, target: FactionId, ref: string) => void
+  /** The phase the table is in, which is what a stop names unless the
+   *  player picks a later one. */
+  phase: GamePhase
+  onStop: (
+    cardId: string, target: FactionId, ref: string, phase: GamePhase,
+  ) => void
   onClose: () => void
   busy?: boolean
   refusal?: string | null
@@ -73,7 +78,7 @@ const SAND_TERRITORIES = DUNE_TERRITORIES.filter(t => t.terrain === 'sand')
 
 export function KaramaPanel({
   seat, mode, cardId, players, leaders, dead,
-  onUse, onStop, onClose, busy = false, refusal = null,
+  onUse, onStop, onClose, busy = false, refusal = null, phase,
 }: KaramaPanelProps) {
   const options = karamaOptions(seat, mode)
   const [useId, setUseId] = useState<KaramaUseId>(options[0]?.id ?? 'guild-rate-shipment')
@@ -108,6 +113,13 @@ export function KaramaPanel({
   }
 
   const stopChoices = stopTarget ? suppressibleRefs(stopTarget) : []
+  /**
+   * WHEN the stop bites. Defaults to now, which is what a Karama always
+   * meant — the picker exists for the advantages that fire in the same
+   * breath as their phase begins, where "now" is already too late.
+   */
+  const whenChoices = stoppablePhases(phase)
+  const [stopWhen, setStopWhen] = useState<GamePhase>(phase)
 
   return (
     <div data-layer="karama-panel" style={{
@@ -233,7 +245,7 @@ export function KaramaPanel({
         {/* ── stop an advantage ─────────────────────────────────────────── */}
         <div style={{ marginTop: 12, borderTop: '1px solid #f0e2bb22', paddingTop: 10 }}>
           <span style={{ fontSize: 12, opacity: 0.75, letterSpacing: 1 }}>
-            OR STOP AN ADVANTAGE — this phase
+            OR STOP AN ADVANTAGE — for one phase
           </span>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
             {others.map(p => (
@@ -262,9 +274,31 @@ export function KaramaPanel({
                   <span style={{ opacity: 0.85 }}>{text}</span>
                 </label>
               ))}
+              {/* AND WHEN. Only worth asking once a rule is picked, and only
+                  when there is more than one answer — the last phase of a
+                  turn offers itself and nothing else. */}
+              {stopRef && whenChoices.length > 1 && (
+                <label style={{ display: 'block', fontSize: 12.5, marginTop: 4 }}>
+                  <span style={{ opacity: 0.75 }}>During </span>
+                  <select data-karama-stop-when="" value={stopWhen}
+                    onChange={e => setStopWhen(e.target.value as GamePhase)}
+                    style={{
+                      background: '#0d1220', color: '#f0e2bb',
+                      border: '1px solid #f0e2bb33', borderRadius: 4,
+                      padding: '2px 5px', font: 'inherit',
+                    }}>
+                    {whenChoices.map(ph => (
+                      <option key={ph} value={ph}>
+                        {ph === phase ? `${ph} — now` : ph}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <div>
                 <button type="button" data-karama-stop="" disabled={busy || !stopRef}
-                  onClick={() => stopTarget && stopRef && onStop(cardId, stopTarget, stopRef)}
+                  onClick={() => stopTarget && stopRef
+                    && onStop(cardId, stopTarget, stopRef, stopWhen)}
                   style={{ ...btn, opacity: stopRef ? 1 : 0.5 }}>
                   Stop it — the card is spent
                 </button>

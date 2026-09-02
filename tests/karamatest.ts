@@ -2,7 +2,9 @@
 // is offered IS the rules statement, and the effects mostly land in phases that
 // do not exist yet.
 import { readFileSync } from 'node:fs'
-import { karamaOptions, playKarama, isKaramaFor } from '@/lib/dune/karama'
+import { DUNE_PHASES } from '@/types/Dune/Game'
+import { karamaOptions, playKarama, isKaramaFor, mayStopIn, stoppablePhases,
+} from '@/lib/dune/karama'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { FACTIONS, FACTION_IDS, canKaramaStop, factionRuleText } from '@/data/dune/factions'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
@@ -277,6 +279,93 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
       [...declared].sort())
   }
 
+  // ── a stop may be played ahead of the moment ───────────────────────────
+  // "BEFORE YOU SHIP, KARAMA" is how the card is actually played at a table,
+  // and it has to be: some advantages fire in the same breath as their phase
+  // begins, with nothing between the two for anybody to answer in. The Guild
+  // naming its place in the shipping order is the plainest case — the window
+  // opens in the very write that sets the phase, so a stop stamped with the
+  // phase already running could never once have fired.
+  {
+    check('silence still means this phase',
+      mayStopIn('Bidding', 'Bidding'), true)
+    check('...and any phase still to come this turn may be named',
+      ['Revival', 'Shipment and Movement', 'Battles', 'Mentat Pause']
+        .map(ph => mayStopIn('Bidding', ph as never)),
+      [true, true, true, true])
+
+    // NOT BACKWARDS. A phase already past is a moment that cannot be
+    // interrupted, and offering it would be selling a stop that lands on
+    // nothing.
+    check('a phase already gone cannot be named',
+      ['Storm', 'Spice Blow and Nexus', 'CHOAM Charity']
+        .map(ph => mayStopIn('Bidding', ph as never)),
+      [false, false, false])
+
+    check('the last phase of a turn offers itself and nothing else',
+      stoppablePhases('Mentat Pause'), ['Mentat Pause'])
+    check('the first offers the whole turn', stoppablePhases('Storm').length, 9)
+    check('...beginning with the one being played in',
+      stoppablePhases('Revival')[0], 'Revival')
+
+    // ONE PHASE, NAMED — not a turn-long shadow. Every offer is a real phase
+    // and no two are the same, or a picker would show a duplicate and a stamp
+    // could match a moment nobody meant.
+    check('the offers are real phases, each once',
+      (() => {
+        const all = stoppablePhases('CHOAM Charity')
+        return [new Set(all).size === all.length,
+          all.every(ph => (DUNE_PHASES as readonly string[]).includes(ph))]
+      })(), [true, true])
+
+    // ── the endpoint takes the name, and refuses a past one ──────────────
+    const ep2 = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+    const stopCase = (() => {
+      const at = ep2.indexOf("case 'KARAMA_STOP': {")
+      const rest = ep2.slice(at + 1)
+      const end = rest.search(/\n {4}case '/)
+      return end < 0 ? ep2.slice(at) : ep2.slice(at, at + 1 + end)
+    })()
+    check('the action takes a phase, defaulting to the live one',
+      [stopCase.includes('const sPhase = action.phase == null'),
+        stopCase.includes('? String(state.phase)')], [true, true])
+    check('...judged by the rule rather than by a test written twice',
+      stopCase.includes('if (!mayStopIn(state.phase as never, sPhase as never)) {'), true)
+    check('...and the suppression is stamped with the phase that was named',
+      [stopCase.includes('phase: sPhase,'),
+        stopCase.includes('phase: state.phase,')], [true, false])
+
+    // AND THE PICKER DRAWS ON THE SAME RULE, so nothing is offered that the
+    // server would refuse.
+    const panel = readFileSync('src/components/dune/KaramaPanel.tsx', 'utf8')
+    check('the panel asks when, out of the same list',
+      [panel.includes('const whenChoices = stoppablePhases(phase)'),
+        panel.includes('data-karama-stop-when')], [true, true])
+    check('...and hands the answer to the caller',
+      panel.includes('onStop(cardId, stopTarget, stopRef, stopWhen)'), true)
+  }
+
+  // ── and the two that could never fire, can ─────────────────────────────
+  // Both fire at a PHASE ENTRY, which is the one moment no card can be played
+  // into: the window and the phase arrive in the same write. Naming the phase
+  // from the one before it is the whole of the fix.
+  {
+    check('the Guild\'s turn order can be stopped from an earlier phase',
+      ['Bidding', 'Revival'].map(ph =>
+        mayStopIn(ph as never, 'Shipment and Movement')), [true, true])
+    check('...and their menu still offers it',
+      suppressibleRefs('spacing-guild').some(r => r.ref === 'advanced.shipment'), true)
+
+    // THE FREMEN STORM IS ONLY HALF REACHED BY THIS, and the suite says so
+    // rather than implying otherwise: their foreknowledge is delivered at the
+    // END of the Storm phase, and Storm is the FIRST phase of a turn — so
+    // there is no earlier phase of that turn to name it from. It is reachable
+    // when the Storm phase has a beat somebody can act in (turn one, and any
+    // turn where the Family Atomics window opens) and not otherwise.
+    check('no earlier phase of the same turn exists to name Storm from',
+      stoppablePhases('Storm')[0], 'Storm')
+  }
+
   // ── a stop reaches the thing it was played against ─────────────────────
   // A KARAMA IS PLAYED IN ANSWER TO SOMETHING. The Voice and the Atreides
   // question both open with the battle, so a stop that read only at the open
@@ -285,9 +374,17 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
   // spends a Karama for. Both are asked again where they are used.
   {
     const ep = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
-    const inCase = (name: string, chars = 2200) => {
+    // THE CASE, TO ITS END, rather than a fixed number of characters after it.
+    // A window has to be re-tuned every time a comment grows inside the block
+    // it is watching, and a pin that needs re-tuning to keep passing is a pin
+    // that will one day be re-tuned into agreeing with a bug — this one had
+    // already been widened once. The next case label is where this one stops.
+    const inCase = (name: string) => {
       const at = ep.indexOf(`case '${name}': {`)
-      return at < 0 ? '' : ep.slice(at, at + chars)
+      if (at < 0) return ''
+      const rest = ep.slice(at + 1)
+      const end = rest.search(/\n {4}case '/)
+      return end < 0 ? ep.slice(at) : ep.slice(at, at + 1 + end)
     }
 
     const voice = inCase('BATTLE_VOICE')
@@ -304,11 +401,15 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
     // bidding reveal sits in their own row from the moment a card opens, so
     // stopping the advantage without clearing it left the card actually up for
     // bid readable for the rest of its auction — a card spent on the next one.
-    const stop = inCase('KARAMA_STOP', 4200)
+    const stop = inCase('KARAMA_STOP')
     check('stopping the Atreides sight clears the card they are holding',
       [stop.includes("sTarget === 'atreides' && sRef === 'abilities.bidding'"),
         stop.includes('delete seen[REVEAL_KEY]'),
         stop.includes('p_secrets: { ...sTakeBack,')], [true, true, true])
+    // AND ONLY WHEN IT BITES NOW. A card naming a later phase has not happened
+    // yet, so the reveal in their tray is still theirs to read until it does.
+    check('...but not when the stop is named for a later phase',
+      stop.includes('&& sPhase === String(state.phase)'), true)
 
     // AND STILL AT THE OPEN. Refusing the use without also declining to open
     // the window would leave a battle stalled on a beat nobody may answer.

@@ -1112,7 +1112,9 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
           ? (card, use) => void send({ type: 'KARAMA', card, use })
           : undefined}
         onKaramaStop={seat
-          ? (card, target, ref) => void send({ type: 'KARAMA_STOP', card, target, ref })
+          ? (card, target, ref, phase) => void send({
+            type: 'KARAMA_STOP', card, target, ref, phase,
+          })
           : undefined}
         karamaRefusal={(refusedBy === 'KARAMA' || refusedBy === 'KARAMA_STOP') && refused
           ? { code: refused }

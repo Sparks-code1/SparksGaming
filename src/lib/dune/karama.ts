@@ -28,6 +28,7 @@ import type { Devoured } from './spiceBlow'
 import type { FactionId } from '@/types/Dune/Faction'
 import type { TreacheryCard } from '@/types/Dune/Treachery'
 import type { Force, GameMode, GamePhase, TerritoryId } from '@/types/Dune/Game'
+import { DUNE_PHASES } from '@/types/Dune/Game'
 import type { FactionRuleRef } from '@/types/Dune/Faction'
 import { canKaramaStop } from '@/data/dune/factions'
 
@@ -268,6 +269,31 @@ export interface Suppression {
   by: FactionId
   turn: number
   phase: GamePhase
+}
+
+/**
+ * WHICH PHASE A STOP MAY NAME: this one, or any still to come this turn.
+ *
+ * A CARD PLAYED AT A TABLE IS PLAYED AHEAD OF THE MOMENT. "Before you ship,
+ * Karama" is how it is actually said, and it has to be — some advantages
+ * fire in the same breath as the phase begins, with nothing between the two
+ * for anybody to answer in. The Guild naming its place in the shipping order
+ * is the plainest case: the window opens in the very write that sets the
+ * phase, so a stop that could only ever be stamped with the phase already
+ * running was a stop that could never once have fired.
+ *
+ * NOT BACKWARDS, and not into next turn. A phase already past is a moment
+ * that cannot be interrupted, and the card stops an advantage "during one
+ * game phase" — one, named, in the turn it is spent in.
+ */
+export function stoppablePhases(current: GamePhase): GamePhase[] {
+  const i = DUNE_PHASES.indexOf(current)
+  return i < 0 ? [] : DUNE_PHASES.slice(i) as GamePhase[]
+}
+
+/** Whether a stop played now may name that phase. */
+export function mayStopIn(current: GamePhase, named: GamePhase): boolean {
+  return stoppablePhases(current).includes(named)
 }
 
 /** Whether this advantage is stopped RIGHT NOW — this turn, this phase. */

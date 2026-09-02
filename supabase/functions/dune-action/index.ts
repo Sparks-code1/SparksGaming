@@ -47,7 +47,7 @@ import {
 import { askTruthtrance, planFromRow } from '../_shared/duneTruthtrance.gen.ts'
 import {
   isSuppressed, karamaAllowed, playKarama, isKaramaCardId, suppressibleRefs,
-  KARAMA_GIVE_SECONDS,
+  KARAMA_GIVE_SECONDS, mayStopIn,
 } from '../_shared/duneKarama.gen.ts'
 import { prescienceFor, withReveal, PRESCIENT_FACTION, REVEAL_KEY,
 } from '../_shared/dunePrescience.gen.ts'
@@ -4141,6 +4141,19 @@ Deno.serve(async req => {
       if (!suppressibleRefs(sTarget as never).some((r) => r.ref === sRef)) {
         return json({ error: 'that advantage cannot be stopped', code: 'not-stoppable' }, 409)
       }
+      // WHICH PHASE IT IS SPENT ON. Silence means this one, which is what it
+      // always meant; naming a later phase of this turn is how a card gets
+      // played ahead of an advantage that fires the instant its phase begins.
+      // See stoppablePhases — the rule is there, and the client draws its
+      // picker from the same function.
+      const sPhase = action.phase == null
+        ? String(state.phase)
+        : String(action.phase)
+      if (!mayStopIn(state.phase as never, sPhase as never)) {
+        return json({
+          error: 'that phase is past, or is not this turn\'s', code: 'phase-past',
+        }, 409)
+      }
       const { data: sRow } = await admin
         .from('match_secrets').select('data')
         .eq('match_id', matchId).eq('player_id', playerId).maybeSingle()
@@ -4165,7 +4178,11 @@ Deno.serve(async req => {
        * wrote it has long since returned.
        */
       const sTakeBack: Record<string, unknown> = {}
-      if (sTarget === 'atreides' && sRef === 'abilities.bidding') {
+      // ONLY A STOP THAT BITES NOW takes anything back: a card played during
+      // Bidding naming Bidding reaches the reveal in their tray, while one
+      // naming a later phase has not happened yet and must leave it alone.
+      if (sTarget === 'atreides' && sRef === 'abilities.bidding'
+        && sPhase === String(state.phase)) {
         const seenSeat = seatOfFaction['atreides']
         if (seenSeat) {
           const { data: seenRow } = await admin
@@ -4185,7 +4202,7 @@ Deno.serve(async req => {
             ...((state.suppressed ?? []) as unknown[]),
             {
               faction: sTarget, ref: sRef, by: myFaction,
-              turn: Number(state.turn ?? 0), phase: state.phase,
+              turn: Number(state.turn ?? 0), phase: sPhase,
             },
           ],
           players: ((state.players ?? []) as { faction: string; handCount?: number }[])

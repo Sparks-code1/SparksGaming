@@ -39,7 +39,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import type { FactionId } from '@/types/Dune/Faction'
-import type { DuneGameState, Force, SectorId } from '@/types/Dune/Game'
+import type { DuneGameState, Force, SectorId, GamePhase } from '@/types/Dune/Game'
 import type { DuneSecrets } from '@/lib/dune/charity'
 import { hudRows, allyOf } from '@/lib/dune/hud'
 import { ChatPanel } from './ChatPanel'
@@ -249,7 +249,11 @@ export interface DuneGameScreenProps {
   /** Spend a Karama on one of the holder's own uses. */
   onKarama?: (cardId: string, use: KaramaUse) => void
   /** Spend a Karama on stopping a named advantage for this phase. */
-  onKaramaStop?: (cardId: string, target: FactionId, ref: string) => void
+  /** Stop one advantage for one phase: the card, whose advantage, which rule,
+   *  and the phase it bites in — this one, or a later one this turn. */
+  onKaramaStop?: (
+    cardId: string, target: FactionId, ref: string, phase: GamePhase,
+  ) => void
   karamaRefusal?: { code: string } | null
   /** Pay the Harkonnen give-back — or push it past its clock. */
   onGiveBack?: (cards: string[]) => void
@@ -1739,7 +1743,7 @@ export function DuneGameScreen({
               leaders={(state.tanks?.leaders?.[seat] ?? [])
                 .filter(l => !l.faceDown).map(l => l.name)}
               dead={state.tanks?.forces?.[seat] ?? { plain: 0, starred: 0 }}
-              onUse={onKarama} onStop={onKaramaStop}
+              onUse={onKarama} onStop={onKaramaStop} phase={state.phase}
               onClose={() => setKaramaCard(null)}
               refusal={karamaRefusal?.code ?? null} />
           )}

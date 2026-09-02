@@ -1649,6 +1649,7 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   const panelK = renderToStaticMarkup(createElement(KaramaPanel, {
     seat: 'fremen' as never, mode: 'advanced' as never, cardId: 'karama',
     players: state.players as never, leaders: [], dead: { plain: 0, starred: 0 },
+    phase: 'Bidding' as never,
     onUse: () => {}, onStop: () => {}, onClose: () => {},
   }))
   check('the panel offers the law\'s own menu and the stop targets, never itself',
@@ -1660,6 +1661,7 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
   const worthless = renderToStaticMarkup(createElement(KaramaPanel, {
     seat: 'bene-gesserit' as never, mode: 'advanced' as never, cardId: 'baliset',
     players: state.players as never, leaders: [], dead: { plain: 0, starred: 0 },
+    phase: 'Bidding' as never,
     onUse: () => {}, onStop: () => {}, onClose: () => {},
   }))
   check('...and says when a worthless card is doing the spending',

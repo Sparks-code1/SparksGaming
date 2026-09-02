@@ -1373,6 +1373,19 @@ function devourTerritory(territoryId, forces, spiceOnBoard, spared) {
   };
 }
 
+// src/types/Dune/Game.ts
+var DUNE_PHASES = [
+  "Storm",
+  "Spice Blow and Nexus",
+  "CHOAM Charity",
+  "Bidding",
+  "Revival",
+  "Shipment and Movement",
+  "Battles",
+  "Spice Collection",
+  "Mentat Pause"
+];
+
 // src/lib/dune/karama.ts
 var OWNER = {
   "atreides-see-battle-plan": "atreides",
@@ -1466,6 +1479,13 @@ function isKaramaFor(faction, mode, card) {
   return mode === "advanced" && faction === "bene-gesserit" && card.kind === "worthless";
 }
 var KARAMA_GIVE_SECONDS = 60;
+function stoppablePhases(current) {
+  const i = DUNE_PHASES.indexOf(current);
+  return i < 0 ? [] : DUNE_PHASES.slice(i);
+}
+function mayStopIn(current, named) {
+  return stoppablePhases(current).includes(named);
+}
 function isSuppressed(list, faction, ref, turn, phase) {
   return (list ?? []).some((s) => s.faction === faction && s.ref === ref && s.turn === turn && s.phase === phase);
 }
@@ -1491,6 +1511,8 @@ export {
   isSuppressed,
   karamaAllowed,
   karamaOptions,
+  mayStopIn,
   playKarama,
+  stoppablePhases,
   suppressibleRefs
 };
