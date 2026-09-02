@@ -477,7 +477,12 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
     if (advanceFired.current === key) return
     const t = setTimeout(() => {
       advanceFired.current = key
-      void send({ type: 'ADVANCE_PHASE' })
+      // NAMING THE PHASE IT MEANT. This timer was scheduled against the
+      // phase above and fires some hundreds of milliseconds later; in
+      // between, the server sweep can move the turn on off somebody
+      // else's action. An unnamed press would then land on the phase that
+      // replaced it — and be accepted, since the host may move on early.
+      void send({ type: 'ADVANCE_PHASE', at: { turn: row.turn, phase: row.phase } })
     }, delay)
     return () => clearTimeout(t)
     // `send` is recreated every render; the turn, phase and the two booleans are
@@ -514,7 +519,10 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
   const passTurn = async () => { await send({ type: 'PASS_TURN' }) }
 
   const advance = async () => {
-    const res = await send({ type: 'ADVANCE_PHASE' })
+    // THE BUTTON NAMES ITS PHASE TOO. A press is a click on what the
+    // screen was showing, and the screen can be a moment behind.
+    const res = await send({ type: 'ADVANCE_PHASE',
+      ...(row ? { at: { turn: row.turn, phase: row.phase } } : null) })
     if (res) {
       const said = res.data as { phase?: string; stormReport?: { roll?: number } }
       say(said.stormReport ? `rolled the storm (${said.stormReport.roll}).`

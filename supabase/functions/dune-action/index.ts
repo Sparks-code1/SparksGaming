@@ -2333,8 +2333,42 @@ Deno.serve(async req => {
     // the same write — see lib/dune/phaseAdvance for the whole design, and for
     // why the holds below stop the host too while the look-window stops only
     // everybody else.
-    case 'ADVANCE_PHASE':
+    case 'ADVANCE_PHASE': {
+      /**
+       * A PRESS NAMES THE PHASE IT MEANT TO END.
+       *
+       * Without that it is anonymous, and an anonymous advance lands on
+       * whichever phase happens to be live when it arrives. That is not
+       * hypothetical: a client saw its auction settle, found no hold and a
+       * window long shut, and scheduled an advance out of Bidding — and in
+       * the four hundred milliseconds before its timer fired, the server
+       * sweep moved Bidding to Revival off the very same bid. The press
+       * landed on Revival instead, one and a half seconds after it began,
+       * and was ACCEPTED, because the sender was the host and the host may
+       * move on early. Revival's own thirty-second window never protected
+       * it, and the log read as a phase that skipped itself.
+       *
+       * The client cannot fix this alone: React cancels the stale timer
+       * when the new row arrives, and the timer fires in the gap before it
+       * does. So the intent travels WITH the press and the server checks
+       * it — the same answer Risk reached when its phase advances were
+       * landing on the wrong turn.
+       *
+       * ABSENT IS STILL ALLOWED. An older client sends no `at`, and one
+       * that names nothing is asking for whatever is current, which is the
+       * behaviour there has always been.
+       */
+      const meant = action.at as { turn?: number; phase?: string } | undefined
+      if (meant && (meant.phase !== state.phase
+        || Number(meant.turn) !== Number(state.turn))) {
+        return json({
+          error: 'the phase moved before that arrived',
+          code: 'phase-moved',
+          phase: state.phase, turn: state.turn,
+        }, 409)
+      }
       return await advancePhase(state, match)
+    }
 
     // ── Revival: the Tanks pay out ───────────────────────────────────────────
     // Forces to RESERVES, never the board; spice to the BANK, never the

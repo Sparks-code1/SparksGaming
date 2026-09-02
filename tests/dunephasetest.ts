@@ -933,8 +933,12 @@ check('a game is ten turns', TURN_LIMIT, 10)
     [/async function advancePhase\(/.test(src),
       (src.match(/await advancePhase\(/g) ?? []).length],
     [true, 2])
+  // Past the guard that refuses a press naming a phase the match has left.
   check('...which the deliberate press calls',
-    /case 'ADVANCE_PHASE':\s*return await advancePhase\(state, match\)/.test(src), true)
+    [src.includes("case 'ADVANCE_PHASE': {"),
+      src.indexOf("case 'ADVANCE_PHASE': {")
+        < src.indexOf("return await advancePhase(state, match)")],
+    [true, true])
 
   // THE SWEEP'S GATES ARE THE BUTTON'S GATES.
   const sweepAt = src.indexOf("if (answer.ok && action.type !== 'ADVANCE_PHASE')")
@@ -1081,6 +1085,58 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
   // without it a spectator at such a table would be offered the button.
   check('only the host is offered the end-the-wait button',
     screen2.includes('{expired && !spectating && amHost && ('), true)
+}
+
+// ── a press names the phase it meant to end ───────────────────────────────
+// FOUND IN THE LOG, which is what the log was added for. Three rows, a second
+// and a half apart: a bid settles the auction; the server sweep moves Bidding
+// to Revival off that same bid; and then a client advance lands on Revival
+// and is ACCEPTED. Revival had been open for one and a half of its thirty
+// seconds.
+//
+// Nothing was wrong with the clock or with the check. The client scheduled
+// that advance while Bidding was genuinely finished and its window genuinely
+// shut, and the phase moved in the few hundred milliseconds before the timer
+// fired. React cancels a stale timer when the new row arrives — the timer
+// fires in the gap before it does. And the server took it because the sender
+// was the host, and the host may move on early, so the fresh window never
+// protected the phase that inherited the press.
+//
+// So the intent travels with the press. Risk reached the same answer when its
+// phase advances were landing on whichever turn happened to be live.
+{
+  const fn = code('supabase/functions/dune-action/index.ts')
+  const at = fn.indexOf('const meant = action.at')
+  check('the press may name a phase', at > 0, true)
+  const guard = fn.slice(at, at + 700)
+  check('...and a press for a phase the match has left is refused',
+    [/meant\.phase !== state\.phase/.test(guard),
+      /Number\(meant\.turn\) !== Number\(state\.turn\)/.test(guard),
+      /code: .phase-moved./.test(guard)],
+    [true, true, true])
+  // THE TURN AS WELL AS THE PHASE: nine phases repeat every turn, so a press
+  // held over a whole turn would otherwise match the same phase one turn on.
+  check('...matching on turn and phase together, not either alone',
+    guard.includes("Number(meant.turn) !== Number(state.turn)"), true)
+  // BEFORE ANYTHING IS ADVANCED. A guard after the work has already advanced
+  // the phase it was meant to stop.
+  check('...refused before the advance runs',
+    at < fn.indexOf('return await advancePhase(state, match)'), true)
+  // NAMING NOTHING IS STILL ALLOWED — an older client, and the sweep, which
+  // re-reads the row itself and is current by construction.
+  check('a press that names nothing still advances',
+    /if \(meant &&/.test(guard), true)
+
+  const screen3 = code('src/components/dune/DuneMatchScreen.tsx')
+  check('the auto-press names the phase it was scheduled against',
+    screen3.includes("void send({ type: 'ADVANCE_PHASE', at: { turn: row.turn, phase: row.phase } })"),
+    true)
+  // THE BUTTON TOO: a click is a click on what the screen was showing, and
+  // the screen can be a moment behind.
+  check('...and so does the button',
+    screen3.includes("at: { turn: row.turn, phase: row.phase }")
+      && (screen3.match(/at: \{ turn: row\.turn, phase: row\.phase \}/g) ?? []).length >= 2,
+    true)
 }
 
 // Not optional: without an exit code the runner counts a failing suite green.
