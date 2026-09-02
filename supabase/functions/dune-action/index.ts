@@ -79,7 +79,7 @@ import {
 } from '../_shared/duneBattle.gen.ts'
 import {
   mayAtomics, STORM_CARD_SECONDS, WEATHER_CONTROL_MAX, SHIELD_WALL_TERRITORY,
-  phaseAfter, advanceHold, phaseWindowOpen, rollStorm, stormEntry, cityIncome,
+  phaseAfter, shiftDeadlines, advanceHold, phaseWindowOpen, rollStorm, stormEntry, cityIncome,
   mentatVerdict, biddingOpening, stormOrder, resetDeadlines, PHASE_SECONDS, TURN_LIMIT,
   spiceHarvest, MENTAT_READY_SECONDS,
 } from '../_shared/dunePhase.gen.ts'
@@ -2333,6 +2333,59 @@ Deno.serve(async req => {
     // the same write — see lib/dune/phaseAdvance for the whole design, and for
     // why the holds below stop the host too while the look-window stops only
     // everybody else.
+    /**
+     * STOP THE CLOCKS, AND START THEM AGAIN.
+     *
+     * ANYBODY MAY DO EITHER. A pause is not a privilege — the reason to
+     * want one is that somebody has to leave the table, and the person who
+     * has to leave is exactly the person who cannot wait for a host to
+     * agree. The same goes for ending it: the table should not be stuck
+     * because whoever pressed it has gone.
+     *
+     * THE DEADLINES MOVE WITH IT. Resuming shifts every clock in the state
+     * forward by exactly how long the match stood still, so an auction that
+     * had nine seconds left has nine seconds left. Without that a pause
+     * would be a banner over a game that went on timing out behind it —
+     * see shiftDeadlines for how the fields are found.
+     */
+    case 'PAUSE': {
+      if (state.paused) {
+        return json({ error: 'the match is already paused', code: 'already-paused' }, 409)
+      }
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: { ...state, paused: { at: now, by: myFaction } },
+        p_secrets: {},
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ paused: true, by: myFaction, version: data[0].version })
+    }
+
+    case 'RESUME': {
+      const was = state.paused as { at: number; by: string } | undefined
+      if (!was) {
+        return json({ error: 'the match is not paused', code: 'not-paused' }, 409)
+      }
+      // HOW LONG IT STOOD STILL. Every deadline moves by this and nothing
+      // else does. A clock that had run out BEFORE the pause stays run out:
+      // it moves too, but it was already behind and stays behind.
+      const stood = Math.max(0, now - Number(was.at))
+      const resumed = shiftDeadlines(
+        { ...state, paused: null } as Record<string, unknown>, stood)
+      delete (resumed as Record<string, unknown>).paused
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: resumed,
+        p_secrets: {},
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ paused: false, movedBy: stood, version: data[0].version })
+    }
+
     case 'ADVANCE_PHASE': {
       /**
        * A PRESS NAMES THE PHASE IT MEANT TO END.

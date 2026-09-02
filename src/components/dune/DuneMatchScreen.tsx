@@ -456,6 +456,54 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
   // below runs before that declaration. A seat of null is a watcher; undefined
   // is "not looked up yet", which must not count as watching.
   const watchingOnly = seat === null
+  /**
+   * THE PAUSE, AND WHY IT IS A KEY AND NOT A BUTTON.
+   *
+   * The board is already full of controls that do something to the game, and
+   * a pause is not one of them — it is a thing you do to the ROOM. It lives
+   * in the menu, where leaving lives, and on a key, because the moment you
+   * want it is the moment you are getting up.
+   *
+   * ANYBODY MAY PRESS IT, and anybody may press it again: the reason to want
+   * a pause is that somebody has to go, and that person cannot wait for a
+   * host to agree — nor should the table be stuck when they do not come back.
+   */
+  const paused = (row as { paused?: { at: number; by: string } | null } | null)?.paused ?? null
+  const togglePause = async () => {
+    if (!seat || !row) return
+    await send({ type: paused ? 'RESUME' : 'PAUSE' })
+  }
+
+  /**
+   * P, EXCEPT WHILE YOU ARE TYPING.
+   *
+   * The chat box is right there and the word "spice" has a p in it. A
+   * shortcut that fires mid-sentence would pause the game because somebody
+   * said something — so the handler stands down for any field that takes
+   * text: inputs, textareas, selects, and anything contenteditable, which is
+   * the set the browser itself treats as typing. isComposing covers an IME
+   * mid-word, where the keystroke belongs to the composition and not to us.
+   */
+  useEffect(() => {
+    if (!seat) return
+    const typing = (t: EventTarget | null): boolean => {
+      const el = t as HTMLElement | null
+      if (!el || !el.tagName) return false
+      if (el.isContentEditable) return true
+      return ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'p' && e.key !== 'P') return
+      if (e.isComposing || e.altKey || e.ctrlKey || e.metaKey) return
+      if (typing(e.target)) return
+      e.preventDefault()
+      void togglePause()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seat?.faction, paused, row?.turn, row?.phase])
+
   const windowShut = !!row && !phaseWindowOpen(row, now)
   const holdCode = hold?.code ?? ''
   const advanceFired = useRef('')
@@ -620,7 +668,10 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
       seated: !!seat,
       spectating: watchingOnly,
       isHost: amHost,
-      expired,
+      // A PAUSED MATCH PUSHES NOTHING. The auction clock has not moved
+      // while the table was away, so an expired-looking window here is only
+      // expired because the deadline has not been shifted back yet.
+      expired: expired && !paused,
       gameOver: !!row.winner,
       seatIndex: (row.players ?? []).findIndex(p => p.faction === seat.faction),
     })
@@ -884,7 +935,8 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
                 'karama-give-back': 'The Harkonnen owe cards back for the ones they took.',
                 'mentat-pause': 'the table is readying for the next turn',
                 'game-over': 'The game is over.',
-                'setup-not-finished': 'Setting up.',
+                paused: 'the match is paused — press P to start it again',
+    'setup-not-finished': 'Setting up.',
               }[hold.code] ?? hold.code}
             </p>
           )}
@@ -1148,6 +1200,19 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
               }}>
                 <SoundSettings inline />
               </div>
+              <button type="button" role="menuitem" data-layer="pause-toggle"
+                onClick={() => { setMenuOpen(false); void togglePause() }}
+                disabled={!seat || busy}
+                aria-label={paused ? 'Start the match again' : 'Pause the match'}
+                style={{
+                  display: 'block', width: '100%', textAlign: 'left',
+                  font: `12.5px ${SERIF}`, padding: '7px 8px', borderRadius: 5,
+                  cursor: seat ? 'pointer' : 'default', background: 'transparent',
+                  color: PALE, border: 'none', opacity: seat ? 1 : 0.5,
+                }}>
+                {paused ? '▶ Start again' : '⏸ Pause'}
+                <span style={{ opacity: 0.5, float: 'right' }}>P</span>
+              </button>
               {onExit && (
                 <button type="button" role="menuitem"
                   onClick={() => { setMenuOpen(false); setLeaving(true) }}

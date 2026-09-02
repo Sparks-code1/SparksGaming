@@ -1293,6 +1293,24 @@ var WIN_STRONGHOLDS = 3;
 var ALLIANCE_WIN_STRONGHOLDS = 4;
 var MENTAT_READY_SECONDS = 60;
 var PHASE_SECONDS = 30;
+var DEADLINE_KEYS = [
+  "closesAt",
+  "expiresAt",
+  "opensAt",
+  "pausedUntil"
+];
+function shiftDeadlines(value, ms) {
+  if (ms === 0 || !Number.isFinite(ms)) return value;
+  if (Array.isArray(value)) {
+    return value.map((v) => shiftDeadlines(v, ms));
+  }
+  if (!value || typeof value !== "object") return value;
+  const out = {};
+  for (const [k, v] of Object.entries(value)) {
+    out[k] = DEADLINE_KEYS.includes(k) && typeof v === "number" ? v + ms : shiftDeadlines(v, ms);
+  }
+  return out;
+}
 var AUTO_ADVANCE_HOST_MS = 400;
 var AUTO_ADVANCE_SEAT_MS = 1500;
 var AUTO_ADVANCE_STEP_MS = 750;
@@ -1316,6 +1334,7 @@ function phaseAfter(phase) {
   return { phase: DUNE_PHASES[last ? 0 : i + 1], newTurn: last };
 }
 function advanceHold(state, now) {
+  if (state.paused) return { code: "paused" };
   if (state.karamaGiveBack && now < state.karamaGiveBack.closesAt) {
     return { code: "karama-give-back", until: state.karamaGiveBack.closesAt };
   }
@@ -1660,6 +1679,7 @@ export {
   AUTO_ADVANCE_HOST_MS,
   AUTO_ADVANCE_SEAT_MS,
   AUTO_ADVANCE_STEP_MS,
+  DEADLINE_KEYS,
   HABBANYA_SIETCH,
   MENTAT_READY_SECONDS,
   PHASE_SECONDS,
@@ -1681,6 +1701,7 @@ export {
   phaseWindowOpen,
   resetDeadlines,
   rollStorm,
+  shiftDeadlines,
   spiceHarvest,
   stormEntry,
   stormOrder

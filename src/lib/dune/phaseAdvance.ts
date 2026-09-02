@@ -79,6 +79,54 @@ export const MENTAT_READY_SECONDS = 60
 export const PHASE_SECONDS = 30
 
 /**
+ * THE PAUSE STOPS THE CLOCKS, not just the screen.
+ *
+ * A banner saying "paused" over a match whose deadlines went on running is
+ * worse than no pause at all: the table comes back to an auction that timed
+ * out, a charity window that shut and a phase that swept itself on. So the
+ * pause is honoured by moving every deadline forward by exactly as long as
+ * the game stood still.
+ *
+ * BY WALKING THE STATE, not by naming the fields. There are a dozen
+ * deadlines — setup, charity, the auction and the gap between its cards, the
+ * blow, the ride, the Nexus, the Mentat, the look window, a Karama owed back,
+ * the battle beats, the shipment rotation, the storm carry — and a list of
+ * them here would be a list to forget to add to. What is named instead is the
+ * KEYS a deadline is ever stored under, which is a much smaller and much more
+ * stable thing, and every one of them at any depth is shifted. A deadline
+ * added tomorrow under one of these names is carried without anybody
+ * remembering this function exists.
+ *
+ * NOTHING ELSE MOVES. `turn`, counts, ids and the rest are untouched, and a
+ * key not on the list is left exactly as it was even when it holds a number
+ * that looks like a time.
+ */
+export const DEADLINE_KEYS = [
+  'closesAt', 'expiresAt', 'opensAt', 'pausedUntil',
+] as const
+
+export function shiftDeadlines<T>(value: T, ms: number): T {
+  if (ms === 0 || !Number.isFinite(ms)) return value
+  if (Array.isArray(value)) {
+    return value.map(v => shiftDeadlines(v, ms)) as unknown as T
+  }
+  if (!value || typeof value !== 'object') return value
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    out[k] = (DEADLINE_KEYS as readonly string[]).includes(k) && typeof v === 'number'
+      ? v + ms
+      : shiftDeadlines(v, ms)
+  }
+  return out as unknown as T
+}
+
+/** A match standing still, and who stopped it. */
+export interface PausedState {
+  at: number
+  by: string
+}
+
+/**
  * WHO FIRES THE ADVANCE WHEN NOBODY IS PLAYING, and how long they wait.
  *
  * The endpoint sweeps a finished phase forward off any successful action —
@@ -191,6 +239,8 @@ export interface AdvanceState {
   forces: Force[]
   players: DunePlayerPublic[]
   spiceOnBoard?: Record<string, number>
+  /** The match stands still until somebody ends it. Outranks every hold. */
+  paused?: PausedState | null
   setup?: { closesAt?: number }
   winner?: unknown
   stormMoved?: number
@@ -247,12 +297,19 @@ export function phaseAfter(phase: GamePhase): { phase: GamePhase; newTurn: boole
 export interface AdvanceHold {
   code: 'setup-not-finished' | 'game-over' | 'blow-not-turned'
     | 'worms-pending' | 'charity-open' | 'auction-running' | 'shipping-underway'
+    | 'paused'
     | 'battles-underway' | 'worm-ride' | 'mentat-pause' | 'nexus-open'
     | 'storm-window' | 'karama-give-back'
   until?: number
 }
 
 export function advanceHold(state: AdvanceState, now: number): AdvanceHold | null {
+  // A PAUSED MATCH ADVANCES NOTHING, and this is checked first because it is
+  // the one hold that outranks every other: whatever else the board is in the
+  // middle of, it is not in the middle of it right now. It carries no `until`
+  // — a pause ends when somebody ends it, not when a clock says so, which is
+  // the whole point of it.
+  if (state.paused) return { code: 'paused' }
   // A KARAMA TAKE OWES ITS RETURN before the match moves on, whatever the
   // phase: cards out of a hand with none yet given back is half a rule.
   // Past the clock the push settles it, so the hold expires like the rest.

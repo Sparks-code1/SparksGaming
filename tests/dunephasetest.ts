@@ -10,6 +10,7 @@
 import { readFileSync } from 'node:fs'
 import {
   phaseAfter, advanceHold, phaseWindowOpen, autoAdvanceDelay, autoPushDelay,
+  shiftDeadlines, DEADLINE_KEYS,
   AUTO_ADVANCE_HOST_MS, AUTO_ADVANCE_SEAT_MS, AUTO_ADVANCE_STEP_MS, rollStorm, stormEntry, cityIncome,
   mentatVerdict, biddingOpening, PHASE_SECONDS, TURN_LIMIT, WIN_STRONGHOLDS,
   SIETCH_TABR, HABBANYA_SIETCH, TUEKS_SIETCH,
@@ -1137,6 +1138,126 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
     screen3.includes("at: { turn: row.turn, phase: row.phase }")
       && (screen3.match(/at: \{ turn: row\.turn, phase: row\.phase \}/g) ?? []).length >= 2,
     true)
+}
+
+// ── the pause stops the clocks, not just the screen ───────────────────────
+// A banner over a match whose deadlines went on running is worse than no
+// pause: the table comes back to an auction that timed out, a charity window
+// that shut and a phase that swept itself on. So resuming moves every
+// deadline forward by exactly as long as the game stood still.
+{
+  // EVERY DEADLINE THE STATE ACTUALLY CARRIES, at the depth it carries it.
+  // This fixture is the point of the test: a shift that missed any one of
+  // these would leave that window expiring during the pause.
+  const before = {
+    turn: 4, phase: 'Bidding', storm: 'sector-7',
+    setup: { closesAt: 1_000 },
+    charity: { expiresAt: 2_000, turn: 4 },
+    auction: { status: 'awaiting', closesAt: 3_000, pausedUntil: 3_500 },
+    spiceBlow: { closesAt: 4_000 },
+    wormRide: { closesAt: 5_000, territories: ['territory-11'] },
+    nexus: { closesAt: 6_000 },
+    mentat: { closesAt: 7_000, ready: [] },
+    phaseClock: { turn: 4, phase: 'Bidding', closesAt: 8_000 },
+    karamaGiveBack: { closesAt: 9_000 },
+    shipping: { closesAt: 10_000, at: 0 },
+    stormCarry: { closesAt: 11_000, roll: 3, turn: 4 },
+    battles: {
+      closesAt: 12_000,
+      current: {
+        closesAt: 13_000,
+        revealed: {
+          traitor: { closesAt: 14_000 },
+          allocate: { closesAt: 15_000, by: 'atreides' },
+        },
+        voice: { closesAt: 16_000, done: false },
+      },
+    },
+  }
+  const after = shiftDeadlines(before, 1_234) as typeof before
+
+  // WALKED, NOT LISTED. Gather every deadline-shaped key at any depth from
+  // the fixture itself and require each one to have moved — so a deadline
+  // added to the game tomorrow is covered without editing this test.
+  // WRITTEN OUT, not imported. A scanner that asked the implementation which
+  // keys are deadlines would go blind the moment the implementation forgot
+  // one — which is the failure this whole block exists to catch.
+  const KNOWN_DEADLINES = ['closesAt', 'expiresAt', 'opensAt', 'pausedUntil']
+  const deadlines = (o: unknown, path = ''): [string, number][] => {
+    if (Array.isArray(o)) return o.flatMap((v, i) => deadlines(v, `${path}[${i}]`))
+    if (!o || typeof o !== 'object') return []
+    return Object.entries(o as Record<string, unknown>).flatMap(([k, v]) =>
+      KNOWN_DEADLINES.includes(k) && typeof v === 'number'
+        ? [[`${path}.${k}`, v] as [string, number]]
+        : deadlines(v, `${path}.${k}`))
+  }
+  const was = deadlines(before)
+  const now2 = deadlines(after)
+  check('the fixture carries every deadline the game has', was.length, 17)
+  check('...and every one of them moves by the pause',
+    now2.map(([, v], i) => v - was[i][1]).filter(d => d !== 1_234), [])
+  check('...naming the same fields, in the same places',
+    now2.map(([k]) => k), was.map(([k]) => k))
+
+  // AND NOTHING ELSE MOVES. A turn is not a time, and neither is a roll.
+  check('the turn and the board are untouched',
+    [after.turn, after.phase, after.storm, after.stormCarry.roll,
+      after.battles.current.revealed.allocate.by],
+    [4, 'Bidding', 'sector-7', 3, 'atreides'])
+  check('...and arrays inside it survive', after.wormRide.territories, ['territory-11'])
+  // A ZERO PAUSE CHANGES NOTHING AT ALL.
+  // AND THE TWO LISTS ARE HELD TOGETHER. Written out above so the scanner is
+  // independent; compared here so a key added to one and not the other is a
+  // failure rather than a quiet gap.
+  check('the scanner knows exactly the keys the shift moves',
+    [...KNOWN_DEADLINES].sort(), [...DEADLINE_KEYS].sort())
+  check('a pause of no length moves nothing',
+    shiftDeadlines(before, 0), before)
+
+  // THE HOLD. A paused match advances nothing, and this outranks every other
+  // hold — whatever the board is in the middle of, it is not in the middle of
+  // it right now. It carries no `until`: a pause ends when somebody ends it.
+  check('a paused match holds the turn',
+    advanceHold(at('Revival', { paused: { at: 1, by: 'atreides' } } as never), 9e12),
+    { code: 'paused' })
+  check('...ahead of a hold that would otherwise answer',
+    advanceHold(at('Bidding', {
+      paused: { at: 1, by: 'atreides' },
+      auction: { status: 'awaiting', closesAt: 9e12 },
+    } as never), 1_000)?.code,
+    'paused')
+  check('...and an unpaused match is unaffected',
+    advanceHold(at('Revival'), 9e12), null)
+
+  // THE ENDPOINT: anybody stops it, anybody starts it again.
+  const fn2 = code('supabase/functions/dune-action/index.ts')
+  check('the endpoint takes a pause and a resume',
+    [fn2.includes("case 'PAUSE': {"), fn2.includes("case 'RESUME': {")],
+    [true, true])
+  check('...with no host check on either',
+    /case .PAUSE.: \{[\s\S]{0,700}?isHost/.test(fn2), false)
+  check('...and resuming shifts the clocks by how long it stood still',
+    [fn2.includes('const stood = Math.max(0, now - Number(was.at))'),
+      fn2.includes('shiftDeadlines(')],
+    [true, true])
+
+  // THE CLIENT: a key, not a button, and never while somebody is typing.
+  const screen4 = code('src/components/dune/DuneMatchScreen.tsx')
+  check('P toggles the pause',
+    screen4.includes("if (e.key !== 'p' && e.key !== 'P') return"), true)
+  check('...and stands down for anything that takes text',
+    [screen4.includes('el.isContentEditable'),
+      screen4.includes("['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)"),
+      screen4.includes('e.isComposing')],
+    [true, true, true])
+  check('...and lives in the menu rather than on the board',
+    [screen4.includes('data-layer="pause-toggle"'),
+      screen4.includes('role="menuitem"')],
+    [true, true])
+  // AND THE AUCTION PUSH STANDS DOWN TOO: its clock has not moved, so an
+  // expired-looking window is only expired because the shift has not run yet.
+  check('a paused match pushes no auction',
+    screen4.includes('expired: expired && !paused'), true)
 }
 
 // Not optional: without an exit code the runner counts a failing suite green.
