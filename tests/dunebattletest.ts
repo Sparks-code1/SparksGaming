@@ -1112,9 +1112,9 @@ check('the three windows have their seconds',
       /purse: readSpice\(mine as never\),/.test(planCase)], [true, true, true])
   const beatCase = fn.slice(fn.indexOf("case 'BATTLE_TRAITOR'"), fn.indexOf("case 'BATTLE_ALLOCATE'"))
   check('the beat opens the winner\'s window exactly when a choice exists',
-    /if \(state\.mode === 'advanced' && outcome\.winner && !outcome\.explosion/.test(beatCase)
-      && /!outcome\.traitors\.includes\(outcome\.winner as never\) && winnerDial > 0\)/.test(beatCase),
-    true)
+    [beatCase.includes("const winnerChoices"),
+      beatCase.includes("if (winnerChoices.length > 1) {")],
+    [true, true])
   check('...and cannot reopen it over the winner\'s head',
     /code: 'allocation-open' \}, 409\)/.test(beatCase), true)
   const allocCase = fn.slice(fn.indexOf("case 'BATTLE_ALLOCATE'"), fn.indexOf('// ── The Fremen ride'))
@@ -1124,7 +1124,7 @@ check('the three windows have their seconds',
       /choice = firstAllocation\(constraint\)/.test(allocCase)], [true, true, true])
   check('...and both triggers settle through ONE implementation',
     [/return await settleBattle\(/.test(allocCase),
-      /return await settleBattle\(b as never, c as never, calls as never, null\)/.test(beatCase)],
+      beatCase.includes("return await settleBattle(b as never, c as never, calls as never,")],
     [true, true])
   const settle = fn.slice(fn.indexOf('const settleBattle'), fn.indexOf('switch (action.type)'))
   check('the winner\'s named dead replace the dial-count rule',
@@ -1712,4 +1712,49 @@ check('the three windows have their seconds',
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.
+// ── the allocation window opens on a CHOICE, not on a dial ────────────────
+// Found by playing: every battle stopped for a "choose your losses" window,
+// including ones where the winner held nothing but ordinary forces and spent
+// no spice — where any dial has exactly one way to be paid. The window was
+// gated on there being a dial at all, which is a different question from
+// there being an answer to pick between.
+//
+// The fix is not a rule about which factions get asked. Elites and spice are
+// only the commonest way to have options; what decides it is how many legal
+// allocations exist, and allocationsFor already says.
+{
+  const plainOnly = { plain: 6, elite: 0 }
+  const withElites = { plain: 5, elite: 1 }
+
+  // ORDINARY FORCES, NO SPICE: one way to pay any dial it can pay.
+  // Six ordinary at half each pay three and no more, so these are the dials
+  // such a winner can actually meet.
+  for (const dial of [0.5, 1, 2, 3]) {
+    check(`a plain-only winner has one way to pay ${dial}`,
+      allocationsFor({ pieces: plainOnly, dial, spice: 0, worth: 1, freeFull: false }).length,
+      1)
+  }
+  // ...AND THE RULEBOOK CASE STILL HAS SEVERAL. The Emperor with one
+  // Sardaukar and five ordinary, dialling 3 on 1 spice, may lose the
+  // Sardaukar full plus two ordinary at half, or one ordinary full plus four
+  // at half — so this must go on asking.
+  check('the rulebook Emperor still has a real choice',
+    allocationsFor({ pieces: withElites, dial: 3, spice: 1, worth: 2, freeFull: false }).length > 1,
+    true)
+
+  // AND THE ENDPOINT ASKS THAT QUESTION rather than counting the dial.
+  const fn = code('supabase/functions/dune-action/index.ts')
+  const at = fn.indexOf('const winnerChoices')
+  check('the endpoint enumerates the winner choices', at > 0, true)
+  const gate = fn.slice(at, at + 900)
+  check('...from the same enumeration that admitted the plan',
+    [gate.includes('allocationsFor({'), gate.includes('piecesInBattle(')],
+    [true, true])
+  check('...and opens the window only when more than one exists',
+    fn.includes('if (winnerChoices.length > 1) {'), true)
+  // A SINGLE OPTION IS APPLIED, not discarded and recomputed.
+  check('...settling a lone option with that option',
+    fn.includes('winnerChoices.length === 1 ? winnerChoices[0] as never : null'), true)
+}
+
 process.exit(pass ? 0 : 1)

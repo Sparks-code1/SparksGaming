@@ -73,7 +73,7 @@ import {
   BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS, BATTLE_ALLOCATE_SECONDS,
   judgeVoiceCommand, prescienceAnswer, PRESCIENCE_ASKS,
   piecesInBattle, eliteWorth, fullWithoutSpice,
-  judgeAllocation, firstAllocation, allocationLosses,
+  judgeAllocation, firstAllocation, allocationLosses, allocationsFor,
   BATTLE_CAPTURE_SECONDS, capturePool, leaderOwner, allOwnLeadersDead,
   KWISATZ_HADERACH, kwisatzHaderachAvailable,
 } from '../_shared/duneBattle.gen.ts'
@@ -3364,13 +3364,31 @@ Deno.serve(async req => {
       })
 
       // ── ADVANCED: the winner names their dead before anything settles ───
-      // The window opens exactly when a choice exists: a winner with a dial
-      // to pay, no explosion, and no traitor call in their favour — a
-      // traitor-calling winner loses nothing, so there is nothing to choose.
-      // The beat's answers ride the same write so the settle can recompute.
+      // The window opens exactly when a choice exists — and THE ENUMERATION
+      // IS WHAT SAYS SO. It used to open for any winner with a dial to pay,
+      // which is not the same question: a faction holding only ordinary
+      // forces and spending no spice has exactly one way to pay any dial, so
+      // the window opened on a choice of one and made every such battle stop
+      // for a decision nobody had. That is not a rule about which factions
+      // get asked — elites and spice are only the commonest way to have
+      // options — it is a question about how many answers exist, and
+      // allocationsFor already answers it. One option settles itself, using
+      // that same option; none is unreachable for a plan judgePlan admitted.
       const winnerDial = outcome.winner ? (planOf(outcome.winner).dial ?? 0) : 0
-      if (state.mode === 'advanced' && outcome.winner && !outcome.explosion
-        && !outcome.traitors.includes(outcome.winner as never) && winnerDial > 0) {
+      const winnerChoices = state.mode === 'advanced' && outcome.winner
+        && !outcome.explosion && !outcome.traitors.includes(outcome.winner as never)
+        && winnerDial > 0
+        ? allocationsFor({
+          pieces: piecesInBattle((state.forces ?? []) as never,
+            outcome.winner as never, c.territoryId, c.sectors),
+          dial: winnerDial,
+          spice: planOf(outcome.winner).spice ?? 0,
+          worth: eliteWorth(outcome.winner as never,
+            [c.aggressor, c.defender].find((f) => f !== outcome.winner) as never),
+          freeFull: fullWithoutSpice(outcome.winner as never),
+        })
+        : []
+      if (winnerChoices.length > 1) {
         const { data, error } = await admin.rpc('apply_match_write', {
           p_match_id: matchId,
           p_expected_version: match.version,
@@ -3398,7 +3416,11 @@ Deno.serve(async req => {
         return json({ allocate: outcome.winner, version: data[0].version })
       }
 
-      return await settleBattle(b as never, c as never, calls as never, null)
+      // A SINGLE OPTION IS APPLIED, NOT DISCARDED. Falling through with null
+      // would leave the settle to work the losses out again; the enumeration
+      // has already produced the only answer, so it is the one used.
+      return await settleBattle(b as never, c as never, calls as never,
+        winnerChoices.length === 1 ? winnerChoices[0] as never : null)
     }
 
     // ── ADVANCED: the winner names their dead ───────────────────────────────
