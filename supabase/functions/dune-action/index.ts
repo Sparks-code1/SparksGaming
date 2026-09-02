@@ -1328,6 +1328,95 @@ Deno.serve(async req => {
    * after it — the switch's own `return` is the action's answer, not the
    * end of the request.
    */
+  /**
+   * THE ACTION LOG, for Dune.
+   *
+   * apply-action has written one for Risk since the beginning, and it is how
+   * a stuck auction and a missing combat dispatch were both diagnosed. Dune
+   * wrote nothing at all — thousands of rows for Risk, zero for Dune — so a
+   * question like "did Revival get skipped" had no evidence to answer it.
+   *
+   * REFUSALS ARE LOGGED TOO, and they are the point. A refused action that
+   * leaves no trace is exactly how the late-bid bug stayed invisible: the
+   * endpoint took a bid it then quietly ignored, and nothing anywhere
+   * recorded that the bid had arrived.
+   *
+   * THE PAYLOAD IS NOT LOGGED, and that is the difference from Risk that
+   * matters. `participants read actions` lets EVERY SEAT read every row, and
+   * Risk can afford it because its state is public. Dune is built on hidden
+   * information — a battle plan before the reveal, the traitor a seat kept,
+   * the Bene Gesserit prediction, a Truthtrance question, which card a Karama
+   * came from. Writing the raw action into a table the whole table can read
+   * would hand all of it over, and it would do so silently. So what is kept
+   * is the SHAPE of what happened — type, actor, outcome, refusal code, and
+   * where the match was — plus a whitelist of fields that are already public.
+   * Anything not on that list stays out; add to it one field at a time, with
+   * a reason.
+   *
+   * BEST EFFORT, ALWAYS. The action has been decided and answered by the time
+   * this runs; a log that failed must never turn a good action into an error.
+   *
+   * SEQ COMES FROM THE LOG ITSELF, not from matches.action_seq, which only
+   * moves on an accepted write — two refusals in a row would collide on the
+   * primary key. One scheme for both kinds, retried past the race.
+   */
+  const safeDetail = (a: Record<string, unknown>): Record<string, unknown> => {
+    // ONLY WHAT THE TABLE CAN ALREADY SEE.
+    //
+    // BID: whether it was a bid or a pass. The standing bid is public on the
+    // row, and which of the two arrived is what a stalled auction turns on.
+    // The AMOUNT is deliberately absent — a refused bid would otherwise
+    // publish what a seat was willing to pay.
+    if (a.type === 'BID') {
+      const bid = a.bid as { kind?: string } | undefined
+      return bid?.kind ? { kind: bid.kind } : {}
+    }
+    // SETUP_ANSWER: WHICH answer, never its content. "traitor" is safe;
+    // which traitor is the whole secret.
+    if (a.type === 'SETUP_ANSWER' && typeof a.answer === 'string') {
+      return { answer: a.answer }
+    }
+    return {}
+  }
+
+  const logAction = async (entry: {
+    type: string; ok: boolean; code?: string; by?: string
+    detail?: Record<string, unknown>
+  }) => {
+    try {
+      const body = {
+        game: 'dune',
+        type: entry.type,
+        ok: entry.ok,
+        ...(entry.code ? { code: entry.code } : null),
+        ...(entry.by ? { by: entry.by } : null),
+        // WHERE THE MATCH WAS when this arrived — the half that answers
+        // "which phase was it in when that happened".
+        phase: state.phase ?? null,
+        turn: state.turn ?? null,
+        ...(entry.detail && Object.keys(entry.detail).length
+          ? { detail: entry.detail } : null),
+      }
+      for (let i = 0; i < 3; i++) {
+        const { data: top } = await admin.from('match_actions')
+          .select('seq').eq('match_id', matchId)
+          .order('seq', { ascending: false }).limit(1)
+        const seq = (((top ?? [])[0]?.seq as number | undefined) ?? 0) + 1
+        const { error } = await admin.from('match_actions').insert({
+          match_id: matchId,
+          seq,
+          actor_user_id: user.id,
+          actor_player_id: playerId,
+          action: body,
+          effects: [],
+        })
+        if (!error) return
+        // 23505 is two requests allocating the same seq; read again and retry.
+        if (error.code !== '23505') return
+      }
+    } catch { /* the log is evidence, never a gate */ }
+  }
+
   const answer = await (async (): Promise<Response> => {
   switch (action.type) {
     // ── Open the charity window ──────────────────────────────────────────────
@@ -4660,6 +4749,20 @@ Deno.serve(async req => {
    * answered; a sweep that fails — someone else advanced first, the row
    * moved under it — must not turn their successful action into an error.
    */
+  // WHAT ARRIVED AND WHAT BECAME OF IT — accepted or refused, and before the
+  // sweep below, so the row records the phase the action was sent INTO.
+  {
+    const said = await answer.clone().json().catch(() => ({})) as {
+      code?: string; error?: string
+    }
+    await logAction({
+      type: String(action.type ?? '?'),
+      ok: answer.ok,
+      ...(answer.ok ? null : { code: said.code ?? String(answer.status) }),
+      detail: safeDetail(action as Record<string, unknown>),
+    })
+  }
+
   if (answer.ok && action.type !== 'ADVANCE_PHASE') {
     try {
       const { data: after } = await admin
@@ -4670,7 +4773,15 @@ Deno.serve(async req => {
       const fresh = (after?.state ?? {}) as Record<string, unknown>
       const at = Date.now()
       if (after && !advanceHold(fresh as never, at) && !phaseWindowOpen(fresh as never, at)) {
-        await advancePhase(fresh, after as never)
+        const swept = await advancePhase(fresh, after as never)
+        // THE SWEEP LEAVES A TRACE. It moves the phase without anybody
+        // sending an action, so without this the turn appears to skip by
+        // itself — which is precisely the question this log exists to
+        // answer. `by: sweep` is what tells it apart from a press.
+        await logAction({
+          type: 'ADVANCE_PHASE', by: 'sweep', ok: swept.ok,
+          detail: { from: String(fresh.phase ?? '?') },
+        })
       }
     } catch { /* the action stands whatever the sweep does */ }
   }

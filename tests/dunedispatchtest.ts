@@ -764,4 +764,88 @@ const code = (path: string) => readFileSync(path, 'utf8')
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
+// ── the action log, and what it must never carry ──────────────────────────
+// apply-action has logged Risk since the beginning and it is how a stuck
+// auction was diagnosed; dune-action logged nothing, so "did Revival get
+// skipped" had no evidence to answer it. It logs now — including refusals,
+// because an action that leaves no trace when it is refused is exactly how
+// the late-bid bug stayed invisible.
+//
+// AND IT REDACTS. `participants read actions` lets every seat read every row.
+// Risk can afford the raw payload because its state is public; Dune cannot,
+// because its whole design is hidden information. These checks are the ones
+// that stop somebody helpfully "improving" the log by putting the action back
+// in it.
+{
+  const fn = code('supabase/functions/dune-action/index.ts')
+
+  check('dune-action writes an action log at all',
+    /from\('match_actions'\)[\s\S]{0,400}\.insert\(\{/.test(fn), true)
+  check('...recording who acted, by account and by seat',
+    [/actor_user_id: user\.id/.test(fn), /actor_player_id: playerId/.test(fn)],
+    [true, true])
+
+  // REFUSALS TOO. The log call sits outside any ok-check, and carries the
+  // refusal code — a row that only ever recorded successes would have had
+  // nothing to say about the auction that went quiet.
+  const logAt = fn.indexOf('const said = await answer.clone().json()')
+  check('the log runs whatever the answer was', logAt > 0, true)
+  const logCall = fn.slice(logAt, logAt + 700)
+  check('...carrying the outcome and the refusal code',
+    [/ok: answer\.ok/.test(logCall), /code: said\.code/.test(logCall)],
+    [true, true])
+  // BEFORE THE SWEEP, so the row names the phase the action was sent INTO
+  // rather than whatever the sweep moved it to a moment later.
+  check('...and lands before the phase sweep',
+    logAt < fn.indexOf('if (answer.ok && action.type !=='), true)
+
+  // THE SWEEP IS LOGGED TOO. It moves the phase with nobody sending
+  // anything, so without a row the turn appears to skip by itself — which is
+  // the exact question the log exists to answer.
+  check('an automatic sweep leaves a trace of its own',
+    [/by: 'sweep'/.test(fn), /detail: \{ from: String\(fresh\.phase/.test(fn)],
+    [true, true])
+
+  // ── the redaction ──────────────────────────────────────────────────────
+  // THE RAW ACTION MUST NOT REACH THE ROW. What goes in `action` is the body
+  // built above it; a bare `action,` or a spread of it would publish battle
+  // plans, kept traitors, predictions and Truthtrance questions to every seat
+  // at the table.
+  const insertAt = fn.indexOf('.from(\'match_actions\').insert({')
+  const insert = fn.slice(insertAt, insertAt + 400)
+  check('the row carries the built body, never the action itself',
+    [/action: body/.test(insert), /action,/.test(insert), /\.\.\.action/.test(insert)],
+    [true, false, false])
+
+  // AND THE WHITELIST IS A WHITELIST — it returns {} for anything it does
+  // not explicitly know to be public.
+  const safeAt = fn.indexOf('const safeDetail =')
+  const safe = fn.slice(safeAt, fn.indexOf('const logAction ='))
+  check('the detail whitelist closes with nothing', /return \{\}\s*\}\s*$/.test(safe.trim() + '\n'), true)
+  // A BID LEAVES ITS KIND AND NOT ITS PRICE: a refused bid would otherwise
+  // publish what a seat was willing to pay.
+  check('a bid logs whether it was a bid or a pass, never the amount',
+    [/kind: bid\.kind/.test(safe), /spice/.test(safe)],
+    [true, false])
+  // A SETUP ANSWER LEAVES ITS KIND AND NOT ITS CONTENT: "traitor" is safe,
+  // which traitor is the whole secret.
+  check('a setup answer logs which answer, never what it said',
+    [/answer: a\.answer/.test(safe), /keep|traitors|turn:/.test(safe)],
+    [true, false])
+
+  // NEVER A GATE. The action is already decided and answered by the time the
+  // log runs, so a failed log must not turn a good action into an error.
+  const logFn = fn.slice(fn.indexOf('const logAction ='), fn.indexOf('const answer = await'))
+  check('a failed log never breaks the action',
+    [/try \{/.test(logFn), /\} catch \{/.test(logFn)],
+    [true, true])
+  // SEQ COMES FROM THE LOG, not from matches.action_seq — that only moves on
+  // an accepted write, so two refusals would collide on the primary key.
+  check('seq is allocated from the log, and the race is retried',
+    [/order\('seq', \{ ascending: false \}\)/.test(logFn),
+      /action_seq/.test(logFn),
+      /error\.code !== '23505'/.test(logFn)],
+    [true, false, true])
+}
+
 process.exit(pass ? 0 : 1)
