@@ -1784,13 +1784,46 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
   // AND THE ENDPOINT ASKS BEFORE IT JUDGES, handing the answers down rather
   // than letting judgePlan reach for match state it has no business reading.
   const fn2 = code('supabase/functions/dune-action/index.ts')
-  const at2 = fn2.indexOf('const elitesStopped')
-  check('the endpoint asks about both before judging a plan',
-    [at2 > 0, fn2.indexOf('const freeFullStopped') > at2,
-      at2 < fn2.indexOf('const verdict = judgePlan({')],
-    [true, true, true])
+  const at2 = fn2.indexOf('const battleStops = (of: string) => ({')
+  check('the endpoint asks about both in one place', at2 > 0, true)
+  {
+    const near = fn2.slice(at2, at2 + 700)
+    check('...against the two refs, in the Battles phase',
+      [near.includes("'advanced.forces' as never"),
+        near.includes("'advanced.battle' as never"),
+        near.includes("'Battles' as never")], [true, true, true])
+  }
   check('...and hands them to the judge',
-    fn2.includes('stopped: { elites: elitesStopped, freeFull: freeFullStopped },'), true)
+    fn2.includes('stopped: battleStops(String(myFaction)),'), true)
+
+  // EVERY PLACE THE CONSTRAINT IS BUILT, not just the plan. "Counting double
+  // in battle AND IN TAKING LOSSES" is two halves of one sentence, and for a
+  // while the endpoint stopped the first and computed the second with the
+  // elites doubled again — the plan was judged one way and the losses
+  // allocated another. A pin on the plan alone could not see that, so what is
+  // pinned is that NO call anywhere is left bare.
+  //
+  // ARGUMENTS, NOT A WINDOW. The first cut of this read a fixed 260 characters
+  // after each call and asked whether battleStops appeared in them — and a
+  // stripped eliteWorth passed, because the NEXT line's fullWithoutSpice
+  // carried one and fell inside the window. So the extent is found by matching
+  // the call's own parentheses, which is the only thing that means "this call's
+  // arguments" rather than "somewhere near here".
+  const argsOf = (src: string, at: number): string => {
+    let depth = 0
+    for (let i = at; i < src.length; i++) {
+      if (src[i] === '(') depth++
+      else if (src[i] === ')') { depth--; if (depth === 0) return src.slice(at, i + 1) }
+    }
+    return src.slice(at)
+  }
+  for (const fn of ['eliteWorth', 'fullWithoutSpice']) {
+    const calls = [...fn2.matchAll(new RegExp(`\\b${fn}\\(`, 'g'))]
+      .map(m => argsOf(fn2, m.index! + fn.length))
+    check(`${fn} is called where the losses are counted`, calls.length > 0, true)
+    check(`no ${fn} call is judged without its stop`,
+      calls.filter(a => !a.includes('battleStops(')).length, 0)
+  }
 }
 
 process.exit(pass ? 0 : 1)

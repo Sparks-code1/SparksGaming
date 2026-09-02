@@ -49,7 +49,8 @@ import {
   isSuppressed, karamaAllowed, playKarama, isKaramaCardId, suppressibleRefs,
   KARAMA_GIVE_SECONDS,
 } from '../_shared/duneKarama.gen.ts'
-import { prescienceFor, withReveal, PRESCIENT_FACTION } from '../_shared/dunePrescience.gen.ts'
+import { prescienceFor, withReveal, PRESCIENT_FACTION, REVEAL_KEY,
+} from '../_shared/dunePrescience.gen.ts'
 import {
   openingPosition, answerFremenPlacement, answerPrediction, answerTraitor,
   answerAdvisorPlacement, shipAdvisor, defaultFremenPlacement, defaultTraitor,
@@ -2668,9 +2669,15 @@ Deno.serve(async req => {
       // THE STORM IS A WALL WITH ONE DOOR IN IT, and only the Fremen have the
       // key. Asked here and handed down, like every other stop: the judge
       // reads no match state of its own.
+      // NAMED, NOT INFERRED. This ref belongs to the Fremen; the Guild has an
+      // 'advanced.shipment' of their own meaning something else entirely, and
+      // asking about myFaction would have read one seat's stop under another
+      // seat's rule. mayShipIntoStorm refuses everyone but the Fremen anyway,
+      // so nothing was broken — but the marker above would have been pointing
+      // at a check that was not always the one it names.
       // KARAMA-STOP: fremen advanced.shipment
       const stormDoorShut = isSuppressed((state.suppressed ?? []) as never,
-        myFaction as never, 'advanced.shipment' as never,
+        'fremen' as never, 'advanced.shipment' as never,
         Number(state.turn ?? 0), 'Shipment and Movement' as never)
       const stormOk = mayShipIntoStorm(
         myFaction as never,
@@ -3212,6 +3219,32 @@ Deno.serve(async req => {
       return json({ current, version: data[0].version })
     }
 
+    /**
+     * THE TWO BATTLE SUPPRESSIONS, asked once and asked everywhere.
+     *
+     * "Counting double IN BATTLE AND IN TAKING LOSSES" is two halves of one
+     * sentence, and for a while only the first half was stopped: the plan was
+     * judged with the elites cancelled and then the losses were allocated with
+     * them counting double again, so a stopped Emperor paid a dial with fewer
+     * pieces than the rule leaves them. The same was true of the Fremen
+     * fighting at full strength without spice.
+     *
+     * A FUNCTION, so the next site that needs them cannot forget one. Both are
+     * (turn, phase)-scoped like every other stop, and both are asked about the
+     * seat whose pieces are being counted rather than about whoever is asking.
+     */
+    const battleStops = (of: string) => ({
+      // KARAMA-STOP: emperor advanced.forces
+      // KARAMA-STOP: fremen advanced.forces
+      elites: isSuppressed((state.suppressed ?? []) as never,
+        of as never, 'advanced.forces' as never,
+        Number(state.turn ?? 0), 'Battles' as never),
+      // KARAMA-STOP: fremen advanced.battle
+      freeFull: isSuppressed((state.suppressed ?? []) as never,
+        'fremen' as never, 'advanced.battle' as never,
+        Number(state.turn ?? 0), 'Battles' as never),
+    })
+
     case 'BATTLE_PLAN': {
       const b = state.battles
       const c = b?.current
@@ -3289,20 +3322,10 @@ Deno.serve(async req => {
         // match state of its own.
         //
         // ONE CHECK SERVES TWO FACTIONS. Sardaukar and Fedaykin are the same
-        // rule wearing two names, so the marker names both: whichever seat is
-        // dialling, it is their own elites that stop counting double.
-        // KARAMA-STOP: emperor advanced.forces
-        // KARAMA-STOP: fremen advanced.forces
-        const elitesStopped = isSuppressed((state.suppressed ?? []) as never,
-          myFaction as never,
-          'advanced.forces' as never,
-          Number(state.turn ?? 0), 'Battles' as never)
-        // KARAMA-STOP: fremen advanced.battle
-        const freeFullStopped = isSuppressed((state.suppressed ?? []) as never,
-          'fremen' as never, 'advanced.battle' as never,
-          Number(state.turn ?? 0), 'Battles' as never)
+        // rule wearing two names: whichever seat is dialling, it is their own
+        // elites that stop counting double. See battleStops.
         const verdict = judgePlan({
-          stopped: { elites: elitesStopped, freeFull: freeFullStopped },
+          stopped: battleStops(String(myFaction)),
           faction: myFaction as never,
           battle: c, forces: (state.forces ?? []) as never,
           hand: ((mine as { cards?: string[] }).cards ?? []),
@@ -3435,6 +3458,17 @@ Deno.serve(async req => {
       } }).voice
       if (!voice) return json({ error: 'no Voice in this battle', code: 'no-voice' }, 409)
       if (voice.done) return json({ error: 'the Voice has spoken', code: 'already-voiced' }, 409)
+      // AND ASKED AGAIN HERE, not only where the window opened. A Karama is
+      // played in ANSWER to something, and the moment somebody wants the Voice
+      // stopped is the moment it is about to speak — by which time the window
+      // is already up. Checking only at the pick made the card useless against
+      // the battle actually being fought and good only against the next one.
+      // KARAMA-STOP: bene-gesserit abilities.battle
+      if (isSuppressed((state.suppressed ?? []) as never,
+        'bene-gesserit' as never, 'abilities.battle' as never,
+        Number(state.turn ?? 0), 'Battles' as never)) {
+        return json({ error: 'a Karama has stopped the Voice', code: 'karama-stopped' }, 409)
+      }
       const expired = now >= voice.closesAt
       let command: unknown = null
       if (!expired) {
@@ -3483,6 +3517,15 @@ Deno.serve(async req => {
       } }).prescience
       if (!pres) return json({ error: 'no question is open', code: 'no-prescience' }, 409)
       if (pres.done) return json({ error: 'the question is settled', code: 'already-asked' }, 409)
+      // THE SAME REASON AS THE VOICE: the window opens with the battle and the
+      // card is played against the battle, so a stop that only reads at the
+      // open cannot reach the question it was spent on.
+      // KARAMA-STOP: atreides abilities.battle
+      if (isSuppressed((state.suppressed ?? []) as never,
+        'atreides' as never, 'abilities.battle' as never,
+        Number(state.turn ?? 0), 'Battles' as never)) {
+        return json({ error: 'a Karama has stopped the question', code: 'karama-stopped' }, 409)
+      }
       const expired = now >= pres.closesAt
 
       const { data: secretRows } = await admin
@@ -3678,9 +3721,14 @@ Deno.serve(async req => {
             outcome.winner as never, c.territoryId, c.sectors),
           dial: winnerDial,
           spice: planOf(outcome.winner).spice ?? 0,
+          // STOPPED HERE TOO, or the second half of the sentence goes
+          // unenforced: the plan was judged with the elites cancelled and the
+          // losses would be counted with them doubled again.
           worth: eliteWorth(outcome.winner as never,
-            [c.aggressor, c.defender].find((f) => f !== outcome.winner) as never),
-          freeFull: fullWithoutSpice(outcome.winner as never),
+            [c.aggressor, c.defender].find((f) => f !== outcome.winner) as never,
+            battleStops(String(outcome.winner)).elites),
+          freeFull: fullWithoutSpice(outcome.winner as never,
+            battleStops(String(outcome.winner)).freeFull),
         })
         : []
       if (winnerChoices.length > 1) {
@@ -3740,8 +3788,13 @@ Deno.serve(async req => {
           (state.forces ?? []) as never, allocate.by as never, c.territoryId, c.sectors),
         dial: plan.dial,
         spice: plan.spice ?? 0,
-        worth: eliteWorth(allocate.by as never, opponent as never),
-        freeFull: fullWithoutSpice(allocate.by as never),
+        // THE SAME TWO STOPS the gate above and the plan below were judged
+        // with. Three computations of one constraint that disagree are three
+        // different games.
+        worth: eliteWorth(allocate.by as never, opponent as never,
+          battleStops(String(allocate.by)).elites),
+        freeFull: fullWithoutSpice(allocate.by as never,
+          battleStops(String(allocate.by)).freeFull),
       }
       const expired = now >= allocate.closesAt
       let choice
@@ -4097,6 +4150,32 @@ Deno.serve(async req => {
       }
       const sHand = [...(sMine.cards ?? [])]
       sHand.splice(sHand.indexOf(sCard), 1)
+      /**
+       * WHAT A STOP TAKES BACK, as well as what it prevents.
+       *
+       * The Atreides bidding reveal is written into their row when a card
+       * OPENS, and stopping the advantage only kept the next one from being
+       * written — the card actually up for bid stayed sitting in their tray,
+       * readable for the rest of its auction. A stop played to keep them from
+       * seeing the card being bid on has to reach the card being bid on, or it
+       * is a card spent on the one after.
+       *
+       * A SECRETS ROW, so this is the only place it can be done: no rule
+       * function can reach into a seat's private data, and the phase entry that
+       * wrote it has long since returned.
+       */
+      const sTakeBack: Record<string, unknown> = {}
+      if (sTarget === 'atreides' && sRef === 'abilities.bidding') {
+        const seenSeat = seatOfFaction['atreides']
+        if (seenSeat) {
+          const { data: seenRow } = await admin
+            .from('match_secrets').select('data')
+            .eq('match_id', matchId).eq('player_id', seenSeat).maybeSingle()
+          const seen = { ...((seenRow?.data ?? {}) as Record<string, unknown>) }
+          delete seen[REVEAL_KEY]
+          sTakeBack[seenSeat] = seen
+        }
+      }
       const { data, error } = await admin.rpc('apply_match_write', {
         p_match_id: matchId,
         p_expected_version: match.version,
@@ -4115,7 +4194,7 @@ Deno.serve(async req => {
             ...((state.treacheryDiscard ?? []) as string[]), sCard,
           ],
         },
-        p_secrets: { [playerId]: { ...sMine, cards: sHand } },
+        p_secrets: { ...sTakeBack, [playerId]: { ...sMine, cards: sHand } },
       })
       if (error) return json({ error: error.message }, 500)
       if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)

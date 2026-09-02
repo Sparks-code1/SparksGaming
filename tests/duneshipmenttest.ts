@@ -1176,8 +1176,12 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
   check('...against abilities.shipment, in Shipment and Movement',
     [/abilities.shipment/.test(nearShip), /Shipment and Movement/.test(nearShip)],
     [true, true])
+  // COUNTED OVER THE WHOLE FILE rather than over a window after the first
+  // mention: the window had to be widened twice as unrelated comments grew
+  // between the two calls, and a pin that needs re-tuning to keep passing is
+  // a pin that will one day be re-tuned into agreeing with a bug.
   check('...and hands it to both prices',
-    (nearShip.match(/suppressed: ownShipSuppressed/g) ?? []).length, 2)
+    (endpoint.match(/suppressed: ownShipSuppressed/g) ?? []).length, 2)
 }
 
 // ── the Guild goes when it likes ────────────────────────────────────────

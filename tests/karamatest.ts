@@ -277,6 +277,47 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
       [...declared].sort())
   }
 
+  // ── a stop reaches the thing it was played against ─────────────────────
+  // A KARAMA IS PLAYED IN ANSWER TO SOMETHING. The Voice and the Atreides
+  // question both open with the battle, so a stop that read only at the open
+  // could never reach the battle it was spent on — the card was good against
+  // the NEXT fight and useless against this one, which is not what anybody
+  // spends a Karama for. Both are asked again where they are used.
+  {
+    const ep = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+    const inCase = (name: string, chars = 2200) => {
+      const at = ep.indexOf(`case '${name}': {`)
+      return at < 0 ? '' : ep.slice(at, at + chars)
+    }
+
+    const voice = inCase('BATTLE_VOICE')
+    check('the Voice is refused while it is stopped',
+      [voice.includes("'bene-gesserit' as never, 'abilities.battle' as never"),
+        voice.includes("code: 'karama-stopped'")], [true, true])
+
+    const pres = inCase('BATTLE_PRESCIENCE')
+    check('the question is refused while it is stopped',
+      [pres.includes("'atreides' as never, 'abilities.battle' as never"),
+        pres.includes("code: 'karama-stopped'")], [true, true])
+
+    // AND A STOP TAKES BACK WHAT IS STILL BEING LOOKED AT. The Atreides
+    // bidding reveal sits in their own row from the moment a card opens, so
+    // stopping the advantage without clearing it left the card actually up for
+    // bid readable for the rest of its auction — a card spent on the next one.
+    const stop = inCase('KARAMA_STOP', 4200)
+    check('stopping the Atreides sight clears the card they are holding',
+      [stop.includes("sTarget === 'atreides' && sRef === 'abilities.bidding'"),
+        stop.includes('delete seen[REVEAL_KEY]'),
+        stop.includes('p_secrets: { ...sTakeBack,')], [true, true, true])
+
+    // AND STILL AT THE OPEN. Refusing the use without also declining to open
+    // the window would leave a battle stalled on a beat nobody may answer.
+    check('...and the windows still decline to open',
+      [ep.includes("if (isSuppressed((state.suppressed ?? []) as never,"),
+        ep.includes('const presWanted = (hasAtreides || !!presProxy)')],
+      [true, true])
+  }
+
   // COUNTED OUT, not recomputed. A check that derived the expected number the
   // same way the code does would agree with any change, including a wrong one;
   // these are literals so adding or dropping an offer is a decision somebody
