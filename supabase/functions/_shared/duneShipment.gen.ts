@@ -788,6 +788,21 @@ var DUNE_TERRITORIES = [
 
 // src/lib/dune/shipment.ts
 var SHIPMENT_SECONDS = 180;
+var GUILD_ORDER_SECONDS = 10;
+var GUILD = "spacing-guild";
+function guildMayChoose(mode, order) {
+  return mode === "advanced" && order.includes(GUILD);
+}
+function guildHolding(window, now) {
+  const pick = window?.guildPick;
+  return !!pick && now < pick.closesAt;
+}
+function guildReorder(order, at) {
+  const without = order.filter((f) => f !== GUILD);
+  if (without.length === order.length) return [...order];
+  const slot = Math.max(0, Math.min(without.length, Math.trunc(at)));
+  return [...without.slice(0, slot), GUILD, ...without.slice(slot)];
+}
 var SHIP_STRONGHOLD_SPICE = 1;
 var SHIP_OPEN_SPICE = 2;
 var GUILD_RETURN_PER = 2;
@@ -1147,6 +1162,8 @@ export {
   BG_FLIP_WINDOW,
   FREMEN_SHIP_RADIUS,
   GREAT_FLAT,
+  GUILD,
+  GUILD_ORDER_SECONDS,
   GUILD_RETURN_PER,
   POLAR_SINK,
   POLAR_SINK_SECTOR,
@@ -1162,6 +1179,9 @@ export {
   coOccupied,
   flipBgForces,
   fremenShipTargets,
+  guildHolding,
+  guildMayChoose,
+  guildReorder,
   hajrMayPlay,
   inStorm,
   judgeBgFlip,

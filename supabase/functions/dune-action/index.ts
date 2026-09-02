@@ -39,7 +39,10 @@ import {
 import {
   rideTerritories, judgeWormRide, WORM_RIDE_SECONDS,
 } from '../_shared/duneSpiceBlow.gen.ts'
-import { bgFollowsShip, POLAR_SINK, POLAR_SINK_SECTOR } from '../_shared/duneShipment.gen.ts'
+import {
+  bgFollowsShip, POLAR_SINK, POLAR_SINK_SECTOR,
+  guildMayChoose, guildReorder, guildHolding, GUILD, GUILD_ORDER_SECONDS,
+} from '../_shared/duneShipment.gen.ts'
 import { askTruthtrance, planFromRow } from '../_shared/duneTruthtrance.gen.ts'
 import {
   isSuppressed, karamaAllowed, playKarama, isKaramaCardId, suppressibleRefs,
@@ -1273,9 +1276,19 @@ Deno.serve(async req => {
         // ── the rotation opens with the phase ──────────────────────────────
         case 'Shipment and Movement': {
           const order = stormOrder(state.storm as never, (state.players ?? []) as never)
+          // THE GUILD PICKS ITS SLOT FIRST, for ten seconds. Their sheet lets
+          // them go first, last or anywhere between, and the rotation cannot
+          // start until it is known where they are in it. Silence is the storm
+          // order — the card grants a choice, not a duty — and the window is
+          // short because five other people are waiting on one seat's option.
+          const guildPicks = guildMayChoose(
+            (state.mode === 'advanced' ? 'advanced' : 'basic') as never, order as never)
           const shipping = {
             turn, order, at: 0, done: {},
             closesAt: now + SHIPMENT_SECONDS * 1000,
+            ...(guildPicks
+              ? { guildPick: { closesAt: now + GUILD_ORDER_SECONDS * 1000 } }
+              : null),
           }
           // THE ATREIDES SEE THE TOP OF THE SPICE DECK — their movement
           // prescience, the same shape as their bidding one: written into
@@ -2352,6 +2365,45 @@ Deno.serve(async req => {
      * would be a banner over a game that went on timing out behind it —
      * see shiftDeadlines for how the fields are found.
      */
+    /**
+     * THE GUILD NAMES ITS SLOT.
+     *
+     * Only the Guild, only while the window stands, and only in the advanced
+     * game where the rule lives. The rotation is rewritten with them lifted
+     * out and put back at the slot they asked for; everybody else keeps the
+     * order the storm gave them, which is not this card's to change.
+     *
+     * ANSWERING CLOSES THE WINDOW. There is one choice in it and it has been
+     * made, so the table does not wait out the rest of the ten seconds.
+     */
+    case 'GUILD_ORDER': {
+      const w = state.shipping as {
+        turn: number; order: string[]; at: number
+        guildPick?: { closesAt: number }
+      } | undefined
+      if (state.phase !== 'Shipment and Movement' || !w || !w.guildPick) {
+        return json({ error: 'nobody is choosing an order', code: 'no-guild-window' }, 409)
+      }
+      if (myFaction !== GUILD) {
+        return json({ error: 'the Guild chooses this', code: 'not-your-choice' }, 403)
+      }
+      if (now >= w.guildPick.closesAt) {
+        return json({ error: 'that window has closed', code: 'window-closed' }, 409)
+      }
+      const reordered = guildReorder(w.order as never, Number(action.at ?? 0))
+      const nextShipping = { ...w, order: reordered, at: 0 }
+      delete (nextShipping as Record<string, unknown>).guildPick
+      const { data, error } = await admin.rpc('apply_match_write', {
+        p_match_id: matchId,
+        p_expected_version: match.version,
+        p_state: { ...state, shipping: nextShipping, awaiting: reordered[0] ?? null },
+        p_secrets: {},
+      })
+      if (error) return json({ error: error.message }, 500)
+      if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
+      return json({ order: reordered, version: data[0].version })
+    }
+
     case 'PAUSE': {
       if (state.paused) {
         return json({ error: 'the match is already paused', code: 'already-paused' }, 409)
@@ -2478,6 +2530,14 @@ Deno.serve(async req => {
         shipAllySpice = readSpice(allyRowData as never)
       }
 
+      // THE ROTATION HAS NOT STARTED while the Guild is choosing where in it
+      // they stand. Past the deadline it has: the window is spent, whoever
+      // asks, exactly like every other clock here.
+      if (guildHolding(w as never, now)) {
+        return json({
+          error: 'the Guild is choosing when they go', code: 'guild-choosing',
+        }, 409)
+      }
       const kind = (action.kind ?? 'off-planet') as 'off-planet' | 'cross' | 'to-reserves'
       const count = Number(action.count ?? 0)
       const starred = Number(action.starred ?? 0)
@@ -2673,6 +2733,11 @@ Deno.serve(async req => {
       if (state.phase !== 'Shipment and Movement' || !w) {
         return json({ error: 'the turn is not at movement', code: 'wrong-phase' }, 409)
       }
+      if (guildHolding(w as never, now)) {
+        return json({
+          error: 'the Guild is choosing when they go', code: 'guild-choosing',
+        }, 409)
+      }
       if (w.order[w.at] !== myFaction) {
         return json({ error: 'not your turn to move', code: 'not-your-turn' }, 403)
       }
@@ -2746,6 +2811,11 @@ Deno.serve(async req => {
         { turn: number; order: string[]; at: number; done: Record<string, boolean>; closesAt: number } | undefined
       if (state.phase !== 'Shipment and Movement' || !w) {
         return json({ error: 'the turn is not at shipment', code: 'wrong-phase' }, 409)
+      }
+      if (guildHolding(w as never, now)) {
+        return json({
+          error: 'the Guild is choosing when they go', code: 'guild-choosing',
+        }, 409)
       }
       const expired = now >= w.closesAt
       if (!expired && w.order[w.at] !== myFaction) {

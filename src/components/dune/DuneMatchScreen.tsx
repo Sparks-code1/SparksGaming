@@ -1051,6 +1051,9 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
         onRevive={seat ? a => void revive(a) : undefined}
         onWormRide={seat ? a => void send({ type: 'WORM_RIDE', ...a }) : undefined}
         onPassTurn={seat ? () => void passTurn() : undefined}
+        onGuildOrder={seat?.faction === 'spacing-guild'
+          ? at => void send({ type: 'GUILD_ORDER', at })
+          : undefined}
         onBattlePick={seat
           ? (territoryId, opponent) => void send({ type: 'BATTLE_PICK', territoryId, opponent })
           : undefined}

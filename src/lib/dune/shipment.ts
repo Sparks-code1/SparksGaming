@@ -39,6 +39,70 @@ import { DUNE_TERRITORIES } from '@/data/dune/boardData'
  *  one turn, both halves, then the next faction. */
 export const SHIPMENT_SECONDS = 180
 
+/**
+ * THE GUILD CHOOSES WHEN THEY GO, and has ten seconds to say so.
+ *
+ * Their sheet: "You may take your shipment and move action out of turn.
+ * This would allow you to go first or last or in between other players'
+ * turns, however you wish." Everyone else keeps the storm order, so what
+ * this is is one seat picking a slot in a rotation that is otherwise fixed.
+ *
+ * TEN SECONDS, AND SILENCE IS NORMAL ORDER. The rest of the table is
+ * waiting on this and the answer is usually "wherever I already was", so a
+ * long window would tax five people for one seat's option. Unanswered, the
+ * order stands exactly as the storm left it — the card grants a choice, not
+ * a duty.
+ *
+ * ADVANCED ONLY, like the rest of that side of the sheet.
+ */
+export const GUILD_ORDER_SECONDS = 10
+export const GUILD: FactionId = 'spacing-guild'
+
+/** Whether the Guild is at this table with a choice to make. */
+export function guildMayChoose(
+  mode: 'basic' | 'advanced', order: readonly FactionId[],
+): boolean {
+  return mode === 'advanced' && order.includes(GUILD)
+}
+
+/**
+ * The rotation with the Guild moved to the slot they named.
+ *
+ * EVERYBODY ELSE KEEPS THEIR RELATIVE ORDER — the storm decides that and no
+ * card here changes it. The Guild is lifted out and put back in, so a table
+ * of six has six legal answers: first, last, and the four gaps between.
+ * Out-of-range is clamped rather than refused, since a seat asking for slot
+ * nine at a table of six means "last" and there is nothing else it could.
+ */
+/**
+ * Whether the rotation is still waiting on the Guild.
+ *
+ * A FUNCTION RATHER THAN AN INLINE TEST because it is a rule, and a rule
+ * that lives inside an endpoint can only be checked by reading the endpoint
+ * for a string — which is how a gate wrapped in `if (false &&` survives its
+ * own test. Here it is exercised at the boundaries instead.
+ *
+ * PAST THE DEADLINE IT IS SPENT, whoever is asking: a window nobody answered
+ * closes on time exactly like every other clock in this game, and the order
+ * the storm dealt stands.
+ */
+export function guildHolding(
+  window: { guildPick?: { closesAt: number } | null } | null | undefined,
+  now: number,
+): boolean {
+  const pick = window?.guildPick
+  return !!pick && now < pick.closesAt
+}
+
+export function guildReorder(
+  order: readonly FactionId[], at: number,
+): FactionId[] {
+  const without = order.filter(f => f !== GUILD)
+  if (without.length === order.length) return [...order]
+  const slot = Math.max(0, Math.min(without.length, Math.trunc(at)))
+  return [...without.slice(0, slot), GUILD, ...without.slice(slot)]
+}
+
 export const SHIP_STRONGHOLD_SPICE = 1
 export const SHIP_OPEN_SPICE = 2
 /** The Guild's return rate: one spice per two forces, rounded up. */

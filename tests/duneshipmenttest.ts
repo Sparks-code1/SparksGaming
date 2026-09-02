@@ -12,6 +12,7 @@ import {
   judgeShipment, judgeMove, moveTargets, movementRange, territoryDistance,
   landForces, liftForces, nextSeat,
   SHIP_STRONGHOLD_SPICE, SHIP_OPEN_SPICE, GREAT_FLAT, STRONGHOLD_CAP, SHIPMENT_SECONDS,
+  guildMayChoose, guildReorder, guildHolding, GUILD_ORDER_SECONDS,
 } from '@/lib/dune/shipment'
 import type { ShippingWindow } from '@/lib/dune/shipment'
 import { stormOrder } from '@/lib/dune/phaseAdvance'
@@ -1115,6 +1116,138 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
     [true, true])
   check('...and hands it to both prices',
     (nearShip.match(/suppressed: ownShipSuppressed/g) ?? []).length, 2)
+}
+
+// ── the Guild goes when it likes ────────────────────────────────────────
+// THE ADVANTAGE IS A SLOT, not a speed: they take their shipment and move
+// out of turn, first or last or between, and everybody else keeps the order
+// the storm dealt. Ten seconds to say so, and silence keeps the storm order —
+// which is the half that has to be checked hardest, because it is the half
+// that happens when nobody is watching.
+{
+  const six: FactionId[] = ['atreides', 'harkonnen', 'emperor', 'spacing-guild', 'fremen', 'bene-gesserit']
+  const rest = six.filter(f => f !== 'spacing-guild')
+
+  check('the choice is the advanced game\'s',
+    [guildMayChoose('advanced', six), guildMayChoose('basic', six)], [true, false])
+  check('...and nobody chooses for an absent Guild',
+    guildMayChoose('advanced', rest), false)
+
+  check('slot zero is first',
+    guildReorder(six, 0), ['spacing-guild', ...rest])
+  check('the last slot is last',
+    guildReorder(six, 5), [...rest, 'spacing-guild'])
+  check('and a middle slot is that gap',
+    guildReorder(six, 2), ['atreides', 'harkonnen', 'spacing-guild', 'emperor', 'fremen', 'bene-gesserit'])
+
+  // EVERYBODY ELSE KEEPS THE STORM'S ORDER. Whatever slot is asked for, the
+  // other five come out in the sequence they went in — this card moves one
+  // seat and no other.
+  check('the rest keep their relative order at every slot',
+    [0, 1, 2, 3, 4, 5].map(at =>
+      JSON.stringify(guildReorder(six, at).filter(f => f !== 'spacing-guild'))),
+    [0, 1, 2, 3, 4, 5].map(() => JSON.stringify(rest)))
+  check('...and the table keeps its size',
+    [0, 3, 5].map(at => guildReorder(six, at).length), [6, 6, 6])
+
+  // A SEAT ASKING FOR SLOT NINE AT A TABLE OF SIX MEANS LAST, and a negative
+  // one means first. There is nothing else either could mean, so they are
+  // clamped rather than refused.
+  check('out of range is clamped to the ends',
+    [guildReorder(six, 99), guildReorder(six, -4)],
+    [guildReorder(six, 5), guildReorder(six, 0)])
+  check('a table without the Guild is returned untouched',
+    guildReorder(rest, 0), rest)
+
+  check('ten seconds, because five people are waiting on one', GUILD_ORDER_SECONDS, 10)
+
+  // ── the window in the endpoint ─────────────────────────────────────────
+  const endpoint = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  check('the phase entry opens the window only when the Guild may choose',
+    endpoint.includes('const guildPicks = guildMayChoose(')
+    && endpoint.includes('guildPick: { closesAt: now + GUILD_ORDER_SECONDS * 1000 }'), true)
+
+  // NOBODY SHIPS INTO AN UNDECIDED ROTATION. Without this the first seat in
+  // storm order could take a whole turn while the Guild was still deciding
+  // whether to precede them, which is the one thing the ten seconds buys.
+  //
+  // THE RULE IS EXERCISED, THE WIRING IS PINNED. The first cut of this test
+  // read the endpoint for the strings around the gate, and wrapping the gate
+  // in `if (false &&` left every one of those strings in place — it passed a
+  // sabotage it should have caught. So the boundaries are checked on the
+  // function itself, and the endpoint is held to the exact guard rather than
+  // to words near it.
+  check('the window holds the rotation up to its deadline',
+    [guildHolding({ guildPick: { closesAt: 1000 } }, 999),
+      guildHolding({ guildPick: { closesAt: 1000 } }, 1000),
+      guildHolding({ guildPick: { closesAt: 1000 } }, 1001)],
+    [true, false, false])
+  check('...and an unanswered window is not a permanent one', 
+    guildHolding({ guildPick: { closesAt: 1000 } }, 9e12), false)
+  check('a phase with no window holds nobody up',
+    [guildHolding({}, 5), guildHolding(null, 5), guildHolding(undefined, 5),
+      guildHolding({ guildPick: null }, 5)],
+    [false, false, false, false])
+
+  // ALL THREE OF THEM. Shipping, moving and passing are the whole of a turn
+  // here, so gating one of the three leaves two ways round the wait.
+  check('shipping, moving and passing all wait on the Guild',
+    [(endpoint.match(/if \(guildHolding\(w as never, now\)\) \{/g) ?? []).length,
+      (endpoint.match(/code: 'guild-choosing'/g) ?? []).length],
+    [3, 3])
+
+  const orderAt = endpoint.indexOf("case 'GUILD_ORDER':")
+  check('the action exists', orderAt > 0, true)
+  {
+    const near = endpoint.slice(orderAt, orderAt + 1400)
+    check('...refuses another faction, a shut window and a phase without one',
+      [near.includes("code: 'not-your-choice'"), near.includes("code: 'window-closed'"),
+        near.includes("code: 'no-guild-window'")], [true, true, true])
+    check('...and answering takes the window away with it',
+      near.includes('delete (nextShipping as Record<string, unknown>).guildPick'), true)
+  }
+
+  // ── the rail says it, to everybody ─────────────────────────────────────
+  // THE GUILD GETS BUBBLES AND EVERYBODY ELSE GETS THE REASON. A table
+  // watching a board do nothing for ten seconds and not being told why is how
+  // a play-by-network game gets reloaded mid-turn.
+  {
+    const base = {
+      storm: CALM, turn: 1, phase: 'Shipment and Movement', shieldWall: 'intact',
+      mode: 'advanced',
+      spiceDeck: { remaining: 10, discardA: [], discardB: [] },
+      players: six.map((f, i) => ({
+        faction: f, seat: `player-position-${i + 1}`,
+        reserves: 10, handCount: 0, battleLosses: 0,
+      })),
+      forces: [] as Force[], spiceOnBoard: {}, awaiting: null,
+      shipping: {
+        turn: 1, order: six, stage: 'ship', at: 0, done: {},
+        closesAt: 9e12, guildPick: { closesAt: 9e12 },
+      },
+    } as unknown as DuneGameState
+    const draw = (seat: FactionId, when = 0) => renderToStaticMarkup(createElement(
+      DuneGameScreen,
+      { state: base, seat, now: when, chat: [], onGuildOrder: () => {} } as never))
+
+    const guild = draw('spacing-guild')
+    check('the Guild is offered a slot for every seat, first through last',
+      (guild.match(/data-guild-slot=/g) ?? []).length, 6)
+    check('...and asked, not told', guild.includes('When do you go?'), true)
+    check('...with the standing order named as the default',
+      guild.includes('keep the slot the storm gave you'), true)
+
+    const other = draw('atreides')
+    check('another seat is told what the wait is',
+      other.includes('The Guild is choosing'), true)
+    check('...and is offered no slots at all',
+      (other.match(/data-guild-slot=/g) ?? []).length, 0)
+
+    // A SHUT WINDOW IS NO WINDOW. The rail is the phase's, and this phase
+    // has ten seconds of it.
+    check('the rail is gone once the window has closed',
+      draw('spacing-guild', 9e12 + 1).includes('data-layer="guild-order-rail"'), false)
+  }
 }
 
 // Not optional: without an exit code the runner counts a failing suite green.

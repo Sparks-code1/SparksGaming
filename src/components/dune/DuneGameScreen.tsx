@@ -87,6 +87,7 @@ import {
 import { RideRail } from './RideRail'
 import { MentatRail } from './MentatRail'
 import { BgFlipRail } from './BgFlipRail'
+import { GuildOrderRail } from './GuildOrderRail'
 import { RevivalRail } from './RevivalRail'
 import { BattlePanel } from './BattlePanel'
 import { NexusPanel } from './NexusPanel'
@@ -268,6 +269,9 @@ export interface DuneGameScreenProps {
   /** End the shipment-and-movement turn: the rotation's handoff, offered
    *  on the rail while it is this seat's turn. */
   onPassTurn?: () => void
+  /** The Guild naming its slot in the rotation: 0 is first, the length of
+   *  the rest is last. Advanced games, ten seconds, Guild only. */
+  onGuildOrder?: (at: number) => void
   /** Ride the worm: some or all of a struck territory's forces, anywhere.
    *  The server judges the window, the storm and the gate. */
   onWormRide?: (a: {
@@ -336,10 +340,14 @@ export function DuneGameScreen({
   onGiveBack, giveBackRefusal = null,
   onBgFlip, bgFlipRefusal = null, onBgPolicy,
   battleRefusal,
-  worms = [], onWormRide, onPassTurn,
+  worms = [], onWormRide, onPassTurn, onGuildOrder,
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
   const [chatShut, setChatShut] = useState(false)
+  /** The Guild's open window, if one stands. Written by the phase entry in
+   *  advanced games only, and deleted the moment they answer. */
+  const guildPick = (state.shipping as { guildPick?: { closesAt: number } } | undefined)
+    ?.guildPick ?? null
   /** The ask panel, and how much of the public answer log this seat has
    *  dismissed — a new answer re-raises the line for everyone. */
   const [ttOpen, setTtOpen] = useState(false)
@@ -910,6 +918,21 @@ export function DuneGameScreen({
             looks like controls reads as a bug. Setup sits in phase Storm,
             so the phase gate alone keeps this rail clear of the Fremen's
             placement. */}
+        {/* THE GUILD'S TEN SECONDS, and they hold the whole rotation.
+            Ahead of the shipment rail because it is ahead of it in time:
+            nobody ships until it is known where the Guild stands. Every
+            seated player sees it — five people watching a board do nothing
+            for ten seconds should be told what it is waiting on — and only
+            the Guild gets the bubbles. */}
+        {seat && guildPick && now < guildPick.closesAt && (
+          <GuildOrderRail
+            seat={seat}
+            order={(state.shipping?.order ?? []) as never}
+            secondsLeft={Math.max(0, Math.ceil((guildPick.closesAt - now) / 1000))}
+            busy={!onGuildOrder}
+            onChoose={at => onGuildOrder?.(at)} />
+        )}
+
         {seat && mine && onShipReserves && state.phase === 'Shipment and Movement' && (
           <ShipRail
             faction={seat}
