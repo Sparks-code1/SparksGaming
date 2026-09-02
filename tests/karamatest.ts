@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs'
 import { karamaOptions, playKarama, isKaramaFor } from '@/lib/dune/karama'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
-import { FACTIONS, FACTION_IDS } from '@/data/dune/factions'
+import { FACTIONS, FACTION_IDS, canKaramaStop, factionRuleText } from '@/data/dune/factions'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import type { FactionId } from '@/types/Dune/Faction'
 import type { Force, TerritoryId } from '@/types/Dune/Game'
@@ -186,6 +186,62 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
       suppressibleRefs('atreides').some(r => r.ref === 'abilities.bidding'),
       suppressibleRefs('harkonnen').some(r => r.ref === 'abilities.treachery')],
     [false, false, false, true, true])
+  // ── what a Karama can and cannot interrupt ──────────────────────────────
+  // The menu used to be every rule with prose minus the win conditions, which
+  // offered things no card can stop. A Karama interrupts something HAPPENING,
+  // so three kinds are absent by decision rather than by oversight, and these
+  // checks are what stop them drifting back in.
+
+  // NOTHING FROM THE START OF THE GAME. It has already happened, and in the
+  // Harkonnen case the card says so itself.
+  check('what a faction was dealt at the start cannot be stopped',
+    [suppressibleRefs('harkonnen').some(r => r.ref === 'abilities.traitors'),
+      suppressibleRefs('bene-gesserit').some(r => r.ref === 'advanced.beforeGame')],
+    [false, false])
+
+  // NOR A STANDING PROPERTY OF A HAND. Holding eight cards is not a moment.
+  // What CAN be stopped is the extra card, which happens during the bidding.
+  check('a hand size cannot be stopped, but the extra card can',
+    suppressibleRefs('harkonnen').find(r => r.ref === 'abilities.treachery')?.text,
+    'The extra Treachery Card they draw whenever they buy one.')
+
+  // NOR ANOTHER FACTION'S OWN KARAMA — a card cannot cancel the thing it is.
+  check('no Karama use is offered, for any faction',
+    FACTION_IDS.flatMap(id => suppressibleRefs(id))
+      .filter(r => r.ref === 'advanced.karama').length,
+    0)
+  check('...and the Bene Gesserit worthless-as-Karama goes with them',
+    suppressibleRefs('bene-gesserit').some(r => r.ref === 'advanced.treachery'), false)
+
+  // WHAT IS OFFERED IS SHORT, and its own line rather than the rules card.
+  // The card stays whole — it is what a player reads about themselves — and a
+  // paragraph in a stop menu is a paragraph nobody reads.
+  check('every offer is one short line',
+    FACTION_IDS.flatMap(id => suppressibleRefs(id))
+      .filter(r => r.text.length > 110).map(r => r.ref),
+    [])
+  check('...and no offer is just the rules card paragraph',
+    FACTION_IDS.flatMap(id => suppressibleRefs(id)
+      .filter(r => r.text === factionRuleText(FACTIONS[id]!, r.ref))
+      .map(r => `${id}.${r.ref}`)),
+    [])
+
+  // AND THE CURATED LIST IS THE SOURCE. A rule missing from karamaStops is
+  // not offered however much prose it has.
+  // COUNTED OUT, not recomputed. A check that derived the expected number the
+  // same way the code does would agree with any change, including a wrong one;
+  // these are literals so adding or dropping an offer is a decision somebody
+  // has to make twice.
+  check('the offer is exactly the curated list, faction by faction',
+    FACTION_IDS.map(id => suppressibleRefs(id).length), [4, 2, 2, 8, 2, 7])
+  check('...twenty-five in all',
+    FACTION_IDS.reduce((n, id) => n + suppressibleRefs(id).length, 0), 25)
+  check('...and every one of them is stoppable in the first place',
+    FACTION_IDS.flatMap(id => suppressibleRefs(id)
+      .filter(r => !canKaramaStop(FACTIONS[id]!, r.ref))
+      .map(r => `${id}.${r.ref}`)),
+    [])
+
   check('...and every offered ref carries its own rules text',
     suppressibleRefs('atreides').every(r => r.text.length > 0), true)
 

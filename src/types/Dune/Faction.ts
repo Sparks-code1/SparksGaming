@@ -235,5 +235,22 @@ export interface Faction {
    * rather than a tidy-up.
    */
   unsuppressable: readonly FactionRuleRef[]
+  /**
+   * WHAT A KARAMA MAY STOP, and how it reads when somebody is choosing.
+   *
+   * A CURATED LIST, not a by-product. The offer used to be "every rule with
+   * prose, minus the win conditions", which produced a menu full of things
+   * that cannot be stopped at all: what a faction was dealt at the start of
+   * the game, how many cards their hand may hold, another faction's own
+   * Karama. A Karama interrupts something happening, so the list is the
+   * things that HAPPEN, chosen one at a time.
+   *
+   * AND IT IS NOT THE RULES CARD. The prose in `abilities` and `advanced` is
+   * what a player reads on their own card and it stays whole; these are the
+   * short lines the Karama panel offers, naming the moment being cancelled
+   * and nothing else. A rule missing from here cannot be Karama'd, which is
+   * the point — absence is the decision.
+   */
+  karamaStops: Readonly<Partial<Record<FactionRuleRef, string>>>
   leaders: Leader[]
 }

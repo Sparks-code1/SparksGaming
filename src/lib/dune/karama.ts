@@ -29,7 +29,7 @@ import type { FactionId } from '@/types/Dune/Faction'
 import type { TreacheryCard } from '@/types/Dune/Treachery'
 import type { Force, GameMode, GamePhase, TerritoryId } from '@/types/Dune/Game'
 import type { FactionRuleRef } from '@/types/Dune/Faction'
-import { canKaramaStop, factionRuleText } from '@/data/dune/factions'
+import { canKaramaStop } from '@/data/dune/factions'
 
 /**
  * The seven things a Karama can buy.
@@ -291,16 +291,20 @@ export function suppressibleRefs(
 ): { ref: FactionRuleRef; text: string }[] {
   const f = FACTIONS[faction]
   if (!f) return []
-  const refs: FactionRuleRef[] = [
-    'specialVictory',
-    ...Object.keys(f.abilities).map(k => `abilities.${k}` as FactionRuleRef),
-    ...Object.keys(f.advanced).map(k => `advanced.${k}` as FactionRuleRef),
-  ]
-  return refs.flatMap(ref => {
-    if (!canKaramaStop(f, ref)) return []
-    const text = factionRuleText(f, ref)
-    return text ? [{ ref, text }] : []
-  })
+  // THE CURATED LIST, and nothing else. It used to be every rule with prose
+  // minus the win conditions, which offered a menu of things no Karama can
+  // touch: what a faction was dealt at the start of the game, how large a
+  // hand it may hold, another faction's own Karama. A card that interrupts
+  // can only interrupt something happening — see Faction.karamaStops, where
+  // absence is the decision.
+  //
+  // canKaramaStop still guards the win conditions, so a rule has to be both
+  // listed here AND stoppable: two independent reasons, and either one says
+  // no on its own.
+  return Object.entries(f.karamaStops).flatMap(([ref, text]) =>
+    canKaramaStop(f, ref as FactionRuleRef) && text
+      ? [{ ref: ref as FactionRuleRef, text }]
+      : [])
 }
 
 /** Whether this CARD ID may be spent as a Karama by this faction — the
