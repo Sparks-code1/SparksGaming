@@ -58,10 +58,11 @@ export const POLAR_SINK_SECTOR = 'sector-1'
  * in it. The FREMEN never trigger it: their reserves are on the planet, so
  * their shipping is not "from off-planet" — the sheet's "any other faction
  * ships... from off-planet" excludes them by construction. The Guild's own
- * off-planet shipments trigger it like anyone's. Advanced sends an advisor
- * to the shipper's territory instead and is NOT built — so in an advanced
- * match NOTHING follows: firing the basic rule there hands the Bene
- * Gesserit free Polar Sink forces the advanced game never grants.
+ * off-planet shipments trigger it like anyone's. ADVANCED IS A DIFFERENT
+ * RULE, not an absent one: bgAdvancedFollow sends an advisor to the shipper's
+ * own territory instead, so this basic rule must not fire there — doing so
+ * would hand the Bene Gesserit free Polar Sink forces the advanced game never
+ * grants, on top of the advisor it does.
  */
 export function bgFollowsShip(
   shipper: FactionId, kind: GuildShipKind, mode: 'basic' | 'advanced',
