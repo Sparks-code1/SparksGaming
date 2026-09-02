@@ -164,6 +164,13 @@ export type FactionRuleRef =
   | `abilities.${keyof FactionAbilities & string}`
   | `advanced.${keyof AdvancedRules & string}`
 
+/** One thing a Karama may stop: what it reads as, and whether it bites. */
+export interface KaramaStop {
+  stops: string
+  /** A check exists where this rule fires. False means it cannot be offered. */
+  enforced: boolean
+}
+
 export interface Faction {
   id: FactionId
   /** As shown to players. */
@@ -250,7 +257,14 @@ export interface Faction {
    * short lines the Karama panel offers, naming the moment being cancelled
    * and nothing else. A rule missing from here cannot be Karama'd, which is
    * the point — absence is the decision.
+   * `enforced` says whether a check actually exists at the moment the rule
+   * fires. It is NOT decoration: an entry that is offered without one takes
+   * the card, discards it publicly, announces the stop to the table — and
+   * the advantage goes on working, which is worse than refusing, because a
+   * refusal at least leaves the player holding their card. So the menu shows
+   * only what is enforced, and karamatest holds every flag to the source: a
+   * true with no check fails, and a check with no true fails.
    */
-  karamaStops: Readonly<Partial<Record<FactionRuleRef, string>>>
+  karamaStops: Readonly<Partial<Record<FactionRuleRef, KaramaStop>>>
   leaders: Leader[]
 }

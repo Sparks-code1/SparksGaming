@@ -301,9 +301,16 @@ export function suppressibleRefs(
   // canKaramaStop still guards the win conditions, so a rule has to be both
   // listed here AND stoppable: two independent reasons, and either one says
   // no on its own.
-  return Object.entries(f.karamaStops).flatMap(([ref, text]) =>
-    canKaramaStop(f, ref as FactionRuleRef) && text
-      ? [{ ref: ref as FactionRuleRef, text }]
+  // AND ONLY WHAT THE GAME CAN ACTUALLY DELIVER. An unenforced stop is not
+  // a stop that quietly does nothing — it takes the card, discards it where
+  // the table can see, announces itself in gold along the bottom of the
+  // board, and then the advantage happens anyway. A player who is refused
+  // keeps their card and knows where they stand; a player who is told it
+  // worked has been lied to and paid for it. So an entry with no check at
+  // its firing site is not offered at all until the check exists.
+  return Object.entries(f.karamaStops).flatMap(([ref, stop]) =>
+    stop && stop.enforced && stop.stops && canKaramaStop(f, ref as FactionRuleRef)
+      ? [{ ref: ref as FactionRuleRef, text: stop.stops }]
       : [])
 }
 

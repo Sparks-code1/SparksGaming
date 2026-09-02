@@ -64,10 +64,10 @@ export const ATREIDES: Faction = {
   // Nothing here is beyond a Karama card.
   unsuppressable: [],
   karamaStops: {
-    'abilities.bidding': 'Seeing each Treachery Card before the bidding.',
-    'abilities.movement': 'Looking at the top of the Spice Deck before the move.',
-    'abilities.battle': 'Forcing an opponent to reveal one element of their battle plan.',
-    'advanced.kwisatzHaderach': 'The Kwisatz Haderach adding its +2 to a leader.',
+    'abilities.bidding': { stops: 'Seeing each Treachery Card before the bidding.', enforced: true },
+    'abilities.movement': { stops: 'Looking at the top of the Spice Deck before the move.', enforced: false },
+    'abilities.battle': { stops: 'Forcing an opponent to reveal one element of their battle plan.', enforced: true },
+    'advanced.kwisatzHaderach': { stops: 'The Kwisatz Haderach adding its +2 to a leader.', enforced: false },
   },
   leaders: [
     { name: 'Lady Jessica', strength: 5 },
@@ -120,8 +120,8 @@ export const EMPEROR: Faction = {
   },
   unsuppressable: [],
   karamaStops: {
-    'abilities.bidding': 'Being paid the spice other factions spend on Treachery Cards.',
-    'advanced.forces': 'Sardaukar counting double in battle and in taking losses.',
+    'abilities.bidding': { stops: 'Being paid the spice other factions spend on Treachery Cards.', enforced: true },
+    'advanced.forces': { stops: 'Sardaukar counting double in battle and in taking losses.', enforced: false },
   },
   leaders: [
     { name: 'Hasimir Fenring', strength: 6 },
@@ -199,14 +199,14 @@ export const FREMEN: Faction = {
   // Their special victory. Karama cannot stop a win condition.
   unsuppressable: ['specialVictory'],
   karamaStops: {
-    'abilities.shipment': 'Riding free onto the Great Flat, or within two territories of it.',
-    'abilities.movement': 'Moving two territories instead of one.',
-    'abilities.shaiHulud': 'Surviving Shai-Hulud, and riding it after the Nexus.',
-    'advanced.storm': 'Knowing the storm distance a turn early.',
-    'advanced.spiceBlow': 'Placing every sandworm after the first, and half losses in a storm.',
-    'advanced.shipment': 'Shipping into a storm at half losses.',
-    'advanced.forces': 'Fedaykin counting double in battle and in taking losses.',
-    'advanced.battle': 'Fighting at full strength without spice.',
+    'abilities.shipment': { stops: 'Riding free onto the Great Flat, or within two territories of it.', enforced: true },
+    'abilities.movement': { stops: 'Moving two territories instead of one.', enforced: false },
+    'abilities.shaiHulud': { stops: 'Surviving Shai-Hulud, and riding it after the Nexus.', enforced: false },
+    'advanced.storm': { stops: 'Knowing the storm distance a turn early.', enforced: false },
+    'advanced.spiceBlow': { stops: 'Placing every sandworm after the first, and half losses in a storm.', enforced: false },
+    'advanced.shipment': { stops: 'Shipping into a storm at half losses.', enforced: false },
+    'advanced.forces': { stops: 'Fedaykin counting double in battle and in taking losses.', enforced: false },
+    'advanced.battle': { stops: 'Fighting at full strength without spice.', enforced: false },
   },
   leaders: [
     { name: 'Stilgar', strength: 7 },
@@ -258,8 +258,8 @@ export const SPACING_GUILD: Faction = {
   // Their special victory. Karama cannot stop a win condition.
   unsuppressable: ['specialVictory'],
   karamaStops: {
-    'abilities.shipment': 'Collecting the shipping fees, and shipping at half rate.',
-    'advanced.shipment': 'Taking their shipment and move out of turn.',
+    'abilities.shipment': { stops: 'Collecting the shipping fees, and shipping at half rate.', enforced: true },
+    'advanced.shipment': { stops: 'Taking their shipment and move out of turn.', enforced: false },
   },
   leaders: [
     { name: 'Staban Tuek', strength: 5 },
@@ -347,13 +347,13 @@ export const BENE_GESSERIT: Faction = {
   // specialVictory — see the note on Faction.unsuppressable.
   unsuppressable: ['abilities.beforeGame'],
   karamaStops: {
-    'abilities.shipment': 'Shipping one force free into the Polar Sink.',
-    'abilities.battle': 'The Voice: commanding one card in an opponent battle plan.',
-    'advanced.shipment': 'Shipping one advisor free into a territory somebody else ships into.',
-    'advanced.charity': 'Always collecting CHOAM charity, whatever they hold.',
-    'advanced.advisors': 'Advisors sharing a territory without a fight.',
-    'advanced.fighters': 'Flipping fighters to advisors when somebody arrives.',
-    'advanced.battle': 'Standing advisors up as fighters before the shipment.',
+    'abilities.shipment': { stops: 'Shipping one force free into the Polar Sink.', enforced: false },
+    'abilities.battle': { stops: 'The Voice: commanding one card in an opponent battle plan.', enforced: true },
+    'advanced.shipment': { stops: 'Shipping one advisor free into a territory somebody else ships into.', enforced: false },
+    'advanced.charity': { stops: 'Always collecting CHOAM charity, whatever they hold.', enforced: false },
+    'advanced.advisors': { stops: 'Advisors sharing a territory without a fight.', enforced: false },
+    'advanced.fighters': { stops: 'Flipping fighters to advisors when somebody arrives.', enforced: false },
+    'advanced.battle': { stops: 'Standing advisors up as fighters before the shipment.', enforced: false },
   },
   leaders: [
     { name: 'Mother Ramallo', strength: 5 },
@@ -405,8 +405,8 @@ export const HARKONNEN: Faction = {
   },
   unsuppressable: [],
   karamaStops: {
-    'abilities.treachery': 'The extra Treachery Card they draw whenever they buy one.',
-    'advanced.capturedLeaders': 'Capturing a leader from a battle they win.',
+    'abilities.treachery': { stops: 'The extra Treachery Card they draw whenever they buy one.', enforced: true },
+    'advanced.capturedLeaders': { stops: 'Capturing a leader from a battle they win.', enforced: false },
   },
   leaders: [
     { name: 'Feyd-Rautha', strength: 6 },

@@ -228,14 +228,67 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
 
   // AND THE CURATED LIST IS THE SOURCE. A rule missing from karamaStops is
   // not offered however much prose it has.
+  // ── every offer bites, and the source is what says so ──────────────────
+  // THE INCREMENTAL RULE FAILED TWICE. "A check arrives with its ability" is
+  // the right rule and nobody kept it: the Fremen desert ride shipped without
+  // one, and so did eighteen more, and the only way anybody found out was by
+  // reading the list. A rule that depends on remembering is a rule that is
+  // already broken, so it is enforced here instead.
+  //
+  // HOW A CHECK IS FOUND. Most call sites name their faction and rule as
+  // literals, but two name them through a variable — `myFaction`, and the
+  // BONUS_FACTION constant that exists to be the single answer to who gets
+  // the bonus card — so the pair cannot always be read off the call. Each
+  // check therefore carries a marker naming what it guards, AND the marker
+  // must be followed by a real isSuppressed call: a comment on its own proves
+  // nothing, which is exactly the failure mode a comment-only scheme would
+  // have.
+  {
+    const endpoint = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+    const lines = endpoint.split(/\r?\n/)
+    const guarded = new Set<string>()
+    const hollow: string[] = []
+    lines.forEach((line, i) => {
+      const m = /\/\/ KARAMA-STOP: ([a-z-]+) ((?:abilities|advanced)\.[a-zA-Z]+)/.exec(line)
+      if (!m) return
+      // the check itself, within a few lines of the marker that claims it
+      const near = lines.slice(i, i + 6).join(' ')
+      if (/isSuppressed\(/.test(near)) guarded.add(`${m[1]}|${m[2]}`)
+      else hollow.push(`${m[1]}.${m[2]}`)
+    })
+    check('no marker stands without a check under it', hollow, [])
+
+    const declared = FACTION_IDS.flatMap(id =>
+      Object.entries(FACTIONS[id]!.karamaStops)
+        .filter(([, stop]) => stop!.enforced)
+        .map(([ref]) => `${id}|${ref}`))
+
+    // BOTH DIRECTIONS. A flag with no check is a promise the game cannot
+    // keep; a check with no flag is enforcement nobody is allowed to buy.
+    check('every enforced flag has a check where the rule fires',
+      declared.filter(k => !guarded.has(k)), [])
+    check('...and every check belongs to an enforced flag',
+      [...guarded].filter(k => !declared.includes(k)), [])
+
+    // AND THE MENU IS EXACTLY THE ENFORCED SET — an unenforced stop takes the
+    // card, discards it publicly, announces itself, and changes nothing.
+    check('the menu offers exactly what is enforced',
+      FACTION_IDS.flatMap(id => suppressibleRefs(id).map(r => `${id}|${r.ref}`)).sort(),
+      [...declared].sort())
+  }
+
   // COUNTED OUT, not recomputed. A check that derived the expected number the
   // same way the code does would agree with any change, including a wrong one;
   // these are literals so adding or dropping an offer is a decision somebody
   // has to make twice.
-  check('the offer is exactly the curated list, faction by faction',
-    FACTION_IDS.map(id => suppressibleRefs(id).length), [4, 2, 2, 8, 2, 7])
+  // THE CURATED LIST is what a Karama could stop if every check existed; the
+  // OFFER is what it can stop today. They are different numbers while the
+  // eighteen are open, and the guard above is what keeps the second honest.
+  check('the curated list is twenty-five, faction by faction',
+    FACTION_IDS.map(id => Object.keys(FACTIONS[id]!.karamaStops).length),
+    [4, 2, 2, 8, 2, 7])
   check('...twenty-five in all',
-    FACTION_IDS.reduce((n, id) => n + suppressibleRefs(id).length, 0), 25)
+    FACTION_IDS.reduce((n, id) => n + Object.keys(FACTIONS[id]!.karamaStops).length, 0), 25)
   check('...and every one of them is stoppable in the first place',
     FACTION_IDS.flatMap(id => suppressibleRefs(id)
       .filter(r => !canKaramaStop(FACTIONS[id]!, r.ref))

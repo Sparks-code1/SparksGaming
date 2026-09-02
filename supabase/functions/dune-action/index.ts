@@ -564,6 +564,7 @@ Deno.serve(async req => {
       const openIndex = step.status === 'awaiting'
         // A STOPPED ADVANTAGE OPENS NOTHING: the Atreides sight of the card
         // is suppressed for this phase, so no reveal is written at all.
+        // KARAMA-STOP: atreides abilities.bidding
         && !isSuppressed((state.suppressed ?? []) as never, 'atreides' as never,
           'abilities.bidding' as never, Number(state.turn ?? 0), 'Bidding' as never)
         ? step.carry.index : -1
@@ -2116,6 +2117,7 @@ Deno.serve(async req => {
           + (justClosed.winner === BONUS_FACTION ? 1 : 0)
         // The SAME default the settlement uses, so two computations of
         // the due cannot disagree about a missing limit.
+        // KARAMA-STOP: harkonnen abilities.treachery
         bonusDue = isSuppressed((state.suppressed ?? []) as never,
           BONUS_FACTION as never, 'abilities.treachery' as never,
           Number(state.turn ?? 0), 'Bidding' as never)
@@ -2150,6 +2152,7 @@ Deno.serve(async req => {
           // own order rather than whoever happens to have a secrets row — and
           // WITHOUT the Emperor while their collection is suppressed: the
           // payment falls to the bank, which is the stop doing its work.
+          // KARAMA-STOP: emperor abilities.bidding
           seated: isSuppressed((state.suppressed ?? []) as never,
             'emperor' as never, 'abilities.bidding' as never,
             Number(state.turn ?? 0), 'Bidding' as never)
@@ -2194,6 +2197,7 @@ Deno.serve(async req => {
         // The reveal FOLLOWS THE ROW. A card that has closed is no longer the
         // card up for purchase, and a reveal left pointing at it is one the
         // Atreides can still read after it has been dealt to somebody else.
+        // KARAMA-STOP: atreides abilities.bidding
         const nextReveal = isSuppressed((state.suppressed ?? []) as never,
           'atreides' as never, 'abilities.bidding' as never,
           Number(state.turn ?? 0), 'Bidding' as never)
@@ -2492,6 +2496,7 @@ Deno.serve(async req => {
       // alone. This check was missing while the radius itself shipped: the
       // suppression doc says an ability gets its check WHEN it is built, and
       // this one got built without it.
+      // KARAMA-STOP: fremen abilities.shipment
       const ownShipSuppressed = isSuppressed((state.suppressed ?? []) as never,
         myFaction as never, 'abilities.shipment' as never,
         Number(state.turn ?? 0), 'Shipment and Movement' as never)
@@ -2530,6 +2535,7 @@ Deno.serve(async req => {
           return json({ error: 'that shipment is not legal', code: 'cannot-pay' }, 409)
         }
       }
+      // KARAMA-STOP: spacing-guild abilities.shipment
       if (isSuppressed((state.suppressed ?? []) as never,
         'spacing-guild' as never, 'abilities.shipment' as never,
         Number(state.turn ?? 0), 'Shipment and Movement' as never)) {
@@ -2957,6 +2963,7 @@ Deno.serve(async req => {
         // the ally's opponent, from outside it.
         ...(() => {
           // A STOPPED VOICE never opens: the suppression is the whole phase's.
+          // KARAMA-STOP: bene-gesserit abilities.battle
           if (isSuppressed((state.suppressed ?? []) as never,
             'bene-gesserit' as never, 'abilities.battle' as never,
             Number(state.turn ?? 0), 'Battles' as never)) return null
@@ -3130,6 +3137,7 @@ Deno.serve(async req => {
       // A STOPPED QUESTION never opens — and the reveal does not wait on a
       // window that cannot exist.
       const presWanted = (hasAtreides || !!presProxy)
+        // KARAMA-STOP: atreides abilities.battle
         && !isSuppressed((state.suppressed ?? []) as never,
           'atreides' as never, 'abilities.battle' as never,
           Number(state.turn ?? 0), 'Battles' as never)

@@ -1104,6 +1104,12 @@ var ATREIDES = {
   },
   // Nothing here is beyond a Karama card.
   unsuppressable: [],
+  karamaStops: {
+    "abilities.bidding": { stops: "Seeing each Treachery Card before the bidding.", enforced: true },
+    "abilities.movement": { stops: "Looking at the top of the Spice Deck before the move.", enforced: false },
+    "abilities.battle": { stops: "Forcing an opponent to reveal one element of their battle plan.", enforced: true },
+    "advanced.kwisatzHaderach": { stops: "The Kwisatz Haderach adding its +2 to a leader.", enforced: false }
+  },
   leaders: [
     { name: "Lady Jessica", strength: 5 },
     { name: "Thufir Hawat", strength: 5 },
@@ -1144,6 +1150,10 @@ var EMPEROR = {
     forces: "Sardaukar: Your 5 starred forces, elite Sardaukar, have a special fighting capability. They are worth two normal forces in battle and in taking losses against all opponents except Fremen. Your starred forces are worth just one force against Fremen. They are treated as one force in revival. Only one Sardaukar force can be revived per turn."
   },
   unsuppressable: [],
+  karamaStops: {
+    "abilities.bidding": { stops: "Being paid the spice other factions spend on Treachery Cards.", enforced: true },
+    "advanced.forces": { stops: "Sardaukar counting double in battle and in taking losses.", enforced: false }
+  },
   leaders: [
     { name: "Hasimir Fenring", strength: 6 },
     { name: "Captain Aramsham", strength: 5 },
@@ -1198,6 +1208,16 @@ var FREMEN = {
   },
   // Their special victory. Karama cannot stop a win condition.
   unsuppressable: ["specialVictory"],
+  karamaStops: {
+    "abilities.shipment": { stops: "Riding free onto the Great Flat, or within two territories of it.", enforced: true },
+    "abilities.movement": { stops: "Moving two territories instead of one.", enforced: false },
+    "abilities.shaiHulud": { stops: "Surviving Shai-Hulud, and riding it after the Nexus.", enforced: false },
+    "advanced.storm": { stops: "Knowing the storm distance a turn early.", enforced: false },
+    "advanced.spiceBlow": { stops: "Placing every sandworm after the first, and half losses in a storm.", enforced: false },
+    "advanced.shipment": { stops: "Shipping into a storm at half losses.", enforced: false },
+    "advanced.forces": { stops: "Fedaykin counting double in battle and in taking losses.", enforced: false },
+    "advanced.battle": { stops: "Fighting at full strength without spice.", enforced: false }
+  },
   leaders: [
     { name: "Stilgar", strength: 7 },
     { name: "Chani", strength: 6 },
@@ -1232,6 +1252,10 @@ var SPACING_GUILD = {
   },
   // Their special victory. Karama cannot stop a win condition.
   unsuppressable: ["specialVictory"],
+  karamaStops: {
+    "abilities.shipment": { stops: "Collecting the shipping fees, and shipping at half rate.", enforced: true },
+    "advanced.shipment": { stops: "Taking their shipment and move out of turn.", enforced: false }
+  },
   leaders: [
     { name: "Staban Tuek", strength: 5 },
     { name: "Master Bewt", strength: 3 },
@@ -1258,25 +1282,34 @@ var BENE_GESSERIT = {
   abilities: {
     beforeGame: "When selecting this faction you secretly predict when one other faction will win, choosing the turn number and faction, this will remain a secret until game end. If your prediction is correct, your prediction is revealed and you and your allies win the game and win alone, you cannot predict the spacing-guild or Fremen will win with their special victory conditions",
     shipment: "Whenever any other faction ships forces onto Dune from off-planet, you may ship 1 force for free from your reserves into the Polar Sink. You may also ship normally, of course.",
-    battle: "You may Voice your opponent to do as you wish with respect to one of the cards they play in their battle. For instance, to play or not play a specific weapon (poison weapon, projectile weapon, or lasgun) or defense (snooper or shield), a worthless card, or a cheap hero. If your opponent cannot comply with your command, they may do as they wish"
+    battle: "You may Voice your opponent to do as you wish with respect to one of the cards they play in their battle. For instance, to play or not play a specific weapon (poison weapon, projectile weapon, or lasgun) or defense (snooper or shield), a worthless card, or a cheap hero. If your opponent cannot comply with your command, they may do as they wish."
   },
   alliance: "You may Voice an ally opponent",
   advanced: {
-    beforeGame: "After the fremen placement in the first turn (if that faction is in the game) you start with one peaceful advisor in any territory of your choice. If you are alone in the territory flip the advisor turns into a fighter",
+    beforeGame: "After the fremen placement in the first turn (if that faction is in the game) you start with one peaceful advisor in any territory of your choice. If you are alone in the territory, the advisor turns into a fighter.",
     shipment: "Whenever any other faction ships forces to Dune from off-planet, you may ship for free one advisor from your reserves into that same territory (instead of the Polar Sink).",
-    charity: "You always receive CHOAM charity of 2 spice regardless of how many spice you already have",
+    charity: "You always receive CHOAM charity of 2 spice regardless of how many spice you already have.",
     // NOT from docs/dune-advance-rules.md — that file lists Karama powers for
     // five factions and omits the Bene Gesserit entirely, which is how their
     // absence came to be read as "they get nothing". This wording is mine and
     // wants replacing with yours.
     treachery: "You may play a Worthless Card as though it were a Karama Card.",
-    advisors: "Advisors coexist peacefully with other faction forces in the same territory. Advisors have no effect on the play of the other factions whatsoever and cannot collect spice, be involved in combat, prevent another faction from challenging a stronghold (second force), use ornithopters, or play Family Atomics. advisors are susceptible to storms, sandworms, lasgun/shield explosions, and atomics",
-    fighters: "when you ship forces into an unoccupied territory, you must ship as fighters, If you move advisors into an unoccupied territory they turn into fighters. If you move advisors into occupied territories they remain as advisors or flip to fighters, fighters follow the same rules for battles. When another faction ships or moves into a territory where you have fighters, you may flip them to advisors",
-    battle: "On each turn after the Spice Blow and Nexus Phase and before any shipment occurs, in all territories in which you have advisors and wish to battle, announce you are doing so and turn all those advisors to fighters"
+    advisors: "Advisors coexist peacefully with other faction forces in the same territory. Advisors have no effect on the play of the other factions whatsoever and cannot collect spice, be involved in combat, prevent another faction from challenging a stronghold (second force), use ornithopters, or play Family Atomics. Advisors are susceptible to storms, sandworms, lasgun/shield explosions, and atomics.",
+    fighters: "When you ship forces into an unoccupied territory, you must ship as fighters. If you move advisors into an unoccupied territory they turn into fighters. If you move advisors into occupied territories they remain as advisors or flip to fighters; fighters follow the same rules for battles. When another faction ships or moves into a territory where you have fighters, you may flip them to advisors.",
+    battle: "On each turn after the Spice Blow and Nexus Phase and before any shipment occurs, in all territories in which you have advisors and wish to battle, announce you are doing so and turn all those advisors to fighters."
   },
   // The prediction win, which lives in abilities.beforeGame rather than in
   // specialVictory — see the note on Faction.unsuppressable.
   unsuppressable: ["abilities.beforeGame"],
+  karamaStops: {
+    "abilities.shipment": { stops: "Shipping one force free into the Polar Sink.", enforced: false },
+    "abilities.battle": { stops: "The Voice: commanding one card in an opponent battle plan.", enforced: true },
+    "advanced.shipment": { stops: "Shipping one advisor free into a territory somebody else ships into.", enforced: false },
+    "advanced.charity": { stops: "Always collecting CHOAM charity, whatever they hold.", enforced: false },
+    "advanced.advisors": { stops: "Advisors sharing a territory without a fight.", enforced: false },
+    "advanced.fighters": { stops: "Flipping fighters to advisors when somebody arrives.", enforced: false },
+    "advanced.battle": { stops: "Standing advisors up as fighters before the shipment.", enforced: false }
+  },
   leaders: [
     { name: "Mother Ramallo", strength: 5 },
     { name: "Wanna Yueh", strength: 5 },
@@ -1301,15 +1334,19 @@ var HARKONNEN = {
   startingTreachery: 2,
   freeRevivals: 2,
   abilities: {
-    traitors: "At the start of the game when you draw 4 Traitor Cards, you keep them all including your own and, any leader cards of other factions can be revealed in a battle as a traitor",
-    treachery: "You may hold up to 8 Treachery Cards. When you have 8 cards you must pass during bidding. At the beginning of the game you are dealt 2 cards instead of 1, and every time you buy a card you get an extra card for free from the Treachery Deck (unless you are at 7 cards, because you can never have more than 8 in your hand"
+    traitors: "At the start of the game when you draw 4 Traitor Cards, you keep them all, including your own, and any leader cards of other factions can be revealed in a battle as a traitor.",
+    treachery: "You may hold up to 8 Treachery Cards. When you have 8 cards you must pass during bidding. At the beginning of the game you are dealt 2 cards instead of 1, and every time you buy a card you get an extra card for free from the Treachery Deck (unless you are at 7 cards, because you can never have more than 8 in your hand)."
   },
   alliance: "Traitor Cards that you hold may be used against your ally's opponent if you so choose",
   advanced: {
     karama: "You may use a Karama Card to take without looking any number of cards, up to the entire hand of any one player of your choice. For each card you take, you must give that player one of your cards in return.",
-    capturedLeaders: "Every time you win a battle, you can either randomly select 1 leader from the loser (including the leader used in battle, if not killed, but excluding all leaders already used elsewhere that turn) and place the Leader Disc face down into the Tleilaxu Tanks to gain 2 spice from the Spice Bank; or you can keep the leader and use it once in a battle, after which, if it was not killed during that battle, after which you must return that leader to its faction. When all of your own leaders have been killed, you must return all captured leaders immediately to their factions. Killed leaders are put in the Tleilaxu Tanks from which their factions can revive them (subject to revival rules). A captured leader used in battle may be claimed as a traitor"
+    capturedLeaders: "Every time you win a battle, you can either randomly select 1 leader from the loser (including the leader used in battle, if not killed, but excluding all leaders already used elsewhere that turn) and place the Leader Disc face down into the Tleilaxu Tanks to gain 2 spice from the Spice Bank; or you can keep the leader and use it once in a battle, after which, if it was not killed during that battle, you must return that leader to its faction. When all of your own leaders have been killed, you must return all captured leaders immediately to their factions. Killed leaders are put in the Tleilaxu Tanks from which their factions can revive them (subject to revival rules). A captured leader used in battle may be claimed as a traitor"
   },
   unsuppressable: [],
+  karamaStops: {
+    "abilities.treachery": { stops: "The extra Treachery Card they draw whenever they buy one.", enforced: true },
+    "advanced.capturedLeaders": { stops: "Capturing a leader from a battle they win.", enforced: false }
+  },
   leaders: [
     { name: "Feyd-Rautha", strength: 6 },
     { name: "Beast Rabban", strength: 4 },
