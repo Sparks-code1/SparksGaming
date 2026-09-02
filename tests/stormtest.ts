@@ -1,10 +1,12 @@
 // The storm, phase 1. Counter-clockwise is INCREASING sector number on this
 // board, because the numbering was chosen to run that way — so the wrap at
 // 18 -> 1 is the case most likely to be got wrong, and it is tested hardest.
+import { readFileSync, readdirSync } from 'node:fs'
 import {
   sweptSectors, stormDestination, resolveStorm, isExposedToStorm, stormLosses,
   firstPlayerAfterStorm, seatsFromPositions, sectorIdsAreValid, territoriesInStorm, stormRollRange,
   beginStorm, resolveStormMove, SHIELD_WALL_PROTECTS,
+  fremenForeknow, FOREKNOWN_FROM_TURN, stormRollPromised,
   STORM_START, SECTOR_COUNT, FIRST_STORM_ROLL, STORM_ROLL, STORM_ROLL_ADVANCED,
 } from '@/lib/dune/storm'
 import { DUNE_PLAYER_POSITIONS, DUNE_TERRITORIES } from '@/data/dune/boardData'
@@ -19,6 +21,12 @@ const check = (label: string, actual: unknown, expected: unknown) => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}\n        got=${JSON.stringify(actual)} want=${JSON.stringify(expected)}`)
 }
 const s = (n: number) => `sector-${n}` as SectorId
+/** Every source file under a directory, for the sweeps that ask where a
+ *  thing is allowed to appear. */
+const walk = (dir: string): string[] =>
+  readdirSync(dir, { withFileTypes: true }).flatMap(e =>
+    e.isDirectory() ? walk(`${dir}/${e.name}`)
+      : /\.tsx?$/.test(e.name) ? [`${dir}/${e.name}`] : [])
 // The Shield Wall stands unless a test says otherwise, which is the state
 // every game starts in.
 const num = (id: SectorId) => Number(id.slice('sector-'.length))
@@ -352,6 +360,124 @@ check('later storms roll 2–6', [STORM_ROLL.min, STORM_ROLL.max], [2, 6])
   check('...and the amount comes back with it', out.spiceCleared[0].amount, 6)
   check('...the storm returns the board rather than a list to apply by hand',
     out.spiceOnBoard, { 'territory-09': 8 })
+}
+
+// ── the Fremen see it coming ────────────────────────────────────────────
+// THE CARD: "The first storm in the game is normal. All subsequent storms can
+// move either 1-6 sectors and you get to know the number of sectors before
+// the storm moves on the previous turn." So what they learn is NEXT turn's
+// number, at the end of this one — this turn's is already public by then,
+// published between the roll and the move so Family Atomics has its beat, and
+// knowing a public number is no advantage at all.
+{
+  const ask = (over: Record<string, unknown> = {}) => fremenForeknow({
+    mode: 'advanced', seated: true, nextTurn: 3, ...over,
+  } as never)
+
+  check('the advanced game only', [ask(), ask({ mode: 'basic' })], [true, false])
+  check('...and only with the Fremen at the table', ask({ seated: false }), false)
+  check('...and not through a Karama', ask({ suppressed: true }), false)
+
+  // THE FIRST STORM IS NORMAL, which is the card's own exemption: nothing is
+  // foretold about turn one, so the first thing they are ever told is turn
+  // two's, at the end of turn one.
+  check('turn one is the normal storm the card exempts',
+    [ask({ nextTurn: 1 }), ask({ nextTurn: 2 }), ask({ nextTurn: 10 })],
+    [false, true, true])
+  check('...which is what the constant says', FOREKNOWN_FROM_TURN, 2)
+
+  // ── the promise, and the two stores that keep it ───────────────────────
+  // A NUMBER TOLD IN ADVANCE IS ONLY WORTH SOMETHING IF IT ARRIVES. The roll
+  // is committed to match_decks — RLS on, no policy at all, so the table
+  // cannot read what one seat was told — and every storm reads that before it
+  // rolls anything fresh. Told and then re-rolled would be worse than never
+  // telling them.
+  const ep = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  const at = ep.indexOf('const stormRollFor = async')
+  check('the storm reads its promise before it rolls', at > 0, true)
+  {
+    const near = ep.slice(at, at + 900)
+    check('...out of match_decks, under its own key',
+      [near.includes("eq('deck', 'storm')"),
+        near.includes('const promised = stormRollPromised(held, forTurn)'),
+        near.includes('if (promised !== null) return promised')],
+      [true, true, true])
+  }
+
+  // THE PROMISE ITSELF, exercised rather than read for.
+  check('a promise for this turn is what moves the marker',
+    stormRollPromised({ turn: 4, roll: 5 }, 4), 5)
+  check('...and a promise for another turn is not',
+    stormRollPromised({ turn: 3, roll: 5 }, 4), null)
+  check('...nor is a promise that never got made',
+    [stormRollPromised(null, 4), stormRollPromised(undefined, 4),
+      stormRollPromised({}, 4), stormRollPromised({ turn: 4 }, 4)],
+    [null, null, null, null])
+  check('a promised nought is still a promise',
+    stormRollPromised({ turn: 4, roll: 0 }, 4), 0)
+  check('and nothing rolls the storm behind its back',
+    (ep.match(/rollStorm\(/g) ?? []).length, 2)
+
+  const fa = ep.indexOf('const foretellStorm = async')
+  check('the end of a storm decides the next one', fa > 0, true)
+  {
+    const near = ep.slice(fa, fa + 1600)
+    check('...for the turn after this one',
+      near.includes('nextTurn: movedTurn + 1'), true)
+    check('...into the Fremen row and the deck store, and nowhere public',
+      [near.includes('stormAhead: { turn: nextTurn, roll }'),
+        near.includes('decks: { storm: [{ turn: nextTurn, roll }] }'),
+        near.includes('state.') && /p_state/.test(near)],
+      [true, true, false])
+    check('...and a Karama takes it away', near.includes('advanced.storm'), true)
+  }
+
+  // EVERY STORM THAT BLOWS TELLS THEM. There are three places a storm moves —
+  // the owed first one, its second beat after the Atomics window, and a new
+  // turn's — and a seat told on two turns out of three would learn nothing
+  // except not to trust it.
+  check('every path that moves the storm makes the next promise',
+    (ep.match(/foretellStorm\(/g) ?? []).length, 3)
+
+  // THE PRINTED BEAT, ON EVERY TURN THAT HAS ONE. The first storm published
+  // its roll and waited so Family Atomics had a moment; every turn after it
+  // rolled and moved in one press, so the card was playable on turn one and
+  // never again.
+  const entry = ep.indexOf("case 'Storm': {")
+  check('a new turn\'s storm waits for the card too', entry > 0, true)
+  {
+    const near = ep.slice(entry, entry + 1200)
+    check('...on the same test and the same window',
+      [near.includes('const canAtomics = turn >= 2'), near.includes('mayAtomics('),
+        near.includes('stormCarry: {')], [true, true, true])
+  }
+
+  // THE RAIL AND NOWHERE ELSE. It is one seat's knowledge and the whole of
+  // its value is that the other five do not have it.
+  const screenSrc = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
+  check('the number is drawn for the Fremen alone',
+    screenSrc.includes("{seat === 'fremen' && own?.stormAhead"), true)
+  check('...and stands down once that turn is public',
+    screenSrc.includes('own.stormAhead.turn > state.turn'), true)
+  // NOWHERE ELSE IN THE APP. Two sweeps, because one file and one place are
+  // different questions: which files may name the field at all, and — inside
+  // the screen — whether every mention of it sits in the one expression that
+  // hands it to the rail. A second reader anywhere in that file is a second
+  // surface waiting to render it.
+  {
+    const seen = walk('src').filter(f => readFileSync(f, 'utf8').includes('stormAhead'))
+      .map(f => f.replace(/\\/g, '/')).sort()
+    check('only the screen and the field itself name it', seen, [
+      'src/components/dune/DuneGameScreen.tsx',
+      'src/lib/dune/charity.ts',
+    ])
+
+    const only = screenSrc.indexOf("{seat === 'fremen' && own?.stormAhead")
+    check('and inside the screen it is read in exactly one place',
+      [...screenSrc.matchAll(/stormAhead/g)]
+        .every(m => m.index! >= only && m.index! < only + 260),
+      true)
+  }
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

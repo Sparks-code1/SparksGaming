@@ -202,9 +202,9 @@ export const FREMEN: Faction = {
     'abilities.shipment': { stops: 'Riding free onto the Great Flat, or within two territories of it.', enforced: true },
     'abilities.movement': { stops: 'Moving two territories instead of one.', enforced: false },
     'abilities.shaiHulud': { stops: 'Surviving Shai-Hulud, and riding it after the Nexus.', enforced: false },
-    'advanced.storm': { stops: 'Knowing the storm distance a turn early.', enforced: false },
+    'advanced.storm': { stops: 'Knowing the storm distance a turn early.', enforced: true },
     'advanced.spiceBlow': { stops: 'Placing every sandworm after the first, and half losses in a storm.', enforced: false },
-    'advanced.shipment': { stops: 'Shipping into a storm at half losses.', enforced: false },
+    'advanced.shipment': { stops: 'Shipping into a storm at half losses.', enforced: true },
     'advanced.forces': { stops: 'Fedaykin counting double in battle and in taking losses.', enforced: true },
     'advanced.battle': { stops: 'Fighting at full strength without spice.', enforced: true },
   },
@@ -259,7 +259,7 @@ export const SPACING_GUILD: Faction = {
   unsuppressable: ['specialVictory'],
   karamaStops: {
     'abilities.shipment': { stops: 'Collecting the shipping fees, and shipping at half rate.', enforced: true },
-    'advanced.shipment': { stops: 'Taking their shipment and move out of turn.', enforced: false },
+    'advanced.shipment': { stops: 'Taking their shipment and move out of turn.', enforced: true },
   },
   leaders: [
     { name: 'Staban Tuek', strength: 5 },

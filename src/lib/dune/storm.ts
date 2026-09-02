@@ -145,6 +145,59 @@ export function stormLosses(force: Force, mode: GameMode): number {
   return force.count
 }
 
+/**
+ * THE FIRST STORM IS NORMAL, and every one after it is known to the Fremen
+ * before it blows.
+ *
+ * Their sheet: "The first storm in the game is normal. All subsequent storms
+ * can move either 1-6 sectors and you get to know the number of sectors
+ * before the storm moves on the previous turn." So the knowledge is of the
+ * NEXT turn's storm, learned at the end of this one — not of this turn's
+ * before it moves, which would be worth nothing: by then the number is
+ * already public, published between the roll and the move so that Family
+ * Atomics has its beat.
+ *
+ * TURN TWO ONWARD. Turn one is the normal storm the card exempts, so the
+ * first thing they are ever told is turn two's, at the end of turn one.
+ */
+export const FOREKNOWN_FROM_TURN = 2
+
+/**
+ * The distance a storm was PROMISED to move, or null if none was.
+ *
+ * When the Fremen were told this turn's number at the end of the last one,
+ * that number was committed, and it is what has to move the marker: rolling
+ * fresh would make the foreknowledge a lie told a turn in advance, which is
+ * worse than not having the rule at all.
+ *
+ * A FUNCTION RATHER THAN A TEST INLINED IN THE ENDPOINT. A rule that lives
+ * inside a request handler can only be checked by reading the handler for a
+ * string, and a gate wrapped in `if (false &&` keeps every one of its
+ * strings — which is a test that proves the words are there and nothing
+ * about the rule. Here it is exercised at its boundaries instead.
+ */
+export function stormRollPromised(
+  held: { turn?: number; roll?: number } | null | undefined,
+  forTurn: number,
+): number | null {
+  return held && held.turn === forTurn && typeof held.roll === 'number'
+    ? held.roll
+    : null
+}
+
+export function fremenForeknow(input: {
+  mode: GameMode
+  /** Whether the Fremen are at this table at all. */
+  seated: boolean
+  /** The turn whose storm would be foretold — the one after the current. */
+  nextTurn: number
+  /** Their advanced.storm advantage, cancelled by a Karama. */
+  suppressed?: boolean
+}): boolean {
+  return input.mode === 'advanced' && input.seated && !input.suppressed
+    && input.nextTurn >= FOREKNOWN_FROM_TURN
+}
+
 /** A stack after the storm has taken its share. */
 export interface StormCasualty {
   force: Force

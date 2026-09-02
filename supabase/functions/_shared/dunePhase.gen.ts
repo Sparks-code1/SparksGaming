@@ -922,6 +922,13 @@ function stormLosses(force, mode) {
   }
   return force.count;
 }
+var FOREKNOWN_FROM_TURN = 2;
+function stormRollPromised(held, forTurn) {
+  return held && held.turn === forTurn && typeof held.roll === "number" ? held.roll : null;
+}
+function fremenForeknow(input) {
+  return input.mode === "advanced" && input.seated && !input.suppressed && input.nextTurn >= FOREKNOWN_FROM_TURN;
+}
 function resolveStorm(from, roll, forces, mode, shieldWall, spiceOnBoard = {}) {
   const swept = sweptSectors(from, roll);
   const casualties = [];
@@ -1152,9 +1159,9 @@ var FREMEN = {
     "abilities.shipment": { stops: "Riding free onto the Great Flat, or within two territories of it.", enforced: true },
     "abilities.movement": { stops: "Moving two territories instead of one.", enforced: false },
     "abilities.shaiHulud": { stops: "Surviving Shai-Hulud, and riding it after the Nexus.", enforced: false },
-    "advanced.storm": { stops: "Knowing the storm distance a turn early.", enforced: false },
+    "advanced.storm": { stops: "Knowing the storm distance a turn early.", enforced: true },
     "advanced.spiceBlow": { stops: "Placing every sandworm after the first, and half losses in a storm.", enforced: false },
-    "advanced.shipment": { stops: "Shipping into a storm at half losses.", enforced: false },
+    "advanced.shipment": { stops: "Shipping into a storm at half losses.", enforced: true },
     "advanced.forces": { stops: "Fedaykin counting double in battle and in taking losses.", enforced: true },
     "advanced.battle": { stops: "Fighting at full strength without spice.", enforced: true }
   },
@@ -1194,7 +1201,7 @@ var SPACING_GUILD = {
   unsuppressable: ["specialVictory"],
   karamaStops: {
     "abilities.shipment": { stops: "Collecting the shipping fees, and shipping at half rate.", enforced: true },
-    "advanced.shipment": { stops: "Taking their shipment and move out of turn.", enforced: false }
+    "advanced.shipment": { stops: "Taking their shipment and move out of turn.", enforced: true }
   },
   leaders: [
     { name: "Staban Tuek", strength: 5 },
@@ -1717,6 +1724,7 @@ export {
   AUTO_ADVANCE_SEAT_MS,
   AUTO_ADVANCE_STEP_MS,
   DEADLINE_KEYS,
+  FOREKNOWN_FROM_TURN,
   HABBANYA_SIETCH,
   MENTAT_READY_SECONDS,
   PHASE_SECONDS,
@@ -1732,6 +1740,7 @@ export {
   autoPushDelay,
   biddingOpening,
   cityIncome,
+  fremenForeknow,
   mayAtomics,
   mentatVerdict,
   phaseAfter,
@@ -1741,5 +1750,6 @@ export {
   shiftDeadlines,
   spiceHarvest,
   stormEntry,
-  stormOrder
+  stormOrder,
+  stormRollPromised
 };

@@ -13,6 +13,7 @@ import {
   landForces, liftForces, nextSeat,
   SHIP_STRONGHOLD_SPICE, SHIP_OPEN_SPICE, GREAT_FLAT, STRONGHOLD_CAP, SHIPMENT_SECONDS,
   guildMayChoose, guildReorder, guildHolding, GUILD_ORDER_SECONDS,
+  mayShipIntoStorm, stormShipLosses,
 } from '@/lib/dune/shipment'
 import type { ShippingWindow } from '@/lib/dune/shipment'
 import { stormOrder } from '@/lib/dune/phaseAdvance'
@@ -1164,7 +1165,7 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
   // ── the window in the endpoint ─────────────────────────────────────────
   const endpoint = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
   check('the phase entry opens the window only when the Guild may choose',
-    endpoint.includes('const guildPicks = guildMayChoose(')
+    endpoint.includes('const guildPicks = !slotStopped && guildMayChoose(')
     && endpoint.includes('guildPick: { closesAt: now + GUILD_ORDER_SECONDS * 1000 }'), true)
 
   // NOBODY SHIPS INTO AN UNDECIDED ROTATION. Without this the first seat in
@@ -1248,6 +1249,99 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
     check('the rail is gone once the window has closed',
       draw('spacing-guild', 9e12 + 1).includes('data-layer="guild-order-rail"'), false)
   }
+}
+
+// ── the storm has one door, and it costs half ───────────────────────────
+// THE SENTENCE IS "You may also bring your reserves into a storm at half
+// losses." Reserves, so the off-planet shipment; half, so ceil of the count;
+// and the advanced game, where their storm losses are halved everywhere else
+// too. For everyone else the storm is still a wall.
+{
+  check('only the Fremen, and only in the advanced game',
+    [mayShipIntoStorm('fremen', 'advanced'), mayShipIntoStorm('fremen', 'basic'),
+      mayShipIntoStorm('atreides', 'advanced'), mayShipIntoStorm('spacing-guild', 'advanced')],
+    [true, false, false, false])
+  check('...and not through a Karama',
+    mayShipIntoStorm('fremen', 'advanced', true), false)
+
+  // ROUNDED UP, so an odd stack is never better off than an even one.
+  check('half of them die, rounded up',
+    [1, 2, 3, 4, 5, 6].map(n => stormShipLosses(n).lost), [1, 1, 2, 2, 3, 3])
+  check('nothing shipped, nothing lost', stormShipLosses(0), { lost: 0, starredLost: 0 })
+
+  // THE FEDAYKIN LAND LAST. Nobody chose these losses — there is no window
+  // on an arrival — so the plain forces take them first.
+  check('the plain forces burn before the elites',
+    [stormShipLosses(4, 1), stormShipLosses(4, 4), stormShipLosses(3, 2)],
+    [{ lost: 2, starredLost: 0 }, { lost: 2, starredLost: 2 },
+      { lost: 2, starredLost: 1 }])
+
+  // ── the judge lets them through, and nobody else ───────────────────────
+  const storm = 'sector-1' as SectorId
+  const stormed = DUNE_TERRITORIES.flatMap(t => t.cells.map(c => ({ t, c })))
+    .find(({ t, c }) => inStorm(t.id, c.sector, storm) && t.terrain === 'sand')
+  check('the board has a stormed sand cell to test with', !!stormed, true)
+  const into = (faction: FactionId, over: Record<string, unknown> = {}) => judgeShipment({
+    faction, kind: 'off-planet', count: 4, starred: 0,
+    to: { territoryId: stormed!.t.id, sector: stormed!.c.sector },
+    forces: [], reserves: 10, reservesStarred: 0, spice: 30,
+    storm, guildSeated: false, ...over,
+  })
+
+  check('an ordinary shipper is still walled out',
+    (into('atreides') as { refusal?: string }).refusal, 'stormed')
+  check('...and so is a Fremen the caller has not cleared',
+    (into('fremen') as { refusal?: string }).refusal, 'stormed')
+  check('a cleared Fremen lands, and half of them do not',
+    (() => { const v = into('fremen', { stormOk: true }) as
+      { ok: boolean; stormLoss?: { lost: number; starredLost: number } }
+      return [v.ok, v.stormLoss] })(),
+    [true, { lost: 2, starredLost: 0 }])
+  check('a shipment that misses the storm carries no toll',
+    (() => { const v = judgeShipment({
+      faction: 'fremen', kind: 'off-planet', count: 4, starred: 0,
+      to: { territoryId: GREAT_FLAT }, forces: [], reserves: 10,
+      reservesStarred: 0, spice: 30, storm, guildSeated: false, stormOk: true,
+    }) as { ok: boolean; stormLoss?: unknown }
+      return [v.ok, v.stormLoss ?? null] })(),
+    [true, null])
+
+  // THE DOOR IS FOR RESERVES. A cross-shipment is the Guild moving what is
+  // already on Arrakis, which is a different sentence on a different card.
+  check('the door does not open for a cross-shipment',
+    (judgeShipment({
+      faction: 'spacing-guild', kind: 'cross', count: 2, starred: 0,
+      from: { territoryId: GREAT_FLAT, sector: DUNE_TERRITORIES
+        .find(t => t.id === GREAT_FLAT)!.cells[0]!.sector },
+      to: { territoryId: stormed!.t.id, sector: stormed!.c.sector },
+      forces: [{ faction: 'spacing-guild', territoryId: GREAT_FLAT,
+        sector: DUNE_TERRITORIES.find(t => t.id === GREAT_FLAT)!.cells[0]!.sector,
+        count: 5, starred: 0 } as Force],
+      reserves: 0, reservesStarred: 0, spice: 30, storm, guildSeated: true,
+      stormOk: true,
+    }) as { refusal?: string }).refusal, 'stormed')
+
+  // ── wired where it fires ───────────────────────────────────────────────
+  const ep = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  check('the endpoint asks the rule and hands the answer to the judge',
+    [ep.includes('const stormOk = mayShipIntoStorm('), ep.includes('stormOk,')],
+    [true, true])
+  check('...against advanced.shipment, which a Karama may stop',
+    ep.slice(ep.indexOf('const stormDoorShut') - 120,
+      ep.indexOf('const stormDoorShut') + 260)
+      .includes('advanced.shipment'), true)
+  check('...and the dead go to the tanks, not into thin air',
+    ep.includes('const toll = judged.stormLoss ??')
+    && ep.slice(ep.indexOf('const toll = judged.stormLoss'), ep.indexOf('const toll = judged.stormLoss') + 500)
+      .includes('tanks = bankDead('), true)
+
+  // THE BOARD OFFERS WHAT THE SERVER ACCEPTS. A ring on a stormed cell for a
+  // seat that would be refused is an invitation to a refusal, and a wall on
+  // one the rules allow is an advantage nobody can reach.
+  const screenSrc = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
+  check('the board asks the same rule before it rings a stormed cell',
+    screenSrc.includes('.filter(c => stormLanding || !inStorm(t.id, c.sector, state.storm))')
+    && screenSrc.includes('const stormLanding = mayShipIntoStorm('), true)
 }
 
 // Not optional: without an exit code the runner counts a failing suite green.

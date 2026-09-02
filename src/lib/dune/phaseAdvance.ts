@@ -50,6 +50,8 @@ import {
 } from './storm'
 export {
   mayAtomics, WEATHER_CONTROL_MAX, STORM_CARD_SECONDS, SHIELD_WALL_TERRITORY,
+  fremenForeknow, FOREKNOWN_FROM_TURN,
+  stormRollPromised,
 } from './storm'
 import type { StormOutcome } from './storm'
 import { strongholdsHeld } from './hud'

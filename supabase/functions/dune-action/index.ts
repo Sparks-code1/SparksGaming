@@ -42,6 +42,7 @@ import {
 import {
   bgFollowsShip, POLAR_SINK, POLAR_SINK_SECTOR,
   guildMayChoose, guildReorder, guildHolding, GUILD, GUILD_ORDER_SECONDS,
+  mayShipIntoStorm,
 } from '../_shared/duneShipment.gen.ts'
 import { askTruthtrance, planFromRow } from '../_shared/duneTruthtrance.gen.ts'
 import {
@@ -82,6 +83,8 @@ import {
 } from '../_shared/duneBattle.gen.ts'
 import {
   mayAtomics, STORM_CARD_SECONDS, WEATHER_CONTROL_MAX, SHIELD_WALL_TERRITORY,
+  fremenForeknow,
+  stormRollPromised,
   phaseAfter, shiftDeadlines, advanceHold, phaseWindowOpen, rollStorm, stormEntry, cityIncome,
   mentatVerdict, biddingOpening, stormOrder, resetDeadlines, PHASE_SECONDS, TURN_LIMIT,
   spiceHarvest, MENTAT_READY_SECONDS,
@@ -968,6 +971,84 @@ Deno.serve(async req => {
       const stamp = (turn: number, phase: string) =>
         ({ turn, phase, closesAt: now + PHASE_SECONDS * 1000 })
 
+      /**
+       * THE NUMBER THIS TURN'S STORM MOVES.
+       *
+       * A COMMITTED ROLL IS THE PROMISE BEING KEPT. When the Fremen were told
+       * this turn's distance at the end of the last one, that number was
+       * written into match_decks under `storm` — service-role only, so the
+       * table cannot read what one seat was told — and it is what moves the
+       * marker now. Rolling fresh here would make the foreknowledge a lie
+       * told a turn in advance, which is worse than not having the rule.
+       *
+       * No promise on file: an ordinary roll, as it always was.
+       */
+      const stormRollFor = async (forTurn: number): Promise<number> => {
+        const { data } = await admin
+          .from('match_decks').select('cards')
+          .eq('match_id', matchId).eq('deck', 'storm').maybeSingle()
+        const held = ((data?.cards ?? []) as { turn?: number; roll?: number }[])[0]
+        const promised = stormRollPromised(held, forTurn)
+        if (promised !== null) return promised
+        return rollStorm(
+          forTurn, state.mode as never,
+          seededRng(Number(match.rng_seed) + match.action_seq))
+      }
+
+      /**
+       * THE FREMEN LEARN NEXT TURN'S STORM, at the end of this one.
+       *
+       * Their sheet gives them the number "before the storm moves on the
+       * previous turn", so the moment a storm finishes blowing is the moment
+       * the next one is decided and told. Not this turn's before it moves:
+       * that number is already public by then, published between the roll and
+       * the move so Family Atomics has its beat, and knowing a public number
+       * would be no advantage at all.
+       *
+       * TWO STORES, ONE NUMBER. The roll goes to match_decks, which has RLS on
+       * and no policy at all, so the server can keep its promise without the
+       * table being able to read it; and to the Fremen's own secrets row, so
+       * the seat that was promised can see it. Nothing goes into matches.state,
+       * because that is the store everybody reads.
+       *
+       * Returns the two writes for the caller to fold into its own, so the
+       * promise and the storm that prompted it land in one transaction.
+       */
+      const foretellStorm = async (movedTurn: number): Promise<{
+        secrets: Record<string, unknown>; decks: Record<string, unknown>
+      }> => {
+        const nothing = { secrets: {}, decks: {} }
+        const fremenSeat = seatOfFaction['fremen']
+        // KARAMA-STOP: fremen advanced.storm
+        const stormBlind = isSuppressed((state.suppressed ?? []) as never,
+          'fremen' as never, 'advanced.storm' as never,
+          movedTurn, 'Storm' as never)
+        const foresees = fremenForeknow({
+          mode: (state.mode === 'advanced' ? 'advanced' : 'basic') as never,
+          seated: !!fremenSeat, nextTurn: movedTurn + 1, suppressed: stormBlind,
+        })
+        if (!foresees || !fremenSeat) return nothing
+        const nextTurn = movedTurn + 1
+        // A SEED OF ITS OWN. action_seq is what every other roll here is drawn
+        // from and it will have moved on by the time this turn arrives, so the
+        // turn is mixed in: the number is decided once, now, and stored.
+        const roll = rollStorm(
+          nextTurn, state.mode as never,
+          seededRng(Number(match.rng_seed) + match.action_seq + nextTurn))
+        const { data: theirs } = await admin
+          .from('match_secrets').select('data')
+          .eq('match_id', matchId).eq('player_id', fremenSeat).maybeSingle()
+        return {
+          secrets: {
+            [fremenSeat]: {
+              ...(theirs?.data ?? {}),
+              stormAhead: { turn: nextTurn, roll },
+            },
+          },
+          decks: { storm: [{ turn: nextTurn, roll }] },
+        }
+      }
+
       // ── THE OWED STORM. A match is DEALT into Storm, so nothing ever
       // entered the phase and nothing rolled. The first press pays that debt
       // and stays put — the table sees the weather before the turn moves on —
@@ -994,19 +1075,19 @@ Deno.serve(async req => {
             phaseClock: stamp(Number(state.turn), 'Storm'),
           } as Record<string, unknown>
           delete moved9.stormCarry
+          const ahead9 = await foretellStorm(Number(state.turn))
           const { data, error } = await admin.rpc('apply_match_write', {
             p_match_id: matchId,
             p_expected_version: match.version,
             p_state: moved9,
-            p_secrets: {},
+            p_secrets: ahead9.secrets,
+            p_decks: ahead9.decks,
           })
           if (error) return json({ error: error.message }, 500)
           if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
           return json({ phase: 'Storm', turn: state.turn, stormReport: moved9.stormReport, version: data[0].version })
         }
-        const roll = rollStorm(
-          Number(state.turn), state.mode as never,
-          seededRng(Number(match.rng_seed) + match.action_seq))
+        const roll = await stormRollFor(Number(state.turn))
         // THE PRINTED BEAT between calculated and moved: from turn two,
         // when some seat could legally answer with Family Atomics, the roll
         // is PUBLISHED — as the dials are at the table — and the marker
@@ -1033,6 +1114,7 @@ Deno.serve(async req => {
           return json({ phase: 'Storm', stormCalculated: roll, version: data[0].version })
         }
         const { patch } = stormEntry(state as never, roll)
+        const ahead1 = await foretellStorm(Number(state.turn))
         const { data, error } = await admin.rpc('apply_match_write', {
           p_match_id: matchId,
           p_expected_version: match.version,
@@ -1040,7 +1122,8 @@ Deno.serve(async req => {
             ...state, ...patch, awaiting: null,
             phaseClock: stamp(Number(state.turn), 'Storm'),
           },
-          p_secrets: {},
+          p_secrets: ahead1.secrets,
+          p_decks: ahead1.decks,
         })
         if (error) return json({ error: error.message }, 500)
         if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
@@ -1111,13 +1194,14 @@ Deno.serve(async req => {
       const plainly = async (
         extra: Record<string, unknown> = {}, status?: string,
         secrets: Record<string, unknown> = {},
+        decks: Record<string, unknown> = {},
       ) => {
         const { data, error } = await admin.rpc('apply_match_write', {
           p_match_id: matchId,
           p_expected_version: match.version,
           p_state: { ...base, ...extra },
           p_secrets: secrets,
-          p_decks: {},
+          p_decks: decks,
           ...(status ? { p_status: status } : null),
         })
         if (error) return json({ error: error.message }, 500)
@@ -1169,11 +1253,28 @@ Deno.serve(async req => {
       switch (target.phase) {
         // ── a new turn's weather, rolled as it is entered ──────────────────
         case 'Storm': {
-          const roll = rollStorm(
-            turn, state.mode as never,
-            seededRng(Number(match.rng_seed) + match.action_seq))
+          const roll = await stormRollFor(turn)
+          // THE PRINTED BEAT, ON EVERY TURN THAT HAS ONE. The owed first
+          // storm published its roll and waited so that Family Atomics had a
+          // moment to answer; every turn after it rolled and moved in the same
+          // press, which meant the card could be played on turn one and never
+          // again. Same test, same window, same second beat — the hold reads
+          // stormCarry and the press that follows moves the marker against the
+          // Wall as it stands by then.
+          const canAtomics = turn >= 2
+            && ((base.players ?? []) as { faction: string }[]).some((pl) =>
+              mayAtomics((base.forces ?? []) as never, pl.faction as never,
+                base.storm as never))
+          if (canAtomics) {
+            return await plainly({
+              stormCarry: {
+                turn, roll, closesAt: now + STORM_CARD_SECONDS * 1000,
+              },
+            })
+          }
           const { patch } = stormEntry({ ...base, turn } as never, roll)
-          return await plainly({ ...patch })
+          const ahead = await foretellStorm(turn)
+          return await plainly({ ...patch }, undefined, ahead.secrets, ahead.decks)
         }
 
         // ── the cards are turned in the same write as the pointer ──────────
@@ -1281,7 +1382,11 @@ Deno.serve(async req => {
           // start until it is known where they are in it. Silence is the storm
           // order — the card grants a choice, not a duty — and the window is
           // short because five other people are waiting on one seat's option.
-          const guildPicks = guildMayChoose(
+          // KARAMA-STOP: spacing-guild advanced.shipment
+          const slotStopped = isSuppressed((state.suppressed ?? []) as never,
+            'spacing-guild' as never, 'advanced.shipment' as never,
+            turn, 'Shipment and Movement' as never)
+          const guildPicks = !slotStopped && guildMayChoose(
             (state.mode === 'advanced' ? 'advanced' : 'basic') as never, order as never)
           const shipping = {
             turn, order, at: 0, done: {},
@@ -2560,8 +2665,20 @@ Deno.serve(async req => {
       const ownShipSuppressed = isSuppressed((state.suppressed ?? []) as never,
         myFaction as never, 'abilities.shipment' as never,
         Number(state.turn ?? 0), 'Shipment and Movement' as never)
+      // THE STORM IS A WALL WITH ONE DOOR IN IT, and only the Fremen have the
+      // key. Asked here and handed down, like every other stop: the judge
+      // reads no match state of its own.
+      // KARAMA-STOP: fremen advanced.shipment
+      const stormDoorShut = isSuppressed((state.suppressed ?? []) as never,
+        myFaction as never, 'advanced.shipment' as never,
+        Number(state.turn ?? 0), 'Shipment and Movement' as never)
+      const stormOk = mayShipIntoStorm(
+        myFaction as never,
+        (state.mode === 'advanced' ? 'advanced' : 'basic') as never,
+        stormDoorShut)
       const judged = judgeShipment({
         suppressed: ownShipSuppressed,
+        stormOk,
         faction: myFaction as never, kind, count, starred,
         to: action.to as never, from: action.from as never,
         forces: (state.forces ?? []) as never,
@@ -2605,6 +2722,10 @@ Deno.serve(async req => {
       // ── the board and the reserves ──────────────────────────────────────
       let forces = (state.forces ?? []) as never[]
       let players = (state.players ?? []) as typeof me[]
+      // THE TANKS, because a shipment can now kill: the Fremen may land in
+      // the storm and half of what they send never stands up. Every other
+      // shipment leaves this exactly as it found it.
+      let tanks = state.tanks as never
       const from = action.from as { territoryId: string; sector: string } | undefined
       if (kind === 'to-reserves' && from) {
         forces = liftForces(forces as never, myFaction as never,
@@ -2621,8 +2742,23 @@ Deno.serve(async req => {
         forces = landForces(forces as never, myFaction as never,
           (action.to as { territoryId: string }).territoryId, judged.sector, count, starred) as never[]
       } else if (judged.sector) {
-        forces = landForces(forces as never, myFaction as never,
-          (action.to as { territoryId: string }).territoryId, judged.sector, count, starred) as never[]
+        // HALF OF THEM NEVER STAND UP. A shipment into the storm leaves its
+        // dead in the tanks on arrival — the reserves are spent in full,
+        // because they were shipped in full, and only the survivors land.
+        const toll = judged.stormLoss ?? { lost: 0, starredLost: 0 }
+        if (toll.lost > 0) {
+          tanks = bankDead(tanks, [{
+            faction: myFaction as never,
+            territoryId: (action.to as { territoryId: string }).territoryId as never,
+            sector: judged.sector as never,
+            count: toll.lost, starred: toll.starredLost,
+          }] as never) as never
+        }
+        if (count - toll.lost > 0) {
+          forces = landForces(forces as never, myFaction as never,
+            (action.to as { territoryId: string }).territoryId, judged.sector,
+            count - toll.lost, starred - toll.starredLost) as never[]
+        }
         players = players.map(p => p?.faction === myFaction
           ? {
             ...p, reserves: p.reserves - (count - starred),
@@ -2714,6 +2850,7 @@ Deno.serve(async req => {
             }
             return { forces, players }
           })(),
+          tanks,
           shipping: { ...w, done: { ...w.done, shipped: true } },
         },
         p_secrets: secretsPatch,

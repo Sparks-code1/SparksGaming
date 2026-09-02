@@ -83,11 +83,13 @@ import { SetupWindow, SetupBoardTargets } from './SetupWindow'
 import { ShipRail } from './ShipRail'
 import {
   bgFlippable, coOccupied, hajrMayPlay, inStorm, moveTargets, strongholdClosed,
+  mayShipIntoStorm, stormShipLosses,
 } from '@/lib/dune/shipment'
 import { RideRail } from './RideRail'
 import { MentatRail } from './MentatRail'
 import { BgFlipRail } from './BgFlipRail'
 import { GuildOrderRail } from './GuildOrderRail'
+import { StormRail } from './StormRail'
 import { RevivalRail } from './RevivalRail'
 import { BattlePanel } from './BattlePanel'
 import { NexusPanel } from './NexusPanel'
@@ -348,6 +350,18 @@ export function DuneGameScreen({
    *  advanced games only, and deleted the moment they answer. */
   const guildPick = (state.shipping as { guildPick?: { closesAt: number } } | undefined)
     ?.guildPick ?? null
+  /**
+   * Whether this seat may land in the storm at all.
+   *
+   * ASKED OF THE RULE, NOT SPELLED OUT HERE: the same function the server
+   * judges the shipment with, so a ring the board offers is a shipment the
+   * endpoint accepts. The Karama that would take this away is the server's to
+   * know — a stopped Fremen is refused on arrival, which is the same shape as
+   * every other suppression on this screen.
+   */
+  const stormLanding = mayShipIntoStorm(
+    (seat ?? 'atreides') as FactionId,
+    state.mode === 'advanced' ? 'advanced' : 'basic') && !!seat
   /** The ask panel, and how much of the public answer log this seat has
    *  dismissed — a new answer re-raises the line for everyone. */
   const [ttOpen, setTtOpen] = useState(false)
@@ -918,6 +932,16 @@ export function DuneGameScreen({
             looks like controls reads as a bug. Setup sits in phase Storm,
             so the phase gate alone keeps this rail clear of the Fremen's
             placement. */}
+        {/* THE FREMEN ALREADY KNOW WHAT IS COMING. Off their own secrets row,
+            so no other seat has the field to render even if it wanted to, and
+            stamped with the turn it belongs to: once that turn arrives the
+            number is public and this stands down rather than repeating what
+            the table can already read off the marker. See StormRail. */}
+        {seat === 'fremen' && own?.stormAhead
+          && own.stormAhead.turn > state.turn && (
+          <StormRail turn={own.stormAhead.turn} sectors={own.stormAhead.roll} />
+        )}
+
         {/* THE GUILD'S TEN SECONDS, and they hold the whole rotation.
             Ahead of the shipment rail because it is ahead of it in time:
             nobody ships until it is known where the Guild stands. Every
@@ -1446,9 +1470,22 @@ export function DuneGameScreen({
             {myShipWindow && staged.plain + staged.starred > 0 && onShipReserves && (
               <g data-layer="ship-targets">
                 {DUNE_TERRITORIES.flatMap(t => t.cells
-                  .filter(c => !inStorm(t.id, c.sector, state.storm))
-                  .map(c => (
+                  // THE STORM IS A WALL WITH ONE DOOR IN IT. Everybody else is
+                  // offered the clear cells only — a ring on a cell the rules
+                  // forbid is an invitation to a refusal — while the Fremen in
+                  // the advanced game may land in it and lose half of what they
+                  // send. Offered in a different colour and dashed harder,
+                  // because it is a landing that costs, and the title says what
+                  // it costs before the click rather than after.
+                  .filter(c => stormLanding || !inStorm(t.id, c.sector, state.storm))
+                  .map(c => {
+                    const burns = inStorm(t.id, c.sector, state.storm)
+                    const toll = burns
+                      ? stormShipLosses(staged.plain + staged.starred, staged.starred)
+                      : null
+                    return (
                     <g key={`${t.id}|${c.sector}`} data-ship-target={`${t.id}|${c.sector}`}
+                      {...(burns ? { 'data-storm-landing': '' } : null)}
                       style={{ cursor: 'pointer' }}
                       onClick={() => {
                         onShipReserves({
@@ -1458,11 +1495,17 @@ export function DuneGameScreen({
                         })
                         setStaged({ plain: 0, starred: 0 })
                       }}>
-                      <title>{`${t.displayName} — ${c.sector}`}</title>
-                      <circle cx={c.at.x} cy={c.at.y} r="11" fill="#dd7a1c22"
-                        stroke="#dd7a1c" strokeWidth="1.2" strokeDasharray="3 3" />
+                      <title>{toll
+                        ? `${t.displayName} — ${c.sector}: in the storm.`
+                          + ` ${toll.lost} of ${staged.plain + staged.starred} die on arrival.`
+                        : `${t.displayName} — ${c.sector}`}</title>
+                      <circle cx={c.at.x} cy={c.at.y} r="11"
+                        fill={burns ? '#a8332022' : '#dd7a1c22'}
+                        stroke={burns ? '#c9542a' : '#dd7a1c'} strokeWidth="1.2"
+                        strokeDasharray={burns ? '2 4' : '3 3'} />
                     </g>
-                  )))}
+                    )
+                  }))}
               </g>
             )}
 

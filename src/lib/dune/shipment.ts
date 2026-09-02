@@ -294,6 +294,46 @@ export function shipCost(input: {
  * their radius; and every kind that puts forces ON the board is held to the
  * storm and the stronghold gate.
  */
+/**
+ * WHETHER THIS SEAT MAY LAND IN THE STORM, and lose half of what it lands.
+ *
+ * The Fremen sheet, advanced side: "You may also bring your reserves into a
+ * storm at half losses." Reserves — so this is the off-planet shipment and
+ * not the Guild's cross-shipping, which is a different sentence on a
+ * different card. Everybody else, and the Fremen in the basic game, are
+ * refused as they always were: the storm is a wall.
+ *
+ * ADVANCED ONLY. Their storm-loss rule lives under `advanced` too, and this
+ * is the same mercy extended to arrivals — in the basic game they burn like
+ * everyone else, so there is nothing to arrive into.
+ */
+export function mayShipIntoStorm(
+  faction: FactionId, mode: 'basic' | 'advanced', suppressed = false,
+): boolean {
+  return faction === 'fremen' && mode === 'advanced' && !suppressed
+}
+
+/**
+ * What the storm takes off a shipment that lands in it.
+ *
+ * HALF, ROUNDED UP — the same arithmetic as stormLosses, because it is the
+ * same mercy: half of three is two lost and one standing, and rounding the
+ * other way would leave an odd stack better off than an even one.
+ *
+ * THE FEDAYKIN LAND LAST. There is no allocation window on a shipment — the
+ * seat named the pile before it knew the storm would take any of it — so the
+ * plain forces take the losses first and the elites only once the plain are
+ * gone. It is the reading that costs the shipper least, which is the right
+ * default for a choice the rules never gave them.
+ */
+export function stormShipLosses(
+  count: number, starred = 0,
+): { lost: number; starredLost: number } {
+  const lost = Math.min(count, Math.ceil(count / 2))
+  const plain = Math.max(0, count - starred)
+  return { lost, starredLost: Math.max(0, lost - plain) }
+}
+
 export function judgeShipment(input: {
   faction: FactionId
   kind: GuildShipKind
@@ -314,7 +354,13 @@ export function judgeShipment(input: {
   /** This shipper's own shipment advantage, cancelled by a Karama. Forwarded
    *  to shipCost, where the Fremen's free radius reads it. */
   suppressed?: boolean
-}): { ok: true; cost: number; payee: 'bank' | 'guild'; sector?: SectorId }
+  /** Whether the storm is passable to this shipment — the Fremen advanced
+   *  rule, asked by the caller so this judges a plan and reads no state.
+   *  A shipment that uses it comes back with `stormLoss` attached. */
+  stormOk?: boolean
+}): { ok: true; cost: number; payee: 'bank' | 'guild'; sector?: SectorId
+  /** Present only on a shipment that landed in the storm. */
+  stormLoss?: { lost: number; starredLost: number } }
   | { ok: false; refusal: ShipRefusal } {
   const { faction, kind, count, forces, storm } = input
   const starred = input.starred ?? 0
@@ -350,7 +396,12 @@ export function judgeShipment(input: {
   if (!input.to) return { ok: false, refusal: 'no-such-territory' }
   const settled = settleSector(input.to.territoryId, input.to.sector)
   if (!settled.ok) return settled
-  if (inStorm(input.to.territoryId, settled.sector, storm)) {
+  // THE STORM IS A WALL WITH ONE DOOR IN IT. Only reserves come through it,
+  // and only for a seat the caller has said may — a cross-shipment is the
+  // Guild moving forces already on Arrakis, which is not what the Fremen
+  // sentence covers.
+  const stormed = inStorm(input.to.territoryId, settled.sector, storm)
+  if (stormed && !(input.stormOk && kind === 'off-planet')) {
     return { ok: false, refusal: 'stormed' }
   }
   if (strongholdClosed(forces, faction, input.to.territoryId)) {
@@ -382,7 +433,10 @@ export function judgeShipment(input: {
     suppressed: input.suppressed,
   })
   if (cost > input.spice + (input.allySpice ?? 0)) return { ok: false, refusal: 'cannot-pay' }
-  return { ok: true, cost, payee, sector: settled.sector }
+  return {
+    ok: true, cost, payee, sector: settled.sector,
+    ...(stormed ? { stormLoss: stormShipLosses(count, starred) } : null),
+  }
 }
 
 // ── the alliance's ground rules ───────────────────────────────────────────

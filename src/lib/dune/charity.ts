@@ -58,6 +58,15 @@ export interface DuneSecrets extends Secrets {
    *  the phase entry into their row alone, stamped with its turn. */
   spiceReveal?: { turn: number; card: { kind: string; name?: string } }
   /**
+   * ADVANCED, Fremen: how far NEXT turn's storm will move.
+   *
+   * Written by the server at the end of each storm into their row alone, and
+   * committed at the same moment to match_decks so the number that arrives is
+   * the number they were promised. Stamped with the turn it belongs to — once
+   * that turn comes the distance is public and the rail stands down.
+   */
+  stormAhead?: { turn: number; roll: number }
+  /**
    * ADVANCED, Harkonnen: leaders seized from lost battles, each usable in
    * ONE battle before it goes home. The identity is this seat's secret —
    * the table sees a battle won and nothing more — until the plan that

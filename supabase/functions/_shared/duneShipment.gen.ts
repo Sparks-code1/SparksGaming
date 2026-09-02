@@ -872,6 +872,14 @@ function shipCost(input) {
     payee: guildSeated ? "guild" : "bank"
   };
 }
+function mayShipIntoStorm(faction, mode, suppressed = false) {
+  return faction === "fremen" && mode === "advanced" && !suppressed;
+}
+function stormShipLosses(count, starred = 0) {
+  const lost = Math.min(count, Math.ceil(count / 2));
+  const plain = Math.max(0, count - starred);
+  return { lost, starredLost: Math.max(0, lost - plain) };
+}
 function judgeShipment(input) {
   const { faction, kind, count, forces, storm } = input;
   const starred = input.starred ?? 0;
@@ -904,7 +912,8 @@ function judgeShipment(input) {
   if (!input.to) return { ok: false, refusal: "no-such-territory" };
   const settled = settleSector(input.to.territoryId, input.to.sector);
   if (!settled.ok) return settled;
-  if (inStorm(input.to.territoryId, settled.sector, storm)) {
+  const stormed = inStorm(input.to.territoryId, settled.sector, storm);
+  if (stormed && !(input.stormOk && kind === "off-planet")) {
     return { ok: false, refusal: "stormed" };
   }
   if (strongholdClosed(forces, faction, input.to.territoryId)) {
@@ -936,7 +945,13 @@ function judgeShipment(input) {
     suppressed: input.suppressed
   });
   if (cost > input.spice + (input.allySpice ?? 0)) return { ok: false, refusal: "cannot-pay" };
-  return { ok: true, cost, payee, sector: settled.sector };
+  return {
+    ok: true,
+    cost,
+    payee,
+    sector: settled.sector,
+    ...stormed ? { stormLoss: stormShipLosses(count, starred) } : null
+  };
 }
 function allyOccupies(forces, ally, territoryId) {
   return !!ally && territoryId !== POLAR_SINK && forces.some((f) => f.faction === ally && f.territoryId === territoryId && f.count > 0 && f.posture !== "advisor");
@@ -1190,11 +1205,13 @@ export {
   landAdvisor,
   landForces,
   liftForces,
+  mayShipIntoStorm,
   moveTargets,
   movementRange,
   nextSeat,
   settleSector,
   shipCost,
+  stormShipLosses,
   strongholdClosed,
   territoryDistance
 };
