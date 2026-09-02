@@ -66,15 +66,6 @@ export function guildMayChoose(
 }
 
 /**
- * The rotation with the Guild moved to the slot they named.
- *
- * EVERYBODY ELSE KEEPS THEIR RELATIVE ORDER — the storm decides that and no
- * card here changes it. The Guild is lifted out and put back in, so a table
- * of six has six legal answers: first, last, and the four gaps between.
- * Out-of-range is clamped rather than refused, since a seat asking for slot
- * nine at a table of six means "last" and there is nothing else it could.
- */
-/**
  * Whether the rotation is still waiting on the Guild.
  *
  * A FUNCTION RATHER THAN AN INLINE TEST because it is a rule, and a rule
@@ -94,6 +85,15 @@ export function guildHolding(
   return !!pick && now < pick.closesAt
 }
 
+/**
+ * The rotation with the Guild moved to the slot they named.
+ *
+ * EVERYBODY ELSE KEEPS THEIR RELATIVE ORDER — the storm decides that and no
+ * card here changes it. The Guild is lifted out and put back in, so a table
+ * of six has six legal answers: first, last, and the four gaps between.
+ * Out-of-range is clamped rather than refused, since a seat asking for slot
+ * nine at a table of six means "last" and there is nothing else it could.
+ */
 export function guildReorder(
   order: readonly FactionId[], at: number,
 ): FactionId[] {
@@ -168,7 +168,7 @@ export type ShipRefusal =
   | 'not-your-turn' | 'already-shipped' | 'already-moved' | 'nothing-asked'
   | 'no-such-territory' | 'sector-needed' | 'no-such-sector' | 'stormed'
   | 'stronghold-full' | 'cannot-pay' | 'not-enough-reserves' | 'not-yours-to-ship'
-  | 'guild-only' | 'nothing-there' | 'out-of-range'
+  | 'guild-only' | 'nothing-there' | 'out-of-range' | 'karama-stopped'
   | 'no-path' | 'ally-occupies' | 'separate-from-ally'
 
 /** Resolve the sector a shipment or move ends in, or refuse. */
@@ -278,7 +278,16 @@ export function shipCost(input: {
     const base = !input.suppressed && fremenShipTargets().has(territoryId) ? 0 : full
     return { cost: input.guildAllied ? Math.ceil(base / 2) : base, payee: 'bank' }
   }
-  if (faction === 'spacing-guild') return { cost: Math.ceil(full / 2), payee: 'bank' }
+  if (faction === 'spacing-guild') {
+    // THEIR HALF RATE IS AN ADVANTAGE and a Karama may take it, which leaves
+    // them paying what everybody else pays. The payee is not theirs to keep
+    // either, but that half is redirected at the call site — see the
+    // KARAMA-STOP marker in dune-action, where the fee is settled.
+    return {
+      cost: input.suppressed ? full : Math.ceil(full / 2),
+      payee: 'bank',
+    }
+  }
   return {
     cost: input.guildAllied ? Math.ceil(full / 2) : full,
     payee: guildSeated ? 'guild' : 'bank',
@@ -358,11 +367,15 @@ export function judgeShipment(input: {
    *  rule, asked by the caller so this judges a plan and reads no state.
    *  A shipment that uses it comes back with `stormLoss` attached. */
   stormOk?: boolean
+  /** Whether a Karama has closed the Guild's two special kinds of shipment
+   *  — 'abilities.shipment#kinds'. Asked by the caller, like every other
+   *  stop here. Their ordinary off-planet shipment is untouched by it. */
+  kindsStopped?: boolean
 }): { ok: true; cost: number; payee: 'bank' | 'guild'; sector?: SectorId
   /** Present only on a shipment that landed in the storm. */
   stormLoss?: { lost: number; starredLost: number } }
   | { ok: false; refusal: ShipRefusal } {
-  const { faction, kind, count, forces, storm } = input
+  const { faction, kind, count, forces, storm, kindsStopped } = input
   const starred = input.starred ?? 0
   if (count <= 0 || starred < 0 || starred > count) return { ok: false, refusal: 'nothing-asked' }
   // THE GUILD'S WAYS OPEN TO THEIR ALLY: cross-shipping like the Guild, at
@@ -372,6 +385,14 @@ export function judgeShipment(input: {
   }
   if (kind === 'cross' && faction !== 'spacing-guild' && input.ally !== 'spacing-guild') {
     return { ok: false, refusal: 'guild-only' }
+  }
+  // AND A KARAMA MAY CLOSE THEM. The two special kinds are the second half
+  // of the Guild paragraph and are stopped on their own — see
+  // 'abilities.shipment#kinds'. THEIR OWN ONLY: an ally cross-shipping does
+  // so under the alliance clause, which is a different entry on the sheet
+  // and is not what this card was spent on.
+  if (kindsStopped && faction === 'spacing-guild' && kind !== 'off-planet') {
+    return { ok: false, refusal: 'karama-stopped' }
   }
 
   // ── leaving the board: no destination to judge, only the pile ───────────

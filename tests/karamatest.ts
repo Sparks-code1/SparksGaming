@@ -249,7 +249,7 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
     const guarded = new Set<string>()
     const hollow: string[] = []
     lines.forEach((line, i) => {
-      const m = /\/\/ KARAMA-STOP: ([a-z-]+) ((?:abilities|advanced)\.[a-zA-Z]+)/.exec(line)
+      const m = /\/\/ KARAMA-STOP: ([a-z-]+) ((?:abilities|advanced)\.[a-zA-Z]+(?:#[a-zA-Z]+)?)/.exec(line)
       if (!m) return
       // the check itself, within a few lines of the marker that claims it
       const near = lines.slice(i, i + 6).join(' ')
@@ -284,11 +284,19 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
   // THE CURATED LIST is what a Karama could stop if every check existed; the
   // OFFER is what it can stop today. They are different numbers while the
   // eighteen are open, and the guard above is what keeps the second honest.
-  check('the curated list is twenty-five, faction by faction',
+  // TWENTY-SIX OFFERS ACROSS TWENTY-FIVE SHEET ENTRIES: the Guild shipment
+  // paragraph is two of them, because it is four advantages in one sentence
+  // and one card taking all four is not a reading a table would accept. See
+  // FactionRuleRef, where the # qualifier names a part without splitting the
+  // prose a player actually reads.
+  check('the curated list is twenty-six, faction by faction',
     FACTION_IDS.map(id => Object.keys(FACTIONS[id]!.karamaStops).length),
-    [4, 2, 2, 8, 2, 7])
-  check('...twenty-five in all',
-    FACTION_IDS.reduce((n, id) => n + Object.keys(FACTIONS[id]!.karamaStops).length, 0), 25)
+    [4, 2, 3, 8, 2, 7])
+  check('...twenty-six in all',
+    FACTION_IDS.reduce((n, id) => n + Object.keys(FACTIONS[id]!.karamaStops).length, 0), 26)
+  check('...over twenty-five entries, one of them offered twice',
+    new Set(FACTION_IDS.flatMap(id =>
+      Object.keys(FACTIONS[id]!.karamaStops).map(r => `${id}|${r.split('#')[0]}`))).size, 25)
   check('...and every one of them is stoppable in the first place',
     FACTION_IDS.flatMap(id => suppressibleRefs(id)
       .filter(r => !canKaramaStop(FACTIONS[id]!, r.ref))

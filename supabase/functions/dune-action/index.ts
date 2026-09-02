@@ -2676,9 +2676,18 @@ Deno.serve(async req => {
         myFaction as never,
         (state.mode === 'advanced' ? 'advanced' : 'basic') as never,
         stormDoorShut)
+      // THE GUILD PARAGRAPH IS TWO OFFERS, so it is two questions. The first
+      // — 'abilities.shipment' — is the money: everybody else's fees stop
+      // reaching them and their own half rate goes back to full. The second
+      // is the two kinds of shipment nobody else may make, which a table
+      // would not agree one card takes along with the money.
+      // KARAMA-STOP: spacing-guild abilities.shipment#kinds
+      const kindsStopped = isSuppressed((state.suppressed ?? []) as never,
+        'spacing-guild' as never, 'abilities.shipment#kinds' as never,
+        Number(state.turn ?? 0), 'Shipment and Movement' as never)
       const judged = judgeShipment({
         suppressed: ownShipSuppressed,
-        stormOk,
+        stormOk, kindsStopped,
         faction: myFaction as never, kind, count, starred,
         to: action.to as never, from: action.from as never,
         forces: (state.forces ?? []) as never,

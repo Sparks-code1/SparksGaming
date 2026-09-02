@@ -866,7 +866,12 @@ function shipCost(input) {
     const base = !input.suppressed && fremenShipTargets().has(territoryId) ? 0 : full;
     return { cost: input.guildAllied ? Math.ceil(base / 2) : base, payee: "bank" };
   }
-  if (faction === "spacing-guild") return { cost: Math.ceil(full / 2), payee: "bank" };
+  if (faction === "spacing-guild") {
+    return {
+      cost: input.suppressed ? full : Math.ceil(full / 2),
+      payee: "bank"
+    };
+  }
   return {
     cost: input.guildAllied ? Math.ceil(full / 2) : full,
     payee: guildSeated ? "guild" : "bank"
@@ -881,7 +886,7 @@ function stormShipLosses(count, starred = 0) {
   return { lost, starredLost: Math.max(0, lost - plain) };
 }
 function judgeShipment(input) {
-  const { faction, kind, count, forces, storm } = input;
+  const { faction, kind, count, forces, storm, kindsStopped } = input;
   const starred = input.starred ?? 0;
   if (count <= 0 || starred < 0 || starred > count) return { ok: false, refusal: "nothing-asked" };
   if (kind === "to-reserves" && faction !== "spacing-guild") {
@@ -889,6 +894,9 @@ function judgeShipment(input) {
   }
   if (kind === "cross" && faction !== "spacing-guild" && input.ally !== "spacing-guild") {
     return { ok: false, refusal: "guild-only" };
+  }
+  if (kindsStopped && faction === "spacing-guild" && kind !== "off-planet") {
+    return { ok: false, refusal: "karama-stopped" };
   }
   if (kind === "to-reserves") {
     const from = input.from;

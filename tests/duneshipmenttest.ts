@@ -17,6 +17,8 @@ import {
 } from '@/lib/dune/shipment'
 import type { ShippingWindow } from '@/lib/dune/shipment'
 import { stormOrder } from '@/lib/dune/phaseAdvance'
+import { suppressibleRefs } from '@/lib/dune/karama'
+import { canKaramaStop } from '@/data/dune/factions'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { DuneGameScreen } from '@/components/dune/DuneGameScreen'
@@ -1170,7 +1172,7 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
   const shipAt = endpoint.indexOf('const ownShipSuppressed')
   check('the endpoint asks whether the shipper own advantage is stopped',
     shipAt > 0, true)
-  const nearShip = endpoint.slice(shipAt, shipAt + 2600)
+  const nearShip = endpoint.slice(shipAt, shipAt + 3400)
   check('...against abilities.shipment, in Shipment and Movement',
     [/abilities.shipment/.test(nearShip), /Shipment and Movement/.test(nearShip)],
     [true, true])
@@ -1409,6 +1411,101 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
   check('the board asks the same rule before it rings a stormed cell',
     screenSrc.includes('.filter(c => stormLanding || !inStorm(t.id, c.sector, state.storm))')
     && screenSrc.includes('const stormLanding = mayShipIntoStorm('), true)
+}
+
+// ── the Guild paragraph is two advantages, and two stops ────────────────
+// FOUR THINGS IN ONE SENTENCE: they collect everybody else's off-planet fees,
+// they pay half of their own, and they may make two kinds of shipment nobody
+// else can — territory to territory, and territory back to reserves. One card
+// taking all four is not a reading a table would accept, so the menu offers
+// the money and the kinds separately and each bites on its own.
+{
+  const guildTo = (over: Record<string, unknown> = {}) => shipCost({
+    faction: 'spacing-guild' as FactionId, kind: 'off-planet' as never,
+    territoryId: 'territory-22', count: 4, guildSeated: true, ...over,
+  })
+
+  // THE MONEY. Their own rate goes back to what everybody else pays; the four
+  // into the deep desert cost 2 each rather than 1 each.
+  check('a suppressed Guild pays the full rate for its own shipment',
+    [guildTo().cost, guildTo({ suppressed: true }).cost],
+    [SHIP_OPEN_SPICE * 4 / 2, SHIP_OPEN_SPICE * 4])
+  check('...and into a stronghold as well',
+    [guildTo({ territoryId: 'territory-13' }).cost,
+      guildTo({ territoryId: 'territory-13', suppressed: true }).cost],
+    [2, 4])
+  check('...while nobody else\'s rate moves with it',
+    (() => {
+      const other = { faction: 'atreides' as FactionId, kind: 'off-planet' as never,
+        territoryId: 'territory-22', count: 4, guildSeated: true }
+      return shipCost({ ...other, suppressed: true }).cost === shipCost(other).cost
+    })(), true)
+
+  // THE KINDS. Their two special shipments close, and their ordinary
+  // off-planet one does not — that is the half the other card stops.
+  const asGuild = (kind: string, over: Record<string, unknown> = {}) => judgeShipment({
+    faction: 'spacing-guild' as FactionId, kind: kind as never, count: 2, starred: 0,
+    from: { territoryId: GREAT_FLAT, sector: 'sector-14' },
+    to: { territoryId: 'territory-13' },
+    forces: [{ faction: 'spacing-guild', territoryId: GREAT_FLAT, sector: 'sector-14',
+      count: 5, starred: 0 } as Force],
+    reserves: 10, reservesStarred: 0, spice: 30,
+    storm: 'sector-1' as SectorId, guildSeated: true, ...over,
+  })
+
+  check('unstopped, the Guild may cross-ship and go home',
+    [asGuild('cross').ok, asGuild('to-reserves').ok], [true, true])
+  check('a stopped paragraph closes both of them',
+    [(asGuild('cross', { kindsStopped: true }) as { refusal?: string }).refusal,
+      (asGuild('to-reserves', { kindsStopped: true }) as { refusal?: string }).refusal],
+    ['karama-stopped', 'karama-stopped'])
+  check('...and leaves the ordinary shipment alone, which is the other card',
+    asGuild('off-planet', { kindsStopped: true, from: undefined }).ok, true)
+
+  // NOT THE ALLY. An ally cross-ships under the ALLIANCE clause, which is a
+  // different entry on the sheet and not what this card was spent on.
+  check('an ally of the Guild still cross-ships',
+    judgeShipment({
+      faction: 'atreides' as FactionId, kind: 'cross' as never, count: 2, starred: 0,
+      from: { territoryId: GREAT_FLAT, sector: 'sector-14' },
+      to: { territoryId: 'territory-13' },
+      forces: [{ faction: 'atreides', territoryId: GREAT_FLAT, sector: 'sector-14',
+        count: 5, starred: 0 } as Force],
+      reserves: 10, reservesStarred: 0, spice: 30,
+      storm: 'sector-1' as SectorId, guildSeated: true,
+      ally: 'spacing-guild' as FactionId, kindsStopped: true,
+    }).ok, true)
+  check('...and a refusal for not being the Guild still reads as that',
+    (judgeShipment({
+      faction: 'atreides' as FactionId, kind: 'to-reserves' as never, count: 2, starred: 0,
+      from: { territoryId: GREAT_FLAT, sector: 'sector-14' },
+      forces: [], reserves: 10, reservesStarred: 0, spice: 30,
+      storm: 'sector-1' as SectorId, guildSeated: true,
+    }) as { refusal?: string }).refusal, 'guild-only')
+
+  // ── two offers, one paragraph ──────────────────────────────────────────
+  check('the menu offers the money and the kinds separately',
+    suppressibleRefs('spacing-guild').map(r => r.ref).sort(),
+    ['abilities.shipment', 'abilities.shipment#kinds', 'advanced.shipment'])
+  check('...and both point at the one paragraph a player reads',
+    suppressibleRefs('spacing-guild')
+      .filter(r => r.ref.startsWith('abilities.shipment'))
+      .length, 2)
+
+  // A FACTION THAT PUT THE WHOLE ENTRY BEYOND A KARAMA MEANT ITS PARTS.
+  // Otherwise the qualifier is the way round the protection.
+  check('an unsuppressable entry protects its parts too',
+    canKaramaStop(
+      { unsuppressable: ['abilities.shipment'] } as never,
+      'abilities.shipment#kinds' as never), false)
+
+  // ── wired where each fires ─────────────────────────────────────────────
+  const src = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  check('the endpoint asks the kinds stop and hands it down',
+    [src.includes("'abilities.shipment#kinds' as never"),
+      src.includes('stormOk, kindsStopped,')], [true, true])
+  check('...and the money stop still redirects the fee',
+    src.includes("shipFeeTo = 'bank'"), true)
 }
 
 // Not optional: without an exit code the runner counts a failing suite green.

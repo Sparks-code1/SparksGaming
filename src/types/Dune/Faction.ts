@@ -159,10 +159,27 @@ export type ReserveLocation = 'off-planet' | 'on-planet'
  * These are the closest thing to ability ids the data has. When abilities stop
  * being prose keyed by phase, this is what becomes a real id.
  */
-export type FactionRuleRef =
+export type FactionRuleField =
   | 'specialVictory'
   | `abilities.${keyof FactionAbilities & string}`
   | `advanced.${keyof AdvancedRules & string}`
+
+/**
+ * A rule as a KARAMA names it: a sheet entry, or one named part of one.
+ *
+ * SOME ENTRIES ARE MORE THAN ONE ADVANTAGE. The Guild's shipment paragraph
+ * is four in a row — collecting everybody's fees, their own half rate, and
+ * two kinds of shipment nobody else may make — and a table would not agree
+ * that one card takes all four. A `#part` suffix lets the stop menu offer
+ * them separately while both halves still point at the one paragraph the
+ * player reads.
+ *
+ * THE SHEET IS NOT SPLIT. Splitting the prose would change what prints on a
+ * faction card, and the card is the rules — so the qualifier lives here, in
+ * the reference, and every consumer that wants the entry itself strips at
+ * the "#". See canKaramaStop, which does exactly that.
+ */
+export type FactionRuleRef = FactionRuleField | `${FactionRuleField}#${string}`
 
 /** One thing a Karama may stop: what it reads as, and whether it bites. */
 export interface KaramaStop {

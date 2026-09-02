@@ -259,6 +259,7 @@ export const SPACING_GUILD: Faction = {
   unsuppressable: ['specialVictory'],
   karamaStops: {
     'abilities.shipment': { stops: 'Collecting the shipping fees, and shipping at half rate.', enforced: true },
+    'abilities.shipment#kinds': { stops: 'Shipping between territories, and back to reserves.', enforced: true },
     'advanced.shipment': { stops: 'Taking their shipment and move out of turn.', enforced: true },
   },
   leaders: [
@@ -454,7 +455,12 @@ export function factionRuleText(f: Faction, ref: FactionRuleRef): string | undef
  * the two would part company the first time a faction changed.
  */
 export function canKaramaStop(f: Faction, ref: FactionRuleRef): boolean {
-  return !f.unsuppressable.includes(ref)
+  // STRIPPED TO THE ENTRY FIRST. A ref may name one part of a sheet entry —
+  // 'abilities.shipment#kinds' — and a faction that put the whole entry
+  // beyond a Karama meant its parts too, or the qualifier becomes the way
+  // round the protection.
+  const field = ref.split('#')[0] as FactionRuleRef
+  return !f.unsuppressable.includes(ref) && !f.unsuppressable.includes(field)
 }
 
 

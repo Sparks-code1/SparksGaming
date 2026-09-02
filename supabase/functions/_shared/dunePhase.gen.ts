@@ -1201,6 +1201,7 @@ var SPACING_GUILD = {
   unsuppressable: ["specialVictory"],
   karamaStops: {
     "abilities.shipment": { stops: "Collecting the shipping fees, and shipping at half rate.", enforced: true },
+    "abilities.shipment#kinds": { stops: "Shipping between territories, and back to reserves.", enforced: true },
     "advanced.shipment": { stops: "Taking their shipment and move out of turn.", enforced: true }
   },
   leaders: [

@@ -1246,6 +1246,7 @@ var SPACING_GUILD = {
   unsuppressable: ["specialVictory"],
   karamaStops: {
     "abilities.shipment": { stops: "Collecting the shipping fees, and shipping at half rate.", enforced: true },
+    "abilities.shipment#kinds": { stops: "Shipping between territories, and back to reserves.", enforced: true },
     "advanced.shipment": { stops: "Taking their shipment and move out of turn.", enforced: true }
   },
   leaders: [
@@ -1356,7 +1357,8 @@ var FACTIONS = {
   "bene-gesserit": BENE_GESSERIT
 };
 function canKaramaStop(f, ref) {
-  return !f.unsuppressable.includes(ref);
+  const field = ref.split("#")[0];
+  return !f.unsuppressable.includes(ref) && !f.unsuppressable.includes(field);
 }
 
 // src/lib/dune/spiceBlow.ts
