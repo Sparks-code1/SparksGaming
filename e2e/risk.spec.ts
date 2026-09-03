@@ -145,6 +145,17 @@ test('the computer takes a whole turn and hands control back', async ({ page }) 
   // There IS a 20-second stall watchdog that notices and offers a Nudge. That
   // is a symptom, not a pass, so this spec fails on the Nudge appearing as
   // surely as on the turn never coming back.
+  //
+  // WHAT IT DOES NOT ASK is whether the turn was PLAYED. A driver that handed
+  // the seat straight on without reinforcing or attacking would pass this. An
+  // attempt to close that — comparing what the computer held before and after,
+  // via `holdings` in the support file — is not here because it could not be
+  // made to fail: stubbing aiReinforcePlacements, aiAttackPlan and
+  // aiFortifyMove all to nothing left the run green, so whatever moves those
+  // numbers is not only them. An assertion nobody can make fail is worse than
+  // no assertion, because it reads like cover. `holdings` is left in place —
+  // it works, and a probe with it showed a real turn taking Bot One from one
+  // territory to eight — for whoever works out what that path is.
   const claimed = await soloGame(page, { you: 'Harness', only: 'Harness', ai: [1] })
   expect(await onBoard(page), 'never reached a board').toBe(true)
 

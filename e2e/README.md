@@ -220,6 +220,16 @@ turn that recovered had already cleared the Nudge. Inside the poll it earns its
 place — the failure says whether the board itself had noticed, which is the
 difference between a slow turn and a wedged one.
 
+**It does not ask whether the turn was PLAYED.** A driver that handed the seat
+straight on without reinforcing or attacking would pass. An attempt to close
+that — comparing what the computer held before and after, which `holdings`
+reads off the roster strip — was removed because it could not be made to fail:
+stubbing `aiReinforcePlacements`, `aiAttackPlan` and `aiFortifyMove` all to
+nothing left the run green, so whatever moves those numbers is not only them.
+An assertion nobody can make fail is worse than none, because it reads like
+cover. `holdings` itself works — a probe showed a real turn taking Bot One from
+one territory to eight — and is left for whoever works out what that path is.
+
 Proven by wedging the driver at the fortify phase in real source. The run fails
 with `the computer took its turn and never gave control back — the AI turn
 driver stalled mid-turn`, and `Received: "stalled — the board gave up and

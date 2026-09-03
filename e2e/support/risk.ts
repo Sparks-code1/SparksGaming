@@ -448,3 +448,32 @@ export async function passTurn(page: Page, home: string): Promise<void> {
   throw new Error(`${me} could not hand the turn on in six presses.`
     + `\n${await where(page)}`)
 }
+
+/**
+ * What each player holds, read off the roster strip.
+ *
+ * The strip prints one line per seat: the name, the cards in hand, then
+ * `🗺 territories` and `⚔ troops`. It is the only place on the board where
+ * those numbers are DOM text — everything on the map itself is painted into
+ * the canvas — which makes it the only way a spec can ask whether a turn
+ * actually did anything.
+ *
+ * Keyed by lowercased name, because the board shows names as the roster spells
+ * them and a spec should not have to match the capitalisation.
+ */
+export async function holdings(
+  page: Page,
+): Promise<Record<string, { territories: number; troops: number }>> {
+  const said = await page.locator('body').innerText()
+  // FROM THE ROSTER ONWARD. Player names appear all over a board — in the turn
+  // banner, on scar cards, in the winners list — and only here are they
+  // followed by the two counts.
+  const tail = said.slice(said.lastIndexOf('CAMPAIGN WINNERS'))
+  const out: Record<string, { territories: number; troops: number }> = {}
+  for (const m of tail.matchAll(/([^\n🃏]+)🃏[^🗺]*🗺\s*(\d+)\s*⚔\s*(\d+)/g)) {
+    out[m[1].trim().toLowerCase()] = {
+      territories: Number(m[2]), troops: Number(m[3]),
+    }
+  }
+  return out
+}
