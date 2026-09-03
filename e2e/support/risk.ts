@@ -25,6 +25,9 @@
  * helper gets simpler and the specs above it do not change at all.
  */
 import { expect, type Page } from '@playwright/test'
+import {
+  TERRITORY_DEFINITIONS, MAP_WIDTH, MAP_HEIGHT,
+} from '../../src/data/territoryData'
 
 /** Long enough for a save to land, short enough that a hang still fails fast. */
 const BEAT = 400
@@ -126,20 +129,6 @@ export async function startGame(page: Page, opts: {
 }
 
 /**
- * Walk the setup screens until the board appears.
- *
- * EVERY DECISION, FOR EVERY SEAT. Setup asks each player in turn for a faction,
- * a permanent ability and an HQ, and asks a computer player the same way it
- * asks a human: GameSetupScreen takes an `aiPlayerIds` set and consults it in
- * exactly one place, the alien weakness power. So the human at the keyboard
- * answers for the computer, and so does this.
- *
- * IT TAKES WHATEVER IS OFFERED. Which faction, which ability and which
- * territory are not what these specs are about — that setup can be completed at
- * all is. Choosing deliberately would also encode one dealing of the scar cards
- * and rot the first time the pool changes.
- */
-/**
  * Who is being asked, if the screen says.
  *
  * ALL THREE CHOICE SCREENS NAME THEIR PICKER, in three different sentences:
@@ -167,9 +156,13 @@ export async function askedOf(page: Page): Promise<string | null> {
  * faction, ability and HQ to the human at the keyboard, and a walk that
  * happily clicked them could not tell the difference before and after.
  */
-export async function playSetup(page: Page, cap = 40, only?: string): Promise<void> {
+export async function playSetup(
+  page: Page, cap = 40, only?: string,
+): Promise<Record<string, string>> {
+  /** Who took which ground, for the seats this walk clicked for. */
+  const claimed: Record<string, string> = {}
   for (let i = 0; i < cap; i++) {
-    if (await onBoard(page)) return
+    if (await onBoard(page)) return claimed
 
     // SOMEBODY ELSE'S DECISION: wait it out rather than making it. A seat that
     // never answers stalls the loop, runs the cap down and fails naming the
@@ -195,7 +188,9 @@ export async function playSetup(page: Page, cap = 40, only?: string): Promise<vo
       continue
     }
     if (await page.locator('text=PLACE YOUR HQ').count()) {
-      await clickAnyTerritory(page)
+      const who = await askedOf(page)
+      const took = await clickAnyTerritory(page)
+      if (who) claimed[who.toLowerCase()] = took
       continue
     }
 
@@ -259,7 +254,7 @@ async function openTerritories(page: Page): Promise<string[]> {
  * specs do not assert, and naming one would break the first time a scar card
  * blocked it.
  */
-async function clickAnyTerritory(page: Page): Promise<void> {
+async function clickAnyTerritory(page: Page): Promise<string> {
   // BY INDEX AMONG THE POLYGONS, so the click lands on the SHAPE.
   //
   // getByTitle finds the <title> element, which is metadata: it has no box, it
@@ -267,18 +262,22 @@ async function clickAnyTerritory(page: Page): Promise<void> {
   // it. The walk then went round forty times pointing at Peru and wondering why
   // no confirm bar appeared. The shape is the polygon; the title only says
   // which polygon it is.
-  const at = await page.$$eval('polygon', els => {
+  const found = await page.$$eval('polygon', els => {
     for (let i = 0; i < els.length; i++) {
       const name = els[i].querySelector('title')?.textContent?.trim() ?? ''
-      if (name && !name.includes('—')) return i
+      if (name && !name.includes('—')) return { at: i, name }
     }
-    return -1
+    return null
   })
-  if (at < 0) {
+  if (!found) {
     throw new Error(`the HQ map offered no unblocked territory.\n${await where(page)}`)
   }
-  await page.locator('polygon').nth(at).click({ timeout: 5000 }).catch(() => {})
+  await page.locator('polygon').nth(found.at).click({ timeout: 5000 }).catch(() => {})
   await page.waitForTimeout(BEAT)
+  // WHICH GROUND, reported back. On turn one a player owns their HQ territory
+  // and nothing else, so this is the only square a spec can legally click when
+  // it comes to place that player's draft.
+  return found.name
 }
 
 /**
@@ -337,8 +336,115 @@ async function where(page: Page): Promise<string> {
  */
 export async function soloGame(page: Page, opts: {
   players?: number; ai?: number[]; others?: string[]; you?: string; only?: string
-} = {}): Promise<void> {
+} = {}): Promise<Record<string, string>> {
   await newCampaign(page, { you: opts.you, others: opts.others })
   await startGame(page, { players: opts.players, ai: opts.ai })
-  await playSetup(page, 40, opts.only)
+  return playSetup(page, 40, opts.only)
+}
+
+// ── The board ─────────────────────────────────────────────────────────────
+//
+// EVERYTHING ABOVE THIS LINE GETS TO A BOARD. These play on one, which needs a
+// different trick: setup's map is an SVG with an element per territory, and the
+// board's is Pixi on a canvas with nothing addressable on it at all — no data
+// attributes, no accessible names, and the SVG marker layer over it is
+// pointer-events:none. A click at a territory is a click at a POINT.
+
+/**
+ * Where a territory sits on screen, in client pixels.
+ *
+ * THE CANVAS IS object-fit: contain, so the map is scaled to whichever axis
+ * runs out first and centred in the leftover. That is four lines of arithmetic
+ * and it is done HERE, once, rather than guessed per call — and the caller that
+ * uses it checks the click registered, so a wrong mapping fails loudly instead
+ * of clicking the ocean forever.
+ */
+export async function territoryPoint(
+  page: Page, territoryId: string,
+): Promise<{ x: number; y: number }> {
+  const def = TERRITORY_DEFINITIONS.find(t => t.id === territoryId)
+  if (!def) throw new Error(`no territory called ${territoryId}`)
+  const box = await page.locator('canvas').first().boundingBox()
+  if (!box) throw new Error('the board has no map to click on')
+  const scale = Math.min(box.width / MAP_WIDTH, box.height / MAP_HEIGHT)
+  return {
+    x: box.x + (box.width - MAP_WIDTH * scale) / 2 + def.labelX * scale,
+    y: box.y + (box.height - MAP_HEIGHT * scale) / 2 + def.labelY * scale,
+  }
+}
+
+/** Click a territory on the board's map. */
+export async function clickTerritory(page: Page, territoryId: string): Promise<void> {
+  const { x, y } = await territoryPoint(page, territoryId)
+  await page.mouse.click(x, y)
+  await page.waitForTimeout(250)
+}
+
+/** A territory's id, from the name the setup screens show. */
+export function territoryIdNamed(name: string): string {
+  const def = TERRITORY_DEFINITIONS.find(t => t.name === name)
+  if (!def) throw new Error(`no territory named ${name}`)
+  return def.id
+}
+
+/**
+ * Whose turn the board says it is.
+ *
+ * TurnControls names the current player above "Turn N" whoever it is, human or
+ * computer, so one read covers both. The banner that says a computer is taking
+ * their turn is a second witness and only appears for a seat this machine is
+ * not playing.
+ */
+export async function whoseTurn(page: Page): Promise<string | null> {
+  const said = await page.locator('body').innerText()
+  return said.match(/^(.+?)\s*\n\s*Turn \d+\s*$/m)?.[1].trim()
+    ?? said.match(/^(.+?) is taking their turn/m)?.[1].trim()
+    ?? null
+}
+
+/** How many reinforcements are still in hand, per the draft pill. */
+export async function toPlace(page: Page): Promise<number> {
+  const m = (await page.locator('body').innerText()).match(/^(\d+) to place$/m)
+  return m ? Number(m[1]) : 0
+}
+
+/**
+ * Play a human turn with no ambition: place the draft, attack nobody, move
+ * nothing, hand over.
+ *
+ * IT EXISTS TO GET TO THE NEXT SEAT. What this run is about is the turn AFTER
+ * this one — nothing here asserts a rule, and choosing targets would make the
+ * spec depend on a board the dice laid out.
+ *
+ * @param home a territory this player owns. On turn one that is their HQ and
+ *   the only one they have, which is why the walk records it.
+ */
+export async function passTurn(page: Page, home: string): Promise<void> {
+  let owed = await toPlace(page)
+  const first = owed
+  for (let i = 0; i < first + 4 && owed > 0; i++) {
+    await clickTerritory(page, home)
+    const now = await toPlace(page)
+    if (now === owed) {
+      throw new Error(`clicking ${home} placed nothing — ${owed} still owed.`
+        + ' The map point is landing somewhere the board does not recognise.')
+    }
+    owed = now
+  }
+  // ONE BUTTON, FOUR LABELS. The phase-advance control is a single button whose
+  // text is written by the phase it is in: "Begin Attack →" while troops are
+  // owed, "✓ Confirm" once they are all down, then "End Attack →", then
+  // "End Turn →" (and "🃏 Pick a Card First", disabled, when a card is owed).
+  // A first version pressed the three labels in order and never found the first
+  // one, because placing the draft had already relabelled it.
+  //
+  // So: press whatever it currently says, until the seat changes hands. That
+  // also survives an interstitial nobody here has met yet.
+  const me = await whoseTurn(page)
+  for (let i = 0; i < 6; i++) {
+    if ((await whoseTurn(page)) !== me) return
+    await press(page, /✓ Confirm|Begin Attack|End Attack|End Turn/)
+  }
+  throw new Error(`${me} could not hand the turn on in six presses.`
+    + `\n${await where(page)}`)
 }

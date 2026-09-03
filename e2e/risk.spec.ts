@@ -12,7 +12,10 @@
  * anything lying on top of it.
  */
 import { test, expect } from '@playwright/test'
-import { soloGame, newCampaign, openSlots, playSetup, startGame, onBoard } from './support/risk'
+import {
+  soloGame, newCampaign, openSlots, playSetup, startGame, onBoard,
+  whoseTurn, passTurn, territoryIdNamed,
+} from './support/risk'
 
 /**
  * The walk is a dozen screens with a save behind several of them.
@@ -130,4 +133,62 @@ test('two computers set up a game with nobody clicking for them', async ({ page 
   for (const who of ['Harness', 'Bot One', 'Bot Two']) {
     expect(said.includes(who), `${who} is not on the board`).toBe(true)
   }
+})
+
+test('the computer takes a whole turn and hands control back', async ({ page }) => {
+  // THE OLDEST OPEN QUESTION ABOUT RISK. The AI turn driver — reinforce, then
+  // attack, then fortify, then end — has never been watched from one end to the
+  // other. Its known failure is a stall: the driver reaches a state it has no
+  // branch for, or leaves `aiBusyRef` set, and the turn silently stops. The
+  // board then looks exactly like a human seat with nobody at it.
+  //
+  // There IS a 20-second stall watchdog that notices and offers a Nudge. That
+  // is a symptom, not a pass, so this spec fails on the Nudge appearing as
+  // surely as on the turn never coming back.
+  const claimed = await soloGame(page, { you: 'Harness', only: 'Harness', ai: [1] })
+  expect(await onBoard(page), 'never reached a board').toBe(true)
+
+  // WHOEVER THE DICE PUT FIRST. If the human opens, their turn is played out to
+  // hand over; if the computer opens, the wait below is the whole test. Either
+  // way exactly one full computer turn is watched, and the spec does not depend
+  // on a roll.
+  if ((await whoseTurn(page))?.toLowerCase() === 'harness') {
+    const home = claimed['harness']
+    expect(home, 'the walk did not record where Harness put her HQ').toBeTruthy()
+    await passTurn(page, territoryIdNamed(home))
+  }
+
+  // THE COMPUTER IS UP. Asserted rather than assumed: a hand-over that quietly
+  // skipped the bot would otherwise read as a pass two lines further down.
+  await expect(page.locator('text=/is taking their turn/'),
+    'the turn never reached the computer').toBeVisible({ timeout: 30_000 })
+
+  // AND IT COMES BACK. Generous, because a turn is reinforce, some number of
+  // battles with dice animations, and a fortify — but bounded, because "it
+  // finishes eventually" is what a stalled AI also looks like from inside a
+  // wait with no ceiling.
+  //
+  // THE WATCHDOG IS PART OF THE READING, not a separate assertion afterwards.
+  // A first version checked for the Nudge button after the wait, which could
+  // never fail: a stall failed the wait first, and a turn that recovered had
+  // already cleared the Nudge by the time control arrived. Folded in here it
+  // earns its place — the failure message says whether the board itself had
+  // noticed, which is the difference between a slow turn and a wedged one.
+  await expect
+    .poll(async () => {
+      if (await page.locator('button', { hasText: /^Nudge$/ }).count()) {
+        return 'stalled — the board gave up and offered a Nudge'
+      }
+      return (await whoseTurn(page))?.toLowerCase() ?? ''
+    }, {
+      timeout: 90_000,
+      message: 'the computer took its turn and never gave control back'
+        + ' — the AI turn driver stalled mid-turn',
+    })
+    .toBe('harness')
+
+  // AND THE HUMAN CAN ACT AGAIN. Control returning to a seat with nothing
+  // pressable is the same soft-lock one step later.
+  await expect(page.locator('button', { hasText: /✓ Confirm|Begin Attack|End Attack|End Turn/ }).first(),
+    'control came back with no turn controls').toBeVisible()
 })

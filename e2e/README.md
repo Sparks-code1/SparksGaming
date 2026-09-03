@@ -188,3 +188,40 @@ two of the three choice headings are uppercased in CSS, and `innerText` returns
 what is rendered. The faction screen asks `HARNESS — PICK A FACTION` of a player
 the roster calls `Harness`, so the first version of the name check waited for the
 human to answer for herself.
+
+### One full AI turn
+
+The oldest open question about Risk: the AI turn driver — reinforce, attack,
+fortify, end — had never been watched end to end. Its known failure is a stall,
+and a stalled AI looks exactly like a human seat with nobody at it.
+
+The spec reaches a board, hands the turn to the computer, and waits for it to
+come back. Whoever the dice put first, exactly one computer turn is watched: if
+the human opens, `passTurn` plays their turn out to hand over; if the computer
+opens, the wait is the whole test.
+
+**The board's map is a canvas with nothing addressable on it** — no data
+attributes, no accessible names, and the SVG marker layer over it is
+`pointer-events: none`. So a territory click is a click at a POINT, and
+`territoryPoint` does the `object-fit: contain` arithmetic once from the canvas
+box and the map's own dimensions. `passTurn` checks the counter actually drops
+after each click, so a wrong mapping fails saying so rather than clicking the
+ocean forty times.
+
+**The phase-advance control is one button with four labels** — `Begin Attack →`
+while troops are owed, `✓ Confirm` once they are down, then `End Attack →`, then
+`End Turn →`. Pressing the three in order finds none of them, because placing
+the draft relabels the first. `passTurn` presses whatever it currently says
+until the seat changes hands.
+
+**The 20-second stall watchdog is folded into the wait**, not checked after it.
+Checked afterwards it could never fail: a stall failed the wait first, and a
+turn that recovered had already cleared the Nudge. Inside the poll it earns its
+place — the failure says whether the board itself had noticed, which is the
+difference between a slow turn and a wedged one.
+
+Proven by wedging the driver at the fortify phase in real source. The run fails
+with `the computer took its turn and never gave control back — the AI turn
+driver stalled mid-turn`, and `Received: "stalled — the board gave up and
+offered a Nudge"`. Three clean runs before that to check it is not flaky:
+~30s each.
