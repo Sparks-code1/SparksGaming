@@ -89,3 +89,14 @@ The beats between the two plans — a Voice, the Atreides question, the traitor
 call, a loss allocation — are PLAYED rather than scripted:  reads
 the row and answers whatever is actually open. A fixed script would encode one
 seating and rot, and would skip a new beat in silence instead of failing.
+
+The guard is proven, not assumed. Passing against fixed code shows a spec runs;
+it does not show it would have caught anything. So the helper was stranded back
+inside the switch and the spec re-run — both tests failed, the first with
+
+    BATTLE_PLAN crashed the endpoint as emperor.
+    Cannot access 'battleStops' before initialization
+      emperor BATTLE_PICK → 200 ok
+      emperor BATTLE_PLAN → 500 action-threw
+
+— and the helper was put back. About 15s for the pair, on the local stack.
