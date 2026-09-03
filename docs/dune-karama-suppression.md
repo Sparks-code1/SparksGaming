@@ -1,11 +1,14 @@
 # Cancelling an advantage with Karama
 
-The plan, not the build. The proactive half of Karama is done —
-`src/lib/dune/karama.ts` — and this is the other half: stopping an opponent from
-using one of their faction advantages.
+**BUILT, and this describes it. Last refreshed 2026-09-03.**
 
-Written down because the shape of it is decided and the timing of it is not, and
-those are different things.
+Both halves of Karama are done. The proactive half — spending one on your own
+faction's power — is `src/lib/dune/karama.ts`. This is the other half: stopping
+an opponent using one of theirs.
+
+This file was written as a plan and has been rewritten as a description. Where
+the build departed from the plan, the departure is marked and the reason kept,
+because the reasoning is the part worth keeping.
 
 ---
 
@@ -31,27 +34,68 @@ the time a holder declines. So the game cannot wait on an answer.
 
 ---
 
-## The shape
+## The shape, as built
 
-### The interrupt is an offering window
+### It is played, not offered
 
-`src/lib/dune/phase.ts` already has it. `offering(from, ask, carry, closesAt)`
-stops a phase, names who *may* act, and proceeds whether or not anyone does —
-built for Family Atomics, which has the same problem: a rare card, held by one
-player, played into a specific gap.
+**DEPARTURE FROM THE PLAN.** This document originally proposed an *offering*
+window: the game would pause at each point an advantage was about to fire, name
+the holders of a Karama, and proceed whether or not anyone answered. That is not
+what was built, and the reason is the reason the plan itself gives for wanting
+it — most of the time nobody holds one, and most of the time a holder declines.
+A window at every firing site would have stopped the game constantly for an
+answer that is almost always silence.
 
-Karama needs exactly that, opened at each point where an advantage is about to
-fire, offered to everyone holding a Karama card:
+What was built instead is a plain action. A player holding a Karama sends
+`KARAMA_STOP` naming the target faction, the rule, and the phase it bites in.
+The card is discarded publicly, an entry goes into `state.suppressed[]`, and
+every firing site asks `isSuppressed(...)` when it fires.
 
 ```
-faction is about to use ability X
-  -> offering(everyone-with-a-karama, { kind: 'karama-window', faction, ability: X }, carry)
-  -> nobody answers, or somebody plays one
-  -> the ability fires, or does not
+KARAMA_STOP { card, target, ref, phase? }
+  -> state.suppressed[] gains { faction, ref, by, turn, phase }
+  -> the site that fires that rule asks isSuppressed() and declines
 ```
 
-The `ask` carries which ability, so a client can say *"the Atreides are about to
-look at this card"* rather than *"someone is doing something"*.
+It is reactive in effect without being reactive in mechanism: the stop is placed
+ahead of the moment and consulted at it.
+
+### Which phase it bites in
+
+Silence means the phase being played in, which is what it always meant. A later
+phase of the same turn may be named instead — `stoppablePhases(current)` is the
+list, and the panel draws its picker from the same function the endpoint judges
+with.
+
+**This is not decoration.** Some advantages fire in the same breath as their
+phase begins, with nothing between the two for anyone to answer in. The Guild
+naming its place in the shipping order is the plainest case: the window opens in
+the very write that sets the phase, so a stop that could only ever be stamped
+with the phase already running could never once have fired. Naming a phase ahead
+is how "before you ship, Karama" is actually said at a table.
+
+A phase already past cannot be named — that moment cannot be interrupted — and
+nor can a phase of the next turn: the card stops an advantage "during one game
+phase", one, named, in the turn it is spent in.
+
+### Only what this game is playing
+
+The menu takes the mode. Half these advantages live on the advanced side of the
+sheet and do nothing whatever in a basic game — Sardaukar counting double, the
+Fremen storm foreknowledge, the Guild going out of turn — and offering them in a
+basic game sells a stop against something that was never going to happen. Mode is
+a REQUIRED argument to `suppressibleRefs`, not a defaulted one, so a caller
+cannot ask what a Karama may stop without saying which game it is asking about.
+
+### One paragraph can be more than one advantage
+
+A ref may name part of a sheet entry, written `abilities.shipment#kinds`. The
+Guild's shipment paragraph is four things at once — collecting everybody's fees,
+their own half rate, and two kinds of shipment nobody else may make — and one
+card taking all four is not a reading a table would accept. The prose is NOT
+split: the card a player reads stays whole, and the qualifier lives in the
+reference. `canKaramaStop` strips at the `#` before checking `unsuppressable`, or
+the qualifier would be a way round a faction's protection.
 
 ### Abilities become addressable
 
@@ -93,8 +137,17 @@ is implemented**, as part of implementing it. The alternative produces a large
 diff of hooks guarding nothing, which then has to be revisited anyway when the
 real code lands, and which nothing can test in the meantime.
 
-The one thing to do up front is the window, because it is shared. Everything else
-arrives with its own ability.
+**(Superseded again 2026-09-02.)** "The one thing to do up front is the window"
+no longer applies — there is no window. What is shared is `suppressibleRefs`, the
+menu, and `isSuppressed`, the question; both existed before the first check did.
+
+The incremental rule failed twice in practice and is now enforced rather than
+remembered. A rule that depends on somebody recalling it is already broken:
+`tests/karamatest.ts` requires every enforced entry to carry a
+`// KARAMA-STOP: <faction> <ref>` marker at its firing site with a real
+`isSuppressed` call within six lines of it, and requires every marker to belong
+to an enforced entry. Both directions, because a flag with no check is a promise
+the game cannot keep and a check with no flag is enforcement nobody may buy.
 
 ---
 
@@ -143,74 +196,116 @@ their empty options list being read as them gaining nothing from the card.
 
 ---
 
-## Open, and worth settling before it is built
+## Open questions, and how they were settled
 
-**Who sees the window.** Offering it to everyone holding a Karama tells the table
-that somebody is about to do something interruptible, which is information. The
-alternative — offering silently and only to holders — means the interface knows
-who holds one, and hands are secret.
+**Who sees the window** — moot. There is no window. The stop is a played card:
+publicly discarded, publicly recorded in `state.suppressed[]`, and the table sees
+what was stopped and by whom. Nothing is inferred about who holds what.
 
-**Whether declining is public.** If the window closes with nobody playing, does
-the table learn that nobody held one?
+**Whether declining is public** — moot for the same reason. Nobody is asked, so
+there is no declining to observe.
 
-**What "one game phase" means for an ability used out of sequence.** The Guild
-takes its shipment out of turn; suppressing "during one game phase" is unclear
-when the phase they act in is not their own.
+**What "one game phase" means for an ability used out of sequence** — settled by
+letting the card name its phase. The Guild takes its shipment out of turn, and a
+stop aimed at that names Shipment and Movement from an earlier phase of the same
+turn. See "Which phase it bites in".
 
-**Whether a suppressed ability is announced.** Stopping the Atreides looking at a
-card is visible. Stopping something passive may not be.
+**Whether a suppressed ability is announced** — the STOP is announced, at the
+moment it is played. What is not announced is the firing site declining later;
+the seat that tried simply gets its ordinary refusal. That asymmetry is
+deliberate: the table saw the card played and can read the consequence, and a
+second announcement per firing would narrate a rule rather than play it.
 
 ---
 
-## The audit, 2026-09-01
+## The audit, 2026-09-03
 
-Taken after a live playtest found the Fremen desert unguarded. Counted from
-`factions.ts` and `canKaramaStop`, against the `isSuppressed` call sites in
-`dune-action`.
+Counted from `factions.ts`, `canKaramaStop` and `suppressibleRefs`, against the
+`isSuppressed` call sites in `dune-action`. The numbers are produced by the
+suite, not by reading: `tests/karamatest.ts` holds each of them as a literal so
+that adding or dropping an offer is a decision somebody has to make twice.
 
-**40 addressable rules across the six factions. 37 are stoppable.** The three a
-Karama may never touch are the Fremen special victory, the Guild special
-victory, and the Bene Gesserit prediction (`abilities.beforeGame`) — the win
-conditions, exactly as the section above says.
+**36 addressable rules across the six factions. 3 are beyond a Karama** — the
+Fremen special victory, the Guild special victory, and the Bene Gesserit
+prediction. The win conditions, exactly as the section above says.
 
-**Seven of the 37 are checked where they fire:**
+**26 curated stops. 20 are enforced and offered; 6 are not offered at all.**
 
-| Faction | Rule | Where |
+An unenforced stop is not a stop that quietly does nothing. It would take the
+card, discard it where the table can see, announce itself, and then the
+advantage would happen anyway. A player who is refused keeps their card and
+knows where they stand; a player who is told it worked has been lied to and paid
+for it. So an entry with no check at its firing site is **not offered**, and
+`suppressibleRefs` is the one list both the panel and the endpoint read.
+
+In a basic game the menu is 9, not 20 — the eleven advanced entries are dropped.
+
+### Enforced
+
+| Faction | Rule | Where it is checked |
 |---|---|---|
-| Atreides | `abilities.bidding` | the auction card they alone see |
-| Atreides | `abilities.battle` | the one element of a plan they may demand |
+| Atreides | `abilities.bidding` | the auction card they alone see — and the stop takes back the one already in their tray |
+| Atreides | `abilities.battle` | the plan element they may demand, asked again where the question is put |
 | Emperor | `abilities.bidding` | their cut of what the auction pays |
+| Emperor | `advanced.forces` | Sardaukar doubling, in the plan AND in the losses |
 | Harkonnen | `abilities.treachery` | the bonus card |
-| Spacing Guild | `abilities.shipment` | the fee redirected to the bank |
-| Bene Gesserit | `abilities.battle` | the Voice |
-| Fremen | `abilities.shipment` | the free desert radius — **added 2026-09-01** |
+| Spacing Guild | `abilities.shipment` | the fees redirected, and the half rate lost |
+| Spacing Guild | `abilities.shipment#kinds` | cross-shipping and shipping home |
+| Spacing Guild | `advanced.shipment` | naming their place in the rotation |
+| Fremen | `abilities.shipment` | the free desert radius |
+| Fremen | `advanced.shipment` | landing in a storm at half losses |
+| Fremen | `advanced.storm` | knowing the next storm a turn early |
+| Fremen | `advanced.forces` | Fedaykin doubling, in the plan AND in the losses |
+| Fremen | `advanced.battle` | fighting at full strength without spice |
+| Bene Gesserit | `abilities.battle` | the Voice, at the pick AND where it speaks |
+| Bene Gesserit | `abilities.shipment` | the free force into the Polar Sink |
+| Bene Gesserit | `advanced.shipment` | the advisor that follows a shipment |
+| Bene Gesserit | `advanced.charity` | the flat two, whatever they hold |
+| Bene Gesserit | `advanced.advisors` | advisors sitting in ground without a fight |
+| Bene Gesserit | `advanced.fighters` | going to ground when somebody arrives |
+| Bene Gesserit | `advanced.battle` | standing advisors up before a shipment |
 
-The Fremen one is the reason for this audit. Their radius shipped without a
-check, so the single power that most changes who can reach where could not be
-cancelled at all — against this document's own rule that an ability gets its
-check WHEN it is built. Note what the check does and does not touch: it prices
-the desert at the ordinary rate, and leaves the payee with the bank, because
-the Fremen fee never reaching the Guild follows from their reserves being on
-planet (`Faction.reservesHeld`, data) and not from the advantage being stopped.
+Two of those say **AND** for a reason. "Counting double in battle and in taking
+losses" is two halves of one sentence, and for a while only the first was
+stopped: the plan was judged with the elites cancelled and the losses then
+allocated with them doubled again. The suite now scans the endpoint for any
+`eliteWorth` or `fullWithoutSpice` call whose own arguments carry no stop.
 
-**The other 30 have no check.** Some are correctly unchecked — the rule above
-is that a check arrives with its ability, and not every one of these is built.
-But several ARE built and are unguarded, and those are debt rather than
-deferral. The ones known to be built and unchecked:
+### Not offered
 
-- Fremen `abilities.movement` — two territories instead of one
-- Fremen `advanced.forces` / Emperor `advanced.forces` — Fedaykin and Sardaukar
-  counting double in battle and in losses
-- Harkonnen `abilities.traitors` — keeping all four
-- Harkonnen `advanced.capturedLeaders` — taking a leader after a win
-- Bene Gesserit `advanced.charity` — always collecting, whatever they hold
-- Bene Gesserit `advanced.advisors` / `advanced.fighters` — the advisor flow
-- Atreides `advanced.kwisatzHaderach` — the counter and what it protects
-- Spacing Guild `advanced.shipment` — cross-planet and shipping home
+| Faction | Rule | Built? |
+|---|---|---|
+| Atreides | `abilities.movement` | yes — the spice-deck glimpse |
+| Atreides | `advanced.kwisatzHaderach` | yes — the +2 |
+| Fremen | `abilities.movement` | yes — two territories instead of one |
+| Fremen | `abilities.shaiHulud` | yes — surviving and riding the worm |
+| Fremen | `advanced.spiceBlow` | yes — extra worms, half storm losses |
+| Harkonnen | `advanced.capturedLeaders` | yes — taking a leader after a win |
 
-None of those is hard on its own; each is one `isSuppressed` call at the site
-where the rule fires, plus a test in both directions — that stopping it changes
-the outcome, and that stopping one seat leaves the others alone. What makes
-them worth doing together is that they are all now findable: the list above is
-the whole of it.
+All six are built, so all six are debt rather than deferral.
 
+The Fremen movement one is closest: `movementRange` already takes a
+`suppressed` input, so it is a check at the `MOVE` site and a test in both
+directions, not new plumbing.
+
+**The Bene Gesserit cluster is done** — 2026-09-03, all six at once, because
+they are one idea rather than six: a faction that sits in everybody's ground
+without fighting, follows every shipment, and is never short of spice. Two of
+them are the two directions of the same flip and stop separately, so one Karama
+does not buy both.
+
+Two notes from doing them, because both are the kind of thing that reads as a
+bug later:
+
+- **Stopping the charity restores the threshold, it does not bar them.** A poor
+  Sisterhood still qualifies the way anybody poor does. The advantage is the
+  exemption, not the claim.
+- **The flip stop is scoped to the phase it is played in**, not a fixed one,
+  because the stand-up window spans CHOAM Charity, Bidding and Revival.
+
+### The rule that keeps this honest
+
+An ability gets its check **when the ability is built**, as part of building it.
+That rule failed twice — the Fremen desert radius shipped without one, and so did
+eighteen more — and the only reason anybody found out was by reading the list. It
+is enforced by the suite now rather than remembered, in both directions.

@@ -183,15 +183,19 @@ export interface PendingBattle {
  * resolution changes the board, and a stored list would have to chase it.
  */
 export function pendingBattles(
-  forces: readonly Force[], storm: SectorId,
+  forces: readonly Force[], storm: SectorId, advisorsFight = false,
 ): PendingBattle[] {
   const out: PendingBattle[] = []
   for (const t of DUNE_TERRITORIES) {
     if (t.terrain === 'polar-sink') continue
     // ADVISORS DO NOT FIGHT: no battle opens over a watcher, and a
     // territory of one advisor and one army holds no fight at all.
+    //
+    // UNLESS A KARAMA HAS SAID OTHERWISE. Sitting in somebody else's ground
+    // without a fight is the advantage; stopped, the robes are no protection
+    // and the watchers are just forces standing where they should not be.
     const occupied = forces.filter(f => f.territoryId === t.id && f.count > 0
-      && f.posture !== 'advisor')
+      && (advisorsFight || f.posture !== 'advisor'))
     if (occupied.length === 0) continue
 
     // The territory's sectors, chained by ring adjacency, cut at the storm.

@@ -1,24 +1,23 @@
 /**
- * Karama: the proactive half.
+ * Karama, both halves — the spending here, the stopping below it.
  *
- * A Karama card can be spent two ways. It can STOP an opponent using one of
- * their advantages, at the moment they try — that half is not built, and the
- * plan for it is docs/dune-karama-suppression.md. Or its owner can spend it on
- * something of their own choosing, which is this file.
+ * A Karama card can be spent two ways. Its owner can spend it on something of
+ * their own choosing, which is the first half of this file. Or it can STOP an
+ * opponent using one of their advantages, which is the second — `Suppression`,
+ * `isSuppressed` and `suppressibleRefs`, from the "reactive half" comment down.
+ * docs/dune-karama-suppression.md describes both as built.
  *
- * Playing it is one decision made once: the options are laid out, one is taken,
+ * Spending it is one decision made once: the options are laid out, one is taken,
  * the effect happens, the card is discarded. There is no window and nobody to
- * wait for, so this is a plain function rather than a phase step — the pausing
- * machinery in ./phase.ts belongs to the half that interrupts.
+ * wait for, so it is a plain function rather than a phase step — and the stop is
+ * not a window either. It is a played card that leaves an entry behind, which
+ * each firing site asks about when it fires.
  *
- * WHAT ACTUALLY RESOLVES HERE. One option of the seven: the Fremen worm, which
- * resolves because the spice blow already knows how a worm eats. The other six
- * need bidding, shipment, revival, battle plans or hands, none of which exist.
- * They are not silently dropped — playing one returns a `pending` description of
- * what is owed, and the card still leaves the hand, because a Karama spent on a
- * phase that has not been written is still spent. `resolvable` on the option
- * says which is which, so a menu can show it rather than a player discovering it
- * after the card is gone.
+ * WHAT RESOLVES HERE. All seven options resolve: every phase they need is built.
+ * `resolvable` stays on the option because it is the honest way to say that an
+ * effect this module cannot carry out is still a card spent — if a use is ever
+ * added ahead of the phase it needs, a menu can show that rather than a player
+ * discovering it after the card is gone.
  */
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'

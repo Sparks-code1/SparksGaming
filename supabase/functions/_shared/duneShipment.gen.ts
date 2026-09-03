@@ -809,7 +809,8 @@ var GUILD_RETURN_PER = 2;
 var GREAT_FLAT = "territory-22";
 var POLAR_SINK = "territory-03";
 var POLAR_SINK_SECTOR = "sector-1";
-function bgFollowsShip(shipper, kind, mode) {
+function bgFollowsShip(shipper, kind, mode, suppressed = false) {
+  if (suppressed) return false;
   return mode === "basic" && kind === "off-planet" && shipper !== "bene-gesserit" && shipper !== "fremen";
 }
 var FREMEN_SHIP_RADIUS = 2;
@@ -1110,7 +1111,8 @@ function hajrMayPlay(w, faction) {
   return !!w && w.order[w.at] === faction && !w.done.moved;
 }
 var SHIPMENT_PHASE = "Shipment and Movement";
-function bgAdvancedFollow(shipper, kind, mode) {
+function bgAdvancedFollow(shipper, kind, mode, suppressed = false) {
+  if (suppressed) return false;
   return mode === "advanced" && kind === "off-planet" && shipper !== "bene-gesserit" && shipper !== "fremen";
 }
 function landAdvisor(forces, territoryId, sector, turn) {
@@ -1130,6 +1132,7 @@ function landAdvisor(forces, territoryId, sector, turn) {
 var BG_FLIP_WINDOW = ["CHOAM Charity", "Bidding", "Revival"];
 function judgeBgFlip(input) {
   const { direction, territoryId, forces, phase, turn } = input;
+  if (input.suppressed) return "karama-stopped";
   const here = forces.filter((f) => f.faction === "bene-gesserit" && f.territoryId === territoryId && f.count > 0);
   const rivals = forces.some((f) => f.faction !== "bene-gesserit" && f.territoryId === territoryId && f.count > 0);
   if (direction === "to-fighter") {

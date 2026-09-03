@@ -130,7 +130,11 @@ export const POLAR_SINK_SECTOR = 'sector-1'
  */
 export function bgFollowsShip(
   shipper: FactionId, kind: GuildShipKind, mode: 'basic' | 'advanced',
+  suppressed = false,
 ): boolean {
+  // A KARAMA KEEPS THE WATCHER HOME. The free force is the advantage; the
+  // shipment that triggers it is somebody else's and is not touched.
+  if (suppressed) return false
   return mode === 'basic' && kind === 'off-planet'
     && shipper !== 'bene-gesserit' && shipper !== 'fremen'
 }
@@ -760,7 +764,10 @@ export const SHIPMENT_PHASE: GamePhase = 'Shipment and Movement'
  */
 export function bgAdvancedFollow(
   shipper: FactionId, kind: GuildShipKind, mode: 'basic' | 'advanced',
+  suppressed = false,
 ): boolean {
+  // Stopped, no advisor follows — the shipper still ships.
+  if (suppressed) return false
   return mode === 'advanced' && kind === 'off-planet'
     && shipper !== 'bene-gesserit' && shipper !== 'fremen'
 }
@@ -794,6 +801,7 @@ export const BG_FLIP_WINDOW: readonly string[] =
 
 export type BgFlipRefusal =
   | 'wrong-phase' | 'nothing-there' | 'fresh-advisors' | 'nobody-there'
+  | 'karama-stopped'
 
 /**
  * Judge one flip, by territory and direction.
@@ -810,8 +818,16 @@ export function judgeBgFlip(input: {
   forces: readonly Force[]
   phase: string
   turn: number
+  /**
+   * The two directions are two advantages and stop separately: standing
+   * advisors up before a shipment is `advanced.battle`, going to ground when
+   * somebody arrives is `advanced.fighters`. The caller asks about the one
+   * being attempted.
+   */
+  suppressed?: boolean
 }): BgFlipRefusal | null {
   const { direction, territoryId, forces, phase, turn } = input
+  if (input.suppressed) return 'karama-stopped'
   const here = forces.filter(f =>
     f.faction === 'bene-gesserit' && f.territoryId === territoryId && f.count > 0)
   const rivals = forces.some(f =>

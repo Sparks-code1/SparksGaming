@@ -122,9 +122,12 @@ const ALWAYS_ELIGIBLE: FactionId = 'bene-gesserit'
  */
 export function isEligibleForCharity(
   secrets: Secrets | null | undefined, faction?: FactionId | null,
-  mode?: 'basic' | 'advanced',
+  mode?: 'basic' | 'advanced', suppressed = false,
 ): boolean {
-  if (faction === ALWAYS_ELIGIBLE && mode === 'advanced') return true
+  // STOPPED, THEY QUEUE WITH EVERYBODY ELSE. The advantage is the exemption
+  // from the threshold, so cancelling it puts the threshold back — it does
+  // not bar them from charity they would qualify for anyway.
+  if (!suppressed && faction === ALWAYS_ELIGIBLE && mode === 'advanced') return true
   return readSpice(secrets) <= CHARITY_TOPS_UP_TO
 }
 
@@ -139,9 +142,13 @@ export function isEligibleForCharity(
  */
 export function charityGrant(
   secrets: Secrets | null | undefined, faction?: FactionId | null,
-  mode?: 'basic' | 'advanced',
+  mode?: 'basic' | 'advanced', suppressed = false,
 ): number {
-  if (faction === ALWAYS_ELIGIBLE && mode === 'advanced') return CHARITY_TOPS_UP_TO
+  // The flat two is the advantage; suppressed, they are topped up like
+  // anybody else, which for a rich seat is nothing.
+  if (!suppressed && faction === ALWAYS_ELIGIBLE && mode === 'advanced') {
+    return CHARITY_TOPS_UP_TO
+  }
   const spice = readSpice(secrets)
   return spice <= CHARITY_TOPS_UP_TO ? CHARITY_TOPS_UP_TO - spice : 0
 }
@@ -149,12 +156,12 @@ export function charityGrant(
 /** A seat's secrets after claiming. Untouched when the claim is worth nothing. */
 export function applyCharity(
   secrets: Secrets | null | undefined, faction?: FactionId | null,
-  mode?: 'basic' | 'advanced',
+  mode?: 'basic' | 'advanced', suppressed = false,
 ): DuneSecrets {
   const spice = readSpice(secrets)
   return {
     ...(secrets ?? {}),
-    spice: spice + charityGrant(secrets, faction, mode),
+    spice: spice + charityGrant(secrets, faction, mode, suppressed),
   } as DuneSecrets
 }
 

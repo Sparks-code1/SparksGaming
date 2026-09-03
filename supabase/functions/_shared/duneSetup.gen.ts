@@ -1029,13 +1029,13 @@ var BENE_GESSERIT = {
   // specialVictory — see the note on Faction.unsuppressable.
   unsuppressable: ["abilities.beforeGame"],
   karamaStops: {
-    "abilities.shipment": { stops: "Shipping one force free into the Polar Sink.", enforced: false },
+    "abilities.shipment": { stops: "Shipping one force free into the Polar Sink.", enforced: true },
     "abilities.battle": { stops: "The Voice: commanding one card in an opponent battle plan.", enforced: true },
-    "advanced.shipment": { stops: "Shipping one advisor free into a territory somebody else ships into.", enforced: false },
-    "advanced.charity": { stops: "Always collecting CHOAM charity, whatever they hold.", enforced: false },
-    "advanced.advisors": { stops: "Advisors sharing a territory without a fight.", enforced: false },
-    "advanced.fighters": { stops: "Flipping fighters to advisors when somebody arrives.", enforced: false },
-    "advanced.battle": { stops: "Standing advisors up as fighters before the shipment.", enforced: false }
+    "advanced.shipment": { stops: "Shipping one advisor free into a territory somebody else ships into.", enforced: true },
+    "advanced.charity": { stops: "Always collecting CHOAM charity, whatever they hold.", enforced: true },
+    "advanced.advisors": { stops: "Advisors sharing a territory without a fight.", enforced: true },
+    "advanced.fighters": { stops: "Flipping fighters to advisors when somebody arrives.", enforced: true },
+    "advanced.battle": { stops: "Standing advisors up as fighters before the shipment.", enforced: true }
   },
   leaders: [
     { name: "Mother Ramallo", strength: 5 },

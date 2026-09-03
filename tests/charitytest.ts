@@ -234,10 +234,12 @@ check('...and no spice anywhere in it',
 // small and had no logic in it. It had exactly enough: this exception.
 {
   const edge = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
-  check('the endpoint asks eligibility directly, naming the mode',
-    /isEligibleForCharity\(secrets, myFaction, mode\)/.test(edge), true)
-  check('...and grants by faction and mode too',
-    /charityGrant\(secrets, myFaction, mode\)/.test(edge), true)
+  // AND NAMING THE STOP. The flat two is the Bene Gesserit advantage, so a
+  // Karama takes it and leaves them on the same threshold as everybody else.
+  check('the endpoint asks eligibility directly, naming the mode and the stop',
+    /isEligibleForCharity\(secrets, myFaction, mode, bgCharityStopped\)/.test(edge), true)
+  check('...and grants by faction, mode and stop too',
+    /charityGrant\(secrets, myFaction, mode, bgCharityStopped\)/.test(edge), true)
   check('...where the mode is the row\'s, not the payload\'s',
     /const mode = state\.mode === 'advanced' \? 'advanced' : 'basic'/.test(edge), true)
   // FROM THE TOKEN, never the payload. A faction in the request body would let

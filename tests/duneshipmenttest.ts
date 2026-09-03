@@ -1123,7 +1123,7 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
   // ── the server slice ────────────────────────────────────────────────────
   const fnb = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
   check('the advanced follow rides the SHIP write, under the standing order',
-    [/bgAdvancedFollow\(myFaction as never, kind, bgMode\)/.test(fnb),
+    [/bgAdvancedFollow\(myFaction as never, kind, bgMode, bgAdvStopped\)/.test(fnb),
       /&& bgHasReserves && state\.bgFollowShips !== false && judged\.sector/.test(fnb),
       /landAdvisor\(/.test(fnb)],
     [true, true, true])

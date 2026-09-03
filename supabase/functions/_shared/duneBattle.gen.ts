@@ -1303,13 +1303,13 @@ var BENE_GESSERIT = {
   // specialVictory — see the note on Faction.unsuppressable.
   unsuppressable: ["abilities.beforeGame"],
   karamaStops: {
-    "abilities.shipment": { stops: "Shipping one force free into the Polar Sink.", enforced: false },
+    "abilities.shipment": { stops: "Shipping one force free into the Polar Sink.", enforced: true },
     "abilities.battle": { stops: "The Voice: commanding one card in an opponent battle plan.", enforced: true },
-    "advanced.shipment": { stops: "Shipping one advisor free into a territory somebody else ships into.", enforced: false },
-    "advanced.charity": { stops: "Always collecting CHOAM charity, whatever they hold.", enforced: false },
-    "advanced.advisors": { stops: "Advisors sharing a territory without a fight.", enforced: false },
-    "advanced.fighters": { stops: "Flipping fighters to advisors when somebody arrives.", enforced: false },
-    "advanced.battle": { stops: "Standing advisors up as fighters before the shipment.", enforced: false }
+    "advanced.shipment": { stops: "Shipping one advisor free into a territory somebody else ships into.", enforced: true },
+    "advanced.charity": { stops: "Always collecting CHOAM charity, whatever they hold.", enforced: true },
+    "advanced.advisors": { stops: "Advisors sharing a territory without a fight.", enforced: true },
+    "advanced.fighters": { stops: "Flipping fighters to advisors when somebody arrives.", enforced: true },
+    "advanced.battle": { stops: "Standing advisors up as fighters before the shipment.", enforced: true }
   },
   leaders: [
     { name: "Mother Ramallo", strength: 5 },
@@ -1441,11 +1441,11 @@ var ringAdjacent = (a, b) => {
   const d = Math.abs(num(a) - num(b));
   return d === 1 || d === 17;
 };
-function pendingBattles(forces, storm) {
+function pendingBattles(forces, storm, advisorsFight = false) {
   const out = [];
   for (const t of DUNE_TERRITORIES) {
     if (t.terrain === "polar-sink") continue;
-    const occupied = forces.filter((f) => f.territoryId === t.id && f.count > 0 && f.posture !== "advisor");
+    const occupied = forces.filter((f) => f.territoryId === t.id && f.count > 0 && (advisorsFight || f.posture !== "advisor"));
     if (occupied.length === 0) continue;
     const open = t.sectors.filter((s) => s !== storm);
     const seen = /* @__PURE__ */ new Set();

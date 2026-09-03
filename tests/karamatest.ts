@@ -2,6 +2,9 @@
 // is offered IS the rules statement, and the effects mostly land in phases that
 // do not exist yet.
 import { readFileSync } from 'node:fs'
+import { bgFollowsShip, bgAdvancedFollow, judgeBgFlip } from '@/lib/dune/shipment'
+import { charityGrant, isEligibleForCharity } from '@/lib/dune/charity'
+import { pendingBattles } from '@/lib/dune/battle'
 import { DUNE_PHASES } from '@/types/Dune/Game'
 import { karamaOptions, playKarama, isKaramaFor, mayStopIn, stoppablePhases,
 } from '@/lib/dune/karama'
@@ -445,6 +448,108 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
 
     // AND THE ABILITIES SURVIVE, or a basic game would offer nothing at all.
     check('the basic game still has stops worth buying', basic.length > 0, true)
+  }
+
+  // ── the six Bene Gesserit stops ────────────────────────────────────────
+  // THEIR WHOLE ADVANCED GAME IS THE ADVISOR, and it was the largest cluster
+  // of built-but-unguarded rules left. Taken as one piece because they are one
+  // idea: a faction that sits in everybody's ground without fighting, follows
+  // every shipment, and is never short of spice.
+  //
+  // EACH IN BOTH DIRECTIONS. That stopping it changes the outcome, and that
+  // stopping it leaves everybody else exactly where they were — the second is
+  // what catches a check written against the wrong seat.
+  {
+    // 1. the free force into the Polar Sink, basic game
+    check('a stopped Sisterhood sends nobody to the Polar Sink',
+      [bgFollowsShip('atreides' as never, 'off-planet' as never, 'basic' as never),
+        bgFollowsShip('atreides' as never, 'off-planet' as never, 'basic' as never, true)],
+      [true, false])
+
+    // 2. the advisor that follows a shipment, advanced game
+    check('...and no advisor follows a shipment either',
+      [bgAdvancedFollow('atreides' as never, 'off-planet' as never, 'advanced' as never),
+        bgAdvancedFollow('atreides' as never, 'off-planet' as never, 'advanced' as never, true)],
+      [true, false])
+
+    // 3. the flat two at charity
+    // THE THRESHOLD COMES BACK, they are not barred outright: a poor
+    // Sisterhood still qualifies the way anybody poor does.
+    const rich = { spice: 10 } as never
+    const poor = { spice: 1 } as never
+    check('a stopped Sisterhood is topped up like anybody else',
+      [charityGrant(rich, 'bene-gesserit' as never, 'advanced'),
+        charityGrant(rich, 'bene-gesserit' as never, 'advanced', true)],
+      [2, 0])
+    check('...and a poor one still qualifies on the ordinary rule',
+      [charityGrant(poor, 'bene-gesserit' as never, 'advanced', true),
+        isEligibleForCharity(poor, 'bene-gesserit' as never, 'advanced', true)],
+      [1, true])
+    check('...while nobody else\'s charity moves with it',
+      [charityGrant(rich, 'atreides' as never, 'advanced'),
+        charityGrant(rich, 'atreides' as never, 'advanced', true)],
+      [0, 0])
+
+    // 4. advisors sharing ground without a fight
+    const watched = [
+      { faction: 'bene-gesserit', territoryId: 'territory-13', sector: 'sector-10',
+        count: 2, posture: 'advisor' },
+      { faction: 'atreides', territoryId: 'territory-13', sector: 'sector-10', count: 3 },
+    ] as never[]
+    check('a stopped advisor is just a force standing where it should not be',
+      [pendingBattles(watched, 'sector-1' as never).length,
+        pendingBattles(watched, 'sector-1' as never, true).length],
+      [0, 1])
+    check('...and the fight it opens is the two of them',
+      pendingBattles(watched, 'sector-1' as never, true)[0]?.factions.slice().sort(),
+      ['atreides', 'bene-gesserit'])
+
+    // 5 & 6. the two flips
+    const ground = [
+      { faction: 'bene-gesserit', territoryId: 'territory-13', sector: 'sector-10',
+        count: 2, posture: 'advisor' },
+      { faction: 'atreides', territoryId: 'territory-13', sector: 'sector-10', count: 3 },
+    ] as never[]
+    check('standing advisors up can be stopped',
+      [judgeBgFlip({
+        direction: 'to-fighter', territoryId: 'territory-13',
+        forces: ground, phase: 'Bidding', turn: 4,
+      }), judgeBgFlip({
+        direction: 'to-fighter', territoryId: 'territory-13',
+        forces: ground, phase: 'Bidding', turn: 4, suppressed: true,
+      })],
+      [null, 'karama-stopped'])
+
+    const standing = [
+      { faction: 'bene-gesserit', territoryId: 'territory-13', sector: 'sector-10', count: 2 },
+      { faction: 'atreides', territoryId: 'territory-13', sector: 'sector-10', count: 3 },
+    ] as never[]
+    check('...and so can going to ground',
+      [judgeBgFlip({
+        direction: 'to-advisor', territoryId: 'territory-13',
+        forces: standing, phase: 'Shipment and Movement', turn: 4,
+      }), judgeBgFlip({
+        direction: 'to-advisor', territoryId: 'territory-13',
+        forces: standing, phase: 'Shipment and Movement', turn: 4, suppressed: true,
+      })],
+      [null, 'karama-stopped'])
+
+    // AND THE TWO DIRECTIONS ARE TWO STOPS. One Karama does not buy both.
+    const ep6 = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+    const bgf = ep6.slice(ep6.indexOf("case 'BG_FLIP'"), ep6.indexOf("case 'BG_POLICY'"))
+    check('the flip asks about the direction being attempted',
+      /direction === 'to-fighter' \? 'advanced\.battle' : 'advanced\.fighters'/.test(bgf),
+      true)
+    check('...scoped to the phase it is played in, since the window spans three',
+      /Number\(state\.turn \?\? 0\), state\.phase as never\)/.test(bgf), true)
+
+    // ALL SIX ARE OFFERED NOW, and the structural guard above has already
+    // insisted each has a marker and a real check behind it.
+    check('the Sisterhood\'s six are on the menu',
+      suppressibleRefs('bene-gesserit', 'advanced').map(r => r.ref).sort(),
+      ['abilities.battle', 'abilities.shipment', 'advanced.advisors',
+        'advanced.battle', 'advanced.charity', 'advanced.fighters',
+        'advanced.shipment'])
   }
 
   // COUNTED OUT, not recomputed. A check that derived the expected number the

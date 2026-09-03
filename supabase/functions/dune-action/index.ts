@@ -1393,7 +1393,16 @@ Deno.serve(async req => {
         // ── Battles: the board demands them, the rotation fights them ─────
         case 'Battles': {
           const order = stormOrder(state.storm as never, (state.players ?? []) as never)
-          const pending = pendingBattles((base.forces ?? []) as never, base.storm as never)
+          // ADVISORS DO NOT FIGHT — unless a Karama has said otherwise. Sitting
+          // in somebody else's ground without a fight is the advantage; stopped,
+          // the robes are no protection and a watcher is just a force standing
+          // where it should not be.
+          // KARAMA-STOP: bene-gesserit advanced.advisors
+          const advisorsFight = isSuppressed((state.suppressed ?? []) as never,
+            'bene-gesserit' as never, 'advanced.advisors' as never,
+            turn, 'Battles' as never)
+          const pending = pendingBattles((base.forces ?? []) as never,
+            base.storm as never, advisorsFight)
           const first = nextAggressor(order as never, pending, 0)
           // A board with nothing to fight over passes straight through.
           if (!first) return await plainly()
@@ -1920,8 +1929,16 @@ Deno.serve(async req => {
       // id — never from the payload, which would let a seat claim to be the one
       // faction that always qualifies.
       const mode = state.mode === 'advanced' ? 'advanced' : 'basic'
-      const granted = charityGrant(secrets, myFaction, mode)
-      if (!isEligibleForCharity(secrets, myFaction, mode)) {
+      // THE FLAT TWO IS THE ADVANTAGE, and a Karama takes it: stopped, the
+      // Bene Gesserit are bound by the same threshold as everybody else, which
+      // for a rich seat means nothing. It does not bar them from charity they
+      // would have qualified for anyway.
+      // KARAMA-STOP: bene-gesserit advanced.charity
+      const bgCharityStopped = isSuppressed((state.suppressed ?? []) as never,
+        'bene-gesserit' as never, 'advanced.charity' as never,
+        Number(state.turn ?? 0), 'CHOAM Charity' as never)
+      const granted = charityGrant(secrets, myFaction, mode, bgCharityStopped)
+      if (!isEligibleForCharity(secrets, myFaction, mode, bgCharityStopped)) {
         // Deliberately vague: telling a rejected caller their own total is fine,
         // but the refusal is logged without it so nothing downstream is tempted
         // to relay a number to the table.
@@ -2939,10 +2956,23 @@ Deno.serve(async req => {
             const bgMode = state.mode === 'advanced' ? 'advanced' : 'basic'
             const bgHasReserves = players.some((p) =>
               p?.faction === 'bene-gesserit' && p.reserves > 0)
+            // THE WATCHERS, STOPPED. Two rules, one per game: the free Polar
+            // Sink force in the basic game and the advisor that follows a
+            // shipment in the advanced one. Either way the shipment itself is
+            // somebody else's and is untouched — only the following is.
+            // KARAMA-STOP: bene-gesserit abilities.shipment
+            const bgBasicStopped = isSuppressed((state.suppressed ?? []) as never,
+              'bene-gesserit' as never, 'abilities.shipment' as never,
+              Number(state.turn ?? 0), 'Shipment and Movement' as never)
+            // KARAMA-STOP: bene-gesserit advanced.shipment
+            const bgAdvStopped = isSuppressed((state.suppressed ?? []) as never,
+              'bene-gesserit' as never, 'advanced.shipment' as never,
+              Number(state.turn ?? 0), 'Shipment and Movement' as never)
             const bgSpend = () => players.map((p) => p?.faction === 'bene-gesserit'
               ? { ...p, reserves: p.reserves - 1 }
               : p)
-            if (bgFollowsShip(myFaction as never, kind, bgMode) && bgHasReserves) {
+            if (bgFollowsShip(myFaction as never, kind, bgMode, bgBasicStopped)
+              && bgHasReserves) {
               return {
                 forces: landForces(
                   forces as never, 'bene-gesserit' as never,
@@ -2950,7 +2980,7 @@ Deno.serve(async req => {
                 players: bgSpend(),
               }
             }
-            if (bgAdvancedFollow(myFaction as never, kind, bgMode)
+            if (bgAdvancedFollow(myFaction as never, kind, bgMode, bgAdvStopped)
               && bgHasReserves && state.bgFollowShips !== false && judged.sector) {
               return {
                 forces: landAdvisor(
@@ -3910,10 +3940,21 @@ Deno.serve(async req => {
       }
       const direction = action.direction === 'to-advisor' ? 'to-advisor' : 'to-fighter'
       const flipAt = String(action.territoryId ?? '')
+      // TWO DIRECTIONS, TWO ADVANTAGES, TWO STOPS. Standing advisors up before
+      // a shipment is advanced.battle; going to ground when somebody arrives is
+      // advanced.fighters. Scoped to the phase being played in rather than a
+      // fixed one, because the stand-up window spans three.
+      // KARAMA-STOP: bene-gesserit advanced.battle
+      // KARAMA-STOP: bene-gesserit advanced.fighters
+      const flipStopped = isSuppressed((state.suppressed ?? []) as never,
+        'bene-gesserit' as never,
+        (direction === 'to-fighter' ? 'advanced.battle' : 'advanced.fighters') as never,
+        Number(state.turn ?? 0), state.phase as never)
       const flipBad = judgeBgFlip({
         direction, territoryId: flipAt,
         forces: (state.forces ?? []) as never,
         phase: String(state.phase), turn: Number(state.turn ?? 0),
+        suppressed: flipStopped,
       })
       if (flipBad) return json({ error: 'that flip is not open', code: flipBad }, 409)
       const { data, error } = await admin.rpc('apply_match_write', {

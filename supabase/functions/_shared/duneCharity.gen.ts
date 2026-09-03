@@ -15,20 +15,22 @@ var readSpice = (s) => {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 };
 var ALWAYS_ELIGIBLE = "bene-gesserit";
-function isEligibleForCharity(secrets, faction, mode) {
-  if (faction === ALWAYS_ELIGIBLE && mode === "advanced") return true;
+function isEligibleForCharity(secrets, faction, mode, suppressed = false) {
+  if (!suppressed && faction === ALWAYS_ELIGIBLE && mode === "advanced") return true;
   return readSpice(secrets) <= CHARITY_TOPS_UP_TO;
 }
-function charityGrant(secrets, faction, mode) {
-  if (faction === ALWAYS_ELIGIBLE && mode === "advanced") return CHARITY_TOPS_UP_TO;
+function charityGrant(secrets, faction, mode, suppressed = false) {
+  if (!suppressed && faction === ALWAYS_ELIGIBLE && mode === "advanced") {
+    return CHARITY_TOPS_UP_TO;
+  }
   const spice = readSpice(secrets);
   return spice <= CHARITY_TOPS_UP_TO ? CHARITY_TOPS_UP_TO - spice : 0;
 }
-function applyCharity(secrets, faction, mode) {
+function applyCharity(secrets, faction, mode, suppressed = false) {
   const spice = readSpice(secrets);
   return {
     ...secrets ?? {},
-    spice: spice + charityGrant(secrets, faction, mode)
+    spice: spice + charityGrant(secrets, faction, mode, suppressed)
   };
 }
 function openCharityWindow(now, turn) {
