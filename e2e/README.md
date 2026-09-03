@@ -109,3 +109,64 @@ reveal, ?ship is the shipment rail with a seat first in the rotation and both
 halves of its turn unspent — the only arrangement where the whole rail is live.
 Both were added because a control that has only ever been asserted about is a
 control nobody has seen.
+
+## risk.spec.ts
+
+The first browser coverage Risk has ever had. Everything above it is Dune's.
+
+It differs from every Dune spec in one way: **it seeds nothing.** The Dune
+fixtures write a match with the service role because the phases they assert on
+are unreachable without playing a whole turn to get there. Risk's walk from the
+front door to a live board is a dozen clicks and takes twelve seconds — and that
+walk is itself the part nobody had driven, so seeding past it would skip the only
+thing here that had never been proven.
+
+It signs in as nobody. A campaign can be created signed out, the form says so,
+and every screen the walk touches works that way.
+
+`support/risk.ts` carries the walk: `newCampaign`, `openSlots` / `leaveSlots`,
+`playSetup`, and `soloGame` for all three. Controls are found **by their text**,
+because Risk's screens carry no `data-` hooks the way Dune's grew them — a spec
+that finds a control the way a player finds it fails when a player would be
+lost, which is the right moment to fail.
+
+### Two maps, and they are not the same map
+
+Setup's HQ picker is an **SVG**, one `<polygon>` per territory, each carrying a
+`<title>` that doubles as the refusal: `Alaska` is open, `Alaska — city` is not.
+So the open territories are the titles with no dash in them, and the walk needs
+to know none of the rules to find one.
+
+The board is **Pixi on a canvas**, with an SVG layer for markers only and no
+territory polygons at all. Both of those cost a debugging round: the walk first
+clicked blind points on a canvas that setup does not have, and the board spec
+first counted polygons the board does not draw.
+
+### What it found on the first run
+
+- **Setup never asks the computer anything.** `GameSetupScreen` takes an
+  `aiPlayerIds` set and consults it in exactly one place — the alien weakness
+  power. Faction, permanent ability and HQ are all put to the human at the
+  keyboard on the computer's behalf, one seat at a time. Not a soft-lock: the
+  clicks land and the game starts. But a solo player makes every one of the
+  bot's opening decisions for it, which is why `playSetup` clicks for the
+  computer and says so.
+- **The Human / AI toggle recorded its state only as a background colour.** No
+  screen reader could read it and no test could assert it without matching rgba
+  strings. It carries `aria-pressed` now.
+
+### Proving it bites
+
+Both targets were planted in real source and the run went red for each: the
+toggle's `aria-pressed` forced false (the seat-count spec failed naming the two
+it expected), and the board's map canvas hidden (the walk failed saying it never
+reached a board).
+
+One more was found by running it, not by planting it. `onBoard` matched three
+phase names in capitals, which passed run after run because the dice kept
+putting the computer first — its banner shouts `⚔ ATTACK`. The turn a HUMAN
+opens starts in `DRAFT`, in sentence case, and the walk declared a perfectly
+good board unreached. Which way it went depended on a die roll. It now matches
+case-insensitively, with the phase list completed, **and** requires a canvas —
+because a faction ability card reads "round up draft bonuses", and the word
+alone was true three screens early.

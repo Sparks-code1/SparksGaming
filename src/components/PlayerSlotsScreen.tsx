@@ -212,6 +212,12 @@ export default function PlayerSlotsScreen({ legacy = null, onConfirm, onBack }: 
                     const activeKind = (kind === 'ai') === ai[i].isAI
                     return (
                       <button key={kind}
+                        // WHICH ONE IS ON, SAID OUT LOUD. It was expressed only
+                        // as a background colour, which a screen reader cannot
+                        // read and a test cannot assert on without matching
+                        // rgba strings. A pressed toggle is a state, and the
+                        // accessibility tree is where a state belongs.
+                        aria-pressed={activeKind}
                         onClick={() => setAiAt(i, { isAI: kind === 'ai' })}
                         style={{
                           padding: '7px 14px', fontSize: 12, fontFamily: 'Georgia, serif', cursor: 'pointer', border: 'none',
