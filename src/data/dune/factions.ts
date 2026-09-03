@@ -454,6 +454,22 @@ export function factionRuleText(f: Faction, ref: FactionRuleRef): string | undef
  * that carried its own list would be a second place for the answer to live, and
  * the two would part company the first time a faction changed.
  */
+/** What a faction card says when it says nothing about a hand: four. */
+export const DEFAULT_HAND_LIMIT = 4
+
+/**
+ * How many treachery cards a faction may hold.
+ *
+ * WITH THE SHEETS, because two different modules need it and both were
+ * defaulting to Infinity when they could not find it — a cap on a hand size
+ * whose fallback was no cap at all. Worse, the map they were reading came
+ * off the auction carry, and OPEN_BIDDING fills that from the request body:
+ * a rule about the Harkonnen hand sourced from a payload.
+ */
+export function handLimitOf(faction: FactionId): number {
+  return factionById(faction)?.handLimit ?? DEFAULT_HAND_LIMIT
+}
+
 export function canKaramaStop(f: Faction, ref: FactionRuleRef): boolean {
   // STRIPPED TO THE ENTRY FIRST. A ref may name one part of a sheet entry —
   // 'abilities.shipment#kinds' — and a faction that put the whole entry

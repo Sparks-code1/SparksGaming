@@ -212,8 +212,15 @@ const base = {
     /bonusDue = Math\.min\(bonusDue, treacheryPile\.length/.test(bid), true)
   check('...the settlement is told the deck\'s truth',
     /deckHolds: bonusDue,/.test(bid), true)
-  check('...the two dues share one default',
-    /step\.carry\.limits\?\.\[BONUS_FACTION\] \?\? Infinity/.test(bid), true)
+  // THE TWO DUES SHARE ONE SOURCE, and it is no longer Infinity. This check
+  // used to pin the fallback itself — step.carry.limits ?? Infinity — which is
+  // to say it pinned the bug: a cap on a hand size whose default was no cap,
+  // read out of a map that OPEN_BIDDING fills from the request body. Both
+  // sides ask the faction sheet now.
+  check('...the two dues share one source, and it is the sheet',
+    [/handLimitOf\(BONUS_FACTION as never\)/.test(bid),
+      /step\.carry\.limits\?\.\[BONUS_FACTION\] \?\? Infinity/.test(bid)],
+    [true, false])
   check('...and the public count moves with the settled hand',
     /playersAfter = playersAfter\.map/.test(bid)
       && /players: playersAfter,/.test(bid), true)

@@ -532,6 +532,11 @@ export function stormOrder(
   return [...counter.slice(at), ...counter.slice(0, at)].map(s => s.faction)
 }
 
+// The hand limit lives with the sheets — one definition, so the auction and
+// the settlement cannot disagree about it. Re-exported because the edge
+// bundle is built from this module.
+export { handLimitOf, DEFAULT_HAND_LIMIT } from '@/data/dune/factions'
+
 export function biddingOpening(input: {
   storm: SectorId
   players: readonly Pick<DunePlayerPublic, 'faction' | 'seat'>[]

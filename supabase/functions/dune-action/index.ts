@@ -88,6 +88,7 @@ import {
   stormRollPromised,
   phaseAfter, shiftDeadlines, advanceHold, phaseWindowOpen, rollStorm, stormEntry, cityIncome,
   mentatVerdict, biddingOpening, stormOrder, resetDeadlines, PHASE_SECONDS, TURN_LIMIT,
+  handLimitOf,
   spiceHarvest, MENTAT_READY_SECONDS,
 } from '../_shared/dunePhase.gen.ts'
 
@@ -502,11 +503,19 @@ Deno.serve(async req => {
    * pointer, so the pointer and the lot land in one write.
    */
   const openTheAuction = async (
-    order: string[], hands: Record<string, number>, limits: Record<string, number>,
+    order: string[], hands: Record<string, number>, _limits: Record<string, number>,
   ): Promise<Response> => {
       if (baseState.phase !== 'Bidding') {
         return json({ error: 'the turn is not at bidding', code: 'wrong-phase' }, 409)
       }
+      // THE LIMITS ARE THE SHEETS', not the caller's. OPEN_BIDDING takes them
+      // from the request body, so an auction opened by an action carried
+      // whatever map the client felt like sending — a rule about the
+      // Harkonnen hand read out of a payload. Recomputed here so both routes
+      // in (the phase entry and the action) get the same answer, and so the
+      // one that can be typed by hand cannot be the one that decides it.
+      const limits: Record<string, number> = Object.fromEntries(
+        order.map((f) => [f, handLimitOf(f as never)]))
       if (baseState.auction) {
         return json({ error: 'bidding has already opened this turn', code: 'already-opened' }, 409)
       }
@@ -2290,15 +2299,17 @@ Deno.serve(async req => {
         // so nothing is pulled off the pile and put back somewhere else.
         const handAfter = (hands[BONUS_FACTION]?.length ?? 0)
           + (justClosed.winner === BONUS_FACTION ? 1 : 0)
-        // The SAME default the settlement uses, so two computations of
-        // the due cannot disagree about a missing limit.
+        // OFF THE SHEET. This read the limit out of the auction carry and fell
+        // back to Infinity when the key was missing — a cap on a hand size
+        // that defaulted to no cap at all, sourced from a map a client can
+        // send. handLimitOf is the faction card.
         // KARAMA-STOP: harkonnen abilities.treachery
         bonusDue = isSuppressed((state.suppressed ?? []) as never,
           BONUS_FACTION as never, 'abilities.treachery' as never,
           Number(state.turn ?? 0), 'Bidding' as never)
           ? 0
           : bonusCardsDue(
-            [justClosed], handAfter, step.carry.limits?.[BONUS_FACTION] ?? Infinity)
+            [justClosed], handAfter, handLimitOf(BONUS_FACTION as never))
         // THE ADVANTAGE DEGRADES LIKE THE ROW. The free card is "if there
         // are cards left": an exhausted deck gives fewer, or none, and never
         // refuses the pass that closed the sale.
@@ -2388,13 +2399,40 @@ Deno.serve(async req => {
           paidSecrets[seatId] = withReveal(
             (paidSecrets[seatId] ?? byId[seatId] ?? {}) as Record<string, unknown>, nextReveal)
         }
+        /**
+         * THE CARRY'S HAND COUNTS, FROM THE HANDS THEMSELVES.
+         *
+         * closeCard adds ONE to the winner's count — the card they won — and
+         * knows nothing of the Harkonnen bonus, which is decided out here
+         * after the card has closed. So every bonus taken left the carry one
+         * short of the truth, and the carry is what `underLimit` asks before
+         * offering the next card. Two bonuses in an auction and a seat with a
+         * limit of eight was being invited to bid holding eight, winning a
+         * ninth.
+         *
+         * The settlement already knows every hand it touched; the rest are
+         * unchanged. Counting them here means the gate and the cards agree.
+         */
+        const stepOut = {
+          ...outcome.step,
+          carry: {
+            ...outcome.step.carry,
+            hands: {
+              ...Object.fromEntries(
+                Object.entries(hands).map(([f, cards]) => [f, cards.length])),
+              ...Object.fromEntries(
+                Object.entries(paid.writes.secrets)
+                  .map(([f, w]) => [f, (w as { hand: string[] }).hand.length])),
+            },
+          },
+        }
         const { data, error } = await admin.rpc('apply_match_write', {
           p_match_id: matchId,
           p_expected_version: match.version,
           p_state: {
             ...state,
             players: playersAfter,
-            auction: outcome.step,
+            auction: stepOut,
             // A card sold mid-auction is as public as one sold at the end.
             ...(justClosed
               ? {
@@ -2415,7 +2453,7 @@ Deno.serve(async req => {
         })
         if (error) return json({ error: error.message }, 500)
         if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
-        return json({ auction: outcome.step, version: data[0].version })
+        return json({ auction: stepOut, version: data[0].version })
       }
 
       // ── Settled. What is left is the unsold and the closing up ─────────────

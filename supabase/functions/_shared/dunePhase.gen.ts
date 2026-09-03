@@ -1312,6 +1312,10 @@ var FACTIONS = {
   "bene-gesserit": BENE_GESSERIT
 };
 var factionById = (id) => FACTIONS[id] ?? null;
+var DEFAULT_HAND_LIMIT = 4;
+function handLimitOf(faction) {
+  return factionById(faction)?.handLimit ?? DEFAULT_HAND_LIMIT;
+}
 
 // src/lib/dune/revival.ts
 var emptyTanks = () => ({ forces: {}, leaders: {} });
@@ -1725,6 +1729,7 @@ export {
   AUTO_ADVANCE_SEAT_MS,
   AUTO_ADVANCE_STEP_MS,
   DEADLINE_KEYS,
+  DEFAULT_HAND_LIMIT,
   FOREKNOWN_FROM_TURN,
   HABBANYA_SIETCH,
   MENTAT_READY_SECONDS,
@@ -1742,6 +1747,7 @@ export {
   biddingOpening,
   cityIncome,
   fremenForeknow,
+  handLimitOf,
   mayAtomics,
   mentatVerdict,
   phaseAfter,

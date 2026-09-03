@@ -13,6 +13,8 @@
 import { readFileSync } from 'node:fs'
 import { settleAuction, settleCard, bonusCardsDue, BONUS_FACTION } from '@/lib/dune/auctionSettlement'
 import { payForAuction } from '@/lib/dune/spice'
+import { answerBid } from '@/lib/dune/bidding'
+import { handLimitOf } from '@/data/dune/factions'
 import type { AuctionResult } from '@/lib/dune/bidding'
 import type { FactionId } from '@/types/Dune/Faction'
 
@@ -436,4 +438,76 @@ check('a winner spending their last spice is fine',
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
 // Not optional: without an exit code the runner counts a failing suite green.
+// ── the Harkonnen ninth card ────────────────────────────────────────────
+// REPORTED FROM A REAL MATCH: they held nine, with a limit of eight. The
+// ruling is that at seven they get the card they won and no bonus, which is
+// exactly what bonusCardsDue already said — so the arithmetic was never the
+// problem. What was wrong is what the AUCTION believed they were holding.
+{
+  const oneWin = [{ winner: 'harkonnen' as FactionId }]
+  check('at six they win one and the bonus makes eight',
+    bonusCardsDue(oneWin, 7, 8), 1)
+  check('at seven they get the card they won and nothing else',
+    bonusCardsDue(oneWin, 8, 8), 0)
+  check('...and holding the limit already, nothing at all',
+    bonusCardsDue(oneWin, 9, 8), 0)
+  // THE BONUS NEVER PUSHES A HAND OVER. A hand already above the limit is a
+  // different fault and not one a bonus of zero can mend — the first cut of
+  // this check asserted that nine ends at eight or under, which is not a
+  // statement about the bonus at all.
+  check('a legal hand is still legal after the bonus',
+    [4, 6, 7, 8].map(after => after + bonusCardsDue(oneWin, after, 8) <= 8),
+    [true, true, true, true])
+  check('...and a hand already over the limit is given nothing more',
+    [9, 12].map(after => bonusCardsDue(oneWin, after, 8)), [0, 0])
+
+  // THE LIMIT COMES OFF THE SHEET. It used to be read out of the auction
+  // carry, which OPEN_BIDDING fills from the REQUEST BODY — a rule about the
+  // Harkonnen hand sourced from a payload — and the fallback for a missing
+  // key was Infinity: a cap on a hand size defaulting to no cap at all.
+  check('the Harkonnen may hold eight and everybody else four',
+    ['harkonnen', 'atreides', 'emperor', 'fremen', 'spacing-guild', 'bene-gesserit']
+      .map(f => handLimitOf(f as FactionId)),
+    [8, 4, 4, 4, 4, 4])
+
+  const ep = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  check('the bonus is capped by the sheet, and no longer by the carry',
+    [ep.includes('handLimitOf(BONUS_FACTION as never))'),
+      ep.includes('step.carry.limits?.[BONUS_FACTION] ?? Infinity')],
+    [true, false])
+  check('...and an auction opens on the sheet\'s limits whoever asked for it',
+    ep.includes('order.map((f) => [f, handLimitOf(f as never)])'), true)
+
+  // ── THE BUG ITSELF ────────────────────────────────────────────────────
+  // The auction adds ONE to the winner's count — the card they won — and
+  // knows nothing of the Harkonnen bonus, which the endpoint decides out here
+  // after the card has closed. So every bonus left the carry one short of the
+  // truth, and the carry is what decides whether a seat is offered the next
+  // card. Hold six, win one, take the bonus: the hand is eight, the carry
+  // says seven, and the seat is invited to bid on a ninth.
+  {
+    const carry = {
+      order: ['harkonnen', 'atreides'] as FactionId[],
+      hands: { harkonnen: 6, atreides: 0 },
+      limits: { harkonnen: 8, atreides: 4 },
+      passed: ['atreides'] as FactionId[], awards: [], index: 0,
+      toAct: 'harkonnen' as FactionId, high: null,
+    } as never
+    const out = answerBid(carry, 'harkonnen' as never,
+      { kind: 'bid', spice: 2 }, 99, 0)
+    const after = out.kind === 'ok'
+      ? ((out.step as { carry?: { hands?: Record<string, number> } }).carry?.hands
+          ?.harkonnen ?? -1)
+      : -1
+    check('winning a card moves the carry by one, bonus uncounted', after, 7)
+  }
+
+  check('so the endpoint puts the real count back after settling',
+    ep.includes('(w as { hand: string[] }).hand.length'), true)
+  check('...into the step it writes AND the step it answers with',
+    [(ep.match(/auction: stepOut,/g) ?? []).length,
+      (ep.match(/auction: outcome\.step,/g) ?? []).length],
+    [2, 0])
+}
+
 process.exit(pass ? 0 : 1)

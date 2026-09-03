@@ -25,6 +25,7 @@
  * notices until the reshuffle.
  */
 import { allyShare, applySpiceMoves, payForAuction } from './spice'
+import { handLimitOf } from '@/data/dune/factions'
 import type { Purses, SpiceMove } from './spice'
 import type { AuctionResult } from './bidding'
 import type { FactionId } from '@/types/Dune/Faction'
@@ -162,7 +163,13 @@ export function settleCard(input: {
   }
 
   // The bonus faction's second card, counted off the hand they now hold.
-  const limit = input.limits?.[BONUS_FACTION] ?? Infinity
+  //
+  // THE SHEET IS THE FALLBACK, not Infinity. A caller that passes no limits
+  // used to get no cap, which is the wrong way for a cap to fail — and the
+  // limits it does pass come off the auction carry, which is filled from a
+  // request body. An explicit map still wins, so a test may say otherwise,
+  // but silence now means the faction card.
+  const limit = input.limits?.[BONUS_FACTION] ?? handLimitOf(BONUS_FACTION)
   const handAfter = (secrets[BONUS_FACTION]?.hand ?? hands[BONUS_FACTION] ?? []).length
   const due = Math.min(
     bonusCardsDue([award], handAfter, limit),
