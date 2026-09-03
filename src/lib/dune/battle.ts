@@ -920,6 +920,33 @@ export function battleLosses(
  * SEATED, NOT itself fighting here, and allied to a combatant — and what
  * comes back is the side the power lands on: the ally's opponent.
  */
+/**
+ * WHICH SEAT A VOICE COMMANDS.
+ *
+ * NOT "whoever is not the speaker". That reading is right exactly while the
+ * Bene Gesserit are fighting the battle themselves — the only other seat IS
+ * the target — and wrong the moment their ALLIANCE CARD reaches the Voice in
+ * from outside: then the speaker is a third party, both combatants are "not
+ * the speaker", and the command lands on the ally as well as the ally's
+ * opponent. The panel read it that way and told an allied Spacing Guild it
+ * had been commanded to play a Cheap Hero that was aimed at the Emperor.
+ *
+ * ONE FUNCTION FOR BOTH SIDES. The server judged this correctly off
+ * voice.over while the client derived its own answer, which is two laws for
+ * one rule and a guarantee they will disagree eventually.
+ *
+ * The fallback is for battles stamped before `over` was written: inside a
+ * fight, the seat that is not the speaker is the one commanded.
+ */
+export function voiceBinds(
+  voice: { by: FactionId; over?: FactionId | null } | null | undefined,
+  aggressor: FactionId, defender: FactionId,
+): FactionId | null {
+  if (!voice) return null
+  if (voice.over) return voice.over
+  return [aggressor, defender].find(f => f !== voice.by) ?? null
+}
+
 export function allyInterrogator(input: {
   faction: FactionId
   aggressor: FactionId

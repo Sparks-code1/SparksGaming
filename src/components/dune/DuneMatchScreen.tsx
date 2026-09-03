@@ -672,7 +672,17 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
     // clock that goes on counting.
     let res: Awaited<ReturnType<typeof dispatchDuneAction>>
     try {
-      res = await dispatchDuneAction(matchId, { type: 'BID', bid: answer })
+      // WHICH MOMENT THIS ANSWERS. The panel can only ever be as fresh as
+      // the last row that reached it, and a bid typed against a beat that
+      // has since passed used to come back as "not your turn" — which reads
+      // as the rotation skipping the seat rather than as an answer arriving
+      // late. Naming the card and the seat lets the server say which it was.
+      res = await dispatchDuneAction(matchId, {
+        type: 'BID', bid: answer,
+        ...(auction
+          ? { at: { index: auction.carry.index, toAct: auction.carry.toAct } }
+          : null),
+      })
     } catch (e) {
       console.error('[dune] BID was never sent:', e)
       setBidRefusal('client-bug')

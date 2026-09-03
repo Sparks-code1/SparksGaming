@@ -102,11 +102,19 @@ export async function serveFunctions(stack: Stack): Promise<ChildProcess> {
   proc.stdout?.on('data', d => { log += d })
   proc.stderr?.on('data', d => { log += d })
 
+  // AN ANSWER FROM OUR HANDLER, not merely an answer. The gateway is up long
+  // before the Deno runtime behind it, and it replies 502 in the meantime — so
+  // "the fetch did not throw" was being read as "functions are serving", and a
+  // slow container start turned into START_DUNE failing with a bare 502 that
+  // looks exactly like a broken import in the bundle. A POST with no body is
+  // refused by the function itself with 400, which nothing but the function
+  // can produce.
   for (let i = 0; i < 60; i++) {
     try {
-      await fetch(`${stack.api}/functions/v1/dune-action`, { method: 'POST' })
-      return proc
-    } catch { await new Promise(r => setTimeout(r, 1000)) }
+      const res = await fetch(`${stack.api}/functions/v1/dune-action`, { method: 'POST' })
+      if (res.status !== 502 && res.status !== 503 && res.status !== 504) return proc
+    } catch { /* not listening yet */ }
+    await new Promise(r => setTimeout(r, 1000))
   }
   throw new Error(`functions serve never came up.\n${log.slice(-2000)}`)
 }

@@ -80,7 +80,7 @@ import {
   piecesInBattle, eliteWorth, fullWithoutSpice,
   judgeAllocation, firstAllocation, allocationLosses, allocationsFor,
   BATTLE_CAPTURE_SECONDS, capturePool, leaderOwner, allOwnLeadersDead,
-  KWISATZ_HADERACH, kwisatzHaderachAvailable,
+  KWISATZ_HADERACH, kwisatzHaderachAvailable, voiceBinds,
 } from '../_shared/duneBattle.gen.ts'
 import {
   mayAtomics, STORM_CARD_SECONDS, WEATHER_CONTROL_MAX, SHIELD_WALL_TERRITORY,
@@ -2147,6 +2147,31 @@ Deno.serve(async req => {
       if (!step || step.status !== 'awaiting') {
         return json({ error: 'no auction is running', code: 'no-auction' }, 409)
       }
+      /**
+       * THE BID NAMES THE MOMENT IT ANSWERS.
+       *
+       * "not-your-turn" was being returned for two different things: a seat
+       * the rotation never offered, and a seat that WAS offered and answered
+       * a beat too late — its window expired, the deadline push passed for
+       * it, and the bid it had already typed landed on the next seat's turn.
+       * From the log those are the same line, and one is a bug in the
+       * rotation while the other is a race nobody did anything wrong in.
+       *
+       * A client that says which card and which seat it believed it was
+       * answering gets told plainly when that has moved. Optional, so an
+       * older client keeps the behaviour it had.
+       */
+      const meantAt = action.at as { index?: number; toAct?: string } | undefined
+      if (meantAt && (
+        (typeof meantAt.index === 'number' && meantAt.index !== step.carry.index)
+        || (typeof meantAt.toAct === 'string' && meantAt.toAct !== step.carry.toAct)
+      )) {
+        return json({
+          error: 'the auction moved on before that bid arrived',
+          code: 'auction-moved',
+          at: { index: step.carry.index, toAct: step.carry.toAct },
+        }, 409)
+      }
 
       const { data: mine } = await admin
         .from('match_secrets').select('data')
@@ -3359,11 +3384,12 @@ Deno.serve(async req => {
         command?: { mode: string; target: string } | null
       } }).voice
       let voiceNow = voice
-      // The side the Voice stands over: stamped at the door; older battles
-      // without the stamp mean the speaker's own opponent.
-      const voiceOver = voice
-        ? (voice.over ?? combatants.find((f) => f !== voice.by))
-        : null
+      // The side the Voice stands over: stamped at the door, with the older
+      // battles that carry no stamp falling back to the speaker's own
+      // opponent. THROUGH THE SHARED RULE, because the panel needs the same
+      // answer and deriving it twice is how the ally came to be told it had
+      // been commanded.
+      const voiceOver = voiceBinds(voice as never, c.aggressor, c.defender)
       if (voice && !voice.done && now >= voice.closesAt) {
         // silence declines the command; the write below carries the closure
         voiceNow = { ...voice, done: true, command: null }

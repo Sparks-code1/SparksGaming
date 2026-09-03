@@ -1799,6 +1799,11 @@ function battleLosses(forces, faction, territoryId, sectors, outcome) {
   }
   return out;
 }
+function voiceBinds(voice, aggressor, defender) {
+  if (!voice) return null;
+  if (voice.over) return voice.over;
+  return [aggressor, defender].find((f) => f !== voice.by) ?? null;
+}
 function allyInterrogator(input) {
   const { faction, aggressor, defender, players } = input;
   if (faction === aggressor || faction === defender) return null;
@@ -1845,6 +1850,7 @@ export {
   planPlaysTarget,
   prescienceAnswer,
   resolveBattle,
+  voiceBinds,
   voiceCardMatches,
   voiceViolation
 };

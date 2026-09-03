@@ -19,7 +19,7 @@ import {
   allocationsFor, judgeAllocation, firstAllocation, allocationLosses,
   BATTLE_CAPTURE_SECONDS, capturePool, leaderOwner, allOwnLeadersDead,
   KWISATZ_HADERACH, KWISATZ_STRENGTH, kwisatzHaderachAvailable,
-  allyInterrogator,
+  allyInterrogator, voiceBinds,
 } from '@/lib/dune/battle'
 import { reviveLeader, returnLeaderToTanks } from '@/lib/dune/revival'
 import type { BattlePlan } from '@/lib/dune/battle'
@@ -798,9 +798,12 @@ check('the three windows have their seconds',
       && /over: inFight/.test(pick)
       && /: proxy!\.over,/.test(pick), true)
   const planCase = fn.slice(fn.indexOf("case 'BATTLE_PLAN'"), fn.indexOf("case 'BATTLE_VOICE'"))
+  // THE SIDE IT STANDS OVER, ALONE — and the side is now named by the shared
+  // rule rather than derived here. This check used to pin the derivation
+  // itself, which is the thing that turned out to be duplicated.
   check('the voiced seat waits for the command — the side it stands over, alone',
     /if \(voiceNow && !voiceNow\.done && myFaction === voiceOver\)/.test(planCase)
-      && /voice\.over \?\? combatants\.find\(\(f\) => f !== voice\.by\)/.test(planCase)
+      && /const voiceOver = voiceBinds\(/.test(fn)
       && /code: 'voiced-first',/.test(planCase), true)
   check('...silence past the window declines it',
     /voiceNow = \{ \.\.\.voice, done: true, command: null \}/.test(planCase), true)
@@ -1824,6 +1827,63 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
     check(`no ${fn} call is judged without its stop`,
       calls.filter(a => !a.includes('battleStops(')).length, 0)
   }
+}
+
+// ── the Voice binds the seat it was aimed at ────────────────────────────
+// REPORTED FROM A REAL MATCH: the Bene Gesserit, allied to the Spacing Guild
+// and not fighting themselves, voiced a Cheap Hero at the Emperor — and the
+// SPACING GUILD was told it had been commanded. allyInterrogator was right
+// all along; the panel was deriving its own answer as "any seat that is not
+// the speaker", which is only the same thing while the speaker is one of the
+// two fighting.
+{
+  const players = [
+    { faction: 'bene-gesserit', ally: 'spacing-guild' },
+    { faction: 'spacing-guild', ally: 'bene-gesserit' },
+    { faction: 'emperor', ally: null },
+  ] as never[]
+
+  check('the interrogator names the ally\'s OPPONENT, either way round',
+    [allyInterrogator({ faction: 'bene-gesserit' as never,
+      aggressor: 'spacing-guild' as never, defender: 'emperor' as never, players })?.over,
+      allyInterrogator({ faction: 'bene-gesserit' as never,
+        aggressor: 'emperor' as never, defender: 'spacing-guild' as never, players })?.over],
+    ['emperor', 'emperor'])
+
+  // ── AND THE BINDING READS THAT, not "not the speaker" ─────────────────
+  const outside = { by: 'bene-gesserit' as FactionId, over: 'emperor' as FactionId }
+  check('a Voice from outside binds the opponent, not the ally',
+    voiceBinds(outside, 'spacing-guild' as never, 'emperor' as never), 'emperor')
+  check('...and the ally is left free to plan',
+    voiceBinds(outside, 'spacing-guild' as never, 'emperor' as never) === 'spacing-guild',
+    false)
+
+  // FROM INSIDE THE FIGHT the two readings agree, which is exactly why the
+  // wrong one survived: every game without the alliance card looked correct.
+  const inside = { by: 'bene-gesserit' as FactionId, over: 'emperor' as FactionId }
+  check('a Voice from inside binds the other combatant',
+    voiceBinds(inside, 'bene-gesserit' as never, 'emperor' as never), 'emperor')
+
+  // AN OLD BATTLE WITH NO STAMP falls back to the speaker's own opponent,
+  // which is right for the only battles that can be missing it.
+  check('an unstamped Voice falls back to the other side',
+    voiceBinds({ by: 'bene-gesserit' as FactionId },
+      'bene-gesserit' as never, 'emperor' as never), 'emperor')
+  check('and no Voice binds nobody', voiceBinds(null, 'a' as never, 'b' as never), null)
+
+  // ── ONE LAW, BOTH SIDES ───────────────────────────────────────────────
+  // The server judged this correctly off voice.over while the panel derived
+  // its own answer. Two laws for one rule is a guarantee they disagree, and
+  // this is the disagreement.
+  const panel = code('src/components/dune/BattlePanel.tsx')
+  check('the panel asks the shared rule',
+    [/seat === voiceBinds\(/.test(panel), /seat !== voice\.by/.test(panel)],
+    [true, false])
+  const ep3 = code('supabase/functions/dune-action/index.ts')
+  check('...and so does the endpoint',
+    [/const voiceOver = voiceBinds\(/.test(ep3),
+      /voice\.over \?\? combatants\.find/.test(ep3)],
+    [true, false])
 }
 
 process.exit(pass ? 0 : 1)

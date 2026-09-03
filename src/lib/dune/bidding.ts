@@ -141,6 +141,13 @@ export type BidRefusal =
    * past the type would have shown them the bare word with no sentence
    * behind it.
    */
+  /**
+   * The bid answered a beat that had already passed — the window expired and
+   * the deadline push spoke for this seat, or another seat's raise landed
+   * first. NOT the same as being skipped, which is what one shared
+   * 'not-your-turn' made both of them look like in the log.
+   */
+  | 'auction-moved'
   | 'client-bug'
 
 /**

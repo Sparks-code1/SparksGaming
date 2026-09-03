@@ -31,6 +31,7 @@ import {
   pendingBattles, battlesFor, forcesInBattle, CHEAP_HERO_ID,
   resolveBattle, BATTLE_TRAITOR_SECONDS,
   VOICE_TARGETS, voiceViolation, voiceCardMatches, canComplyWithVoice,
+  voiceBinds,
   PRESCIENCE_ASKS,
   piecesInBattle, eliteWorth, fullWithoutSpice, battleStrengthCap, allocationsFor,
 } from '@/lib/dune/battle'
@@ -760,7 +761,17 @@ export function BattlePanel({
   // ── the interrogations, before and between the plans ────────────────────
   const voice = c.voice
   const pres = c.prescience
-  const iAmIn2 = seat === c.aggressor || seat === c.defender
+
+  /**
+   * The one seat this Voice commands — the same answer the server judges by.
+   *
+   * WITH THE BENE GESSERIT FIGHTING, this equals "the seat that is not the
+   * speaker", which is why reading it that way looked right for as long as
+   * nobody played the alliance card. From outside the battle the speaker is
+   * a third party and BOTH combatants are not-the-speaker, so the ally was
+   * being held for, and told to obey, a command aimed at their opponent.
+   */
+  const voiceBound = voiceBinds(voice as never, c.aggressor, c.defender)
 
   // THE VOICE'S OWN FORM: a command named before the opponent may commit.
   if (voice && !voice.done && now < voice.closesAt && seat === voice.by && onVoice) {
@@ -806,7 +817,10 @@ export function BattlePanel({
       </>,
     )
   }
-  if (voice && !voice.done && seat !== voice.by) {
+  // ONLY THE SEAT IT BINDS WAITS. This screen replaces the plan form, so
+  // showing it to the other combatant stopped a seat committing a plan the
+  // server would have accepted — the Voice holds its target and nobody else.
+  if (voice && !voice.done && seat === voiceBound) {
     const vExpired = now >= voice.closesAt
     return frame(
       <>
@@ -814,7 +828,7 @@ export function BattlePanel({
           {FACTION_LOOK[c.aggressor].name} vs {FACTION_LOOK[c.defender].name} — {territoryName(c.territoryId)}
         </b>
         <p style={{ opacity: 0.8 }} data-voice-waits="">
-          The Voice is being prepared{iAmIn2 ? ' — your plan waits for it' : ''}.
+          The Voice is being prepared — your plan waits for it.
         </p>
         {vExpired && onVoice && (
           <button type="button" disabled={busy} data-voice-push=""
@@ -1005,7 +1019,13 @@ export function BattlePanel({
   // ONE law with the server: the same helper that refuses a defiant plan
   // grades the draft here, so the form knows which commands are satisfiable
   // against the hand it holds and can never bless what the judge strikes.
-  const cmd = voice?.done && voice.command && seat !== voice.by
+  // THE SEAT IT WAS AIMED AT, not merely a seat that did not speak. With the
+  // Bene Gesserit fighting here the two are the same and this looked correct
+  // for as long as nobody used the alliance card; from outside the battle,
+  // "not the speaker" is BOTH combatants, so the ally was being told to obey
+  // a command aimed at their opponent.
+  const cmd = voice?.done && voice.command
+    && seat === voiceBinds(voice as never, c.aggressor, c.defender)
     ? (voice.command as VoiceCommand) : null
   const canFieldAny = usable.length > 0 || heroHeld
   const draftPlan = {
