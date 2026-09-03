@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 // AI: card trade-ins and red-star pursuit.
 import {
   handCoinTotal, aiTradeInDecision, playerRedStars, rivalStarCounts, rivalsOnMatchPoint,
@@ -258,6 +259,36 @@ console.log('--- setup choices ---')
       () => aiSetupChoice(['a', 'b', 'c'], 'hard')))
     check('hard does not always take the same faction', seen.size > 1, true)
   }
+}
+
+// ─── The reinforce fallback must not go quiet again ───────────────────────
+//
+// The driver drops the draft on the first owned territory when the planner
+// offers nothing (GameBoard, the reinforce step). It has to: troopsToPlace > 0
+// blocks the phase advance, so a troop that never lands is a wedged turn.
+//
+// BUT IT IS COVER FOR A PLANNER BUG, and it used to be silent cover. A browser
+// spec that stubbed aiReinforcePlacements, aiAttackPlan and aiFortifyMove all
+// to nothing passed GREEN — the AI still placed its three troops every turn,
+// just never choosing where. A broken planner would not stall the game; it
+// would quietly draft onto the same square for the rest of the campaign.
+//
+// So the fallback and its warning are pinned TOGETHER. Deleting the warn while
+// keeping the `??` restores exactly the silence that hid this.
+console.log('--- the reinforce fallback is audible ---')
+{
+  const board = readFileSync('src/components/GameBoard.tsx', 'utf8')
+  const at = board.indexOf('const plan = aiReinforcePlacements(')
+  const step = at < 0 ? '' : board.slice(at, at + 1800)
+
+  check('the driver still falls back rather than wedging the phase',
+    /\?\?\s*fallback/.test(step), true)
+  check('...and says so when it does',
+    /console\.warn\([^)]*aiReinforcePlacements returned nothing/.test(step), true)
+  // THE GUARD, NOT THE STRING. A warn that fires on every placement is noise
+  // nobody reads; this one is conditional on the planner having failed.
+  check('...only when the planner actually came back empty',
+    /if \(!plan\[0\] && fallback\)/.test(step), true)
 }
 
 // Not optional: without an exit code the runner counts a failing suite green.

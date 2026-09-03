@@ -3062,7 +3062,32 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       // effects pass — the state value in this closure is still the stale 0.
       if (troopsRef.current > 0) {
         const plan = aiReinforcePlacements(gameState, legacyState, cp.id, 1, diff)
-        const tid = plan[0] ?? Object.values(gameState.territories).find(t => t.occupyingPlayerId === cp.id)?.id
+        // ── THE FALLBACK, AND WHY IT SHOUTS ─────────────────────────────────
+        // The draft has to land somewhere: troopsToPlace > 0 blocks the phase
+        // advance, so a troop that never gets placed is a wedged turn. Hence
+        // the first territory this player owns, in map order, when the planner
+        // offers nothing.
+        //
+        // IT SHOULD NEVER FIRE. aiReinforcePlacements has one empty return —
+        // owned.length === 0 || troops <= 0 — and this is the only caller, it
+        // passes troops: 1, and it only asks while troops are owed. So the
+        // planner comes back empty only when the player owns nothing, and then
+        // the find below is empty too and nothing is placed at all.
+        //
+        // WHICH MAKES IT COVER FOR A PLANNER BUG, and silent cover is the
+        // dangerous kind: a broken planner would not stall the turn, it would
+        // quietly draft onto the same territory every turn for the rest of the
+        // campaign, playing worse and worse while looking like it worked. A
+        // browser spec that stubbed all three AI decision functions passed
+        // green because of this line, which is how it was found.
+        const fallback = Object.values(gameState.territories)
+          .find(t => t.occupyingPlayerId === cp.id)?.id
+        if (!plan[0] && fallback) {
+          console.warn(`[AI] ${cp.name}: aiReinforcePlacements returned nothing`
+            + ` while holding territory — dropping the troop on ${fallback}.`
+            + ' The planner is broken; the draft is not being chosen.')
+        }
+        const tid = plan[0] ?? fallback
         if (tid) run(() => {
           playTroop()
           dispatch({ type: 'PLACE_REINFORCEMENT', playerId: cp.id, territoryId: tid })
