@@ -72,3 +72,20 @@ condition forced false, the ship rail's, Ready hard-disabled, and a transparent
 full-screen overlay dropped over the board. All four were caught. A browser
 suite that cannot catch its own three targets is worse than none, so re-run
 that check if you change the helpers.
+
+## battleplan.spec.ts
+
+Two battles, both plans committed, through the endpoint — plus the Commit
+button, pressed, with the public row as the witness that a plan reached it.
+
+This one exists because of a specific miss. A helper extracted for the battle
+Karama stops was parked between two case labels inside the switch, and a switch
+does not run the statements it jumps past: every BATTLE_PLAN died on a
+ReferenceError. It typechecked, it bundled, all 107 unit suites passed, and the
+existing battle spec passed too — it drove the dial and stopped short of
+pressing Commit. Two deploys and a player's bug report found it.
+
+The beats between the two plans — a Voice, the Atreides question, the traitor
+call, a loss allocation — are PLAYED rather than scripted:  reads
+the row and answers whatever is actually open. A fixed script would encode one
+seating and rot, and would skip a new beat in silence instead of failing.
