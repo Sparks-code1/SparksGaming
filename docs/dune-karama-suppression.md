@@ -74,9 +74,25 @@ the very write that sets the phase, so a stop that could only ever be stamped
 with the phase already running could never once have fired. Naming a phase ahead
 is how "before you ship, Karama" is actually said at a table.
 
-A phase already past cannot be named — that moment cannot be interrupted — and
-nor can a phase of the next turn: the card stops an advantage "during one game
-phase", one, named, in the turn it is spent in.
+A phase already past cannot be named: that moment cannot be interrupted.
+
+**AND THE COMING STORM, from the Mentat Pause — the one crossing of a turn
+boundary this card makes.** The Storm is the FIRST phase of a turn, so nothing
+earlier in that turn can name it, and since the storm rolls, moves and tells
+the Fremen their next distance in a single press there is no moment inside the
+phase to answer either. Two stops sat on the menu that could not once have
+fired: knowing the storm a turn early, and half losses in it.
+
+The Pause is the moment immediately before the next storm, which is the same
+reasoning that moved Family Atomics and Weather Control there. A stop named
+from the Pause on the Storm is stamped `turn + 1`; everything else is stamped
+with the turn it is played in. `stopTurnFor` is the one place that arithmetic
+happens, because the panel has to show the player which storm they are aiming
+at and the endpoint has to stamp it, and two answers would put a stop on a
+storm nobody meant.
+
+Nothing else reaches across a turn. From mid-turn this turn's storm has blown
+and next turn's is out of the card's reach.
 
 ### Only what this game is playing
 

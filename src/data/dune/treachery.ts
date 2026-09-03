@@ -381,11 +381,11 @@ export const TREACHERY_CARDS: TreacheryCard[] = [
 //
 // And in the advanced game it does double duty: five of the six factions gain a
 // one-time power of their own, spendable INSTEAD of the cancellation. Those are
-// data now, in AdvancedRules.karama. What they still need is somewhere to fire:
-// the Atreides one reads another player's battle plan, the Harkonnen one takes
-// cards blindly from a hand and gives cards back, the Fremen one puts a worm on
-// the board from outside the deck, the Guild one cancels a shipment, and the
-// Emperor one revives for free. Every phase they touch is unbuilt.
+// data now, in AdvancedRules.karama, and all five resolve: the Atreides read
+// another player's battle plan, the Harkonnen take cards blindly from a hand
+// and hand cards back, the Fremen put a worm on the board from outside the
+// deck, the Guild cancel an off-planet shipment, and the Emperor revive for
+// free. Every phase they touch is built.
 //
 // Truthtrance. Pauses the whole game for a question, at any time, in any phase.
 // phase.ts stops a phase; this stops the game, which is a different thing and

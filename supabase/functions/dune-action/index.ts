@@ -47,7 +47,7 @@ import {
 import { askTruthtrance, planFromRow } from '../_shared/duneTruthtrance.gen.ts'
 import {
   isSuppressed, karamaAllowed, playKarama, isKaramaCardId, suppressibleRefs,
-  KARAMA_GIVE_SECONDS, mayStopIn,
+  KARAMA_GIVE_SECONDS, mayStopIn, stopTurnFor,
 } from '../_shared/duneKarama.gen.ts'
 import { prescienceFor, withReveal, PRESCIENT_FACTION, REVEAL_KEY,
 } from '../_shared/dunePrescience.gen.ts'
@@ -4333,9 +4333,17 @@ Deno.serve(async req => {
         : String(action.phase)
       if (!mayStopIn(state.phase as never, sPhase as never)) {
         return json({
-          error: 'that phase is past, or is not this turn\'s', code: 'phase-past',
+          error: 'that phase is past, or is out of this card\'s reach',
+          code: 'phase-past',
         }, 409)
       }
+      // WHICH TURN IT LANDS ON. This turn for everything except the Storm
+      // named from the Mentat Pause, which is next turn's — the Pause is the
+      // moment immediately before it, and this turn's storm is long past.
+      // Asked of the rule rather than worked out here, because the panel has
+      // to show the player the same answer.
+      const sTurn = stopTurnFor(
+        state.phase as never, sPhase as never, Number(state.turn ?? 0))
       const { data: sRow } = await admin
         .from('match_secrets').select('data')
         .eq('match_id', matchId).eq('player_id', playerId).maybeSingle()
@@ -4384,7 +4392,7 @@ Deno.serve(async req => {
             ...((state.suppressed ?? []) as unknown[]),
             {
               faction: sTarget, ref: sRef, by: myFaction,
-              turn: Number(state.turn ?? 0), phase: sPhase,
+              turn: sTurn, phase: sPhase,
             },
           ],
           players: ((state.players ?? []) as { faction: string; handCount?: number }[])

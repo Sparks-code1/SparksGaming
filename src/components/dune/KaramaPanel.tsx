@@ -289,7 +289,14 @@ export function KaramaPanel({
                     }}>
                     {whenChoices.map(ph => (
                       <option key={ph} value={ph}>
-                        {ph === phase ? `${ph} — now` : ph}
+                        {/* WHICH STORM. From the Mentat Pause the only storm
+                            anybody can mean is the next turn's — this turn's
+                            is long past — and a bare "Storm" in that list
+                            would read as one that has already blown. */}
+                        {ph === phase ? `${ph} — now`
+                          : ph === 'Storm' && phase === 'Mentat Pause'
+                            ? 'Storm — next turn'
+                            : ph}
                       </option>
                     ))}
                   </select>

@@ -9,7 +9,7 @@ import { bgFollowsShip, bgAdvancedFollow, judgeBgFlip, movementRange,
 import { charityGrant, isEligibleForCharity } from '@/lib/dune/charity'
 import { pendingBattles } from '@/lib/dune/battle'
 import { DUNE_PHASES } from '@/types/Dune/Game'
-import { karamaOptions, playKarama, isKaramaFor, mayStopIn, stoppablePhases,
+import { karamaOptions, playKarama, isKaramaFor, mayStopIn, stoppablePhases, stopTurnFor,
 } from '@/lib/dune/karama'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { FACTIONS, FACTION_IDS, canKaramaStop, factionRuleText } from '@/data/dune/factions'
@@ -308,8 +308,40 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
         .map(ph => mayStopIn('Bidding', ph as never)),
       [false, false, false])
 
-    check('the last phase of a turn offers itself and nothing else',
-      stoppablePhases('Mentat Pause'), ['Mentat Pause'])
+    // ── AND THE COMING STORM, from the Pause ─────────────────────────────
+    // The Storm is the FIRST phase of a turn, so nothing earlier in that turn
+    // can name it — and since the storm rolls, moves and tells the Fremen
+    // their next distance in one press, there is no moment inside the phase to
+    // answer either. Two stops sat on the menu that could not once have fired.
+    //
+    // The Pause is the moment immediately before the next storm, which is the
+    // same reasoning that moved Family Atomics and Weather Control there.
+    check('the last phase of a turn offers itself and the coming storm',
+      stoppablePhases('Mentat Pause'), ['Mentat Pause', 'Storm'])
+    check('...and that Storm is next turn\'s, not the one long past',
+      [stopTurnFor('Mentat Pause', 'Storm', 7),
+        stopTurnFor('Mentat Pause', 'Mentat Pause', 7)],
+      [8, 7])
+    check('...while nowhere else reaches across the turn',
+      ['Bidding', 'Battles', 'Spice Collection']
+        .map(ph => stopTurnFor(ph as never, 'Battles' as never, 7)),
+      [7, 7, 7])
+
+    // NOBODY ELSE MAY NAME THE STORM. From mid-turn this turn's storm has
+    // blown and next turn's is two phases past the card's reach.
+    check('only the Pause reaches the storm',
+      ['Bidding', 'Revival', 'Battles', 'Spice Collection']
+        .map(ph => mayStopIn(ph as never, 'Storm')),
+      [false, false, false, false])
+
+    // AND THE TWO STOPS THAT NEEDED IT ARE REACHABLE NOW. Both are checked
+    // against the Storm phase, and before this there was no phase a player
+    // could be in that could name it.
+    check('the Fremen storm stops can actually be bought',
+      [mayStopIn('Mentat Pause', 'Storm'),
+        suppressibleRefs('fremen', 'advanced').some(r => r.ref === 'advanced.storm'),
+        suppressibleRefs('fremen', 'advanced').some(r => r.ref === 'advanced.spiceBlow')],
+      [true, true, true])
     check('the first offers the whole turn', stoppablePhases('Storm').length, 9)
     check('...beginning with the one being played in',
       stoppablePhases('Revival')[0], 'Revival')
@@ -337,7 +369,12 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
         stopCase.includes('? String(state.phase)')], [true, true])
     check('...judged by the rule rather than by a test written twice',
       stopCase.includes('if (!mayStopIn(state.phase as never, sPhase as never)) {'), true)
-    check('...and the suppression is stamped with the phase that was named',
+    check('...on the turn the rule names, not always the live one',
+    [stopCase.includes('const sTurn = stopTurnFor('),
+      stopCase.includes('turn: sTurn, phase: sPhase,'),
+      stopCase.includes('turn: Number(state.turn ?? 0), phase: sPhase,')],
+    [true, true, false])
+  check('...and the suppression is stamped with the phase that was named',
       [stopCase.includes('phase: sPhase,'),
         stopCase.includes('phase: state.phase,')], [true, false])
 

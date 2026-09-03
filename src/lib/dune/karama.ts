@@ -70,9 +70,11 @@ export interface KaramaOption {
   /**
    * Whether playing it finishes here.
    *
-   * False means the phase that would carry it out is unbuilt, and playing it
-   * records what is owed instead. A build-state fact rather than a rule, and it
-   * turns true as phases land.
+   * TRUE FOR ALL SEVEN NOW — every phase they touch is built. It stays on
+   * the option because it is the honest way to say that an effect this
+   * module cannot carry out is still a card spent: if a use is ever added
+   * ahead of the phase it needs, a menu can show that rather than a player
+   * discovering it after the card is gone.
    */
   resolvable: boolean
 }
@@ -150,9 +152,9 @@ export interface WormPlaced {
 export interface KaramaOutcome {
   use: KaramaUse
   /**
-   * Always true. The card is spent whichever way it went, including on an
-   * effect nothing can carry out yet — a Karama played into an unbuilt phase is
-   * still a Karama played.
+   * Always true. The card is spent whichever way it went — including, if a
+   * use is ever added ahead of the phase that would carry it out, on an
+   * effect that resolves nowhere. A Karama played is a Karama played.
    */
   discarded: true
   /** Set when the effect happened here. */
@@ -287,12 +289,43 @@ export interface Suppression {
  */
 export function stoppablePhases(current: GamePhase): GamePhase[] {
   const i = DUNE_PHASES.indexOf(current)
-  return i < 0 ? [] : DUNE_PHASES.slice(i) as GamePhase[]
+  if (i < 0) return []
+  const rest = DUNE_PHASES.slice(i) as GamePhase[]
+  // AND THE COMING STORM, from the Mentat Pause.
+  //
+  // The Storm is the FIRST phase of a turn, so nothing earlier in that turn
+  // can name it — and since the storm rolls, moves and tells the Fremen
+  // their next distance all in one press, there is no moment inside the
+  // phase to answer either. Two stops were on the menu that could not once
+  // have fired: knowing the storm a turn early, and half losses in it.
+  //
+  // The Pause is the moment immediately before the next storm, which is the
+  // same reasoning that moved Family Atomics and Weather Control there. A
+  // stop named here lands on turn + 1 — see stopTurnFor, which is the one
+  // place that arithmetic is done.
+  return current === 'Mentat Pause' ? [...rest, 'Storm' as GamePhase] : rest
 }
 
 /** Whether a stop played now may name that phase. */
 export function mayStopIn(current: GamePhase, named: GamePhase): boolean {
   return stoppablePhases(current).includes(named)
+}
+
+/**
+ * WHICH TURN a stop played now, naming that phase, belongs to.
+ *
+ * Everything is this turn except the Storm named from the Mentat Pause,
+ * which is unambiguous: this turn's storm is long past by then, so the only
+ * storm anybody could mean is the next one.
+ *
+ * ONE PLACE, because the panel has to show the player which turn they are
+ * aiming at and the endpoint has to stamp it, and two answers to that would
+ * put a stop on a storm nobody was aiming for.
+ */
+export function stopTurnFor(
+  current: GamePhase, named: GamePhase, turn: number,
+): number {
+  return current === 'Mentat Pause' && named === 'Storm' ? turn + 1 : turn
 }
 
 /** Whether this advantage is stopped RIGHT NOW — this turn, this phase. */

@@ -1481,10 +1481,15 @@ function isKaramaFor(faction, mode, card) {
 var KARAMA_GIVE_SECONDS = 60;
 function stoppablePhases(current) {
   const i = DUNE_PHASES.indexOf(current);
-  return i < 0 ? [] : DUNE_PHASES.slice(i);
+  if (i < 0) return [];
+  const rest = DUNE_PHASES.slice(i);
+  return current === "Mentat Pause" ? [...rest, "Storm"] : rest;
 }
 function mayStopIn(current, named) {
   return stoppablePhases(current).includes(named);
+}
+function stopTurnFor(current, named, turn) {
+  return current === "Mentat Pause" && named === "Storm" ? turn + 1 : turn;
 }
 function isSuppressed(list, faction, ref, turn, phase) {
   return (list ?? []).some((s) => s.faction === faction && s.ref === ref && s.turn === turn && s.phase === phase);
@@ -1514,6 +1519,7 @@ export {
   karamaOptions,
   mayStopIn,
   playKarama,
+  stopTurnFor,
   stoppablePhases,
   suppressibleRefs
 };
