@@ -591,15 +591,39 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
     // NO CLIENT PASSED. dispatchDuneAction uses the app's own session, which is
     // the only session this page has — the acting seat is stated by the token
     // in the header and by nothing in the payload.
-    const res = await Promise.race([
-      dispatchDuneAction(matchId, action),
-      new Promise<{ ok: false; error: { code: string; message: string } }>(resolve =>
-        setTimeout(() => resolve({
-          ok: false,
-          error: { code: 'timeout', message: 'no answer after 15s' },
-        }), 15_000)),
-    ])
-    setBusy(false)
+    //
+    // THE FLAG COMES DOWN WHATEVER HAPPENS. dispatchDuneAction RETURNS a
+    // refusal but THROWS on a caller-side mistake — a payload carrying
+    // playerId or actAs, which it refuses to send at all — and a session read
+    // can reject on its own. Either way the old shape never reached
+    // setBusy(false): the promise rejected out of send, nothing caught it,
+    // and `busy` stayed true for the life of the screen. Every later action
+    // then answered "still waiting on the last action…" — a seat locked out
+    // of its own game by a bug it could not see, with no refusal shown and
+    // nothing in the log, because nothing was ever sent.
+    let res: Awaited<ReturnType<typeof dispatchDuneAction>>
+    try {
+      res = await Promise.race([
+        dispatchDuneAction(matchId, action),
+        new Promise<{ ok: false; error: { code: string; message: string } }>(resolve =>
+          setTimeout(() => resolve({
+            ok: false,
+            error: { code: 'timeout', message: 'no answer after 15s' },
+          }), 15_000)),
+      ])
+    } catch (e) {
+      // A THROW HERE IS A BUG IN THIS CLIENT, not a thing the server said, so
+      // it is shown as its own code rather than dressed up as a refusal —
+      // and logged, because the person who can fix it is not the player.
+      const why = e instanceof Error ? e.message : String(e)
+      console.error(`[dune] ${action.type} was never sent:`, e)
+      setRefused('client-bug')
+      setRefusedBy(action.type)
+      say(`${action.type} could not be sent — ${why}`)
+      return null
+    } finally {
+      setBusy(false)
+    }
     if (!res.ok) {
       setRefused(res.error?.code ?? 'refused')
       setRefusedBy(action.type)
@@ -643,8 +667,19 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
     if (busy) return
     setBusy(true)
     setBidRefusal(null)
-    const res = await dispatchDuneAction(matchId, { type: 'BID', bid: answer })
-    setBusy(false)
+    // THE SAME TRAP AS send(), and closed the same way: a throw between the
+    // flag going up and coming down leaves the seat unable to bid again, on a
+    // clock that goes on counting.
+    let res: Awaited<ReturnType<typeof dispatchDuneAction>>
+    try {
+      res = await dispatchDuneAction(matchId, { type: 'BID', bid: answer })
+    } catch (e) {
+      console.error('[dune] BID was never sent:', e)
+      setBidRefusal('client-bug')
+      return
+    } finally {
+      setBusy(false)
+    }
     if (!res.ok) {
       // A REFUSAL IS NOT AN ERROR. "More than you hold" and "not your turn" are
       // things the server is supposed to say, they change nothing, and they are

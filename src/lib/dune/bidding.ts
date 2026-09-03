@@ -131,6 +131,17 @@ export type BidRefusal =
   | 'at-your-hand-limit'
   | 'below-the-minimum'
   | 'more-than-you-hold'
+  /**
+   * NOT THE SERVER SPEAKING. Every other member of this union is a ruling;
+   * this one is the client failing to send at all — a payload it refuses to
+   * put on the wire, or a session read that rejected.
+   *
+   * IN THE UNION RATHER THAN CAST INTO IT. The bidder has to be told their
+   * bid did not happen, on a clock that goes on counting, and a code smuggled
+   * past the type would have shown them the bare word with no sentence
+   * behind it.
+   */
+  | 'client-bug'
 
 /**
  * The outcome of one answer.

@@ -895,4 +895,41 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
     })(), true)
 }
 
+// ── the busy flag comes down whatever happens ────────────────────────────
+// A SEAT LOCKED OUT OF ITS OWN GAME BY A BUG IT COULD NOT SEE. dispatchDuneAction
+// RETURNS a refusal but THROWS on a caller-side mistake — a payload carrying
+// playerId or actAs, which it refuses to put on the wire — and a session read
+// can reject on its own. Neither reached setBusy(false): the promise rejected
+// out of the handler, nothing caught it, and `busy` stayed true for the life
+// of the screen. Every later action then answered "still waiting on the last
+// action…", with no refusal shown and nothing in the action log, because
+// nothing was ever sent.
+{
+  const screen = code('src/components/dune/DuneMatchScreen.tsx')
+
+  // BOTH SITES, AND ONLY IN A finally. Counting the pairs would pass a
+  // handler that lowered the flag on the happy path alone, which is exactly
+  // the shape that shipped — so what is checked is WHERE it comes down.
+  const downs = [...screen.matchAll(/setBusy\(false\)/g)]
+  check('the flag is lowered in both handlers that raise it',
+    [downs.length, (screen.match(/setBusy\(true\)/g) ?? []).length], [2, 2])
+  check('...and every one of them is inside a finally',
+    downs.filter(m => !/\}\s*finally\s*\{\s*$/.test(
+      screen.slice(Math.max(0, m.index! - 40), m.index!))).length,
+    0)
+
+  // AND A THROW IS SHOWN, not swallowed. The player has to learn their action
+  // did not happen; the console has to carry the thing a developer can fix.
+  check('a send that never left says so, and is logged',
+    [screen.includes("setRefused('client-bug')"),
+      screen.includes('was never sent:')], [true, true])
+  check('...and so does a bid', screen.includes("setBidRefusal('client-bug')"), true)
+
+  // WITH A SENTENCE BEHIND IT. A code the panel has no text for shows the
+  // bidder a bare word on a clock that is still counting.
+  const panel = code('src/components/dune/BiddingPanel.tsx')
+  check('...which the panel can actually read out',
+    /'client-bug':\s*'[^']{20,}'/.test(panel), true)
+}
+
 process.exit(pass ? 0 : 1)

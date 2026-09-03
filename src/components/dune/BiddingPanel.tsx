@@ -41,6 +41,7 @@ const REFUSAL_TEXT: Record<BidRefusal, string> = {
   'at-your-hand-limit': 'Your hand is full.',
   'below-the-minimum': 'That does not beat the standing bid.',
   'more-than-you-hold': 'You do not have that much spice.',
+  'client-bug': 'That bid never left this browser — nothing was sent, so nothing has changed.',
 }
 
 export interface BiddingPanelProps {
