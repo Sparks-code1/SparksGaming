@@ -2,7 +2,8 @@
 // is offered IS the rules statement, and the effects mostly land in phases that
 // do not exist yet.
 import { readFileSync } from 'node:fs'
-import { bgFollowsShip, bgAdvancedFollow, judgeBgFlip } from '@/lib/dune/shipment'
+import { bgFollowsShip, bgAdvancedFollow, judgeBgFlip, movementRange,
+} from '@/lib/dune/shipment'
 import { charityGrant, isEligibleForCharity } from '@/lib/dune/charity'
 import { pendingBattles } from '@/lib/dune/battle'
 import { DUNE_PHASES } from '@/types/Dune/Game'
@@ -550,6 +551,43 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
       ['abilities.battle', 'abilities.shipment', 'advanced.advisors',
         'advanced.battle', 'advanced.charity', 'advanced.fighters',
         'advanced.shipment'])
+  }
+
+  // ── the desert's second step ────────────────────────────────────────────
+  // Two territories instead of one, and only the second step: flying three
+  // out of Arrakeen or Carthag belongs to whoever holds the city and is
+  // nobody's faction advantage, so a stopped Fremen holding one still flies.
+  {
+    check('a stopped Fremen walks one like anybody else',
+      [movementRange('fremen' as never, []), movementRange('fremen' as never, [], true)],
+      [2, 1])
+    check('...and nobody else\'s walk moves with it',
+      [movementRange('atreides' as never, []),
+        movementRange('atreides' as never, [], true)],
+      [1, 1])
+
+    // THE CITIES ARE NOT THEIRS TO LOSE. Ornithopters carry the faction that
+    // holds Arrakeen or Carthag, whoever that is, and no Karama aimed at the
+    // Fremen takes them away.
+    const inCarthag = [
+      { faction: 'fremen', territoryId: 'territory-26', sector: 'sector-10', count: 1 },
+    ] as never[]
+    check('a stopped Fremen holding a city still flies three',
+      [movementRange('fremen' as never, inCarthag),
+        movementRange('fremen' as never, inCarthag, true)],
+      [3, 3])
+
+    // ── the board and the server agree ────────────────────────────────────
+    // moveTargets draws the rings and judgeMove judges them; the suite sweeps
+    // the two against each other cell by cell elsewhere. A stop the endpoint
+    // knows about and the board does not would put a ring on a refusal.
+    const ep7 = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+    const screen7 = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
+    check('the endpoint asks before it judges a move',
+      [/const stepStopped = isSuppressed\(/.test(ep7),
+        /suppressed: stepStopped,/.test(ep7)], [true, true])
+    check('...and the board asks the same thing before it rings',
+      /suppressed: isSuppressed\(state\.suppressed \?\? \[\], seat,/.test(screen7), true)
   }
 
   // COUNTED OUT, not recomputed. A check that derived the expected number the

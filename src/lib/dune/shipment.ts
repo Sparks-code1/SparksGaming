@@ -597,9 +597,18 @@ export function moveTargets(input: {
   storm: SectorId
   /** The mover's ally — rings are never offered on shared ground. */
   ally?: FactionId | null
+  /**
+   * The Fremen second step, cancelled by a Karama.
+   *
+   * THE BOARD MUST ASK IT TOO. This draws the rings and judgeMove judges
+   * them, and the two are swept cell by cell against each other in the tests
+   * — so a stop the endpoint knows about and the board does not would put a
+   * ring on a move the server refuses.
+   */
+  suppressed?: boolean
 }): Set<string> {
   const { faction, from, forces, storm } = input
-  const range = movementRange(faction, forces)
+  const range = movementRange(faction, forces, input.suppressed)
   const reach = new Set<string>()
   for (const t of DUNE_TERRITORIES) {
     if (t.id === from.territoryId) continue
@@ -634,6 +643,15 @@ export function judgeMove(input: {
   storm: SectorId
   /** The mover's ally, for the shared-ground refusal — or null. */
   ally?: FactionId | null
+  /**
+   * The Fremen second step, cancelled by a Karama.
+   *
+   * ONLY THE SECOND STEP. Flying three from Arrakeen or Carthag belongs to
+   * whoever holds those cities and is not a Fremen advantage, so a stopped
+   * Fremen holding one still flies — see movementRange, which is where that
+   * distinction lives.
+   */
+  suppressed?: boolean
 }): { ok: true; sector: SectorId; moving: number } | { ok: false; refusal: ShipRefusal } {
   const { faction, from, gather, to, forces, storm } = input
   if (!territory(from)) return { ok: false, refusal: 'no-such-territory' }
@@ -651,7 +669,7 @@ export function judgeMove(input: {
     return { ok: false, refusal: 'ally-occupies' }
   }
 
-  const range = movementRange(faction, forces)
+  const range = movementRange(faction, forces, input.suppressed)
   let moving = 0
   for (const g of gather) {
     const held = forces.find(f =>

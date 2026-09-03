@@ -1,4 +1,4 @@
-import type { FactionId } from './Faction'
+import type { FactionId, FactionRuleRef } from './Faction'
 
 /**
  * Dune game state — the beginnings of it.
@@ -524,7 +524,10 @@ export interface DuneGameState {
    */
   suppressed?: {
     faction: FactionId
-    ref: string
+    /** The rule stopped — a sheet entry, or one named part of one. Typed as
+     *  the reference rather than a bare string so a screen reading this list
+     *  can hand it straight to isSuppressed without a cast. */
+    ref: FactionRuleRef
     by: FactionId
     turn: number
     phase: GamePhase

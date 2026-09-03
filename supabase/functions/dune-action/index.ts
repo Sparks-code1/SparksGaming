@@ -3029,7 +3029,16 @@ Deno.serve(async req => {
 
       const gather = (Array.isArray(action.gather) ? action.gather : []) as
         { sector: string; count: number; starred?: number }[]
+      // THE DESERT'S SECOND STEP, cancelled by a Karama. Only the step:
+      // flying three out of Arrakeen or Carthag belongs to whoever holds the
+      // city and is nobody's faction advantage, so a stopped Fremen holding
+      // one still flies.
+      // KARAMA-STOP: fremen abilities.movement
+      const stepStopped = isSuppressed((state.suppressed ?? []) as never,
+        myFaction as never, 'abilities.movement' as never,
+        Number(state.turn ?? 0), 'Shipment and Movement' as never)
       const judged = judgeMove({
+        suppressed: stepStopped,
         faction: myFaction as never,
         from: String(action.from ?? ''),
         gather,

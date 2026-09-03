@@ -936,7 +936,7 @@ var FREMEN = {
   unsuppressable: ["specialVictory"],
   karamaStops: {
     "abilities.shipment": { stops: "Riding free onto the Great Flat, or within two territories of it.", enforced: true },
-    "abilities.movement": { stops: "Moving two territories instead of one.", enforced: false },
+    "abilities.movement": { stops: "Moving two territories instead of one.", enforced: true },
     "abilities.shaiHulud": { stops: "Surviving Shai-Hulud, and riding it after the Nexus.", enforced: false },
     "advanced.storm": { stops: "Knowing the storm distance a turn early.", enforced: true },
     "advanced.spiceBlow": { stops: "Placing every sandworm after the first, and half losses in a storm.", enforced: false },

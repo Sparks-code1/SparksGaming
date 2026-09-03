@@ -229,7 +229,7 @@ that adding or dropping an offer is a decision somebody has to make twice.
 Fremen special victory, the Guild special victory, and the Bene Gesserit
 prediction. The win conditions, exactly as the section above says.
 
-**26 curated stops. 20 are enforced and offered; 6 are not offered at all.**
+**26 curated stops. 21 are enforced and offered; 5 are not offered at all.**
 
 An unenforced stop is not a stop that quietly does nothing. It would take the
 card, discard it where the table can see, announce itself, and then the
@@ -238,7 +238,7 @@ knows where they stand; a player who is told it worked has been lied to and paid
 for it. So an entry with no check at its firing site is **not offered**, and
 `suppressibleRefs` is the one list both the panel and the endpoint read.
 
-In a basic game the menu is 9, not 20 — the eleven advanced entries are dropped.
+In a basic game the menu is 10, not 21 — the eleven advanced entries are dropped.
 
 ### Enforced
 
@@ -264,6 +264,7 @@ In a basic game the menu is 9, not 20 — the eleven advanced entries are droppe
 | Bene Gesserit | `advanced.advisors` | advisors sitting in ground without a fight |
 | Bene Gesserit | `advanced.fighters` | going to ground when somebody arrives |
 | Bene Gesserit | `advanced.battle` | standing advisors up before a shipment |
+| Fremen | `abilities.movement` | the second step — never the city flight |
 
 Two of those say **AND** for a reason. "Counting double in battle and in taking
 losses" is two halves of one sentence, and for a while only the first was
@@ -277,16 +278,21 @@ allocated with them doubled again. The suite now scans the endpoint for any
 |---|---|---|
 | Atreides | `abilities.movement` | yes — the spice-deck glimpse |
 | Atreides | `advanced.kwisatzHaderach` | yes — the +2 |
-| Fremen | `abilities.movement` | yes — two territories instead of one |
 | Fremen | `abilities.shaiHulud` | yes — surviving and riding the worm |
 | Fremen | `advanced.spiceBlow` | yes — extra worms, half storm losses |
 | Harkonnen | `advanced.capturedLeaders` | yes — taking a leader after a win |
 
-All six are built, so all six are debt rather than deferral.
+All five are built, so all five are debt rather than deferral.
 
-The Fremen movement one is closest: `movementRange` already takes a
-`suppressed` input, so it is a check at the `MOVE` site and a test in both
-directions, not new plumbing.
+**The Fremen second step is done** — 2026-09-03. Worth one note: the stop takes
+the SECOND STEP and not the flight. Three territories out of Arrakeen or Carthag
+belongs to whoever holds the city, whoever that is, and is no faction's
+advantage — so a stopped Fremen holding one still flies three. That distinction
+lives in `movementRange` and is asserted in both directions.
+
+The board asks the same question before it draws a ring. `moveTargets` and
+`judgeMove` are swept against each other cell by cell in the suite, so a stop
+the endpoint knew about and the board did not would put a ring on a refusal.
 
 **The Bene Gesserit cluster is done** — 2026-09-03, all six at once, because
 they are one idea rather than six: a faction that sits in everybody's ground

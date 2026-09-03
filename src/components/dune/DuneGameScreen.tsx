@@ -102,7 +102,7 @@ import { WeatherPanel } from './WeatherPanel'
 import { AtomicsPanel } from './AtomicsPanel'
 import { mayAtomics } from '@/lib/dune/storm'
 import { KaramaPanel, KaramaGiveBackPanel } from './KaramaPanel'
-import { isKaramaCardId } from '@/lib/dune/karama'
+import { isKaramaCardId, isSuppressed } from '@/lib/dune/karama'
 import type { KaramaUse } from '@/lib/dune/karama'
 import type { TruthtranceQuestion } from '@/lib/dune/truthtrance'
 import {
@@ -1397,10 +1397,15 @@ export function DuneGameScreen({
                   const starredStaged = movePlan
                     ? Math.max(0, movePlan.count - (stackTotal - stackStarred))
                     : 0
+                  // THE SAME STOP THE SERVER JUDGES BY, off the public
+                  // suppression list — a ring on a move the endpoint refuses
+                  // is an invitation to a refusal.
                   const reach = moveTargets({
                     faction: seat!, from: movePlan.from,
                     forces: state.forces, storm: state.storm,
                     ally: myAlly,
+                    suppressed: isSuppressed(state.suppressed ?? [], seat,
+                      'abilities.movement', state.turn, 'Shipment and Movement'),
                   })
                   return (
                     <>

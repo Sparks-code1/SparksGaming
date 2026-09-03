@@ -1020,7 +1020,7 @@ function territoryDistance(from, to, storm) {
 }
 function moveTargets(input) {
   const { faction, from, forces, storm } = input;
-  const range = movementRange(faction, forces);
+  const range = movementRange(faction, forces, input.suppressed);
   const reach = /* @__PURE__ */ new Set();
   for (const t of DUNE_TERRITORIES) {
     if (t.id === from.territoryId) continue;
@@ -1049,7 +1049,7 @@ function judgeMove(input) {
   if (allyOccupies(forces, input.ally, to.territoryId)) {
     return { ok: false, refusal: "ally-occupies" };
   }
-  const range = movementRange(faction, forces);
+  const range = movementRange(faction, forces, input.suppressed);
   let moving = 0;
   for (const g of gather) {
     const held = forces.find((f) => f.faction === faction && f.territoryId === from && f.sector === g.sector);
