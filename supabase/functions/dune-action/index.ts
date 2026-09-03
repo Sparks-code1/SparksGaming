@@ -2294,6 +2294,17 @@ Deno.serve(async req => {
       let bonusDue = 0
       let playersAfter = ((state.players ?? []) as { faction: string; handCount?: number }[])
 
+      /**
+       * THE HAND COUNTS AFTER A SETTLEMENT, or null when nothing settled.
+       *
+       * DECLARED OUT HERE BECAUSE IT IS READ OUT HERE. The first cut built
+       * this next to the write and read `paid`, which is scoped to the block
+       * below — so an ordinary raise, where no card closes and no settlement
+       * exists, died on a ReferenceError. The log named it as BID /
+       * action-threw within a minute, which is the second time this session a
+       * binding has been used outside the block that declares it.
+       */
+      let settledHands: Record<string, number> | null = null
       if (justClosed) {
         // The bonus faction's second card, for THIS card only. Drawn to order
         // so nothing is pulled off the pile and put back somewhere else.
@@ -2375,6 +2386,16 @@ Deno.serve(async req => {
           paid.writes.secrets[p.faction]
             ? { ...p, handCount: paid.writes.secrets[p.faction].hand.length }
             : p)
+        // AND THE AUCTION'S OWN COUNT, from the same settled hands. The
+        // bonus cards are already in them, which is the point of counting
+        // here rather than adding one and hoping.
+        settledHands = {
+          ...Object.fromEntries(
+            Object.entries(hands).map(([f, cards]) => [f, cards.length])),
+          ...Object.fromEntries(
+            Object.entries(paid.writes.secrets)
+              .map(([f, w]) => [f, (w as { hand: string[] }).hand.length])),
+        }
       }
 
       const paidDecks = bonusDue > 0 ? { treachery: bonusDraw.draw } : {}
@@ -2413,19 +2434,14 @@ Deno.serve(async req => {
          * The settlement already knows every hand it touched; the rest are
          * unchanged. Counting them here means the gate and the cards agree.
          */
-        const stepOut = {
-          ...outcome.step,
-          carry: {
-            ...outcome.step.carry,
-            hands: {
-              ...Object.fromEntries(
-                Object.entries(hands).map(([f, cards]) => [f, cards.length])),
-              ...Object.fromEntries(
-                Object.entries(paid.writes.secrets)
-                  .map(([f, w]) => [f, (w as { hand: string[] }).hand.length])),
-            },
-          },
-        }
+        // NULL WHEN NOTHING SETTLED: an ordinary raise closes no card, so
+        // there is nothing to recount and the auction's own carry stands.
+        const stepOut = settledHands
+          ? {
+            ...outcome.step,
+            carry: { ...outcome.step.carry, hands: settledHands },
+          }
+          : outcome.step
         const { data, error } = await admin.rpc('apply_match_write', {
           p_match_id: matchId,
           p_expected_version: match.version,
