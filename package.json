@@ -1,7 +1,7 @@
 {
   "name": "SparksGaming",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.3.3",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -55,7 +55,7 @@
   },
   "build": {
     "appId": "com.sparkscode.sparksgaming",
-    "productName": "Risk Legacy",
+    "productName": "Sparks Gaming",
     "asar": false,
     "directories": {
       "output": "release",
@@ -66,7 +66,7 @@
         "provider": "github",
         "owner": "sparks-code1",
         "repo": "SparksGaming",
-        "releaseType": "release"
+        "releaseType": "draft"
       }
     ],
     "files": [
@@ -96,7 +96,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Risk Legacy"
+      "shortcutName": "Sparks Gaming"
     }
   }
 }
