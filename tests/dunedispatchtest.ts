@@ -860,8 +860,8 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
     fetchImpl: (() => Promise.reject(new TypeError('Failed to fetch'))) as never,
   })
   check('a fetch that threw says so',
-    [thrown.ok, thrown.ok ? null : thrown.error.code,
-      thrown.ok ? null : thrown.error.message.startsWith('Could not reach the server')],
+    [thrown.ok, thrown.ok ? null : thrown.error?.code,
+      thrown.ok ? null : thrown.error?.message.startsWith('Could not reach the server')],
     [false, 'network', true])
 
   const gateway = await dispatchDuneAction('m1', { type: 'PING' } as never, {
@@ -870,8 +870,8 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
       '<html>502</html>', { status: 502 })) ) as never,
   })
   check('...and an answer with no code of its own says something else',
-    [gateway.ok, gateway.ok ? null : gateway.error.code,
-      gateway.ok ? null : gateway.error.message.includes('502')],
+    [gateway.ok, gateway.ok ? null : gateway.error?.code,
+      gateway.ok ? null : gateway.error?.message.includes('502')],
     [false, 'network', true])
 
   // THE SERVER NO LONGER LEAVES THAT GAP FOR ITS OWN CRASHES. An uncaught
