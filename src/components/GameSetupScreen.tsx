@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { MOCK_PLAYERS, FACTION_COLORS } from '@/data/mockGameState'
 import { TERRITORY_DEFINITIONS } from '@/data/territoryData'
 import { getAbilitiesForFaction } from '@/data/factionAbilities'
@@ -6,10 +6,12 @@ import { needsWeaknessPower, WEAKNESS_POWERS } from '@/data/weaknessPowers'
 import type { FactionId } from '@/types/faction'
 import type { LegacyState } from '@/types/legacy'
 import type { AIDifficulty } from '@/types/ai'
+import { aiSetupChoice } from '@/lib/ai'
 import HQMapPicker from './HQMapPicker'
 import WeaknessPowerPicker from './WeaknessPowerPicker'
 import {
   FactionChoiceList, AbilityChoicePair, FACTION_NAMES, hexToRgb, abilityName,
+  availableFactions,
 } from './FactionChoicePanels'
 
 export interface PlayerSetup {
@@ -35,8 +37,17 @@ interface Props {
   removedAbilityIds?: string[]
   /** Full legacy state for map overlays (cities, scars). Null on game 1. */
   legacy?: LegacyState | null
-  /** Players driven by the computer — their weakness powers are auto-claimed. */
+  /** Players driven by the computer. They answer every question below. */
   aiPlayerIds?: Set<string>
+  /**
+   * How hard each computer seat plays, by player id.
+   *
+   * SEPARATE FROM THE SET ABOVE rather than folded into it, because the set
+   * is what the weakness auto-claim has always read and two screens pass it.
+   * A seat in the set with no entry here plays at medium, which is the
+   * default the slots screen offers.
+   */
+  aiDifficulty?: Record<string, AIDifficulty>
   onSetupComplete: (
     setups: PlayerSetup[],
     order: string[],
@@ -45,9 +56,18 @@ interface Props {
   ) => void
 }
 
+/**
+ * How long a computer seat sits with a question before answering it.
+ *
+ * Not a fake think — the choice is instant. It is the time a player needs to
+ * read which faction and which ability the bot took, on a screen that would
+ * otherwise flick through three of them between frames.
+ */
+const AI_CHOICE_MS = 650
+
 type Phase = 'faction' | 'weakness' | 'ability' | 'territory'
 
-export default function GameSetupScreen({ playerOrder, existingAbilities, removedAbilityIds = [], legacy = null, aiPlayerIds, onSetupComplete }: Props) {
+export default function GameSetupScreen({ playerOrder, existingAbilities, removedAbilityIds = [], legacy = null, aiPlayerIds, aiDifficulty = {}, onSetupComplete }: Props) {
   const players = playerOrder.map(id => MOCK_PLAYERS.find(p => p.id === id)!)
   const [phase, setPhase] = useState<Phase>('faction')
   const [factionPicks, setFactionPicks]   = useState<Record<string, string>>({})  // playerId → factionId
@@ -125,6 +145,67 @@ export default function GameSetupScreen({ playerOrder, existingAbilities, remove
       setPhase('territory')
     }
   }
+
+  // ── The computer answers for itself ─────────────────────────────────────────
+
+  /**
+   * Whether the seat being asked right now is played by the computer, and how
+   * hard. Null for a human, and null while nobody is being asked.
+   */
+  const askingAI: AIDifficulty | null =
+    currentPlayer && aiPlayerIds?.has(currentPlayer.id)
+      ? aiDifficulty[currentPlayer.id] ?? 'medium'
+      : null
+
+  /**
+   * The faction and the permanent ability, taken by the bot whose turn it is.
+   *
+   * IT USED TO BE THE HUMAN WHO ANSWERED THESE. This screen took an
+   * `aiPlayerIds` set and consulted it in exactly one place — the alien
+   * weakness power — so a solo player picked their opponents' factions, their
+   * opponents' permanent abilities and their opponents' starting ground, one
+   * seat at a time, before a game they were about to play against them. The
+   * board driver has always run the AI's whole turn. Setup was the odd one out.
+   *
+   * THROUGH THE SAME HANDLERS A CLICK CALLS, so everything that hangs off a
+   * pick still happens: the alien weakness auto-claim below handleFactionPick,
+   * the ability phase skipping factions that have none, the advance to the next
+   * seat. A branch that set the state directly would be a second copy of the
+   * sequencing, and it would be the copy that missed the next rule added.
+   *
+   * AFTER A BEAT, because a human has to see what was taken — three factions
+   * claimed in one frame is not a screen anybody can read. The card names the
+   * picker, so the pause is the bot showing its choice.
+   *
+   * THE TERRITORY IS NOT HERE. That one lives in HQMapPicker, which is the only
+   * thing that knows which ground is legal — see its `autoPick`.
+   */
+  useEffect(() => {
+    if (!askingAI || !currentPlayer) return
+    if (phase !== 'faction' && phase !== 'ability') return
+
+    const wait = setTimeout(() => {
+      if (phase === 'faction') {
+        const open = availableFactions(legacy).filter(f => !takenFactions.includes(f))
+        const want = aiSetupChoice(open, askingAI)
+        if (want) handleFactionPick(want)
+        return
+      }
+      const fid = factionPicks[currentPlayer.id]
+      if (!fid) return
+      const want = aiSetupChoice(
+        getAbilitiesForFaction(fid as FactionId)
+          .filter(a => !removedAbilityIds.includes(a.id))
+          .map(a => a.id),
+        askingAI)
+      if (want) handleAbilityPick(fid, want)
+    }, AI_CHOICE_MS)
+    return () => clearTimeout(wait)
+    // The seat and the question. Not the handlers — they close over state that
+    // changes every render, and depending on them would re-arm the timer
+    // continuously and pick again the moment it fired.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [askingAI, currentPlayer?.id, phase])
 
   // ── Territory phase ─────────────────────────────────────────────────────────
 
@@ -254,6 +335,7 @@ export default function GameSetupScreen({ playerOrder, existingAbilities, remove
                 currentPlayer={{ id: currentPlayer.id, name: currentPlayer.name, factionId: factionPicks[currentPlayer.id] ?? 'enclave-of-the-bear' }}
                 placedHQs={placedHQs}
                 legacy={legacy}
+                autoPick={askingAI}
                 onConfirm={handleTerritoryPick}
               />
             )}

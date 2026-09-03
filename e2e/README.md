@@ -170,3 +170,21 @@ good board unreached. Which way it went depended on a die roll. It now matches
 case-insensitively, with the phase list completed, **and** requires a canvas —
 because a faction ability card reads "round up draft bonuses", and the word
 alone was true three screens early.
+
+### The computer answers for itself now
+
+The finding above is fixed, and two specs hold it: `playSetup` takes an optional
+name and clicks for **that player only**, so every screen put to a bot has to be
+answered by the bot or the walk runs its cap down and fails naming the screen it
+stalled on. One spec runs a bot alongside the human; the other runs two, which
+is what proves the sequencing rather than a lucky ordering.
+
+Both were checked by disabling each half of the new behaviour in real source.
+Stopping the faction and ability auto-pick failed at `BOT ONE — PICK A FACTION`;
+stopping the HQ auto-pick failed at `PLACE YOUR HQ`.
+
+One more case thing, worth knowing before writing a spec against these screens:
+two of the three choice headings are uppercased in CSS, and `innerText` returns
+what is rendered. The faction screen asks `HARNESS — PICK A FACTION` of a player
+the roster calls `Harness`, so the first version of the name check waited for the
+human to answer for herself.

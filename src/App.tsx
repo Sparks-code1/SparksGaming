@@ -561,6 +561,11 @@ export default function App() {
         existingAbilities={legacy?.chosenFactionAbilities ?? {}}
         legacy={legacy}
         aiPlayerIds={new Set(Object.keys(slotConfig).filter(id => slotConfig[id].isAI))}
+        // HOW HARD, alongside WHICH. Both setup screens let the computer
+        // answer their own questions now, and the slots screen has always
+        // asked for a difficulty per seat — it just had nowhere to go.
+        aiDifficulty={Object.fromEntries(Object.entries(slotConfig)
+          .filter(([, c]) => c.isAI).map(([id, c]) => [id, c.difficulty]))}
         onDraftComplete={handleSetupComplete}
       />
     )
@@ -572,6 +577,11 @@ export default function App() {
         removedAbilityIds={legacy?.removedAbilityIds ?? []}
         legacy={legacy ?? null}
         aiPlayerIds={new Set(Object.keys(slotConfig).filter(id => slotConfig[id].isAI))}
+        // HOW HARD, alongside WHICH. Both setup screens let the computer
+        // answer their own questions now, and the slots screen has always
+        // asked for a difficulty per seat — it just had nowhere to go.
+        aiDifficulty={Object.fromEntries(Object.entries(slotConfig)
+          .filter(([, c]) => c.isAI).map(([id, c]) => [id, c.difficulty]))}
         onSetupComplete={handleSetupComplete}
       />
     )

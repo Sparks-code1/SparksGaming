@@ -139,9 +139,53 @@ export async function startGame(page: Page, opts: {
  * all is. Choosing deliberately would also encode one dealing of the scar cards
  * and rot the first time the pool changes.
  */
-export async function playSetup(page: Page, cap = 40): Promise<void> {
+/**
+ * Who is being asked, if the screen says.
+ *
+ * ALL THREE CHOICE SCREENS NAME THEIR PICKER, in three different sentences:
+ * "Harness — Pick a Faction", "Bot One (Imperial Balkania) — Choose Permanent
+ * Ability", and the HQ map's "Bot One is choosing…". Read as text rather than
+ * from a hook because there is none; the names are the players' own, which is
+ * what makes them usable here.
+ *
+ * Null on a screen that asks nobody — the scar deal, the dice.
+ */
+export async function askedOf(page: Page): Promise<string | null> {
+  const said = await page.locator('body').innerText()
+  const m = said.match(/^(.+?) — Pick a Faction$/mi)
+    ?? said.match(/^(.+?)\s*\([^)]*\) — Choose Permanent Ability$/mi)
+    ?? said.match(/^(.+?)is choosing…$/mi)
+  return m ? m[1].trim() : null
+}
+
+/**
+ * Walk the setup screens until the board appears.
+ *
+ * @param only when given, the harness clicks for THIS player and nobody else.
+ * Every other seat has to answer for itself or the walk stalls and fails —
+ * which is the assertion, not a convenience. Setup used to put the computer's
+ * faction, ability and HQ to the human at the keyboard, and a walk that
+ * happily clicked them could not tell the difference before and after.
+ */
+export async function playSetup(page: Page, cap = 40, only?: string): Promise<void> {
   for (let i = 0; i < cap; i++) {
     if (await onBoard(page)) return
+
+    // SOMEBODY ELSE'S DECISION: wait it out rather than making it. A seat that
+    // never answers stalls the loop, runs the cap down and fails naming the
+    // screen it died on.
+    // CASE-INSENSITIVELY, because two of the three headings are uppercased in
+    // CSS and innerText returns what is rendered: the faction screen asks
+    // "HARNESS — PICK A FACTION" of a player the roster calls Harness. Compared
+    // exactly, the walk waited for the human to answer for herself and ran the
+    // cap down on her own turn.
+    if (only) {
+      const asked = await askedOf(page)
+      if (asked && asked.toLowerCase() !== only.toLowerCase()) {
+        await page.waitForTimeout(600)
+        continue
+      }
+    }
 
     // The map stage: a territory is clicked, then confirmed.
     const confirmHQ = page.locator('button', { hasText: /Confirm HQ/ })
@@ -284,11 +328,17 @@ async function where(page: Page): Promise<string> {
   return `screen said:\n${said}\nbuttons: ${(await pressable(page)).join(' | ')}`
 }
 
-/** The whole walk, front door to board. */
+/**
+ * The whole walk, front door to board.
+ *
+ * @param only pass a name to make the walk click for that player alone — see
+ * playSetup. Left out, it clicks for whoever is asked, which is how it drove
+ * setup before the computer answered its own questions.
+ */
 export async function soloGame(page: Page, opts: {
-  players?: number; ai?: number[]; others?: string[]
+  players?: number; ai?: number[]; others?: string[]; you?: string; only?: string
 } = {}): Promise<void> {
-  await newCampaign(page, { others: opts.others })
+  await newCampaign(page, { you: opts.you, others: opts.others })
   await startGame(page, { players: opts.players, ai: opts.ai })
-  await playSetup(page)
+  await playSetup(page, 40, opts.only)
 }

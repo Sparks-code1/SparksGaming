@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { MOCK_PLAYERS, FACTION_COLORS } from '@/data/mockGameState'
 import { needsWeaknessPower, WEAKNESS_POWERS } from '@/data/weaknessPowers'
 import { factionPowers } from '@/lib/factionPowers'
@@ -9,6 +9,8 @@ import type { LegacyState } from '@/types/legacy'
 import type { PlayerSetup } from './GameSetupScreen'
 import WeaknessPowerPicker from './WeaknessPowerPicker'
 import HQMapPicker from './HQMapPicker'
+import type { AIDifficulty } from '@/types/ai'
+import { aiSetupChoice } from '@/lib/ai'
 
 interface Props {
   /** Players in draft-pick order (index 0 = first pick = HIGHEST dice roll) */
@@ -18,6 +20,8 @@ interface Props {
   legacy?: LegacyState | null
   /** Players driven by the computer — their weakness powers are auto-claimed. */
   aiPlayerIds?: Set<string>
+  /** How hard each computer seat drafts, by player id. Missing means medium. */
+  aiDifficulty?: Record<string, AIDifficulty>
   onDraftComplete: (
     setups: PlayerSetup[],
     order: string[],
@@ -52,6 +56,16 @@ function availableFactions(legacy: { alienMilestoneTriggered?: boolean; nuclearM
 const troopSlots = DRAFT_TROOP_SLOTS
 const coinSlots = DRAFT_COIN_SLOTS
 
+/**
+ * How long a computer seat sits with the draft board before taking something.
+ *
+ * The draft is a snake and the board changes under everyone between picks, so
+ * a bot claiming instantly would take three chips between frames and the
+ * player would only ever see the result. Slightly longer than the other setup
+ * screen: there are four lists to look at rather than one card.
+ */
+const AI_DRAFT_MS = 800
+
 type DraftListId = 'faction' | 'troops' | 'coins' | 'order'
 const DRAFT_LISTS: Array<{ id: DraftListId; label: string; icon: string }> = [
   { id: 'faction', label: 'Factions',    icon: '⚑' },
@@ -72,7 +86,7 @@ function hexToRgb(hex: number): string {
 }
 
 
-export default function DraftSetupScreen({ playerOrder, existingAbilities, legacy = null, aiPlayerIds, onDraftComplete }: Props) {
+export default function DraftSetupScreen({ playerOrder, existingAbilities, legacy = null, aiPlayerIds, aiDifficulty = {}, onDraftComplete }: Props) {
   const players = playerOrder.map(id => MOCK_PLAYERS.find(p => p.id === id)!).filter(Boolean)
   const n = players.length
   const factions = availableFactions(legacy)
@@ -152,6 +166,77 @@ export default function DraftSetupScreen({ playerOrder, existingAbilities, legac
     }
     advancePicker(next)
   }
+
+  /**
+   * The computer takes its own turn in the draft.
+   *
+   * SAME REASON AS THE OTHER SETUP SCREEN: the board driver has always played
+   * the AI's turns, and setup was the one place a solo player had to sit and
+   * make their opponents' opening decisions for them, one seat at a time.
+   *
+   * A FIXED ORDER OF WANTS — faction, then troops, then coins, then turn
+   * position — taking the best slot still free in the first list it has not
+   * claimed. Both slot tables are documented "best first" so the best free one
+   * is the lowest free index, and going first is the pick worth having in the
+   * order list. That is a POLICY, not a calculation: the draft is a genuine
+   * tradeoff and nothing here weighs eight troops against second pick. It is
+   * "grab the biggest thing while it is still there", which is a real way to
+   * draft and an honest one to describe.
+   *
+   * EASY TAKES ANY OF IT, per the ladder in lib/ai.
+   *
+   * THROUGH claim(), the same call a chip's onClick makes, so the alien
+   * weakness auto-claim and the advance to the next picker both still happen.
+   */
+  const draftingAI: AIDifficulty | null =
+    currentPicker && aiPlayerIds?.has(currentPicker.id)
+      ? aiDifficulty[currentPicker.id] ?? 'medium'
+      : null
+
+  useEffect(() => {
+    if (!draftingAI || !currentPicker || weaknessPendingId) return
+    if (phase !== 'draft') return
+    const mine = picks[currentPicker.id] ?? {}
+    const free = <T,>(all: T[], taken: (d: PlayerDraft) => T | undefined) =>
+      all.filter(v => !players.some(p => taken(picks[p.id] ?? {}) === v))
+
+    const wants: Array<{ list: DraftListId; open: Array<string | number> }> = [
+      ...(mine.faction ? [] : [{ list: 'faction' as const, open: free(factions, d => d.faction) }]),
+      ...(mine.troopSlot !== undefined ? [] : [{
+        list: 'troops' as const,
+        open: free(troops.map((_, i) => i), d => d.troopSlot),
+      }]),
+      ...(mine.coinSlot !== undefined ? [] : [{
+        list: 'coins' as const,
+        open: free(coins.map((_, i) => i), d => d.coinSlot),
+      }]),
+      ...(mine.orderSlot !== undefined ? [] : [{
+        list: 'order' as const,
+        open: free(Array.from({ length: n }, (_, i) => i + 1), d => d.orderSlot),
+      }]),
+    ].filter(w => w.open.length > 0)
+    if (!wants.length) return
+
+    const wait = setTimeout(() => {
+      const take = draftingAI === 'easy'
+        ? wants[Math.floor(Math.random() * wants.length)]
+        : wants[0]
+      // Factions are a coin toss — nothing rates one above another. The slot
+      // lists are ordered best-first, so the best free one is the front of the
+      // list either way.
+      const value = take.list === 'faction'
+        ? aiSetupChoice(take.open, draftingAI)
+        : draftingAI === 'easy'
+          ? take.open[Math.floor(Math.random() * take.open.length)]
+          : take.open[0]
+      if (value !== null && value !== undefined) claim(take.list, value)
+    }, AI_DRAFT_MS)
+    return () => clearTimeout(wait)
+    // The seat and how much it has taken. Not claim() or picks by identity —
+    // both change every render and would re-arm the timer forever.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftingAI, currentPicker?.id, phase, weaknessPendingId,
+    pickCount(currentPicker?.id ?? '')])
 
   function handleWeaknessPick(powerId: string) {
     const pid = weaknessPendingId
@@ -241,6 +326,8 @@ export default function DraftSetupScreen({ playerOrder, existingAbilities, legac
               currentPlayer={{ id: player.id, name: player.name, factionId }}
               placedHQs={placedHQs}
               legacy={legacy}
+              autoPick={aiPlayerIds?.has(player.id)
+                ? aiDifficulty[player.id] ?? 'medium' : null}
               onConfirm={handleTerritoryPick}
             />
           )}

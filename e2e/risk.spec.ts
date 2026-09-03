@@ -12,7 +12,7 @@
  * anything lying on top of it.
  */
 import { test, expect } from '@playwright/test'
-import { soloGame, newCampaign, openSlots, onBoard } from './support/risk'
+import { soloGame, newCampaign, openSlots, playSetup, startGame, onBoard } from './support/risk'
 
 /**
  * The walk is a dozen screens with a save behind several of them.
@@ -96,4 +96,38 @@ test('the player count chip sets the seats it names', async ({ page }) => {
     .toHaveCount(2)
   await expect(page.locator('button[aria-pressed="true"]', { hasText: /^🧑 Human$/ }))
     .toHaveCount(1)
+})
+
+test('the computer makes its own setup choices', async ({ page }) => {
+  // THE HARNESS CLICKS FOR "Harness" AND NOBODY ELSE. Every screen that asks
+  // Bot One something has to be answered by Bot One, or the walk runs its cap
+  // down waiting and fails naming the screen it stalled on.
+  //
+  // That is the whole assertion. Setup used to put the computer's faction, its
+  // permanent ability and its HQ to the human at the keyboard — a solo player
+  // made all of their opponents' opening decisions before playing against
+  // them — and a walk that cheerfully clicked those could not tell the
+  // difference before and after.
+  await soloGame(page, { you: 'Harness', only: 'Harness', ai: [1] })
+
+  expect(await onBoard(page), 'the computer never answered for itself').toBe(true)
+})
+
+test('two computers set up a game with nobody clicking for them', async ({ page }) => {
+  // THREE SEATS, TWO OF THEM BOTS, and the walk still only answers for the
+  // human. One bot answering could be a lucky ordering; two, in turn, through
+  // faction, ability and HQ, is the sequencing working.
+  await newCampaign(page, { others: ['Bot One', 'Bot Two'] })
+  await startGame(page, { players: 3, ai: [1, 2] })
+  await playSetup(page, 40, 'Harness')
+
+  expect(await onBoard(page), 'two computers did not finish their own setup').toBe(true)
+
+  // AND THE BOARD KNOWS ALL THREE. A bot that answered nothing would still let
+  // the walk through if the screen simply skipped it; three seats on the board
+  // is the proof each one actually took a faction and a piece of ground.
+  const said = await page.locator('body').innerText()
+  for (const who of ['Harness', 'Bot One', 'Bot Two']) {
+    expect(said.includes(who), `${who} is not on the board`).toBe(true)
+  }
 })

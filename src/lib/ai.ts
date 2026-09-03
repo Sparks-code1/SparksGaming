@@ -592,3 +592,111 @@ export function aiShouldPursueMission(focus: MissionFocus | null, difficulty: AI
   if (!focus || focus.remaining <= 0) return false
   return focus.remaining <= MISSION_REACH[difficulty]
 }
+
+// ─── Setup ────────────────────────────────────────────────────────────────────
+//
+// EVERYTHING ABOVE THIS LINE PLAYS A TURN. These play the screens BEFORE the
+// first turn — which the computer used to sit out entirely: the faction, the
+// permanent ability and the HQ were all put to the human at the keyboard, one
+// bot seat at a time, and a solo player made every one of their opponents'
+// opening decisions for them. The board driver already runs the AI's whole
+// turn; setup was the odd one out.
+//
+// THEY TAKE NO GameState, unlike every function above, because there is not one
+// yet — nobody owns a territory until the last HQ is placed. What they take is
+// the list of options the screen has already worked out is legal, which keeps
+// the rules in one place: HQMapPicker's blockInfo says what may be started on,
+// and this only says which of those to want.
+
+/**
+ * Pick one of several options this difficulty has no opinion about.
+ *
+ * FACTIONS AND ABILITIES ARE A COIN TOSS, and saying so is better than
+ * inventing a ranking. Nothing in the data rates one faction above another or
+ * one permanent ability above its alternative — they are deliberately
+ * side-grades — so a "hard" AI that always took the same one would not be
+ * playing better, it would be playing the same. It would also open every
+ * campaign identically, which is worse than either.
+ *
+ * The difficulty is still taken, so this reads as a decision rather than an
+ * oversight, and so the signature does not change on the day a ranking exists.
+ */
+export function aiSetupChoice<T>(options: readonly T[], _difficulty: AIDifficulty): T | null {
+  if (options.length === 0) return null
+  return options[Math.floor(Math.random() * options.length)]
+}
+
+/**
+ * How many territories in a continent touch something outside it.
+ *
+ * THE DOOR COUNT, which is what makes a continent worth holding: a bonus you
+ * have to defend on five fronts is not the same bonus as one you defend on
+ * one. Australia has a single door and is the classic strong opening for
+ * exactly that reason.
+ *
+ * Computed from the adjacency data at load rather than written down, because a
+ * hand-kept table of entrances is a second copy of the map.
+ */
+const CONTINENT_DOORS: Record<string, number> = (() => {
+  const home: Record<string, string> = {}
+  for (const t of TERRITORY_DEFINITIONS) home[t.id] = t.continentId
+  const doors: Record<string, number> = {}
+  for (const t of TERRITORY_DEFINITIONS) {
+    doors[t.continentId] ??= 0
+    if (t.adjacentIds.some(id => home[id] && home[id] !== t.continentId)) {
+      doors[t.continentId]++
+    }
+  }
+  return doors
+})()
+
+/**
+ * What a starting territory is worth, before a single troop is placed.
+ *
+ * THE CONTINENT'S BONUS PER DOOR, plus a little for a quiet corner. It is the
+ * oldest heuristic in Risk and it is the right one here: the opening question
+ * is which continent you are trying to own, and a bonus divided by the number
+ * of fronts you would have to hold answers it. Australia scores 2 for one door;
+ * Europe scores 5 over four, and is famously not the same proposition.
+ *
+ * The adjacency term is small and breaks ties within a continent toward the
+ * territory with fewest neighbours — an HQ is a thing you would rather not have
+ * to defend from three sides.
+ *
+ * Exported so a test can hold it to the ordering it claims.
+ */
+export function startingValue(territoryId: string): number {
+  const def = TERRITORY_DEFINITIONS.find(t => t.id === territoryId)
+  if (!def) return 0
+  const bonus = CONTINENT_BONUSES[def.continentId] ?? 0
+  const doors = CONTINENT_DOORS[def.continentId] || 1
+  return bonus / doors - def.adjacentIds.length * 0.01
+}
+
+/**
+ * Where the computer starts, chosen from the territories the map allows.
+ *
+ * THE LADDER THIS MODULE ALREADY DOCUMENTS: easy takes any of them, medium
+ * takes one of the better half, hard takes the best it is offered. Hard is
+ * deliberately deterministic — opening in the strongest continent available is
+ * correct play, not a rut, and with several seats placing in turn the
+ * adjacency rule fans them out anyway.
+ *
+ * @param open the territory ids the picker has already ruled legal. This never
+ *   decides legality itself: HQMapPicker's blockInfo is the only thing that
+ *   knows about cities, scars, ruins, the Fallout Zone and HQ adjacency, and a
+ *   second opinion here would eventually disagree with it.
+ */
+export function aiStartingTerritory(
+  open: readonly string[], difficulty: AIDifficulty,
+): string | null {
+  if (open.length === 0) return null
+  // Ties break on id so a replay places identically — the same rule the
+  // bonus-troop chooser above follows.
+  const ranked = [...open].sort((a, b) =>
+    startingValue(b) - startingValue(a) || a.localeCompare(b))
+  if (difficulty === 'easy') return ranked[Math.floor(Math.random() * ranked.length)]
+  if (difficulty === 'hard') return ranked[0]
+  const half = Math.max(1, Math.ceil(ranked.length / 2))
+  return ranked[Math.floor(Math.random() * half)]
+}

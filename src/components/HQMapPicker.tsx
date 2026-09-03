@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { TERRITORY_DEFINITIONS, MAP_WIDTH, MAP_HEIGHT, CONTINENT_COLORS } from '@/data/territoryData'
 import { FACTION_COLORS, MOCK_PLAYERS } from '@/data/mockGameState'
 import { victoryWinnerId } from '@/lib/roster'
 import { SCAR_META } from '@/lib/legacyApi'
 import BulletIcon from './BulletIcon'
 import type { LegacyState } from '@/types/legacy'
+import type { AIDifficulty } from '@/types/ai'
+import { aiStartingTerritory } from '@/lib/ai'
 
 interface PlacedHQ {
   playerId: string
@@ -17,14 +19,39 @@ interface Props {
   currentPlayer: { id: string; name: string; factionId: string }
   placedHQs: PlacedHQ[]
   legacy?: LegacyState | null
+  /**
+   * Play this seat for the computer, at this difficulty.
+   *
+   * THE CHOICE BELONGS HERE, not in the screen above. blockInfo below is the
+   * only thing that knows which territories an HQ may start on — cities,
+   * scars, ruins, the Fallout Zone, the World Capital and the adjacency rule
+   * — and its own comment is about having ONE decision read once. A caller
+   * that worked out the legal set for itself would be a second copy of that,
+   * and the copy that drifts is never the one you are looking at.
+   *
+   * So the picker hands the AI the list it has already ruled legal, and the
+   * AI says which of them it wants. Null for a human, who says so by
+   * clicking.
+   */
+  autoPick?: AIDifficulty | null
   onConfirm: (territoryId: string) => void
 }
+
+/**
+ * How long the computer looks at the map, and then at its own choice.
+ *
+ * Not a fake think — the decision is instant. It is the time a human at the
+ * table needs to see which ground each opponent took, on a screen that is
+ * otherwise three placements in half a second.
+ */
+const AI_LOOK_MS = 550
+const AI_PLACE_MS = 700
 
 function hexToRgba(hex: number, a: number) {
   return `rgba(${(hex >> 16) & 0xff},${(hex >> 8) & 0xff},${hex & 0xff},${a})`
 }
 
-export default function HQMapPicker({ currentPlayer, placedHQs, legacy = null, onConfirm }: Props) {
+export default function HQMapPicker({ currentPlayer, placedHQs, legacy = null, autoPick = null, onConfirm }: Props) {
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
@@ -191,6 +218,37 @@ export default function HQMapPicker({ currentPlayer, placedHQs, legacy = null, o
     setSelectedId(null)
     setHoveredId(null)
   }
+
+  /**
+   * The computer places its own HQ.
+   *
+   * IN TWO BEATS, ON PURPOSE — it selects, and then a moment later confirms.
+   * Placing instantly would flicker three screens past a player who never sees
+   * which ground their opponents took, and where the HQs are is the single most
+   * useful thing to know at the start of a game. The map already draws the
+   * selection and names it in the bar below, so the pause is the bot showing
+   * its hand rather than dead time.
+   *
+   * KEYED ON THE SEAT, not on a clock. The effect re-runs when the picker moves
+   * to the next player and at no other time; a `now` in here would fire it
+   * again on every render and place an HQ per frame.
+   */
+  useEffect(() => {
+    if (!autoPick) return
+    const open = TERRITORY_DEFINITIONS.map(d => d.id).filter(id => !isBlocked(id))
+    const want = aiStartingTerritory(open, autoPick)
+    if (!want) return
+    const show = setTimeout(() => setSelectedId(want), AI_LOOK_MS)
+    const place = setTimeout(() => {
+      onConfirm(want)
+      setSelectedId(null)
+      setHoveredId(null)
+    }, AI_LOOK_MS + AI_PLACE_MS)
+    return () => { clearTimeout(show); clearTimeout(place) }
+    // The seat and the board it is choosing on. placedHQs changes exactly once
+    // per placement, which is also when currentPlayer changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoPick, currentPlayer.id, placedHQs.length])
 
   const selectedDef = selectedId ? TERRITORY_DEFINITIONS.find(d => d.id === selectedId) : null
 

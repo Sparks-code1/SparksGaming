@@ -2,9 +2,11 @@
 import {
   handCoinTotal, aiTradeInDecision, playerRedStars, rivalStarCounts, rivalsOnMatchPoint,
   aiMissionFocus, aiShouldPursueMission, aiAttackPlan,
+  aiSetupChoice, aiStartingTerritory, startingValue,
 } from '@/lib/ai'
 import { coinTradeInTroops, CARD_TRADE_IN_VALUES } from '@/data/cards'
 import { initialTurnState } from '@/types/game'
+import { TERRITORY_DEFINITIONS } from '@/data/territoryData'
 
 let pass = true
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -184,6 +186,79 @@ console.log('\n--- attack planning ---')
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
+
+// ─── Setup, which the computer used to sit out ────────────────────────────
+//
+// The three questions before the first turn — faction, permanent ability and
+// HQ — were all put to the human at the keyboard, one bot seat at a time. A
+// solo player made every one of their opponents' opening decisions before
+// playing against them.
+console.log('--- setup choices ---')
+{
+  const ids = TERRITORY_DEFINITIONS.map(t => t.id)
+  const value = (id: string) => Number(startingValue(id).toFixed(4))
+
+  // THE HEURISTIC IS BONUS PER DOOR, and the ordering it produces is the
+  // claim the comment makes. Australia has one way in for two troops a turn;
+  // Europe has four for five, and is famously not the same proposition. If
+  // this ever ranks Europe over Australia the scorer has stopped meaning what
+  // it says.
+  check('Australia outranks Europe',
+    value('eastern-australia') > value('western-europe'), true)
+  check('...and North America',
+    value('eastern-australia') > value('alberta'), true)
+  check('North America outranks Africa',
+    value('alberta') > value('congo'), true)
+
+  // WITHIN a continent the tie breaks toward the quiet corner.
+  check('a territory with fewer neighbours edges one with more',
+    value('western-australia') > value('indonesia')
+      === (TERRITORY_DEFINITIONS.find(t => t.id === 'western-australia')!.adjacentIds.length
+        < TERRITORY_DEFINITIONS.find(t => t.id === 'indonesia')!.adjacentIds.length), true)
+
+  // HARD TAKES THE BEST IT IS OFFERED, deterministically — opening in the
+  // strongest continent available is correct play, not a rut.
+  check('hard opens in Australia when it may',
+    aiStartingTerritory(ids, 'hard'), 'eastern-australia')
+  check('...and takes the best of a poor list rather than refusing',
+    aiStartingTerritory(['congo', 'alberta'], 'hard'), 'alberta')
+
+  // IT NEVER INVENTS A TERRITORY. The picker rules what is legal; this only
+  // says which of those to want, and an answer outside the list would put an
+  // HQ on blocked ground.
+  for (const level of ['easy', 'medium', 'hard'] as const) {
+    const open = ['congo', 'alberta', 'siam']
+    const picks = Array.from({ length: 40 }, () => aiStartingTerritory(open, level))
+    check(`${level} only ever picks from what it was offered`,
+      picks.every(p => p !== null && open.includes(p)), true)
+  }
+  check('an empty map is refused rather than guessed',
+    aiStartingTerritory([], 'hard'), null)
+
+  // MEDIUM STAYS IN THE BETTER HALF. Not "sometimes better" — never worse.
+  {
+    const open = ['congo', 'alberta', 'siam', 'eastern-australia']
+    const half = [...open].sort((a, b) => startingValue(b) - startingValue(a))
+      .slice(0, 2)
+    const picks = Array.from({ length: 60 },
+      () => aiStartingTerritory(open, 'medium'))
+    check('medium never drops into the weaker half',
+      picks.every(p => p !== null && half.includes(p)), true)
+  }
+
+  // FACTIONS AND ABILITIES ARE A COIN TOSS, deliberately — nothing rates one
+  // above another. What it must never do is answer with something that was
+  // not on offer, or refuse when something was.
+  check('a choice is made from the options given',
+    ['a', 'b', 'c'].includes(aiSetupChoice(['a', 'b', 'c'], 'hard') ?? ''), true)
+  check('an empty offer is refused', aiSetupChoice([], 'medium'), null)
+  check('a single option is taken', aiSetupChoice(['only'], 'easy'), 'only')
+  {
+    const seen = new Set(Array.from({ length: 80 },
+      () => aiSetupChoice(['a', 'b', 'c'], 'hard')))
+    check('hard does not always take the same faction', seen.size > 1, true)
+  }
+}
 
 // Not optional: without an exit code the runner counts a failing suite green.
 process.exit(pass ? 0 : 1)
