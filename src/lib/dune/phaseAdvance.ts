@@ -471,7 +471,9 @@ export interface StormReport {
  * treachery card yet, so opening a window nobody can act in would only stall
  * the table. When card play lands, this is the seam it goes into.
  */
-export function stormEntry(state: AdvanceState, roll: number): {
+export function stormEntry(
+  state: AdvanceState, roll: number, fremenBurn = false,
+): {
   patch: Pick<AdvanceState, 'storm' | 'forces' | 'stormMoved'> & {
     spiceOnBoard: Record<string, number>; stormReport: StormReport; tanks: Tanks
   }
@@ -479,7 +481,7 @@ export function stormEntry(state: AdvanceState, roll: number): {
 } {
   const outcome = resolveStorm(
     state.storm, roll, state.forces ?? [], state.mode, state.shieldWall,
-    state.spiceOnBoard ?? {},
+    state.spiceOnBoard ?? {}, fremenBurn,
   )
   return {
     outcome,

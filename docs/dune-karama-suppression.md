@@ -229,7 +229,7 @@ that adding or dropping an offer is a decision somebody has to make twice.
 Fremen special victory, the Guild special victory, and the Bene Gesserit
 prediction. The win conditions, exactly as the section above says.
 
-**26 curated stops. 21 are enforced and offered; 5 are not offered at all.**
+**26 curated stops. All 26 are enforced and offered.**
 
 An unenforced stop is not a stop that quietly does nothing. It would take the
 card, discard it where the table can see, announce itself, and then the
@@ -238,7 +238,7 @@ knows where they stand; a player who is told it worked has been lied to and paid
 for it. So an entry with no check at its firing site is **not offered**, and
 `suppressibleRefs` is the one list both the panel and the endpoint read.
 
-In a basic game the menu is 10, not 21 — the eleven advanced entries are dropped.
+In a basic game the menu is 12, not 26 — the fourteen advanced entries are dropped.
 
 ### Enforced
 
@@ -272,42 +272,32 @@ stopped: the plan was judged with the elites cancelled and the losses then
 allocated with them doubled again. The suite now scans the endpoint for any
 `eliteWorth` or `fullWithoutSpice` call whose own arguments carry no stop.
 
-### Not offered
+### Nothing is left unoffered
 
-| Faction | Rule | Built? |
-|---|---|---|
-| Atreides | `abilities.movement` | yes — the spice-deck glimpse |
-| Atreides | `advanced.kwisatzHaderach` | yes — the +2 |
-| Fremen | `abilities.shaiHulud` | yes — surviving and riding the worm |
-| Fremen | `advanced.spiceBlow` | yes — extra worms, half storm losses |
-| Harkonnen | `advanced.capturedLeaders` | yes — taking a leader after a win |
+**Closed 2026-09-03.** Every curated stop now has a check at the site where its
+rule fires, so the menu and the game agree everywhere: what a player is offered
+is what a card actually buys.
 
-All five are built, so all five are debt rather than deferral.
+Four notes from the last five, each the kind of thing a later reader would
+flatten if it were not written down:
 
-**The Fremen second step is done** — 2026-09-03. Worth one note: the stop takes
-the SECOND STEP and not the flight. Three territories out of Arrakeen or Carthag
-belongs to whoever holds the city, whoever that is, and is no faction's
-advantage — so a stopped Fremen holding one still flies three. That distinction
-lives in `movementRange` and is asserted in both directions.
+- **The Fremen second step is stoppable; the city flight is not.** Three
+  territories out of Arrakeen or Carthag belongs to whoever holds the city, and
+  is no faction's advantage.
+- **Stopping the Fremen worm immunity takes the ally's shield with it.** The
+  shield is that immunity lent out; with nothing left to lend, sparing the ally
+  while the Fremen themselves burn would be a protection the sheet never grants.
+- **`advanced.spiceBlow` fires in two phases** — placing the extra worms during
+  the blow, half losses during the storm — so a stop aimed at one does not touch
+  the other. That is what "during one game phase" means for an advantage used in
+  two, and it is the answer to a question this document used to leave open.
+- **The stopped Kwisatz Haderach is refused as `kwisatz-asleep`**, the same
+  refusal a seat gets before their losses have woken him. He is not available to
+  field either way, so a second code would have been a distinction without a
+  difference.
 
-The board asks the same question before it draws a ring. `moveTargets` and
-`judgeMove` are swept against each other cell by cell in the suite, so a stop
-the endpoint knew about and the board did not would put a ring on a refusal.
-
-**The Bene Gesserit cluster is done** — 2026-09-03, all six at once, because
-they are one idea rather than six: a faction that sits in everybody's ground
-without fighting, follows every shipment, and is never short of spice. Two of
-them are the two directions of the same flip and stop separately, so one Karama
-does not buy both.
-
-Two notes from doing them, because both are the kind of thing that reads as a
-bug later:
-
-- **Stopping the charity restores the threshold, it does not bar them.** A poor
-  Sisterhood still qualifies the way anybody poor does. The advantage is the
-  exemption, not the claim.
-- **The flip stop is scoped to the phase it is played in**, not a fixed one,
-  because the stand-up window spans CHOAM Charity, Bidding and Revival.
+The Bene Gesserit cluster went first, on the same day, because their six were
+one idea rather than six.
 
 ### The rule that keeps this honest
 

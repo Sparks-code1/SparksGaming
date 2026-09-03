@@ -205,12 +205,21 @@ export function devourTerritory(
   spiceOnBoard: Readonly<Record<string, number>>,
   /** The Fremen's ally under the standing shield grant — spared like them. */
   spared?: FactionId | null,
+  /**
+   * Their immunity, cancelled by a Karama.
+   *
+   * THE ALLY GOES WITH THEM. The shield the Fremen extend is their own
+   * immunity lent out; with the immunity stopped there is nothing to lend,
+   * and sparing the ally while the Fremen themselves are eaten would be a
+   * protection the sheet never grants on its own.
+   */
+  eaten?: boolean,
 ): Devoured {
   const inTerritory = forces.filter(f => f.territoryId === territoryId)
   // Shai-Hulud does not devour the Fremen — both games — and does not
   // devour the ally the Fremen choose to protect.
-  const safe = (f: Force) =>
-    f.faction === 'fremen' || (spared != null && f.faction === spared)
+  const safe = (f: Force) => !eaten
+    && (f.faction === 'fremen' || (spared != null && f.faction === spared))
   return {
     territoryId,
     forcesKilled: inTerritory.filter(f => !safe(f)),
@@ -225,6 +234,9 @@ export interface SpiceBlowInput {
   forces: readonly Force[]
   /** The Fremen's shielded ally, if the grant stands — see devourTerritory. */
   spared?: FactionId | null
+  /** Their immunity to Shai-Hulud, cancelled by a Karama — and the ally's
+   *  shield with it, since the shield is that immunity lent out. */
+  fremenEaten?: boolean
   mode: GameMode
   /** Whether the Fremen are in this game at all. Their worm rules are theirs
    *  alone, so with no Fremen seated the phase behaves as it always did. */
@@ -439,7 +451,8 @@ export function resolveSpiceBlow(input: SpiceBlowInput): SpiceBlowOutcome {
 
     if (top.kind === 'territory') {
       devoured.push(devourTerritory(
-        top.territoryId, input.forces, input.spiceOnBoard, input.spared))
+        top.territoryId, input.forces, input.spiceOnBoard, input.spared,
+        input.fremenEaten))
     }
     // A worm with a worm showing eats nothing, and is still discarded.
     discard.push(card)

@@ -1417,7 +1417,11 @@ check('the three windows have their seconds',
   const planCase = fn.slice(fn.indexOf("case 'BATTLE_PLAN'"), fn.indexOf("case 'BATTLE_VOICE'"))
   check('the plan carries the sleeper, and the judge is told everything',
     [/\.\.\.\(action\.kwisatz \? \{ kwisatz: true \} : null\),/.test(planCase),
-      /available: kwisatzHaderachAvailable\(/.test(planCase),
+      // AND A KARAMA CAN KEEP HIM ASLEEP. judgePlan then refuses a plan naming
+      // him with kwisatz-asleep — the same refusal a seat gets before their
+      // losses have woken him, which is the right one: either way he is simply
+      // not available to field.
+      /available: !isSuppressed\([\s\S]{0,200}?&& kwisatzHaderachAvailable\(/.test(planCase),
       /borrowed: \(\(mine as \{ capturedLeaders/.test(planCase)],
     [true, true, true])
   const beatAll = fn.slice(fn.indexOf("case 'BATTLE_TRAITOR'"), fn.indexOf("case 'SEED_SPICE'"))

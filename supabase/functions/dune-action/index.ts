@@ -433,6 +433,13 @@ Deno.serve(async req => {
       // THE STANDING SHIELD: the Fremen's ally is spared the worm unless the
       // Fremen turned the grant off — absent means protecting, per the
       // toggle's own contract. Read only while the pair actually stands.
+      // THE WORM EATS THEM TOO, when a Karama says so — and the ally's shield
+      // goes with it, because the shield is the Fremen immunity lent out and
+      // there is nothing to lend once it is stopped.
+      // KARAMA-STOP: fremen abilities.shaiHulud
+      const fremenEaten = isSuppressed((baseState.suppressed ?? []) as never,
+        'fremen' as never, 'abilities.shaiHulud' as never,
+        turn, 'Spice Blow and Nexus' as never)
       const shieldedAlly = (() => {
         const ps = (baseState.players ?? []) as { faction: string; ally?: string | null }[]
         const a = ps.find((p) => p.faction === 'fremen')?.ally ?? null
@@ -452,6 +459,7 @@ Deno.serve(async req => {
             forces, spiceOnBoard, storm: baseState.storm as number,
             firstTurn: turn <= 1, fremenInPlay, rng: seededRng(seed),
             spared: shieldedAlly as never,
+            fremenEaten,
             closesAt: now + WORM_SECONDS * 1000,
           })
         } catch (e) {
@@ -470,6 +478,7 @@ Deno.serve(async req => {
           deck, discard: shown.discardA ?? [], forces,
           mode: 'basic', fremenInPlay, spiceOnBoard,
           spared: shieldedAlly as never,
+          fremenEaten,
           storm: baseState.storm as number, firstTurn: turn <= 1, rng: seededRng(seed),
         })
       } catch (e) {
@@ -858,7 +867,15 @@ Deno.serve(async req => {
           capturedLeaders?: { name: string }[]
         }).capturedLeaders ?? [])
         : []
-      const pool = captiveFrom
+      // NO POOL, NO WINDOW. The capture opens only when there is somebody to
+      // take, so emptying the pool is how the whole beat declines to open —
+      // the battle resolves and the rotation moves on, which is what happens
+      // for every other faction anyway.
+      // KARAMA-STOP: harkonnen advanced.capturedLeaders
+      const captureStopped = isSuppressed((state.suppressed ?? []) as never,
+        'harkonnen' as never, 'advanced.capturedLeaders' as never,
+        Number(state.turn ?? 0), 'Battles' as never)
+      const pool = captiveFrom && !captureStopped
         ? capturePool({
           loser: captiveFrom as never,
           tanks: (tanks.leaders[captiveFrom] ?? []) as never,
@@ -1079,7 +1096,14 @@ Deno.serve(async req => {
         // nobody sits through a window they cannot act in.
         const roll = await stormRollFor(Number(state.turn))
         const steered = (state.stormSteer as { turn: number; by: string } | undefined)
-        const { patch } = stormEntry(state as never, roll)
+        // HALF LOSSES IN A STORM, cancelled by a Karama — the same sheet entry
+        // as the worm placement, in a different phase, so a stop aimed here and
+        // one aimed at the blow are two different cards.
+        // KARAMA-STOP: fremen advanced.spiceBlow
+        const fremenBurn = isSuppressed((state.suppressed ?? []) as never,
+          'fremen' as never, 'advanced.spiceBlow' as never,
+          Number(state.turn ?? 0), 'Storm' as never)
+        const { patch } = stormEntry(state as never, roll, fremenBurn)
         const ahead1 = await foretellStorm(Number(state.turn))
         const spent = { ...state } as Record<string, unknown>
         // SPENT WITH THE STORM IT NAMED, so a steer cannot outlive its turn.
@@ -1234,7 +1258,11 @@ Deno.serve(async req => {
           // this one.
           const roll = await stormRollFor(turn)
           const steer = base.stormSteer as { turn: number; by: string } | undefined
-          const { patch } = stormEntry({ ...base, turn } as never, roll)
+          // KARAMA-STOP: fremen advanced.spiceBlow
+          const fremenBurn2 = isSuppressed((base.suppressed ?? []) as never,
+            'fremen' as never, 'advanced.spiceBlow' as never,
+            turn, 'Storm' as never)
+          const { patch } = stormEntry({ ...base, turn } as never, roll, fremenBurn2)
           const ahead = await foretellStorm(turn)
           const used = steer && steer.turn === turn
           return await plainly({
@@ -1372,7 +1400,14 @@ Deno.serve(async req => {
           // state. Stamped with the turn so a stale glimpse reads as stale.
           let seer: Record<string, unknown> = {}
           const seerSeat = seatOfFaction['atreides']
-          if (seerSeat) {
+          // NOTHING IS WRITTEN AT ALL when the glimpse is stopped — not a
+          // blank, not a stale one. The card sits face down on the deck like
+          // everybody else's.
+          // KARAMA-STOP: atreides abilities.movement
+          const glimpseStopped = isSuppressed((state.suppressed ?? []) as never,
+            'atreides' as never, 'abilities.movement' as never,
+            turn, 'Shipment and Movement' as never)
+          if (seerSeat && !glimpseStopped) {
             const { data: deckRow } = await admin
               .from('match_decks').select('cards')
               .eq('match_id', matchId).eq('deck', 'spice').maybeSingle()
@@ -2085,6 +2120,19 @@ Deno.serve(async req => {
         // A's numbers for pile B. Offsetting by the number of answers so far
         // keeps every resumption reproducible from (seed, resumes) alone, which
         // is what replaying this turn later needs.
+        // PLACING THE EXTRA WORMS is advanced.spiceBlow, the same entry as
+        // the half storm losses — but a different phase, so a stop aimed at
+        // the blow and one aimed at the storm are two different cards. That
+        // is what "during one game phase" means for an advantage that fires
+        // in two.
+        // KARAMA-STOP: fremen advanced.spiceBlow
+        if (isSuppressed((state.suppressed ?? []) as never,
+          'fremen' as never, 'advanced.spiceBlow' as never,
+          Number(state.turn ?? 0), 'Spice Blow and Nexus' as never)) {
+          return json({
+            error: 'a Karama has taken the placement', code: 'karama-stopped',
+          }, 409)
+        }
         step = placeFremenWorms(
           held.carry, at, seededRng(held.seed + held.resumes + 1),
           // The NEXT pause gets a fresh window. Carrying one deadline across
@@ -3449,7 +3497,15 @@ Deno.serve(async req => {
           purse: readSpice(mine as never),
           // ...the sleeper's state, and any prisoner this seat may field
           kwisatz: {
-            available: kwisatzHaderachAvailable(
+            // STOPPED, THE SLEEPER DOES NOT WAKE. judgePlan refuses a plan
+            // that names him with kwisatz-asleep, which is the same refusal a
+            // seat gets before their losses have woken him — the right one,
+            // because in both cases he is simply not available to field.
+            // KARAMA-STOP: atreides advanced.kwisatzHaderach
+            available: !isSuppressed((state.suppressed ?? []) as never,
+              'atreides' as never, 'advanced.kwisatzHaderach' as never,
+              Number(state.turn ?? 0), 'Battles' as never)
+            && kwisatzHaderachAvailable(
               ((state.players ?? []) as { faction: string; battleLosses?: number }[])
                 .find((p) => p.faction === myFaction)?.battleLosses),
             dead: (tanks.leaders[myFaction] ?? [])
@@ -5077,6 +5133,17 @@ Deno.serve(async req => {
       if (!ride) return json({ error: 'no worm to ride', code: 'no-ride' }, 409)
       if (myFaction !== 'fremen') {
         return json({ error: 'only the Fremen ride', code: 'not-your-decision' }, 403)
+      }
+      // RIDING IS THE SECOND HALF of the same sheet entry as surviving, and
+      // a stop on it takes both — the worm they would have boarded is the
+      // worm that would have spared them.
+      // KARAMA-STOP: fremen abilities.shaiHulud
+      if (isSuppressed((state.suppressed ?? []) as never,
+        'fremen' as never, 'abilities.shaiHulud' as never,
+        Number(state.turn ?? 0), 'Spice Blow and Nexus' as never)) {
+        return json({
+          error: 'a Karama has taken the worm from you', code: 'karama-stopped',
+        }, 409)
       }
       if (now >= ride.closesAt) {
         return json({ error: 'the worm has gone', code: 'window-shut' }, 409)

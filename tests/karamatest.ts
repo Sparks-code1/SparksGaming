@@ -2,6 +2,8 @@
 // is offered IS the rules statement, and the effects mostly land in phases that
 // do not exist yet.
 import { readFileSync } from 'node:fs'
+import { devourTerritory } from '@/lib/dune/spiceBlow'
+import { stormLosses } from '@/lib/dune/storm'
 import { bgFollowsShip, bgAdvancedFollow, judgeBgFlip, movementRange,
 } from '@/lib/dune/shipment'
 import { charityGrant, isEligibleForCharity } from '@/lib/dune/charity'
@@ -589,6 +591,85 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
     check('...and the board asks the same thing before it rings',
       /suppressed: isSuppressed\(state\.suppressed \?\? \[\], seat,/.test(screen7), true)
   }
+
+  // ── the last five ──────────────────────────────────────────────────────
+  {
+    // 1. THE WORM EATS THEM. Their immunity is the advantage, and the ally's
+    // shield is that immunity lent out — stopped, there is nothing to lend,
+    // so sparing the ally while the Fremen burn would be a protection the
+    // sheet never grants on its own.
+    const inWormGround = [
+      { faction: 'fremen', territoryId: 'territory-13', sector: 'sector-10', count: 3 },
+      { faction: 'atreides', territoryId: 'territory-13', sector: 'sector-10', count: 2 },
+    ] as never[]
+    check('a stopped Fremen is devoured with everybody else',
+      [devourTerritory(
+        'territory-13' as never, inWormGround, {}, 'atreides' as never,
+      ).forcesKilled.length,
+      devourTerritory(
+        'territory-13' as never, inWormGround, {}, 'atreides' as never, true,
+      ).forcesKilled.length],
+      [0, 2])
+    check('...and the ally they were shielding goes with them',
+      devourTerritory(
+        'territory-13' as never, inWormGround, {}, 'atreides' as never, true,
+      ).forcesSpared, [])
+
+    // 2. HALF LOSSES IN A STORM. Same sheet entry as the worm placement,
+    // different phase — so a stop aimed at the storm and one aimed at the
+    // blow are two different cards.
+    const burning = { faction: 'fremen', territoryId: 'territory-13',
+      sector: 'sector-10', count: 5 } as never
+    check('a stopped Fremen burns whole in a storm',
+      [stormLosses(burning, 'advanced'), stormLosses(burning, 'advanced', true)],
+      [3, 5])
+    check('...and nobody else\'s storm losses move with it',
+      (() => {
+        const other = { faction: 'atreides', territoryId: 'territory-13',
+          sector: 'sector-10', count: 5 } as never
+        return [stormLosses(other, 'advanced'), stormLosses(other, 'advanced', true)]
+      })(), [5, 5])
+    check('...and the basic game was never halving anyway',
+      [stormLosses(burning, 'basic'), stormLosses(burning, 'basic', true)],
+      [5, 5])
+
+    // 3, 4, 5 fire in the endpoint, which is where they are pinned.
+    const ep8 = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+
+    check('the Atreides glimpse writes nothing at all when stopped',
+      [/const glimpseStopped = isSuppressed\(/.test(ep8),
+        /if \(seerSeat && !glimpseStopped\)/.test(ep8)], [true, true])
+
+    check('the sleeper stays asleep',
+      /available: !isSuppressed\([\s\S]{0,200}?&& kwisatzHaderachAvailable\(/.test(ep8),
+      true)
+
+    check('the prisoner is never offered, so the beat never opens',
+      [/const captureStopped = isSuppressed\(/.test(ep8),
+        /const pool = captiveFrom && !captureStopped/.test(ep8)], [true, true])
+
+    // THE RIDE AND THE PLACEMENT are refusals rather than silent no-ops: the
+    // Fremen are looking at a control and pressing it, and a control that
+    // answers with nothing is worse than one that says why.
+    check('the ride and the placement refuse out loud',
+      (ep8.match(/code: 'karama-stopped',/g) ?? []).length >= 2, true)
+    check('...the ride against abilities.shaiHulud, in the blow',
+      /'fremen' as never, 'abilities\.shaiHulud' as never,[\s\S]{0,80}?Spice Blow and Nexus/
+        .test(ep8), true)
+    check('...and the placement against advanced.spiceBlow, in the same phase',
+      /'fremen' as never, 'advanced\.spiceBlow' as never,[\s\S]{0,80}?Spice Blow and Nexus/
+        .test(ep8), true)
+    check('...while the half-loss stop names the Storm instead',
+      /'fremen' as never, 'advanced\.spiceBlow' as never,[\s\S]{0,80}?'Storm' as never/
+        .test(ep8), true)
+  }
+
+  // ── and that is all of them ────────────────────────────────────────────
+  check('every curated stop is enforced, and the menu is the whole list',
+    FACTION_IDS.flatMap(id => Object.entries(FACTIONS[id]!.karamaStops)
+      .filter(([, st]) => !st!.enforced)
+      .map(([ref]) => `${id}.${ref}`)),
+    [])
 
   // COUNTED OUT, not recomputed. A check that derived the expected number the
   // same way the code does would agree with any change, including a wrong one;

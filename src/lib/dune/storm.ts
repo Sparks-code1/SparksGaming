@@ -138,8 +138,15 @@ export function isExposedToStorm(
  * Rounded up rather than down: half of three is two lost, one surviving. The
  * other rounding would make an odd stack better off than an even one.
  */
-export function stormLosses(force: Force, mode: GameMode): number {
-  if (mode === 'advanced' && force.faction === 'fremen') {
+export function stormLosses(
+  force: Force, mode: GameMode, suppressed = false,
+): number {
+  // A KARAMA TAKES THE MERCY, and they burn like everyone else. Same entry
+  // on the sheet as the worm placement — advanced.spiceBlow — but a
+  // different phase, so a stop aimed at the storm and one aimed at the blow
+  // are two different cards. That is what "during one game phase" means for
+  // an advantage that fires in two.
+  if (!suppressed && mode === 'advanced' && force.faction === 'fremen') {
     return Math.ceil(force.count / 2)
   }
   return force.count
@@ -335,6 +342,9 @@ export function resolveStorm(
   mode: GameMode,
   shieldWall: ShieldWall,
   spiceOnBoard: Readonly<Record<string, number>> = {},
+  /** The Fremen half-loss, cancelled by a Karama — passed in, since this
+   *  resolves a storm and reads no match state of its own. */
+  fremenBurn = false,
 ): StormOutcome {
   const swept = sweptSectors(from, roll)
 
@@ -342,7 +352,7 @@ export function resolveStorm(
   const forcesAfter: Force[] = []
   for (const force of forces) {
     if (!isExposedToStorm(force, swept, shieldWall)) { forcesAfter.push(force); continue }
-    const lost = Math.min(force.count, stormLosses(force, mode))
+    const lost = Math.min(force.count, stormLosses(force, mode, fremenBurn))
     const survived = force.count - lost
     casualties.push({ force, lost, survived })
     if (survived > 0) forcesAfter.push({ ...force, count: survived })

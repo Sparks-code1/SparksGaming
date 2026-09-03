@@ -916,8 +916,8 @@ function isExposedToStorm(cell, swept, shieldWall) {
   const t = DUNE_TERRITORIES.find((x) => x.id === cell.territoryId);
   return t?.terrain === "sand";
 }
-function stormLosses(force, mode) {
-  if (mode === "advanced" && force.faction === "fremen") {
+function stormLosses(force, mode, suppressed = false) {
+  if (!suppressed && mode === "advanced" && force.faction === "fremen") {
     return Math.ceil(force.count / 2);
   }
   return force.count;
@@ -929,7 +929,7 @@ function stormRollPromised(held, forTurn) {
 function fremenForeknow(input) {
   return input.mode === "advanced" && input.seated && !input.suppressed && input.nextTurn >= FOREKNOWN_FROM_TURN;
 }
-function resolveStorm(from, roll, forces, mode, shieldWall, spiceOnBoard = {}) {
+function resolveStorm(from, roll, forces, mode, shieldWall, spiceOnBoard = {}, fremenBurn = false) {
   const swept = sweptSectors(from, roll);
   const casualties = [];
   const forcesAfter = [];
@@ -938,7 +938,7 @@ function resolveStorm(from, roll, forces, mode, shieldWall, spiceOnBoard = {}) {
       forcesAfter.push(force);
       continue;
     }
-    const lost = Math.min(force.count, stormLosses(force, mode));
+    const lost = Math.min(force.count, stormLosses(force, mode, fremenBurn));
     const survived = force.count - lost;
     casualties.push({ force, lost, survived });
     if (survived > 0) forcesAfter.push({ ...force, count: survived });
@@ -1053,9 +1053,9 @@ var ATREIDES = {
   unsuppressable: [],
   karamaStops: {
     "abilities.bidding": { stops: "Seeing each Treachery Card before the bidding.", enforced: true },
-    "abilities.movement": { stops: "Looking at the top of the Spice Deck before the move.", enforced: false },
+    "abilities.movement": { stops: "Looking at the top of the Spice Deck before the move.", enforced: true },
     "abilities.battle": { stops: "Forcing an opponent to reveal one element of their battle plan.", enforced: true },
-    "advanced.kwisatzHaderach": { stops: "The Kwisatz Haderach adding its +2 to a leader.", enforced: false }
+    "advanced.kwisatzHaderach": { stops: "The Kwisatz Haderach adding its +2 to a leader.", enforced: true }
   },
   leaders: [
     { name: "Lady Jessica", strength: 5 },
@@ -1158,9 +1158,9 @@ var FREMEN = {
   karamaStops: {
     "abilities.shipment": { stops: "Riding free onto the Great Flat, or within two territories of it.", enforced: true },
     "abilities.movement": { stops: "Moving two territories instead of one.", enforced: true },
-    "abilities.shaiHulud": { stops: "Surviving Shai-Hulud, and riding it after the Nexus.", enforced: false },
+    "abilities.shaiHulud": { stops: "Surviving Shai-Hulud, and riding it after the Nexus.", enforced: true },
     "advanced.storm": { stops: "Knowing the storm distance a turn early.", enforced: true },
-    "advanced.spiceBlow": { stops: "Placing every sandworm after the first, and half losses in a storm.", enforced: false },
+    "advanced.spiceBlow": { stops: "Placing every sandworm after the first, and half losses in a storm.", enforced: true },
     "advanced.shipment": { stops: "Shipping into a storm at half losses.", enforced: true },
     "advanced.forces": { stops: "Fedaykin counting double in battle and in taking losses.", enforced: true },
     "advanced.battle": { stops: "Fighting at full strength without spice.", enforced: true }
@@ -1293,7 +1293,7 @@ var HARKONNEN = {
   unsuppressable: [],
   karamaStops: {
     "abilities.treachery": { stops: "The extra Treachery Card they draw whenever they buy one.", enforced: true },
-    "advanced.capturedLeaders": { stops: "Capturing a leader from a battle they win.", enforced: false }
+    "advanced.capturedLeaders": { stops: "Capturing a leader from a battle they win.", enforced: true }
   },
   leaders: [
     { name: "Feyd-Rautha", strength: 6 },
@@ -1448,14 +1448,15 @@ function rollStorm(turn, mode, rng) {
   const range = turn <= 1 ? FIRST_STORM_ROLL : stormRollRange(mode);
   return range.min + Math.floor(rng() * (range.max - range.min + 1));
 }
-function stormEntry(state, roll) {
+function stormEntry(state, roll, fremenBurn = false) {
   const outcome = resolveStorm(
     state.storm,
     roll,
     state.forces ?? [],
     state.mode,
     state.shieldWall,
-    state.spiceOnBoard ?? {}
+    state.spiceOnBoard ?? {},
+    fremenBurn
   );
   return {
     outcome,

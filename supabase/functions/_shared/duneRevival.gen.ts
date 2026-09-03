@@ -37,9 +37,9 @@ var ATREIDES = {
   unsuppressable: [],
   karamaStops: {
     "abilities.bidding": { stops: "Seeing each Treachery Card before the bidding.", enforced: true },
-    "abilities.movement": { stops: "Looking at the top of the Spice Deck before the move.", enforced: false },
+    "abilities.movement": { stops: "Looking at the top of the Spice Deck before the move.", enforced: true },
     "abilities.battle": { stops: "Forcing an opponent to reveal one element of their battle plan.", enforced: true },
-    "advanced.kwisatzHaderach": { stops: "The Kwisatz Haderach adding its +2 to a leader.", enforced: false }
+    "advanced.kwisatzHaderach": { stops: "The Kwisatz Haderach adding its +2 to a leader.", enforced: true }
   },
   leaders: [
     { name: "Lady Jessica", strength: 5 },
@@ -142,9 +142,9 @@ var FREMEN = {
   karamaStops: {
     "abilities.shipment": { stops: "Riding free onto the Great Flat, or within two territories of it.", enforced: true },
     "abilities.movement": { stops: "Moving two territories instead of one.", enforced: true },
-    "abilities.shaiHulud": { stops: "Surviving Shai-Hulud, and riding it after the Nexus.", enforced: false },
+    "abilities.shaiHulud": { stops: "Surviving Shai-Hulud, and riding it after the Nexus.", enforced: true },
     "advanced.storm": { stops: "Knowing the storm distance a turn early.", enforced: true },
-    "advanced.spiceBlow": { stops: "Placing every sandworm after the first, and half losses in a storm.", enforced: false },
+    "advanced.spiceBlow": { stops: "Placing every sandworm after the first, and half losses in a storm.", enforced: true },
     "advanced.shipment": { stops: "Shipping into a storm at half losses.", enforced: true },
     "advanced.forces": { stops: "Fedaykin counting double in battle and in taking losses.", enforced: true },
     "advanced.battle": { stops: "Fighting at full strength without spice.", enforced: true }
@@ -277,7 +277,7 @@ var HARKONNEN = {
   unsuppressable: [],
   karamaStops: {
     "abilities.treachery": { stops: "The extra Treachery Card they draw whenever they buy one.", enforced: true },
-    "advanced.capturedLeaders": { stops: "Capturing a leader from a battle they win.", enforced: false }
+    "advanced.capturedLeaders": { stops: "Capturing a leader from a battle they win.", enforced: true }
   },
   leaders: [
     { name: "Feyd-Rautha", strength: 6 },

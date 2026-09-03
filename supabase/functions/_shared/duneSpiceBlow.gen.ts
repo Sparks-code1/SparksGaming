@@ -893,9 +893,9 @@ function judgeWormRide(input) {
   }
   return { ok: true, sector: settled2.sector, moving };
 }
-function devourTerritory(territoryId, forces, spiceOnBoard, spared) {
+function devourTerritory(territoryId, forces, spiceOnBoard, spared, eaten) {
   const inTerritory = forces.filter((f) => f.territoryId === territoryId);
-  const safe = (f) => f.faction === "fremen" || spared != null && f.faction === spared;
+  const safe = (f) => !eaten && (f.faction === "fremen" || spared != null && f.faction === spared);
   return {
     territoryId,
     forcesKilled: inTerritory.filter((f) => !safe(f)),
@@ -965,7 +965,8 @@ function resolveSpiceBlow(input) {
         top.territoryId,
         input.forces,
         input.spiceOnBoard,
-        input.spared
+        input.spared,
+        input.fremenEaten
       ));
     }
     discard.push(card);
