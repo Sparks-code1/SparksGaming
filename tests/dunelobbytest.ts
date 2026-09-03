@@ -237,7 +237,8 @@ const seat = (over: Partial<LobbySeat> = {}): LobbySeat => {
 
 // ── a way in that is not a query flag ─────────────────────────────────────
 {
-  const app = code('src/App.tsx')
+  const NL = code('src/components/BetweenGameScreen.tsx').includes('\r\n') ? '\r\n' : '\n'
+const app = code('src/App.tsx')
   check('the app has a Dune lobby screen', /screen === 'dune-lobby'/.test(app), true)
   check('...and a match screen after it', /screen === 'dune-match' && duneMatch/.test(app), true)
   check('...reached from the campaign screen', /onPlayDune=\{\(\) => setScreen\('dune-lobby'\)\}/.test(app), true)
@@ -248,13 +249,44 @@ const seat = (over: Partial<LobbySeat> = {}): LobbySeat => {
     /replaceState\(null, '', `\?dune-match=\$\{id\}`\)/.test(app), true)
 
   const between = code('src/components/BetweenGameScreen.tsx')
-  check('the campaign screen offers it', /onPlayDune/.test(between), true)
-  check('...where somebody is choosing what to play',
-    /status === 'picking' && onPlayDune/.test(between), true)
-  // NOT AMONG THE CAMPAIGNS. Dune has no world, no scars and no game number,
-  // and a row in the picker would read as a campaign somebody could open.
-  check('...as its own thing rather than a campaign',
-    /OR PLAY SOMETHING ELSE/.test(between), true)
+  check('the landing screen offers it', /onPlayDune/.test(between), true)
+
+  // AT THE FRONT DOOR, not under a rule at the foot of the Risk screen. Dune
+  // spent a while as a line of small type below the campaign list, which said
+  // Risk was the thing and Dune was an afterthought — and made "which game am
+  // I playing" a decision you took by scrolling past the answer to a different
+  // question.
+  // THE LANDING ITSELF, not merely a mention of the door somewhere in the
+  // file: the back button also calls setStatus('front-door'), so a mount that
+  // was quietly changed to open the campaign list went on passing a pin that
+  // only asked whether the string appeared.
+  check('the door is what a player lands on',
+    between.includes(`    } else {${NL}      setStatus('front-door')${NL}    }`), true)
+  // AND ONLY A HAND-OFF SKIPS IT. autoNextGame means the table has already
+  // agreed on the next game; asking "which game?" over the top of that would
+  // interrupt a decision they made together.
+  check('...unless a finished game is already arranging the next one',
+    /if \(autoNextGame\) \{/.test(between), true)
+  check('...and the Risk campaign list is one click behind its own button',
+    [/data-game-door=\{label\}/.test(between),
+      /label="RISK LEGACY"[\s\S]{0,220}?onClick=\{\(\) => setStatus\('picking'\)\}/.test(between)],
+    [true, true])
+
+  // BOTH DOORS THE SAME SHAPE. A picker whose two options are drawn
+  // differently is a picker making the choice for you, so they go through one
+  // component and the test says so — the old arrangement had Risk as a list
+  // and Dune as a sentence.
+  check('...and both games are offered the same way',
+    (between.match(/<GameDoor/g) ?? []).length, 2)
+
+  // A WAY BACK OUT OF EACH. The click that opens either is easy to make by
+  // accident, and without this the only way back was a page reload.
+  check('the campaign list can be left again',
+    /data-front-door-back=""/.test(between), true)
+  check('...and so can the Dune lobby',
+    /← Back/.test(code('src/components/dune/DuneLobbyScreen.tsx')), true)
+  check('...landing on the door rather than back where they started',
+    /onExit=\{\(\) => setScreen\('between-games'\)\}/.test(app), true)
 }
 
 // ── a table is found by its code, not by browsing ─────────────────────────

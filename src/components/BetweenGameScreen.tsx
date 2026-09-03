@@ -46,6 +46,16 @@ interface Props {
 
 type LoadState =
   | 'loading'
+  /**
+   * THE FRONT DOOR: which game, before anything about a game.
+   *
+   * This screen used to open on the Risk campaign list with Dune added under
+   * a rule at the bottom, which said that Risk was the thing and Dune was an
+   * afterthought — and made "which game am I playing" a decision you took by
+   * scrolling past the answer to a different question. The list now lives
+   * behind the Risk button, one click in, where it belongs.
+   */
+  | 'front-door'
   | 'picking'   // choosing among existing campaigns, or starting a new one
   | 'joining'   // entering someone else's join code
   | 'found'     // a campaign is open; show its lobby
@@ -304,11 +314,21 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
   }
 
   useEffect(() => {
-    // Open the campaign this device was last in; otherwise offer the picker.
-    // There is no longer a single implicit campaign to fall back on.
-    getActiveCampaignId()
-      .then(id => (id ? openCampaign(id) : setStatus('picking')))
-      .catch(() => setStatus('picking'))
+    // THE DOOR FIRST, every time. A landing screen that skips itself for
+    // anybody with a campaign open is not a landing screen — and the one
+    // moment a player is choosing what to play is the moment they arrive.
+    //
+    // EXCEPT ON A HAND-OFF. autoNextGame is set when every player clicked
+    // Continue at a finished game's gate: the next game is already being
+    // arranged, and putting a "which game?" question in front of that would
+    // interrupt a decision the table has just made together.
+    if (autoNextGame) {
+      getActiveCampaignId()
+        .then(id => (id ? openCampaign(id) : setStatus('picking')))
+        .catch(() => setStatus('picking'))
+    } else {
+      setStatus('front-door')
+    }
     void getPreferredName().then(n => {
       if (!n) return
       setPlayerName(n)
@@ -391,8 +411,13 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
         color: '#E8DCC8', fontFamily: 'Georgia, serif',
         boxShadow: '0 16px 60px rgba(0,0,0,0.90)',
       }}>
-        {/* Account — one small button, top right */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: -14 }}>
+        {/* Account — one small button, top right.
+
+            ITS OWN LINE. It was tucked up under a negative margin, which put it
+            across the title at every width the title is wide — a button sitting
+            on the name of the place is the first thing the eye tries to read as
+            one thing and cannot. */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
           <AccountMenu
             user={user}
             legacy={legacy}
@@ -404,10 +429,10 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
           />
         </div>
 
-        {/* Title */}
-        <div style={{ textAlign: 'center', marginBottom: 28 }}>
+        {/* Title — the house at the door, the game once inside one. */}
+        <div style={{ textAlign: 'center', margin: '10px 0 28px' }}>
           <div style={{ fontSize: 28, fontWeight: 'bold', color: '#C8940A', letterSpacing: 2 }}>
-            ⚔ RISK LEGACY
+            {status === 'front-door' ? 'SPARKS GAMING' : '⚔ RISK LEGACY'}
           </div>
           {status === 'found' && legacy && (
             <div style={{ fontSize: 13, color: '#7a6040', marginTop: 6 }}>
@@ -423,37 +448,57 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
           )}
         </div>
 
-        {/* Campaign picker — any campaign, not just the most recent */}
-        {status === 'picking' && (
-          <CampaignPicker
-            onOpen={openCampaign}
-            onNew={() => { setWorldName('New World'); setStatus('none') }}
-            onJoin={() => { setJoinReturnTo('picking'); setStatus('joining') }}
-          />
-        )}
-
-        {/* A DIFFERENT GAME, and said so rather than slipped in among the
-            campaigns. Dune is not a Risk campaign and has none of the things
-            this screen is about — no world, no scars, no game number — so it
-            gets its own line under a rule rather than a row in the picker,
-            where it would read as a campaign somebody could open. */}
-        {status === 'picking' && onPlayDune && (
-          <div style={{
-            marginTop: 26, paddingTop: 18, borderTop: '1px solid #ffffff14',
-            textAlign: 'center',
-          }}>
-            <div style={{ fontSize: 12, color: '#7a6040', letterSpacing: 1.4, marginBottom: 10 }}>
-              OR PLAY SOMETHING ELSE
+        {/* ── PICK YOUR GAME ───────────────────────────────────────────── */}
+        {status === 'front-door' && (
+          <div data-layer="front-door" style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 12, color: '#7a6040', letterSpacing: 1.6, marginBottom: 16 }}>
+              PICK YOUR GAME
             </div>
-            <button type="button" onClick={onPlayDune} style={{
-              font: '600 14px Georgia, serif', padding: '9px 20px', borderRadius: 6,
-              cursor: 'pointer', background: 'transparent', color: '#d9a441',
-              border: '1px solid #8a6a2a', letterSpacing: 1,
+            <div style={{
+              display: 'flex', gap: 14, justifyContent: 'center', flexWrap: 'wrap',
             }}>
-              DUNE — two to six players
-            </button>
+              <GameDoor
+                label="RISK LEGACY"
+                note="A campaign across many games"
+                accent="#C8940A"
+                onClick={() => setStatus('picking')} />
+              {/* THE SAME SIZE AND THE SAME SHAPE as its neighbour. Dune spent
+                  a while as a line of small type under a rule at the foot of
+                  the Risk screen, which is where you put a thing you are not
+                  sure about rather than a game somebody came here to play. */}
+              {onPlayDune && (
+                <GameDoor
+                  label="DUNE"
+                  note="Two to six players, one table"
+                  accent="#d9a441"
+                  onClick={onPlayDune} />
+              )}
+            </div>
           </div>
         )}
+
+        {/* Campaign picker — any campaign, not just the most recent */}
+        {status === 'picking' && (
+          <>
+            {/* THE WAY BACK OUT. This screen is one click from the door and
+                the click that opened it is easy to make by accident; without
+                this the only way back to the other game was a page reload. */}
+            <button type="button" data-front-door-back="" onClick={() => setStatus('front-door')}
+              style={{
+                font: '13px Georgia, serif', background: 'transparent',
+                color: '#9a7a4a', border: 'none', cursor: 'pointer',
+                padding: 0, marginBottom: 14,
+              }}>
+              ← Pick a different game
+            </button>
+            <CampaignPicker
+              onOpen={openCampaign}
+              onNew={() => { setWorldName('New World'); setStatus('none') }}
+              onJoin={() => { setJoinReturnTo('picking'); setStatus('joining') }}
+            />
+          </>
+        )}
+
 
         {/* Join someone else's campaign with their code.
             `cameFrom` is remembered so Cancel returns to the screen the player
@@ -837,4 +882,35 @@ const ghostBtnStyle: React.CSSProperties = {
   width: '100%', padding: '10px', borderRadius: 8, fontSize: 12,
   border: '1px solid rgba(200,148,10,0.25)', background: 'transparent',
   color: '#5a4020', cursor: 'pointer', fontFamily: 'Georgia, serif',
+}
+
+/**
+ * One of the two doors.
+ *
+ * SAME SIZE, SAME SHAPE, DIFFERENT ACCENT — the only thing separating them is
+ * which game they are. A picker whose options are drawn differently is a picker
+ * making the choice for you, and this screen's whole job is to hand that choice
+ * back.
+ */
+function GameDoor({ label, note, accent, onClick }: {
+  label: string
+  note: string
+  accent: string
+  onClick(): void
+}) {
+  return (
+    <button type="button" data-game-door={label} onClick={onClick} style={{
+      width: 200, padding: '18px 14px', borderRadius: 8, cursor: 'pointer',
+      background: '#ffffff08', border: `1px solid ${accent}66`,
+      color: '#E8DCC8', fontFamily: 'Georgia, serif', textAlign: 'center',
+    }}>
+      <span style={{
+        display: 'block', font: 'bold 17px Georgia, serif',
+        color: accent, letterSpacing: 1.5,
+      }}>{label}</span>
+      <span style={{
+        display: 'block', marginTop: 7, fontSize: 12, color: '#8a7050', lineHeight: 1.4,
+      }}>{note}</span>
+    </button>
+  )
 }
