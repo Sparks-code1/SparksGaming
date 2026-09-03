@@ -92,13 +92,22 @@ runs as normal — nothing on the startup path waits on it.
    ```bash
    export GH_TOKEN=ghp_your_token_here
    ```
-3. Build and publish:
+3. Build and upload:
    ```bash
    npm run release
    ```
+4. **Publish the draft by hand** on the
+   [releases page](https://github.com/sparks-code1/SparksGaming/releases).
 
-That uploads the installer plus the `latest.yml` manifest electron-updater reads.
-Publish the GitHub release (not a draft) or clients will not see it.
+That uploads the installer plus the `latest.yml` manifest electron-updater reads,
+as a **draft**. Step 4 is not optional and not a tidy-up: a draft is invisible to
+update clients, even on a public repo, so until it is published nobody's game
+sees the new version.
+
+> **Why a draft rather than a direct publish.** The config used to set
+> `releaseType: release`, which publishes in one step — and it kept failing on
+> the tag. Uploading to a draft and pressing publish afterwards works reliably,
+> so the extra step buys a release that actually goes out. Changed 2026-09-03.
 
 > **Only the NSIS installer auto-updates.** The portable `.exe` has nowhere to
 > install to, so portable users must download new versions manually.
@@ -110,11 +119,14 @@ Publish the GitHub release (not a draft) or clients will not see it.
 
 Two things silently stop clients seeing a release. Both look like success locally.
 
-1. **The release is a draft.** electron-builder creates drafts by default, and a
-   draft is invisible to update clients — even on a public repo. The publish
-   config sets `releaseType: release` so `npm run release` publishes directly.
-   Drafts left over from earlier attempts must be published or deleted by hand
-   on the GitHub releases page.
+1. **The release is still a draft.** A draft is invisible to update clients,
+   even on a public repo — and `releaseType: draft` in the publish config means
+   every release starts as one, on purpose. `npm run release` uploads; it does
+   not publish. If the update never arrives, look here first: the odds are the
+   draft is sitting on the releases page waiting for step 4 above.
+
+   Drafts left over from abandoned attempts should be deleted rather than left
+   about, so the one waiting to be published is the only one there.
 
 2. **The repo is private.** A client has no token, so every check 404s. The repo
    must be public for auto-update to work as configured.
