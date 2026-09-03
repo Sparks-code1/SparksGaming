@@ -12,7 +12,6 @@ import { TREACHERY_CARDS } from '@/data/dune/treachery'
 
 export interface AtomicsPanelProps {
   /** The storm's calculated reach, already public. */
-  roll: number
   onPlay: () => void
   onClose: () => void
   busy?: boolean
@@ -27,7 +26,7 @@ const REFUSAL_TEXT: Record<string, string> = {
   'stale': 'The table moved first — try again.',
 }
 
-export function AtomicsPanel({ roll, onPlay, onClose, busy = false, refusal = null }: AtomicsPanelProps) {
+export function AtomicsPanel({ onPlay, onClose, busy = false, refusal = null }: AtomicsPanelProps) {
   return (
     <div data-layer="atomics-panel" style={{
       position: 'absolute', inset: 0, display: 'grid', placeItems: 'center',
@@ -54,11 +53,14 @@ export function AtomicsPanel({ roll, onPlay, onClose, busy = false, refusal = nu
               </button>
             </div>
             <p style={{ margin: '4px 0 0', opacity: 0.75, fontSize: 12.5 }}>
-              The storm is calculated at <b data-atomics-roll="">{roll}</b>
-              {' '}sector{roll === 1 ? '' : 's'} and has not yet moved. Detonate
-              now and the Shield Wall comes down before it does: Arrakeen,
-              Carthag and the Imperial Basin lie open to every storm for the
-              rest of the game.
+              {/* NO NUMBER TO WEIGH IT AGAINST, and the panel says so rather
+                  than leaving a player to wonder where it went. The printed
+                  card is played after the storm is calculated; here it is
+                  played at the Pause, before anything is rolled. */}
+              <b data-atomics-blind="">The coming storm has not been rolled.</b>
+              {' '}Detonate now and the Shield Wall is down before it moves:
+              Arrakeen, Carthag and the Imperial Basin lie open to every storm
+              for the rest of the game — starting with next turn's.
             </p>
           </div>
         </div>

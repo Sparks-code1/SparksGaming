@@ -436,20 +436,29 @@ check('later storms roll 2–6', [STORM_ROLL.min, STORM_ROLL.max], [2, 6])
   // the owed first one, its second beat after the Atomics window, and a new
   // turn's — and a seat told on two turns out of three would learn nothing
   // except not to trust it.
+  // TWO PATHS NOW, NOT THREE. The storm used to publish its roll and wait a
+  // beat before moving, which was a third way for it to blow; both cards that
+  // needed the beat are played at the Mentat Pause and it went with them.
   check('every path that moves the storm makes the next promise',
-    (ep.match(/foretellStorm\(/g) ?? []).length, 3)
+    (ep.match(/foretellStorm\(/g) ?? []).length, 2)
 
-  // THE PRINTED BEAT, ON EVERY TURN THAT HAS ONE. The first storm published
-  // its roll and waited so Family Atomics had a moment; every turn after it
-  // rolled and moved in one press, so the card was playable on turn one and
-  // never again.
+  // NO BEAT AT ALL, ON ANY TURN. There was a window between the roll and the
+  // move so Weather Control could steer and Family Atomics could answer a known
+  // number. Both are played at the Mentat Pause now — the moment immediately
+  // before the next storm, so the sequence is unchanged — and the storm rolls
+  // and moves in one press on every turn.
   const entry = ep.indexOf("case 'Storm': {")
-  check('a new turn\'s storm waits for the card too', entry > 0, true)
+  check('a new turn\'s storm is entered and moved at once', entry > 0, true)
   {
     const near = ep.slice(entry, entry + 1200)
-    check('...on the same test and the same window',
-      [near.includes('const canAtomics = turn >= 2'), near.includes('mayAtomics('),
-        near.includes('stormCarry: {')], [true, true, true])
+    check('...with nothing published to wait on',
+      [near.includes('const roll = await stormRollFor(turn)'),
+        near.includes('stormCarry: {'), near.includes('canAtomics')],
+      [true, false, false])
+    // AND A STEER IS SPENT BY THE STORM IT NAMED, so it cannot outlive its turn.
+    check('...and Weather Control is spent by the storm it steered',
+      [near.includes('const used = steer && steer.turn === turn'),
+        near.includes('stormSteer: undefined')], [true, true])
   }
 
   // THE RAIL AND NOWHERE ELSE. It is one seat's knowledge and the whole of

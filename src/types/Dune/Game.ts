@@ -499,14 +499,22 @@ export interface DuneGameState {
    * roll is public the moment it exists, exactly as the dials are at the
    * table; `steered` names the seat that chose it.
    */
-  stormCarry?: {
-    turn: number
-    roll: number
-    closesAt: number
-    steered?: FactionId
-    atomics?: FactionId
-  }
-  /** Cards out of the game for good — Family Atomics detonated, never
+  /**
+   * WEATHER CONTROL, STANDING FOR THE TURN IT NAMES.
+   *
+   * Played at the Mentat Pause for the storm of the turn AFTER, so it sits
+   * on the row across the turn boundary and is spent by the Storm phase that
+   * matches its turn. An entry for any other turn is inert, like every other
+   * turn-stamped record here.
+   *
+   * THIS REPLACED A BETWEEN-BEAT. The storm used to publish its roll and
+   * wait, so that Weather Control could steer before the marker moved and
+   * Family Atomics could answer after the number was known. Both cards moved
+   * to the Mentat Pause — immediately before the next storm, so the sequence
+   * is unchanged — and the beat had nothing left to hold.
+   */
+  stormSteer?: { turn: number; sectors: number; by: FactionId }
+ /** Cards out of the game for good — Family Atomics detonated, never
    *  reshuffled. The treachery economy counts them here. */
   removedFromPlay?: string[]
   /**

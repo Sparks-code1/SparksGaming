@@ -255,10 +255,10 @@ var TREACHERY_CARDS = [
     name: "Weather Control",
     kind: "special",
     subtype: "storm",
-    timing: "storm-before-roll",
+    timing: "mentat-storm",
     copies: 1,
     image: "/treachery/weather_control.png",
-    text: "After the first game turn, play during the Storm Phase before the Storm Marker is moved.\n\nWhen you play this card, you control the storm this phase and may move it from 0 to 10 sectors in a counterclockwise direction."
+    text: "Play during the Mentat Pause. You control the NEXT turn's storm and may move it from 0 to 10 sectors in a counterclockwise direction.\n\nTHIS GAME: at the Pause, not during the Storm Phase \u2014 which is the moment just before, so the sequence is unchanged."
   },
   {
     id: "karama",
@@ -282,10 +282,10 @@ var TREACHERY_CARDS = [
     name: "Family Atomics",
     kind: "special",
     subtype: "storm",
-    timing: "storm-after-roll",
+    timing: "mentat-storm",
     copies: 1,
     image: "/treachery/Family_atomics.png",
-    text: "After the first game turn, play after the storm movement is calculated, but before the storm is moved, but only if you have one or more forces on the Shield Wall or a territory adjacent to the Shield Wall with no storm between your sector and the Wall.\n\nAll forces on the Shield Wall are destroyed.\n\nThe Shield Wall now turns blue as a reminder. The Imperial Basin, Arrakeen, and Carthag are no longer protected from the Storm for the rest of the game."
+    text: "Play during the Mentat Pause, only if you have forces on the Shield Wall or a territory adjacent to it with no storm between your sector and the Wall.\n\nAll forces on the Shield Wall are destroyed. The Imperial Basin, Arrakeen and Carthag are no longer protected from the storm, from next turn's on.\n\nTHIS GAME: at the Pause, not after the storm is calculated \u2014 so the coming roll is not yet known."
   }
 ];
 

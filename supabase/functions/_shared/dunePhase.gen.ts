@@ -1412,9 +1412,6 @@ function advanceHold(state, now) {
     return null;
   }
   if (state.phase === "Storm") {
-    if (state.stormCarry && now < state.stormCarry.closesAt) {
-      return { code: "storm-window", until: state.stormCarry.closesAt };
-    }
     return null;
   }
   if (state.phase === "Battles") {
@@ -1619,13 +1616,6 @@ function resetDeadlines(state, now, lengths) {
   if (state.nexus) {
     patch.nexus = { ...state.nexus, closesAt: now + lengths.nexusSeconds * 1e3 };
     reset.push("nexus");
-  }
-  if (state.stormCarry) {
-    patch.stormCarry = {
-      ...state.stormCarry,
-      closesAt: now + lengths.stormCardSeconds * 1e3
-    };
-    reset.push("storm-window");
   }
   if (state.karamaGiveBack) {
     patch.karamaGiveBack = {

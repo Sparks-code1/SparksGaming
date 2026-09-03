@@ -415,14 +415,23 @@ check('no card outside a battle plan claims to be part of one',
 // Every timing names a window some phase has to open. Two of these do not exist
 // yet; the point of listing them is that they are visible.
 const timings = [...new Set(TREACHERY_CARDS.map(c => c.timing))].sort()
-check('five distinct timings', timings,
-  ['any-time', 'battle-plan', 'movement', 'storm-after-roll', 'storm-before-roll'])
+check('four distinct timings', timings,
+  ['any-time', 'battle-plan', 'mentat-storm', 'movement'])
 check('everything committed in a plan is a weapon, defence, worthless or Cheap Hero',
   TREACHERY_CARDS.filter(c => c.timing === 'battle-plan'
     && !['weapon', 'defense', 'worthless'].includes(c.kind) && c.id !== 'cheaphero').map(c => c.id), [])
-check('the two storm cards want two different windows',
+// ONE WINDOW NOW, THE MENTAT PAUSE. They wanted two — steering before the roll,
+// detonating after it — and the storm had to publish a number and wait between
+// them. Both are played at the Pause for the storm of the turn after, which is
+// the moment immediately following, so the sequence is unchanged and the beat
+// is gone. A DELIBERATE DEPARTURE: at the Pause the coming roll is not known,
+// so Family Atomics is a judgement rather than a calculation.
+check('both storm cards share the Mentat Pause',
   TREACHERY_CARDS.filter(c => c.subtype === 'storm').map(c => [c.id, c.timing]),
-  [['weathercontrol', 'storm-before-roll'], ['familyatomics', 'storm-after-roll']])
+  [['weathercontrol', 'mentat-storm'], ['familyatomics', 'mentat-storm']])
+check('...and both say so on the card',
+  TREACHERY_CARDS.filter(c => c.subtype === 'storm')
+    .map(c => c.text.includes('Mentat Pause')), [true, true])
 
 // ── headers ─────────────────────────────────────────────────────────────────
 check('every kind in the deck has a header colour',

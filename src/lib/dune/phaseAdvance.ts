@@ -270,7 +270,7 @@ export interface AdvanceState {
   /** The Nexus's window: cleared by the last ready, outlived by the clock. */
   nexus?: { closesAt: number; ready?: string[] }
   /** The storm's between-beat: calculated, the cards deciding, not moved. */
-  stormCarry?: { turn: number; roll: number; closesAt: number }
+  stormSteer?: { turn: number; sectors: number; by: string }
   /** The Harkonnen's owed return after a Karama take, on its clock. */
   karamaGiveBack?: { closesAt: number }
   phaseClock?: PhaseClock
@@ -365,13 +365,13 @@ export function advanceHold(state: AdvanceState, now: number): AdvanceHold | nul
   }
 
   if (state.phase === 'Storm') {
-    // THE CALCULATED STORM WAITS ITS BEAT: the window between the roll and
-    // the move belongs to the cards, and the press that would move the
-    // marker early is held off it. Spent or run out, the hold clears and
-    // the next press moves the storm.
-    if (state.stormCarry && now < state.stormCarry.closesAt) {
-      return { code: 'storm-window', until: state.stormCarry.closesAt }
-    }
+    // NOTHING HOLDS THE STORM ANY MORE. It used to publish its roll and wait
+    // a beat, so Weather Control could steer before the marker moved and
+    // Family Atomics could answer once the number was known. Both cards are
+    // played at the Mentat Pause now, for the storm of the turn after — which
+    // is the very next thing that happens — so the phase rolls and moves in
+    // one press and the table is not asked to sit through a window in which,
+    // most turns, nobody can do anything at all.
     return null
   }
 
@@ -860,7 +860,6 @@ export function resetDeadlines(
     battleCaptureSeconds: number
     mentatSeconds: number
     nexusSeconds: number
-    stormCardSeconds: number
     karamaGiveSeconds: number
   },
 ): { patch: Record<string, unknown>; reset: string[] } {
@@ -883,12 +882,7 @@ export function resetDeadlines(
     patch.nexus = { ...state.nexus, closesAt: now + lengths.nexusSeconds * 1000 }
     reset.push('nexus')
   }
-  if (state.stormCarry) {
-    patch.stormCarry = {
-      ...state.stormCarry, closesAt: now + lengths.stormCardSeconds * 1000,
-    }
-    reset.push('storm-window')
-  }
+
   if (state.karamaGiveBack) {
     patch.karamaGiveBack = {
       ...state.karamaGiveBack, closesAt: now + lengths.karamaGiveSeconds * 1000,

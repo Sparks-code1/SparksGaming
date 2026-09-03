@@ -994,6 +994,12 @@ Deno.serve(async req => {
        * No promise on file: an ordinary roll, as it always was.
        */
       const stormRollFor = async (forTurn: number): Promise<number> => {
+        // WEATHER CONTROL FIRST. Played at the Mentat Pause for this turn, it
+        // is not a roll at all — the storm goes where it was told, and neither
+        // the Fremen promise nor the dice get a say.
+        const steer = state.stormSteer as
+          { turn: number; sectors: number } | undefined
+        if (steer && steer.turn === forTurn) return steer.sectors
         const { data } = await admin
           .from('match_decks').select('cards')
           .eq('match_id', matchId).eq('deck', 'storm').maybeSingle()
@@ -1065,71 +1071,30 @@ Deno.serve(async req => {
       // and the stamp below makes the second press subject to the same look-
       // window as any other phase.
       if (state.phase === 'Storm' && state.stormMoved !== state.turn) {
-        const carried = state.stormCarry as {
-          turn: number; roll: number; closesAt: number
-          steered?: string; atomics?: string
-        } | undefined
-        if (carried && carried.turn === Number(state.turn)) {
-          // ── SECOND BEAT: the window has run out — advanceHold gated the
-          // early press — and the storm moves AS CALCULATED, against the
-          // Wall as it stands NOW: a detonation in between is exactly what
-          // the beat exists for.
-          const { patch } = stormEntry(state as never, carried.roll)
-          const moved9 = {
-            ...state, ...patch, awaiting: null,
-            stormReport: {
-              ...(patch.stormReport as object),
-              ...(carried.steered ? { steered: carried.steered } : null),
-              ...(carried.atomics ? { atomics: carried.atomics } : null),
-            },
-            phaseClock: stamp(Number(state.turn), 'Storm'),
-          } as Record<string, unknown>
-          delete moved9.stormCarry
-          const ahead9 = await foretellStorm(Number(state.turn))
-          const { data, error } = await admin.rpc('apply_match_write', {
-            p_match_id: matchId,
-            p_expected_version: match.version,
-            p_state: moved9,
-            p_secrets: ahead9.secrets,
-            p_decks: ahead9.decks,
-          })
-          if (error) return json({ error: error.message }, 500)
-          if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
-          return json({ phase: 'Storm', turn: state.turn, stormReport: moved9.stormReport, version: data[0].version })
-        }
+        // ONE PRESS. The storm used to publish its roll and wait a beat so
+        // Weather Control could steer before the marker moved and Family
+        // Atomics could answer once the number was known. Both cards are
+        // played at the Mentat Pause now, for the storm of the turn after —
+        // which is this one — so the roll and the move are the same press and
+        // nobody sits through a window they cannot act in.
         const roll = await stormRollFor(Number(state.turn))
-        // THE PRINTED BEAT between calculated and moved: from turn two,
-        // when some seat could legally answer with Family Atomics, the roll
-        // is PUBLISHED — as the dials are at the table — and the marker
-        // waits its window. With nobody in reach of the Wall the storm
-        // moves in the same press, as it always did.
-        const anyAtomics = Number(state.turn) >= 2
-          && ((state.players ?? []) as { faction: string }[]).some((p) =>
-            mayAtomics((state.forces ?? []) as never, p.faction as never, state.storm as never))
-        if (anyAtomics) {
-          const { data, error } = await admin.rpc('apply_match_write', {
-            p_match_id: matchId,
-            p_expected_version: match.version,
-            p_state: {
-              ...state, awaiting: null,
-              stormCarry: {
-                turn: Number(state.turn), roll,
-                closesAt: now + STORM_CARD_SECONDS * 1000,
-              },
-            },
-            p_secrets: {},
-          })
-          if (error) return json({ error: error.message }, 500)
-          if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
-          return json({ phase: 'Storm', stormCalculated: roll, version: data[0].version })
-        }
+        const steered = (state.stormSteer as { turn: number; by: string } | undefined)
         const { patch } = stormEntry(state as never, roll)
         const ahead1 = await foretellStorm(Number(state.turn))
+        const spent = { ...state } as Record<string, unknown>
+        // SPENT WITH THE STORM IT NAMED, so a steer cannot outlive its turn.
+        if (steered && steered.turn === Number(state.turn)) delete spent.stormSteer
         const { data, error } = await admin.rpc('apply_match_write', {
           p_match_id: matchId,
           p_expected_version: match.version,
           p_state: {
-            ...state, ...patch, awaiting: null,
+            ...spent, ...patch, awaiting: null,
+            stormReport: {
+              ...(patch.stormReport as object),
+              ...(steered && steered.turn === Number(state.turn)
+                ? { steered: steered.by }
+                : null),
+            },
             phaseClock: stamp(Number(state.turn), 'Storm'),
           },
           p_secrets: ahead1.secrets,
@@ -1263,28 +1228,24 @@ Deno.serve(async req => {
       switch (target.phase) {
         // ── a new turn's weather, rolled as it is entered ──────────────────
         case 'Storm': {
+          // ONE PRESS, for the same reason as the owed storm above: the two
+          // cards that needed a beat between the roll and the move are played
+          // at the Mentat Pause now, which is the moment immediately before
+          // this one.
           const roll = await stormRollFor(turn)
-          // THE PRINTED BEAT, ON EVERY TURN THAT HAS ONE. The owed first
-          // storm published its roll and waited so that Family Atomics had a
-          // moment to answer; every turn after it rolled and moved in the same
-          // press, which meant the card could be played on turn one and never
-          // again. Same test, same window, same second beat — the hold reads
-          // stormCarry and the press that follows moves the marker against the
-          // Wall as it stands by then.
-          const canAtomics = turn >= 2
-            && ((base.players ?? []) as { faction: string }[]).some((pl) =>
-              mayAtomics((base.forces ?? []) as never, pl.faction as never,
-                base.storm as never))
-          if (canAtomics) {
-            return await plainly({
-              stormCarry: {
-                turn, roll, closesAt: now + STORM_CARD_SECONDS * 1000,
-              },
-            })
-          }
+          const steer = base.stormSteer as { turn: number; by: string } | undefined
           const { patch } = stormEntry({ ...base, turn } as never, roll)
           const ahead = await foretellStorm(turn)
-          return await plainly({ ...patch }, undefined, ahead.secrets, ahead.decks)
+          const used = steer && steer.turn === turn
+          return await plainly({
+            ...patch,
+            ...(used
+              ? {
+                stormSteer: undefined,
+                stormReport: { ...(patch.stormReport as object), steered: steer.by },
+              }
+              : null),
+          }, undefined, ahead.secrets, ahead.decks)
         }
 
         // ── the cards are turned in the same write as the pointer ──────────
@@ -4392,11 +4353,22 @@ Deno.serve(async req => {
     // atomics window still follows when someone stands in the Wall's reach.
     case 'WEATHER_CONTROL': {
       if (!myFaction) return json({ error: 'your seat has no faction', code: 'no-faction' }, 409)
-      if (state.phase !== 'Storm' || state.stormMoved === state.turn || state.stormCarry) {
-        return json({ error: 'the storm is not waiting to be calculated', code: 'no-window' }, 409)
+      // AT THE MENTAT PAUSE, FOR THE STORM OF THE TURN AFTER.
+      //
+      // A DELIBERATE DEPARTURE from the printed timing, which has this played
+      // during the Storm phase before the marker moves. The Pause is the
+      // moment immediately before the next storm, so the sequence is unchanged
+      // in practice — and it lets the storm roll and move in one press instead
+      // of publishing a number and waiting in a window that, most turns,
+      // nobody could act in at all.
+      if (state.phase !== 'Mentat Pause') {
+        return json({
+          error: 'Weather Control is played at the Mentat Pause', code: 'wrong-phase',
+        }, 409)
       }
-      if (Number(state.turn) < 2) {
-        return json({ error: 'the first storm is the dials\' alone', code: 'too-early' }, 409)
+      const wcFor = Number(state.turn) + 1
+      if (state.stormSteer) {
+        return json({ error: 'the next storm is already steered', code: 'already-steered' }, 409)
       }
       const sectors = Number(action.sectors)
       if (!Number.isInteger(sectors) || sectors < 0 || sectors > WEATHER_CONTROL_MAX) {
@@ -4411,27 +4383,42 @@ Deno.serve(async req => {
       }
       const wcHand = [...(wcMine.cards ?? [])]
       wcHand.splice(wcHand.indexOf('weathercontrol'), 1)
-      const atomicsCould = ((state.players ?? []) as { faction: string }[]).some((p) =>
-        mayAtomics((state.forces ?? []) as never, p.faction as never, state.storm as never))
+      /**
+       * AND THE FREMEN ARE TOLD AGAIN.
+       *
+       * Their advanced rule promised them next turn's distance at the end of
+       * this turn's storm, and this card has just changed it. A promise that
+       * is quietly overtaken is worse than none: they would plan a whole turn
+       * against a number the board no longer intends. The committed roll goes
+       * with it, so the storm that arrives is the one everybody was told about.
+       */
+      const wcSeat = seatOfFaction['fremen']
+      let wcSecrets: Record<string, unknown> = {}
+      if (wcSeat) {
+        const { data: theirs } = await admin
+          .from('match_secrets').select('data')
+          .eq('match_id', matchId).eq('player_id', wcSeat).maybeSingle()
+        const held = (theirs?.data ?? {}) as { stormAhead?: { turn: number } }
+        if (held.stormAhead && held.stormAhead.turn === wcFor) {
+          wcSecrets = {
+            [wcSeat]: { ...held, stormAhead: { turn: wcFor, roll: sectors } },
+          }
+        }
+      }
       const { data, error } = await admin.rpc('apply_match_write', {
         p_match_id: matchId,
         p_expected_version: match.version,
         p_state: {
           ...state,
-          stormCarry: {
-            turn: Number(state.turn), roll: sectors,
-            // the atomics beat still follows a steered storm; with nobody
-            // in reach the window is already spent
-            closesAt: atomicsCould ? now + STORM_CARD_SECONDS * 1000 : now,
-            steered: myFaction,
-          },
+          stormSteer: { turn: wcFor, sectors, by: myFaction },
           players: ((state.players ?? []) as { faction: string; handCount?: number }[])
             .map((p) => p.faction === myFaction ? { ...p, handCount: wcHand.length } : p),
           treacheryDiscard: [
             ...((state.treacheryDiscard ?? []) as string[]), 'weathercontrol',
           ],
         },
-        p_secrets: { [playerId]: { ...wcMine, cards: wcHand } },
+        p_decks: { storm: [{ turn: wcFor, roll: sectors }] },
+        p_secrets: { ...wcSecrets, [playerId]: { ...wcMine, cards: wcHand } },
       })
       if (error) return json({ error: error.message }, 500)
       if (!data?.length) return json({ error: 'version conflict', code: 'stale' }, 409)
@@ -4445,13 +4432,19 @@ Deno.serve(async req => {
     // leaves the game — removed from play, never reshuffled.
     case 'FAMILY_ATOMICS': {
       if (!myFaction) return json({ error: 'your seat has no faction', code: 'no-faction' }, 409)
-      const fc = state.stormCarry as {
-        turn: number; roll: number; closesAt: number; atomics?: string
-      } | undefined
-      if (state.phase !== 'Storm' || !fc || state.stormMoved === state.turn) {
-        return json({ error: 'the storm is not between its beats', code: 'no-window' }, 409)
+      // AT THE MENTAT PAUSE, taking effect on the next turn's storm.
+      //
+      // A DELIBERATE DEPARTURE, and this one changes the decision rather than
+      // just its timing. The printed card is played AFTER the storm movement
+      // is calculated, so you bring the Wall down knowing exactly what is
+      // coming. At the Pause you do not: the roll has not happened. Family
+      // Atomics is a judgement here, not a calculation.
+      if (state.phase !== 'Mentat Pause') {
+        return json({
+          error: 'Family Atomics is played at the Mentat Pause', code: 'wrong-phase',
+        }, 409)
       }
-      if (fc.atomics) {
+      if (state.shieldWall === 'destroyed') {
         return json({ error: 'the Wall is already down', code: 'already-detonated' }, 409)
       }
       if (!mayAtomics((state.forces ?? []) as never, myFaction as never, state.storm as never)) {
@@ -4479,8 +4472,6 @@ Deno.serve(async req => {
           forces: ((state.forces ?? []) as { territoryId: string; count: number }[])
             .filter((f) => !(f.territoryId === SHIELD_WALL_TERRITORY && f.count > 0)),
           tanks: bankDead((state.tanks ?? emptyTanks()) as never, wallRows as never),
-          // the window is SPENT: the storm may move on the next press
-          stormCarry: { ...fc, atomics: myFaction, closesAt: now },
           players: ((state.players ?? []) as { faction: string; handCount?: number }[])
             .map((p) => p.faction === myFaction ? { ...p, handCount: faHand.length } : p),
           // REMOVED FROM PLAY, not discarded: the treachery economy counts

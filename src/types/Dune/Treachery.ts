@@ -45,6 +45,12 @@ export type TreacheryTiming =
   | 'any-time'
   /** During the Storm Phase, BEFORE the storm's movement is rolled — it replaces
    *  the roll rather than reacting to it. */
+  /**
+   * THE TWO STORM CARDS, at the Mentat Pause, for the storm of the turn
+   * AFTER. A DELIBERATE DEPARTURE from the printed timing — see the note on
+   * each card — kept as one value because both now sit in the same moment.
+   */
+  | 'mentat-storm'
   | 'storm-before-roll'
   /** After the storm's movement is known and before the storm moves: the seam
    *  `beginStorm` already opens. */

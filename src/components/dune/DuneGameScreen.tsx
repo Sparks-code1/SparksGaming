@@ -412,37 +412,34 @@ export function DuneGameScreen({
     killed: readonly Force[]
     step: number
   } | null>(null)
-  const stormSeen = useRef({ ready: false, seenTurn: -1, spunTurn: -1 })
+  /**
+   * The storm, shown: the wheel spins and then the marker walks.
+   *
+   * ONE CUE NOW, THE REPORT. There used to be two, because the roll was
+   * published a beat before the move — the spin ran off that carry and the
+   * walk off the report that followed. Both storm cards moved to the Mentat
+   * Pause, the beat went with them, and the storm arrives whole: spin, then
+   * walk, from the one record.
+   */
+  const stormSeen = useRef({ ready: false, seenTurn: -1 })
   useEffect(() => {
     const r = stormSeen.current
     const report = state.stormReport
-    const carry = state.stormCarry
     if (!r.ready) {
       r.ready = true
       r.seenTurn = report?.turn ?? -1
-      r.spunTurn = carry?.turn ?? r.seenTurn
-      return
-    }
-    if (carry && carry.turn !== r.spunTurn && state.stormMoved !== state.turn) {
-      r.spunTurn = carry.turn
-      setStormShow({
-        kind: 'spin', roll: carry.roll, flick: 0, first: carry.turn === 1,
-        walkAfter: false, from: state.storm, swept: [], killed: [], step: 0,
-      })
       return
     }
     if (report && report.turn !== r.seenTurn) {
       r.seenTurn = report.turn
-      const needSpin = r.spunTurn !== report.turn
-      r.spunTurn = report.turn
       setStormShow({
-        kind: needSpin ? 'spin' : 'walk',
+        kind: 'spin',
         roll: report.roll, flick: 0, first: report.turn === 1,
         walkAfter: true, from: report.from,
         swept: report.swept, killed: report.killed, step: 0,
       })
     }
-  }, [state.stormReport, state.stormCarry, state.storm, state.stormMoved, state.turn])
+  }, [state.stormReport, state.turn])
   // KEYED ON THE STAGE, never the whole object: the flick updates the state
   // every 90ms, and an effect depending on it would reset the spin's own
   // clock with every flick — a slot machine that can never stop.
@@ -1730,7 +1727,6 @@ export function DuneGameScreen({
           {atomicsOpen && seat && onAtomics
             && (own?.cards ?? []).includes('familyatomics') && (
             <AtomicsPanel
-              roll={state.stormCarry?.roll ?? 0}
               onPlay={onAtomics}
               onClose={() => setAtomicsOpen(false)}
               refusal={atomicsRefusal?.code ?? null} />
@@ -2026,15 +2022,15 @@ export function DuneGameScreen({
                 ...(onGhola ? ['tleilaxughola'] : []),
                 ...(onHajr && state.shipping
                   && hajrMayPlay(state.shipping as never, seat) ? ['hajr'] : []),
-                // The storm cards ride the storm's own beats: steering
-                // before the calculation, the detonation between it and
-                // the move — and only from a seat in the Wall's reach.
-                ...(onWeather && state.phase === 'Storm' && state.turn >= 2
-                  && state.stormMoved !== state.turn && !state.stormCarry
+                // BOTH STORM CARDS RIDE THE MENTAT PAUSE, for the storm of the
+                // turn after — the moment immediately following. Family Atomics
+                // still asks for a seat in the Wall's reach; what it no longer
+                // has is the coming roll to weigh against.
+                ...(onWeather && state.phase === 'Mentat Pause'
+                  && !state.stormSteer
                   ? ['weathercontrol'] : []),
-                ...(onAtomics && state.phase === 'Storm' && state.stormCarry
-                  && !state.stormCarry.atomics
-                  && state.stormMoved !== state.turn
+                ...(onAtomics && state.phase === 'Mentat Pause'
+                  && state.shieldWall !== 'destroyed'
                   && mayAtomics(state.forces, seat, state.storm)
                   ? ['familyatomics'] : []),
                 // EVERY KARAMA-CAPABLE CARD ribbons — for the Bene Gesserit

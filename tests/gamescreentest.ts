@@ -1613,10 +1613,14 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
       /counterclockwise/.test(weather)],
     [true, true, true])
   const atomics = renderToStaticMarkup(createElement(AtomicsPanel, {
-    roll: 4, onPlay: () => {}, onClose: () => {}, refusal: 'not-in-reach',
+    onPlay: () => {}, onClose: () => {}, refusal: 'not-in-reach',
   }))
-  check('the Atomics panel shows the calculation and the price in red',
-    [/data-atomics-roll/.test(atomics), />4</.test(atomics),
+  // NO CALCULATION TO SHOW. The printed card is played after the storm is
+  // calculated; this one is played at the Mentat Pause, before anything is
+  // rolled — so the panel says the number is not known rather than leaving a
+  // player hunting for one that used to be there.
+  check('the Atomics panel says the roll is unknown, and the price in red',
+    [/data-atomics-blind/.test(atomics), /has not been rolled/.test(atomics),
       /data-atomics-play=""/.test(atomics),
       /yours\s+included/.test(atomics),
       /data-atomics-refusal="not-in-reach"/.test(atomics)],
@@ -1631,10 +1635,14 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
     [true, false])
 
   const screen6 = readFileSync('src/components/dune/DuneGameScreen.tsx', 'utf8')
-  check('the ribbons ride the storm\'s beats',
-    [/&& state\.stormMoved !== state\.turn && !state\.stormCarry/.test(screen6),
-      /&& mayAtomics\(state\.forces, seat, state\.storm\)/.test(screen6)],
-    [true, true])
+  // BOTH RIBBONS RIDE THE MENTAT PAUSE now, for the storm of the turn after.
+  // Family Atomics still asks for a seat in the Wall's reach; what it no longer
+  // has is a calculated roll to weigh against.
+  check('the ribbons ride the Mentat Pause',
+    [/state\.phase === 'Mentat Pause'/.test(screen6),
+      /&& mayAtomics\(state\.forces, seat, state\.storm\)/.test(screen6),
+      /state\.stormCarry/.test(screen6)],
+    [true, true, false])
   const match7 = readFileSync('src/components/dune/DuneMatchScreen.tsx', 'utf8')
   const harness7 = readFileSync('src/components/dune/DuneMultiSeatView.tsx', 'utf8')
   check('both drivers post both plays',
@@ -1861,12 +1869,16 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
       /forcesShown\.reduce/.test(screenS),
       /stormShow\.swept\.indexOf\(k\.sector\) >= stormShow\.step/.test(screenS)],
     [true, true, true])
-  check('the two-beat storm spins at the calculation and holds the number for the cards',
-    [/walkAfter: false, from: state\.storm, swept: \[\], killed: \[\], step: 0,/.test(screenS),
-      /kind: s\.walkAfter \? 'walk' : 'held'/.test(screenS),
+  // ONE CUE, THE REPORT. There used to be two, because the roll was published a
+  // beat before the move: the wheel spun off that carry and the marker walked
+  // off the report that followed. The beat is gone with the cards that needed
+  // it, so the storm arrives whole — spin, then walk, from one record.
+  check('the storm spins and then walks, from the report alone',
+    [/walkAfter: true, from: report\.from,/.test(screenS),
       /data-storm-spin=\{stormShow\.kind\}/.test(screenS),
-      /data-storm-walk=""/.test(screenS)],
-    [true, true, true, true])
+      /data-storm-walk=""/.test(screenS),
+      /state\.stormCarry/.test(screenS)],
+    [true, true, true, false])
 }
 
 // ── the blow performed ────────────────────────────────────────────────────

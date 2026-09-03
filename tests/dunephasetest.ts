@@ -758,7 +758,7 @@ check('a game is ten turns', TURN_LIMIT, 10)
         battleTraitorSeconds: 1, battleVoiceSeconds: 1,
         battlePrescienceSeconds: 1, battleAllocateSeconds: 1,
         battleCaptureSeconds: 1, mentatSeconds: MENTAT_READY_SECONDS,
-        nexusSeconds: 1, stormCardSeconds: 1, karamaGiveSeconds: 1,
+        nexusSeconds: 1, karamaGiveSeconds: 1,
       })
       return [(out.patch.mentat as { closesAt: number }).closesAt, out.reset]
     })(),
@@ -830,7 +830,7 @@ check('a game is ten turns', TURN_LIMIT, 10)
           battleTraitorSeconds: 1, battleVoiceSeconds: 1,
           battlePrescienceSeconds: 1, battleAllocateSeconds: 1,
           battleCaptureSeconds: 1, mentatSeconds: 1, nexusSeconds: NEXUS_SECONDS,
-          stormCardSeconds: 1, karamaGiveSeconds: 1,
+          karamaGiveSeconds: 1,
         })
       return [(out.patch.nexus as { closesAt: number }).closesAt, out.reset]
     })(),
@@ -843,7 +843,7 @@ check('a game is ten turns', TURN_LIMIT, 10)
 // calculation; Family Atomics answers it from the Wall's reach.
 {
   const { mayAtomics, STORM_CARD_SECONDS, WEATHER_CONTROL_MAX,
-    SHIELD_WALL_TERRITORY, advanceHold: hold4, resetDeadlines: reset4 } =
+    SHIELD_WALL_TERRITORY, advanceHold: hold4 } =
     await import('@/lib/dune/phaseAdvance')
   check('the constants are the card\'s', [WEATHER_CONTROL_MAX, STORM_CARD_SECONDS], [10, 45])
 
@@ -871,54 +871,58 @@ check('a game is ten turns', TURN_LIMIT, 10)
     false)
   check('...nobody anywhere is not', mayAtomics([] as never, 'atreides' as never, 'sector-18' as never), false)
 
-  check('the calculated storm holds the marker for its window',
-    hold4(at('Storm', { stormCarry: { turn: 4, roll: 3, closesAt: 400_000 } }), 1000),
-    { code: 'storm-window', until: 400_000 })
-  check('...and past the window the press may move it',
-    hold4(at('Storm', { stormCarry: { turn: 4, roll: 3, closesAt: 400_000 } }), 500_000), null)
-  check('the reset restamps the window',
-    (() => {
-      const out = reset4(at('Storm', {
-        stormCarry: { turn: 4, roll: 3, closesAt: 5 },
-      }), 1_000_000, {
-        setupSeconds: 1, charityMs: 1, wormSeconds: 1, bidSeconds: 1,
-        shipmentSeconds: 1, battlePickSeconds: 1, battlePlanSeconds: 1,
-        battleTraitorSeconds: 1, battleVoiceSeconds: 1,
-        battlePrescienceSeconds: 1, battleAllocateSeconds: 1,
-        battleCaptureSeconds: 1, mentatSeconds: 1, nexusSeconds: 1,
-        stormCardSeconds: STORM_CARD_SECONDS, karamaGiveSeconds: 1,
-      })
-      return [(out.patch.stormCarry as { closesAt: number }).closesAt, out.reset]
-    })(),
-    [1_000_000 + STORM_CARD_SECONDS * 1000, ['storm-window']])
+  // THE STORM HOLDS NOTHING NOW. It used to publish its roll and wait a beat
+  // so Weather Control could steer before the marker moved and Family Atomics
+  // could answer once the number was known. Both cards are played at the
+  // Mentat Pause — the moment immediately before the next storm, so the
+  // sequence is unchanged — and the window had nothing left to hold open.
+  check('nothing holds the storm, at any moment',
+    [hold4(at('Storm', {}), 1000), hold4(at('Storm', {}), 500_000)],
+    [null, null])
 
   // ── the server slice ────────────────────────────────────────────────────
   const fns = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
-  check('the storm publishes its calculation when a detonation could answer',
-    [/const anyAtomics = Number\(state\.turn\) >= 2/.test(fns),
-      /stormCalculated: roll/.test(fns),
-      /closesAt: now \+ STORM_CARD_SECONDS \* 1000,/.test(fns)],
-    [true, true, true])
-  check('...and the second beat moves it AS CALCULATED, against the Wall as it stands',
-    [/stormEntry\(state as never, carried\.roll\)/.test(fns),
-      /delete moved9\.stormCarry/.test(fns),
-      /\.\.\.\(carried\.steered \? \{ steered: carried\.steered \} : null\)/.test(fns)],
-    [true, true, true])
+  // ── ONE PRESS, AND BOTH CARDS AT THE PAUSE ────────────────────────────
+  // The storm used to publish its roll and wait a beat: Weather Control
+  // steered before the marker moved, Family Atomics answered once the number
+  // was known. Both are played at the Mentat Pause now, for the storm of the
+  // turn after — the moment immediately following — so the sequence is
+  // unchanged in practice and the beat had nothing left to hold.
+  check('nothing publishes a calculation and waits',
+    [/stormCalculated: roll/.test(fns), /stormCarry/.test(fns)],
+    [false, false])
+  check('...the storm rolls and moves in one press',
+    /const roll = await stormRollFor\(Number\(state\.turn\)\)/.test(fns), true)
+
   const wc = fns.slice(fns.indexOf("case 'WEATHER_CONTROL'"), fns.indexOf("case 'FAMILY_ATOMICS'"))
-  check('Weather Control writes the calculation and is discarded',
-    [/code: 'no-window'/.test(wc), /code: 'too-early'/.test(wc),
+  check('Weather Control is played at the Pause, for the storm after',
+    [/state\.phase !== 'Mentat Pause'/.test(wc),
+      /const wcFor = Number\(state\.turn\) \+ 1/.test(wc),
+      /stormSteer: \{ turn: wcFor, sectors, by: myFaction \}/.test(wc),
       /code: 'bad-sectors'/.test(wc),
-      /steered: myFaction,/.test(wc),
       /'weathercontrol',\s*[\r\n]+\s*\]/.test(wc)],
     [true, true, true, true, true])
+  // AND THE FREMEN ARE TOLD AGAIN. Their advanced rule promised them next
+  // turn's distance at the end of this turn's storm, and this card has just
+  // changed it — a promise quietly overtaken is worse than none.
+  check('...and it corrects the promise it just broke',
+    [/stormAhead: \{ turn: wcFor, roll: sectors \}/.test(wc),
+      /p_decks: \{ storm: \[\{ turn: wcFor, roll: sectors \}\] \}/.test(wc)],
+    [true, true])
+
   const fa = fns.slice(fns.indexOf("case 'FAMILY_ATOMICS'"), fns.indexOf("case 'TLEILAXU_GHOLA'"))
   check('Family Atomics kills the Wall\'s occupants, opens the three, and leaves the game',
-    [/code: 'already-detonated'/.test(fa), /code: 'not-in-reach'/.test(fa),
+    [/state\.phase !== 'Mentat Pause'/.test(fa),
+      /code: 'already-detonated'/.test(fa), /code: 'not-in-reach'/.test(fa),
       /shieldWall: 'destroyed',/.test(fa),
       /tanks: bankDead\(/.test(fa),
-      /removedFromPlay: \[/.test(fa),
-      /stormCarry: \{ \.\.\.fc, atomics: myFaction, closesAt: now \}/.test(fa)],
+      /removedFromPlay: \[/.test(fa)],
     [true, true, true, true, true, true])
+  // NO ROLL TO WEIGH IT AGAINST. The printed card is played after the storm
+  // is calculated; at the Pause it has not been. That is the one thing this
+  // departure actually changes about the decision, so it is asserted.
+  check('...and it is played blind, with no calculation in reach',
+    /stormCarry|carried\.roll/.test(fa), false)
   check('...and is NEVER discarded — removed is the economy\'s word for it',
     /treacheryDiscard/.test(fa), false)
   const bag9 = readFileSync('scripts/local-invariants.mjs', 'utf8')
