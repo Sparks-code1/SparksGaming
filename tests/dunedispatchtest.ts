@@ -932,4 +932,39 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
     /'client-bug':\s*'[^']{20,}'/.test(panel), true)
 }
 
+// ── nothing is declared in the switch that jumps over it ─────────────────
+// A SWITCH DOES NOT RUN THE STATEMENTS IT JUMPS PAST. A const or let sitting
+// at the switch's own level, between two case labels, is hoisted into the
+// block but initialised only if control flows THROUGH its line — and control
+// entering at a later case never does. The binding stays in its temporal dead
+// zone, and the first case to touch it dies on "Cannot access X before
+// initialization".
+//
+// THIS IS WHY IT IS A TEST AND NOT A NOTE. A helper was extracted for the
+// battle stops and parked between BATTLE_PICK and BATTLE_PLAN, where it read
+// as ordinary tidying. It typechecks. It bundles. It passes every unit suite,
+// because the suites call the pure rules and never enter the switch. It fails
+// only in a real match, at the moment somebody commits a battle plan — and it
+// failed there for two deploys.
+{
+  const ep = code('supabase/functions/dune-action/index.ts')
+  const lines = ep.split(/\r?\n/)
+  const first = lines.findIndex(l => /^    case '/.test(l))
+  const last = lines.reduce((n, l, i) => /^    default:/.test(l) ? i : n, -1)
+  check('the action switch was found', [first > 0, last > first], [true, true])
+
+  const stranded = lines
+    .map((l, i) => ({ l, i }))
+    .filter(({ i }) => i > first && i < last)
+    .filter(({ l }) => /^    (const|let|function|class) /.test(l))
+    .map(({ l, i }) => `${i + 1}: ${l.trim().slice(0, 48)}`)
+  check('nothing is declared between the case labels', stranded, [])
+
+  // AND THE ONE THAT CAUSED IT IS OUT. Named rather than left to the scan,
+  // so a future re-extraction of this exact helper is caught by name.
+  check('battleStops is declared before the switch, not inside it',
+    ep.indexOf('const battleStops = (of: string)') < lines.slice(0, first)
+      .join('\n').length, true)
+}
+
 process.exit(pass ? 0 : 1)

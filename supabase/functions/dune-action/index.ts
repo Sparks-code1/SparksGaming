@@ -1557,6 +1557,40 @@ Deno.serve(async req => {
    * that can act on it; the LOG keeps only the code, because every seat reads
    * that table and a stack trace is not theirs to read.
    */
+  /**
+   * THE TWO BATTLE SUPPRESSIONS, asked once and asked everywhere.
+   *
+   * "Counting double IN BATTLE AND IN TAKING LOSSES" is two halves of one
+   * sentence, and for a while only the first half was stopped: the plan was
+   * judged with the elites cancelled and then the losses were allocated with
+   * them counting double again, so a stopped Emperor paid a dial with fewer
+   * pieces than the rule leaves them. The same was true of the Fremen
+   * fighting at full strength without spice.
+   *
+   * A FUNCTION, so the next site that needs them cannot forget one. Both are
+   * (turn, phase)-scoped like every other stop, and both are asked about the
+   * seat whose pieces are being counted rather than about whoever is asking.
+   *
+   * OUTSIDE THE SWITCH, and that is not a tidiness question. It lived between
+   * two case labels, and a switch does not run the statements it jumps over:
+   * control entering at `case 'BATTLE_PLAN'` skipped the declaration, left
+   * the binding uninitialised, and every plan that reached judgePlan died on
+   * "Cannot access 'battleStops' before initialization" — a ReferenceError
+   * that typechecks, bundles, and only ever appears at the moment somebody
+   * commits a battle plan.
+   */
+  const battleStops = (of: string) => ({
+    // KARAMA-STOP: emperor advanced.forces
+    // KARAMA-STOP: fremen advanced.forces
+    elites: isSuppressed((state.suppressed ?? []) as never,
+      of as never, 'advanced.forces' as never,
+      Number(state.turn ?? 0), 'Battles' as never),
+    // KARAMA-STOP: fremen advanced.battle
+    freeFull: isSuppressed((state.suppressed ?? []) as never,
+      'fremen' as never, 'advanced.battle' as never,
+      Number(state.turn ?? 0), 'Battles' as never),
+  })
+
   const answer = await (async (): Promise<Response> => {
     try {
       return await (async (): Promise<Response> => {
@@ -3241,31 +3275,6 @@ Deno.serve(async req => {
       return json({ current, version: data[0].version })
     }
 
-    /**
-     * THE TWO BATTLE SUPPRESSIONS, asked once and asked everywhere.
-     *
-     * "Counting double IN BATTLE AND IN TAKING LOSSES" is two halves of one
-     * sentence, and for a while only the first half was stopped: the plan was
-     * judged with the elites cancelled and then the losses were allocated with
-     * them counting double again, so a stopped Emperor paid a dial with fewer
-     * pieces than the rule leaves them. The same was true of the Fremen
-     * fighting at full strength without spice.
-     *
-     * A FUNCTION, so the next site that needs them cannot forget one. Both are
-     * (turn, phase)-scoped like every other stop, and both are asked about the
-     * seat whose pieces are being counted rather than about whoever is asking.
-     */
-    const battleStops = (of: string) => ({
-      // KARAMA-STOP: emperor advanced.forces
-      // KARAMA-STOP: fremen advanced.forces
-      elites: isSuppressed((state.suppressed ?? []) as never,
-        of as never, 'advanced.forces' as never,
-        Number(state.turn ?? 0), 'Battles' as never),
-      // KARAMA-STOP: fremen advanced.battle
-      freeFull: isSuppressed((state.suppressed ?? []) as never,
-        'fremen' as never, 'advanced.battle' as never,
-        Number(state.turn ?? 0), 'Battles' as never),
-    })
 
     case 'BATTLE_PLAN': {
       const b = state.battles
