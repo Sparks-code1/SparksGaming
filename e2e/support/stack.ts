@@ -102,17 +102,31 @@ export async function serveFunctions(stack: Stack): Promise<ChildProcess> {
   proc.stdout?.on('data', d => { log += d })
   proc.stderr?.on('data', d => { log += d })
 
-  // AN ANSWER FROM OUR HANDLER, not merely an answer. The gateway is up long
-  // before the Deno runtime behind it, and it replies 502 in the meantime — so
-  // "the fetch did not throw" was being read as "functions are serving", and a
-  // slow container start turned into START_DUNE failing with a bare 502 that
-  // looks exactly like a broken import in the bundle. A POST with no body is
-  // refused by the function itself with 400, which nothing but the function
-  // can produce.
+  // AN ANSWER FROM OUR HANDLER, not merely an answer, and not merely a status
+  // that is not 502.
+  //
+  // THE GATEWAY IS UP LONG BEFORE THE RUNTIME BEHIND IT. Waiting for "the
+  // fetch did not throw" returned instantly on a 502 and the deal that
+  // followed failed with one; waiting for "not a 502" returned in ONE SECOND
+  // on the gateway's own 401, because an unauthenticated POST never reaches
+  // the function at all. Both looked exactly like a broken import in the
+  // bundle, which cost real time to rule out twice.
+  //
+  // WITH THE ANON KEY the request gets past the gateway, and an empty body is
+  // refused by our own first line with 400 — before it asks who is calling, so
+  // no session is needed. 400 on this route is a thing only the function can
+  // say.
   for (let i = 0; i < 60; i++) {
     try {
-      const res = await fetch(`${stack.api}/functions/v1/dune-action`, { method: 'POST' })
-      if (res.status !== 502 && res.status !== 503 && res.status !== 504) return proc
+      const res = await fetch(`${stack.api}/functions/v1/dune-action`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${stack.anon}`,
+        },
+        body: '{}',
+      })
+      if (res.status === 400) return proc
     } catch { /* not listening yet */ }
     await new Promise(r => setTimeout(r, 1000))
   }

@@ -4249,7 +4249,11 @@ Deno.serve(async req => {
         return json({ error: 'no such seat', code: 'not-seated' }, 409)
       }
       const sRef = String(action.ref ?? '')
-      if (!suppressibleRefs(sTarget as never).some((r) => r.ref === sRef)) {
+      // THE SAME LIST THE PANEL DREW FROM, mode and all — a basic game must
+      // refuse an advanced stop even if something managed to ask for one.
+      if (!suppressibleRefs(sTarget as never,
+        (state.mode === 'advanced' ? 'advanced' : 'basic') as never)
+        .some((r) => r.ref === sRef)) {
         return json({ error: 'that advantage cannot be stopped', code: 'not-stoppable' }, 409)
       }
       // WHICH PHASE IT IS SPENT ON. Silence means this one, which is what it

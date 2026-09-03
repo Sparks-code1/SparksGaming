@@ -1489,10 +1489,10 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 
   // ── two offers, one paragraph ──────────────────────────────────────────
   check('the menu offers the money and the kinds separately',
-    suppressibleRefs('spacing-guild').map(r => r.ref).sort(),
+    suppressibleRefs('spacing-guild', 'advanced').map(r => r.ref).sort(),
     ['abilities.shipment', 'abilities.shipment#kinds', 'advanced.shipment'])
   check('...and both point at the one paragraph a player reads',
-    suppressibleRefs('spacing-guild')
+    suppressibleRefs('spacing-guild', 'advanced')
       .filter(r => r.ref.startsWith('abilities.shipment'))
       .length, 2)
 

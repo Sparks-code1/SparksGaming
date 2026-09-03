@@ -182,11 +182,11 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
   check('the give-back clock is a minute', KARAMA_GIVE_SECONDS, 60)
 
   check('the stop menu offers what resolves, never a win condition',
-    [suppressibleRefs('fremen').some(r => r.ref === 'specialVictory'),
-      suppressibleRefs('spacing-guild').some(r => r.ref === 'specialVictory'),
-      suppressibleRefs('bene-gesserit').some(r => r.ref === 'abilities.beforeGame'),
-      suppressibleRefs('atreides').some(r => r.ref === 'abilities.bidding'),
-      suppressibleRefs('harkonnen').some(r => r.ref === 'abilities.treachery')],
+    [suppressibleRefs('fremen', 'advanced').some(r => r.ref === 'specialVictory'),
+      suppressibleRefs('spacing-guild', 'advanced').some(r => r.ref === 'specialVictory'),
+      suppressibleRefs('bene-gesserit', 'advanced').some(r => r.ref === 'abilities.beforeGame'),
+      suppressibleRefs('atreides', 'advanced').some(r => r.ref === 'abilities.bidding'),
+      suppressibleRefs('harkonnen', 'advanced').some(r => r.ref === 'abilities.treachery')],
     [false, false, false, true, true])
   // ── what a Karama can and cannot interrupt ──────────────────────────────
   // The menu used to be every rule with prose minus the win conditions, which
@@ -197,33 +197,33 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
   // NOTHING FROM THE START OF THE GAME. It has already happened, and in the
   // Harkonnen case the card says so itself.
   check('what a faction was dealt at the start cannot be stopped',
-    [suppressibleRefs('harkonnen').some(r => r.ref === 'abilities.traitors'),
-      suppressibleRefs('bene-gesserit').some(r => r.ref === 'advanced.beforeGame')],
+    [suppressibleRefs('harkonnen', 'advanced').some(r => r.ref === 'abilities.traitors'),
+      suppressibleRefs('bene-gesserit', 'advanced').some(r => r.ref === 'advanced.beforeGame')],
     [false, false])
 
   // NOR A STANDING PROPERTY OF A HAND. Holding eight cards is not a moment.
   // What CAN be stopped is the extra card, which happens during the bidding.
   check('a hand size cannot be stopped, but the extra card can',
-    suppressibleRefs('harkonnen').find(r => r.ref === 'abilities.treachery')?.text,
+    suppressibleRefs('harkonnen', 'advanced').find(r => r.ref === 'abilities.treachery')?.text,
     'The extra Treachery Card they draw whenever they buy one.')
 
   // NOR ANOTHER FACTION'S OWN KARAMA — a card cannot cancel the thing it is.
   check('no Karama use is offered, for any faction',
-    FACTION_IDS.flatMap(id => suppressibleRefs(id))
+    FACTION_IDS.flatMap(id => suppressibleRefs(id, 'advanced'))
       .filter(r => r.ref === 'advanced.karama').length,
     0)
   check('...and the Bene Gesserit worthless-as-Karama goes with them',
-    suppressibleRefs('bene-gesserit').some(r => r.ref === 'advanced.treachery'), false)
+    suppressibleRefs('bene-gesserit', 'advanced').some(r => r.ref === 'advanced.treachery'), false)
 
   // WHAT IS OFFERED IS SHORT, and its own line rather than the rules card.
   // The card stays whole — it is what a player reads about themselves — and a
   // paragraph in a stop menu is a paragraph nobody reads.
   check('every offer is one short line',
-    FACTION_IDS.flatMap(id => suppressibleRefs(id))
+    FACTION_IDS.flatMap(id => suppressibleRefs(id, 'advanced'))
       .filter(r => r.text.length > 110).map(r => r.ref),
     [])
   check('...and no offer is just the rules card paragraph',
-    FACTION_IDS.flatMap(id => suppressibleRefs(id)
+    FACTION_IDS.flatMap(id => suppressibleRefs(id, 'advanced')
       .filter(r => r.text === factionRuleText(FACTIONS[id]!, r.ref))
       .map(r => `${id}.${r.ref}`)),
     [])
@@ -275,7 +275,7 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
     // AND THE MENU IS EXACTLY THE ENFORCED SET — an unenforced stop takes the
     // card, discards it publicly, announces itself, and changes nothing.
     check('the menu offers exactly what is enforced',
-      FACTION_IDS.flatMap(id => suppressibleRefs(id).map(r => `${id}|${r.ref}`)).sort(),
+      FACTION_IDS.flatMap(id => suppressibleRefs(id, 'advanced').map(r => `${id}|${r.ref}`)).sort(),
       [...declared].sort())
   }
 
@@ -354,7 +354,7 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
       ['Bidding', 'Revival'].map(ph =>
         mayStopIn(ph as never, 'Shipment and Movement')), [true, true])
     check('...and their menu still offers it',
-      suppressibleRefs('spacing-guild').some(r => r.ref === 'advanced.shipment'), true)
+      suppressibleRefs('spacing-guild', 'advanced').some(r => r.ref === 'advanced.shipment'), true)
 
     // THE FREMEN STORM IS ONLY HALF REACHED BY THIS, and the suite says so
     // rather than implying otherwise: their foreknowledge is delivered at the
@@ -419,6 +419,34 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
       [true, true])
   }
 
+  // ── the menu is the game being played ──────────────────────────────────
+  // HALF THESE ADVANTAGES ARE NOT IN A BASIC GAME. Sardaukar counting double,
+  // the Fremen storm foreknowledge, the Guild going out of turn — all live on
+  // the advanced side of the sheet and do nothing whatever without it. The
+  // menu offered them anyway, so a basic game could sell a stop against
+  // something that was never going to happen: the same broken promise as an
+  // unenforced stop, and the same card spent to find out.
+  {
+    const basic = FACTION_IDS.flatMap(id => suppressibleRefs(id, 'basic').map(r => r.ref))
+    const advanced = FACTION_IDS.flatMap(id => suppressibleRefs(id, 'advanced').map(r => r.ref))
+
+    check('a basic game offers no advanced rule',
+      basic.filter(r => r.startsWith('advanced.')), [])
+    check('...and the advanced game offers several',
+      advanced.filter(r => r.startsWith('advanced.')).length > 0, true)
+
+    // THE BASIC LIST IS THE ADVANCED ONE MINUS THE ADVANCED RULES, not a
+    // separately curated thing that could drift.
+    check('everything a basic game offers, an advanced one offers too',
+      basic.filter(r => !advanced.includes(r)), [])
+    check('...and what it drops is exactly the advanced entries',
+      advanced.filter(r => !basic.includes(r)).sort(),
+      advanced.filter(r => r.startsWith('advanced.')).sort())
+
+    // AND THE ABILITIES SURVIVE, or a basic game would offer nothing at all.
+    check('the basic game still has stops worth buying', basic.length > 0, true)
+  }
+
   // COUNTED OUT, not recomputed. A check that derived the expected number the
   // same way the code does would agree with any change, including a wrong one;
   // these are literals so adding or dropping an offer is a decision somebody
@@ -440,13 +468,13 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
     new Set(FACTION_IDS.flatMap(id =>
       Object.keys(FACTIONS[id]!.karamaStops).map(r => `${id}|${r.split('#')[0]}`))).size, 25)
   check('...and every one of them is stoppable in the first place',
-    FACTION_IDS.flatMap(id => suppressibleRefs(id)
+    FACTION_IDS.flatMap(id => suppressibleRefs(id, 'advanced')
       .filter(r => !canKaramaStop(FACTIONS[id]!, r.ref))
       .map(r => `${id}.${r.ref}`)),
     [])
 
   check('...and every offered ref carries its own rules text',
-    suppressibleRefs('atreides').every(r => r.text.length > 0), true)
+    suppressibleRefs('atreides', 'advanced').every(r => r.text.length > 0), true)
 
   const sup = [{ faction: 'atreides', ref: 'abilities.bidding', by: 'emperor', turn: 4, phase: 'Bidding' }]
   check('a stop bites exactly its (faction, ref, turn, phase)',
@@ -500,11 +528,16 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
       /shuffleWithSeed\(\s*[\r\n]+\s*Number\(match\.rng_seed\) \+ match\.action_seq, \[\.\.\.\(victim\.cards \?\? \[\]\)\]\)/.test(kc)],
     [true, true, true, true, true, true, true, true, true, true])
   const ks = fn.slice(fn.indexOf("case 'KARAMA_STOP'"), fn.indexOf("case 'KARAMA_GIVE_BACK'"))
+  // BY THE SHARED MENU, AND FOR THIS GAME. The menu takes the mode now, so a
+  // basic match refuses an advanced stop even if something contrives to ask
+  // for one — the panel would never offer it, and the panel is not the guard.
   check('the stop validates by the shared menu and publishes by name',
-    [/suppressibleRefs\(sTarget as never\)\.some\(\(r\) => r\.ref === sRef\)/.test(ks),
+    [/suppressibleRefs\(sTarget as never,/.test(ks),
+      /\.some\(\(r\) => r\.ref === sRef\)/.test(ks),
+      /state\.mode === 'advanced' \? 'advanced' : 'basic'/.test(ks),
       /code: 'not-stoppable'/.test(ks),
       /faction: sTarget, ref: sRef, by: myFaction,/.test(ks)],
-    [true, true, true])
+    [true, true, true, true, true])
   const kg = fn.slice(fn.indexOf("case 'KARAMA_GIVE_BACK'"), fn.indexOf("case 'WEATHER_CONTROL'"))
   check('the give-back is the debtor\'s to choose and anyone\'s to push past the clock',
     [/code: 'not-your-debt'/.test(kg),

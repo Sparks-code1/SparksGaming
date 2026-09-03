@@ -394,6 +394,41 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
   }, [row?.lastAuction?.at])
 
   /**
+   * A Truthtrance answer, into the record.
+   *
+   * IT IS PUBLIC BY RULE — the question is asked in the open and the answer
+   * is binding on the whole table — and the banner it arrives in is
+   * dismissable and then gone. The chat is where this game keeps what
+   * happened, so an answer that only ever lived in a banner was a fact the
+   * table could not look up ten minutes later.
+   *
+   * ANNOUNCE, NOT SAY: every seat derives the same line from the same public
+   * row, so nobody is being told anything the others were not.
+   *
+   * KEYED ON THE COUNT, which only grows. The row is redelivered on every
+   * change, and an answer is not unique — the same seat can be asked the same
+   * question twice and answer the same way.
+   */
+  const toldTruth = useRef<number | null>(null)
+  useEffect(() => {
+    const all = row?.truthtrances ?? []
+    if (all.length === 0) { toldTruth.current = all.length; return }
+    // A LATE JOINER SAYS NOTHING. Arriving to a row that already holds five
+    // answers must not replay all five into the chat as though they had just
+    // been given; the first read only marks the place.
+    if (toldTruth.current === null) { toldTruth.current = all.length; return }
+    if (all.length <= toldTruth.current) return
+    const fresh = all.slice(toldTruth.current)
+    toldTruth.current = all.length
+    for (const tt of fresh) {
+      announce(`Truthtrance — ${nameOf(tt.asker)} asked the ${nameOf(tt.target)}: `
+        + `“${tt.asked}” — ${tt.answer ? 'YES' : 'NO'}`
+        + ` (turn ${tt.asOf.turn}, ${tt.asOf.phase}).`)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [row?.truthtrances?.length])
+
+  /**
    * Everybody else at the table, for addressing a line to one of them.
    *
    * BY SEAT ID, off the roster — see the read above for why not off the public

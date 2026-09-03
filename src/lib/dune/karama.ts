@@ -313,7 +313,7 @@ export function isSuppressed(
  * stoppable without touching this file.
  */
 export function suppressibleRefs(
-  faction: FactionId,
+  faction: FactionId, mode: GameMode,
 ): { ref: FactionRuleRef; text: string }[] {
   const f = FACTIONS[faction]
   if (!f) return []
@@ -334,8 +334,21 @@ export function suppressibleRefs(
   // keeps their card and knows where they stand; a player who is told it
   // worked has been lied to and paid for it. So an entry with no check at
   // its firing site is not offered at all until the check exists.
+  // AND ONLY WHAT IS IN THIS GAME. Half of these advantages exist on the
+  // advanced side of the sheet and do nothing whatever in a basic game —
+  // Sardaukar counting double, the Fremen storm foreknowledge, the Guild
+  // going out of turn. Offering them in a basic game sells a stop against
+  // something that was never going to happen, which is the same broken
+  // promise as an unenforced one and costs the same card to learn.
+  //
+  // MODE IS REQUIRED, not defaulted. A default would let a caller ask what a
+  // Karama may stop without saying which game it is asking about, and get
+  // the advanced answer quietly — see resolveStorm, refused a default for
+  // the same reason.
+  const inPlay = (ref: string) => mode === 'advanced' || !ref.startsWith('advanced.')
   return Object.entries(f.karamaStops).flatMap(([ref, stop]) =>
-    stop && stop.enforced && stop.stops && canKaramaStop(f, ref as FactionRuleRef)
+    stop && stop.enforced && stop.stops && inPlay(ref)
+      && canKaramaStop(f, ref as FactionRuleRef)
       ? [{ ref: ref as FactionRuleRef, text: stop.stops }]
       : [])
 }

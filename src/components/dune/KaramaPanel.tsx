@@ -112,7 +112,7 @@ export function KaramaPanel({
     }
   }
 
-  const stopChoices = stopTarget ? suppressibleRefs(stopTarget) : []
+  const stopChoices = stopTarget ? suppressibleRefs(stopTarget, mode) : []
   /**
    * WHEN the stop bites. Defaults to now, which is what a Karama always
    * meant — the picker exists for the advantages that fire in the same

@@ -1489,10 +1489,11 @@ function mayStopIn(current, named) {
 function isSuppressed(list, faction, ref, turn, phase) {
   return (list ?? []).some((s) => s.faction === faction && s.ref === ref && s.turn === turn && s.phase === phase);
 }
-function suppressibleRefs(faction) {
+function suppressibleRefs(faction, mode) {
   const f = FACTIONS[faction];
   if (!f) return [];
-  return Object.entries(f.karamaStops).flatMap(([ref, stop]) => stop && stop.enforced && stop.stops && canKaramaStop(f, ref) ? [{ ref, text: stop.stops }] : []);
+  const inPlay = (ref) => mode === "advanced" || !ref.startsWith("advanced.");
+  return Object.entries(f.karamaStops).flatMap(([ref, stop]) => stop && stop.enforced && stop.stops && inPlay(ref) && canKaramaStop(f, ref) ? [{ ref, text: stop.stops }] : []);
 }
 function isKaramaCardId(faction, mode, cardId) {
   const card = TREACHERY_CARDS.find((c) => c.id === cardId);

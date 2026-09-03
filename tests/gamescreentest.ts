@@ -1977,4 +1977,49 @@ const draw = (over: Partial<DuneGameScreenProps> = {}) =>
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
+// ── a leader disc opens, and the truth reaches the record ───────────────
+{
+  const panelSrc = readFileSync('src/components/dune/BattlePanel.tsx', 'utf8')
+
+  // THE NAME IS SET AROUND A CURVE inside a 64px token — legible as a piece
+  // you already know, not as a label you are reading for the first time. The
+  // treachery cards have had a zoom for exactly this reason.
+  check('every leader offered has a way to be looked at closely',
+    [/data-leader-zoom=\{l\.name\}/.test(panelSrc),
+      /data-leader-zoom=\{x\.leader\.name\}/.test(panelSrc)],
+    [true, true])
+
+  // ITS OWN CONTROL, not the disc. The disc picks the leader for the plan,
+  // and one press cannot mean both "field this one" and "let me read it".
+  check('...on a control of its own, beside the disc that fields it',
+    /aria-label=\{`Look closely at \$\{l\.name\}`\}/.test(panelSrc), true)
+
+  check('...and it opens the same furniture the cards open in',
+    /<DraggableResizable title=\{zoomLeader\.leader\.name\}/.test(panelSrc), true)
+  check('...with the name in plain type, which is the point',
+    /<b style=\{\{ fontSize: 16 \}\}>\{zoomLeader\.leader\.name\}<\/b>/.test(panelSrc), true)
+
+  // ── THE TRUTHTRANCE ANSWER IS PUBLIC and belongs in the record ─────────
+  // The banner is dismissable and then gone; the chat is where this game
+  // keeps what happened, so an answer that lived only in a banner was a fact
+  // nobody could look up ten minutes later.
+  const matchSrc = readFileSync('src/components/dune/DuneMatchScreen.tsx', 'utf8')
+  check('a Truthtrance answer is announced to the table',
+    /announce\(`Truthtrance — /.test(matchSrc), true)
+  check('...to everyone, not to one seat',
+    (() => {
+      const at = matchSrc.indexOf('const toldTruth')
+      const near = matchSrc.slice(at, at + 1200)
+      return [near.includes('announce('), near.includes('say(')]
+    })(), [true, false])
+
+  // A LATE JOINER SAYS NOTHING. The row is redelivered whole, so arriving to
+  // five answers already given must not replay all five as if they were new.
+  check('...and the first read only marks the place',
+    /if \(toldTruth\.current === null\) \{ toldTruth\.current = all\.length; return \}/
+      .test(matchSrc), true)
+  check('...keyed on a count that only grows, never on the answers',
+    /\}, \[row\?\.truthtrances\?\.length\]\)/.test(matchSrc), true)
+}
+
 process.exit(pass ? 0 : 1)

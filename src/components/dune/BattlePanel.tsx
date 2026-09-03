@@ -260,6 +260,14 @@ function PlanLine({ faction, plan }: {
   )
 }
 
+/** The little magnifier beside a disc. Small, quiet, and never the thing
+ *  you press by accident when you meant to field the leader. */
+const zoomPip: React.CSSProperties = {
+  background: 'none', border: 'none', color: SAND, opacity: 0.65,
+  cursor: 'pointer', font: '13px Georgia, serif', padding: '0 4px',
+  alignSelf: 'center',
+}
+
 export function BattlePanel({
   battles, forces, storm, tanks, seat, hand, traitors, now, busy,
   traitorProxy = null, beatEligible = 2,
@@ -272,6 +280,16 @@ export function BattlePanel({
   const [kh, setKh] = useState(false)
   const [voiceMode, setVoiceMode] = useState<'play' | 'not-play'>('play')
   const [voiceTarget, setVoiceTarget] = useState<VoiceTarget | null>(null)
+  /**
+   * A leader held open, big enough to read.
+   *
+   * The discs are 64px on the plan form and the name is set around a curve
+   * inside them — legible as a token you already know, not as a label you
+   * are reading for the first time. The treachery cards have had a zoom for
+   * exactly this reason; the pieces you pick a leader from had not.
+   */
+  const [zoomLeader, setZoomLeader] = useState<
+    { leader: Leader; faction: FactionId } | null>(null)
   const [dial, setDial] = useState(0)
   const [half, setHalf] = useState(false)
   const [spiceSpent, setSpiceSpent] = useState(0)
@@ -1156,6 +1174,15 @@ export function BattlePanel({
             </svg>
           </button>
         ))}
+        {/* ── OPEN IT, rather than squint at it. A separate control, because
+            the disc itself picks the leader for the plan and one press
+            cannot mean both "field this one" and "let me read it". */}
+        {usable.map(l => (
+          <button key={`zoom-${l.name}`} type="button" data-leader-zoom={l.name}
+            aria-label={`Look closely at ${l.name}`}
+            onClick={() => setZoomLeader({ leader: l, faction: seat! })}
+            style={zoomPip}>⌕</button>
+        ))}
         {borrowedObjs.map(x => (
           <button key={x.leader.name} type="button" data-plan-borrowed={x.leader.name}
             aria-pressed={leader === x.leader.name}
@@ -1170,6 +1197,13 @@ export function BattlePanel({
               <LeaderDisc leader={x.leader} faction={x.from} r={32} />
             </svg>
           </button>
+        ))}
+        {borrowedObjs.map(x => (
+          <button key={`zoom-${x.leader.name}`} type="button"
+            data-leader-zoom={x.leader.name}
+            aria-label={`Look closely at ${x.leader.name}`}
+            onClick={() => setZoomLeader({ leader: x.leader, faction: x.from })}
+            style={zoomPip}>⌕</button>
         ))}
         {heroHeld && (
           <button type="button" data-plan-hero=""
@@ -1246,6 +1280,26 @@ export function BattlePanel({
       )}
 
 
+      {zoomLeader && (
+        <DraggableResizable title={zoomLeader.leader.name}
+          accentColor={FACTION_LOOK[zoomLeader.faction].colour}
+          width={280} storageKey={`dune-leader-${seat}`}
+          onClose={() => setZoomLeader(null)}>
+          <div data-layer="leader-zoom" style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+          }}>
+            <svg viewBox="-70 -70 140 140" width="240" height="240">
+              <LeaderDisc leader={zoomLeader.leader}
+                faction={zoomLeader.faction} r={66} />
+            </svg>
+            {/* THE NAME IN PLAIN TYPE TOO. The disc sets it around a curve,
+                which is the piece being itself; this is the part you came
+                here to read. */}
+            <b style={{ fontSize: 16 }}>{zoomLeader.leader.name}</b>
+            <span style={{ opacity: 0.75 }}>strength {zoomLeader.leader.strength}</span>
+          </div>
+        </DraggableResizable>
+      )}
       {zoomCard && (
         <DraggableResizable title={zoomCard.name}
           accentColor={seat ? FACTION_LOOK[seat].colour : SAND}
