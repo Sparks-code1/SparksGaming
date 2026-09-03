@@ -14,7 +14,7 @@
 import { test, expect } from '@playwright/test'
 import {
   soloGame, newCampaign, openSlots, playSetup, startGame, onBoard,
-  whoseTurn, passTurn, territoryIdNamed,
+  whoseTurn, passTurn, territoryIdNamed, playRounds, gameOver,
 } from './support/risk'
 
 /**
@@ -202,4 +202,53 @@ test('the computer takes a whole turn and hands control back', async ({ page }) 
   // pressable is the same soft-lock one step later.
   await expect(page.locator('button', { hasText: /✓ Confirm|Begin Attack|End Attack|End Turn/ }).first(),
     'control came back with no turn controls').toBeVisible()
+})
+
+test('several turns run through without the drivers wedging', async ({ page }) => {
+  // ONE TURN REACHES NONE OF THE INTERRUPTS. No event card, no capture that
+  // opens a modal, no elimination — and those are exactly where the AI driver
+  // is least proven. It auto-answers its own choice modals and pauses for
+  // human-owned ones, and a state it has no branch for is a wedge. Which of
+  // them are covered is not a thing to reason about from the code; it is a
+  // thing to walk into.
+  //
+  // THREE SEATS, TWO OF THEM COMPUTERS, because two bots produce battles
+  // between themselves as well as against the human — more captures, more
+  // cards, more chances of an elimination inside the run.
+  //
+  // UNCAUGHT ERRORS ARE FAILURES HERE. An unhandled interrupt is at least as
+  // likely to throw as to hang, and a throw inside a React effect leaves the
+  // board looking fine while the driver is dead. Nothing else in this file
+  // watches for that.
+  const crashes: string[] = []
+  page.on('pageerror', e => crashes.push(String(e)))
+
+  await newCampaign(page, { others: ['Bot One', 'Bot Two'] })
+  await startGame(page, { players: 3, ai: [1, 2] })
+  await playSetup(page, 40, 'Harness')
+  expect(await onBoard(page), 'never reached a board').toBe(true)
+
+  const held = await playRounds(page, { you: 'Harness', turns: 9 })
+
+  // SAID OUT LOUD, because the assertions below are SKIPPED when the game ends
+  // early and a silently weakened test is the thing this file keeps catching
+  // itself doing. A passing run should say how far it actually got.
+  console.log(`turns held: ${held.join(' → ')}`
+    + (await gameOver(page) ? ' (game ended inside the run)' : ''))
+
+  // EVERY SEAT TOOK A TURN. Nine hand-overs across three players is three
+  // rounds; a driver that quietly skipped a computer would show up as a name
+  // missing from the log rather than as a hang.
+  //
+  // Unless the game ended early, which is a legitimate finish and not a fault
+  // — a three-seat game can be over inside three rounds.
+  if (!(await gameOver(page))) {
+    expect(held.length, `only ${held.length} of 9 turns were played`).toBe(9)
+    for (const who of ['Harness', 'Bot One', 'Bot Two']) {
+      expect(held.some(h => h.toLowerCase() === who.toLowerCase()),
+        `${who} never held a turn across ${held.join(' → ')}`).toBe(true)
+    }
+  }
+
+  expect(crashes, `the page threw during play:\n${crashes.join('\n')}`).toEqual([])
 })

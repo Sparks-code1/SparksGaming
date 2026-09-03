@@ -409,28 +409,59 @@ export async function toPlace(page: Page): Promise<number> {
 }
 
 /**
+ * A territory this player can still draft onto.
+ *
+ * ASKED OF THE BOARD, not remembered. Over several turns the human loses ground
+ * — in a two-seat game against a computer that conquers, they can lose the
+ * territory they started on — and a helper that kept clicking their opening HQ
+ * would place nothing and blame the coordinate maths.
+ *
+ * The test for "this one works" is the draft counter going down, which is the
+ * board's own answer, so nothing here needs to know who owns what. The hint is
+ * tried first because it is nearly always still right; the sweep behind it is
+ * the whole map in order and costs a few seconds on the turn after a loss.
+ */
+async function draftableTerritory(
+  page: Page, hint?: string,
+): Promise<{ id: string; owed: number }> {
+  const owed = await toPlace(page)
+  if (owed === 0) return { id: hint ?? '', owed }
+  const tries = [...(hint ? [hint] : []), ...TERRITORY_DEFINITIONS.map(t => t.id)]
+  for (const id of tries) {
+    await clickTerritory(page, id)
+    const now = await toPlace(page)
+    if (now < owed) return { id, owed: now }
+  }
+  throw new Error('no territory on the map accepted a reinforcement.'
+    + ' Either this seat owns nothing, or the map point maths is wrong.'
+    + `\n${await where(page)}`)
+}
+
+/**
  * Play a human turn with no ambition: place the draft, attack nobody, move
  * nothing, hand over.
  *
- * IT EXISTS TO GET TO THE NEXT SEAT. What this run is about is the turn AFTER
- * this one — nothing here asserts a rule, and choosing targets would make the
- * spec depend on a board the dice laid out.
+ * IT EXISTS TO GET TO THE NEXT SEAT. What these specs are about is the turns
+ * AFTER this one — nothing here asserts a rule, and choosing targets would make
+ * a spec depend on a board the dice laid out.
  *
- * @param home a territory this player owns. On turn one that is their HQ and
- *   the only one they have, which is why the walk records it.
+ * @param hint a territory this player owned last time. Optional, and only a
+ *   hint: the board is asked either way.
+ * @returns the territory that took the troops, to hand back as the next hint.
  */
-export async function passTurn(page: Page, home: string): Promise<void> {
-  let owed = await toPlace(page)
-  const first = owed
-  for (let i = 0; i < first + 4 && owed > 0; i++) {
-    await clickTerritory(page, home)
+export async function passTurn(page: Page, hint?: string): Promise<string> {
+  const first = await draftableTerritory(page, hint)
+  let owed = first.owed
+  for (let i = 0; i < 40 && owed > 0; i++) {
+    await clickTerritory(page, first.id)
     const now = await toPlace(page)
-    if (now === owed) {
-      throw new Error(`clicking ${home} placed nothing — ${owed} still owed.`
-        + ' The map point is landing somewhere the board does not recognise.')
-    }
-    owed = now
+    // The territory that worked a moment ago can stop working — a scar, a
+    // stack limit — so fall back to asking the board again rather than
+    // looping on a square that has gone quiet.
+    if (now === owed) { owed = (await draftableTerritory(page, undefined)).owed }
+    else owed = now
   }
+
   // ONE BUTTON, FOUR LABELS. The phase-advance control is a single button whose
   // text is written by the phase it is in: "Begin Attack →" while troops are
   // owed, "✓ Confirm" once they are all down, then "End Attack →", then
@@ -441,11 +472,11 @@ export async function passTurn(page: Page, home: string): Promise<void> {
   // So: press whatever it currently says, until the seat changes hands. That
   // also survives an interstitial nobody here has met yet.
   const me = await whoseTurn(page)
-  for (let i = 0; i < 6; i++) {
-    if ((await whoseTurn(page)) !== me) return
+  for (let i = 0; i < 8; i++) {
+    if ((await whoseTurn(page)) !== me) return first.id
     await press(page, /✓ Confirm|Begin Attack|End Attack|End Turn/)
   }
-  throw new Error(`${me} could not hand the turn on in six presses.`
+  throw new Error(`${me} could not hand the turn on in eight presses.`
     + `\n${await where(page)}`)
 }
 
@@ -476,4 +507,76 @@ export async function holdings(
     }
   }
   return out
+}
+
+/** Turn the AI's pacing down to its fast setting, if the button is showing. */
+export async function fastForward(page: Page): Promise<void> {
+  const ff = page.locator('button', { hasText: /⏩ Fast Forward/ })
+  if (await ff.count()) await ff.first().click().catch(() => {})
+}
+
+/** Has the game finished — a winner, or the board frozen behind an end screen? */
+export async function gameOver(page: Page): Promise<boolean> {
+  const said = await page.locator('body').innerText()
+  return /WINS|VICTORY|Campaign Victory|GAME OVER/i.test(said)
+}
+
+/**
+ * Play the game forward for a number of turn hand-overs.
+ *
+ * WHY SEVERAL AND NOT ONE. A single turn reaches none of the interrupts — no
+ * event card, no capture that opens a modal, no elimination — and those are
+ * exactly where the AI driver is least proven: it auto-answers its own choice
+ * modals, pauses for human-owned ones, and a state with no branch is a wedge.
+ * Arguing about which of them are handled gets nowhere. Playing several turns
+ * walks into them.
+ *
+ * IT ANSWERS FOR THE HUMAN AND NOBODY ELSE. Every computer seat has to run its
+ * own turn, or the loop notices the seat has not changed and fails.
+ *
+ * @returns a log of who held each turn, so a caller can say how far it got.
+ */
+export async function playRounds(page: Page, opts: {
+  you: string
+  /** How many hand-overs to sit through. */
+  turns?: number
+  /** Seconds to allow one seat before calling it stalled. */
+  patience?: number
+}): Promise<string[]> {
+  const turns = opts.turns ?? 6
+  const patience = (opts.patience ?? 120) * 1000
+  const seen: string[] = []
+  let hint: string | undefined
+
+  for (let i = 0; i < turns; i++) {
+    if (await gameOver(page)) return seen
+    const who = await whoseTurn(page)
+    if (!who) throw new Error(`nobody holds the turn.\n${await where(page)}`)
+    seen.push(who)
+
+    if (who.toLowerCase() === opts.you.toLowerCase()) {
+      hint = await passTurn(page, hint)
+      continue
+    }
+
+    // A COMPUTER SEAT. Fast-forward its pacing — which is also a probe: turn
+    // boundaries crossed by shrunken timers is the exact race that once let a
+    // stale AI step end a human's reinforce phase under him.
+    await fastForward(page)
+    const until = Date.now() + patience
+    for (;;) {
+      if (await gameOver(page)) return seen
+      if (await page.locator('button', { hasText: /^Nudge$/ }).count()) {
+        throw new Error(`${who} stalled — the board gave up and offered a Nudge`
+          + ` on turn ${i + 1}.\n${await where(page)}`)
+      }
+      if ((await whoseTurn(page)) !== who) break
+      if (Date.now() > until) {
+        throw new Error(`${who} held the turn for ${patience / 1000}s`
+          + ` without finishing it.\n${await where(page)}`)
+      }
+      await page.waitForTimeout(500)
+    }
+  }
+  return seen
 }

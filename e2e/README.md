@@ -235,3 +235,41 @@ with `the computer took its turn and never gave control back — the AI turn
 driver stalled mid-turn`, and `Received: "stalled — the board gave up and
 offered a Nudge"`. Three clean runs before that to check it is not flaky:
 ~30s each.
+
+### Several consecutive turns
+
+One turn reaches none of the interrupts — no event card, no capture that opens a
+modal, no elimination — and those are exactly where the AI driver is least
+proven: it auto-answers its own choice modals, pauses for human-owned ones, and
+a state it has no branch for is a wedge. Which of them are covered is not a
+thing to reason about from the code. It is a thing to walk into.
+
+Three seats, two of them computers, nine hand-overs. Two bots produce battles
+between themselves as well as against the human — more captures, more cards,
+more chance of an elimination inside the run. ~45s with fast-forward on, which
+is also a probe in its own right: turn boundaries crossed by shrunken timers is
+the exact race that once let a stale AI step end a human's reinforce phase
+under him.
+
+`playRounds` answers for the named human and nobody else, fails on a Nudge
+naming the seat and the turn, and fails if any seat holds the turn past its
+patience. `passTurn` asks the board which ground it can still draft onto rather
+than remembering an opening HQ — over several turns the human loses territory,
+and in a two-seat game can lose the one they started on.
+
+**Uncaught page errors fail the run.** An unhandled interrupt is at least as
+likely to throw as to hang, and a throw inside a React effect leaves the board
+looking fine while the driver is dead. Nothing else in this file watches for
+that.
+
+A passing run prints the rotation it achieved — `turns held: Harness → Bot One →
+Bot Two → …` — because the per-seat assertions are SKIPPED when the game ends
+early, and a silently weakened test is the thing this file keeps catching itself
+doing.
+
+Proven three ways in real source. A wedge from turn two: the single-turn spec
+**passes** and this one fails with `Bot Two stalled — the board gave up and
+offered a Nudge on turn 5`, which is the whole reason it exists. A throw that
+does not wedge: caught by the page-error assertion, which the stall check would
+never have reached. And the clean run above, in strict three-seat rotation with
+no seat skipped.
