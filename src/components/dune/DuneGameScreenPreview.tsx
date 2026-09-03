@@ -23,6 +23,7 @@ import {
 import type { SetupDecision, SetupWindow } from '@/lib/dune/setup'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
 import { DuneGameScreen } from './DuneGameScreen'
+import { VictoryScreen } from './VictoryScreen'
 import type { ChatMessage } from './ChatPanel'
 import type { BiddingPanelProps } from './BiddingPanel'
 
@@ -272,6 +273,17 @@ export default function DuneGameScreenPreview() {
   // at ?dune-game&nexus=allied the pair STANDS, so the strip's CARDS panel
   // holds the exchanged alliance card and the bar offers the break instead,
   // with an incoming offer whose Accept waits on breaking first.
+  /**
+   * The ceremony, at ?dune-game&win — and ?dune-game&win=shared for a pair.
+   *
+   * A WIN IS THE ONE SCREEN NOBODY CAN STAGE FOR THEMSELVES. It needs ten
+   * turns of a real match to reach, so before this it had only ever been
+   * looked at as code. The Harkonnen variant is the point of the second
+   * form: their colour is the one that had to be lifted to be read at all.
+   */
+  const winning = q.has('win')
+  const sharedWin = q.get('win') === 'shared'
+
   const nexusing = q.has('nexus')
   const nexusAllied = q.get('nexus') === 'allied'
   const [nexusAt] = useState(() => Date.now())
@@ -566,6 +578,21 @@ export default function DuneGameScreenPreview() {
             borderRadius: 4, padding: '5px 11px', cursor: 'pointer',
             font: '12px Georgia, "Times New Roman", serif',
           }}>run an auction</button>
+      )}
+      {winning && (
+        <VictoryScreen
+          winner={{
+            factions: sharedWin ? ['harkonnen', 'emperor'] : ['harkonnen'],
+            reason: sharedWin ? 'most-spice' : 'strongholds', turn: 7,
+          }}
+          spice={{
+            atreides: 4, fremen: 11, harkonnen: 19,
+            emperor: 7, 'spacing-guild': 2, 'bene-gesserit': 6,
+          }}
+          players={STATE.players as never}
+          seat={seat}
+          onClose={() => { window.location.search = '?dune-game' }}
+        />
       )}
     </>
   )

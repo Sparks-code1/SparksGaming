@@ -73,7 +73,7 @@ import { WORM_SECONDS, WORM_RIDE_SECONDS, NEXUS_SECONDS } from '@/lib/dune/spice
 import {
   BATTLE_PICK_SECONDS, BATTLE_PLAN_SECONDS, BATTLE_TRAITOR_SECONDS,
   BATTLE_VOICE_SECONDS, BATTLE_PRESCIENCE_SECONDS, BATTLE_ALLOCATE_SECONDS,
-  BATTLE_CAPTURE_SECONDS, allyInterrogator,
+  BATTLE_CAPTURE_SECONDS, allyInterrogator, pendingBattles,
 } from '@/lib/dune/battle'
 import { MENTAT_READY_SECONDS } from '@/lib/dune/phaseAdvance'
 import { kwisatzHaderachAvailable, KWISATZ_HADERACH } from '@/types/Dune/Game'
@@ -492,6 +492,27 @@ export function DuneGameScreen({
   const stormFace = stormShow && stormShow.kind === 'walk'
     ? (stormShow.step === 0 ? stormShow.from : stormShow.swept[stormShow.step - 1])
     : state.storm
+
+  /**
+   * Ground still contested, off the same function the server judges with.
+   *
+   * ONE SOURCE, so this cannot hide a battle the endpoint would insist on.
+   * That matters more here than it looks: the mount below now DEPENDS on this
+   * count, and a client that counted fewer battles than the server would take
+   * the pick screen away from an aggressor the server is still waiting on —
+   * turning a cosmetic fix into a wedged phase.
+   *
+   * WHICH IS WHY THE ADVISOR STOP IS READ. A Karama on the Bene Gesserit's
+   * advisors makes robed forces fight like any other, so the board has MORE
+   * battles on it, not fewer. The endpoint's Battles entry derives it exactly
+   * this way; BattlePanel's own list does not, and takes the default — a
+   * divergence that was only cosmetic while nothing gated on it.
+   */
+  const advisorsFight = isSuppressed(
+    state.suppressed ?? [], 'bene-gesserit', 'advanced.advisors',
+    Number(state.turn ?? 0), 'Battles')
+  const battlesLeft = pendingBattles(
+    (state.forces ?? []) as never, state.storm as never, advisorsFight)
 
   /**
    * THE BLOW'S REPLAY. The server turns the cards in one write; the table
@@ -1577,7 +1598,20 @@ export function DuneGameScreen({
               deadline. Everything it draws is the public battles object plus
               THIS seat's own hand and traitors — the plan leaves through the
               handlers and comes back only at the reveal. */}
+          {/* ── AND ONLY WHEN THERE IS A BATTLE IN IT ────────────────────────
+              A battle is either being fought right now or waiting to be picked.
+              With neither, the panel drew its header over the board and an
+              empty list under it: "Atreides picks the next battle", and nothing
+              to pick. A screen with nothing on it is not information, it is a
+              thing in the way of the board — and the board is what the table
+              wants to look at while the phase runs out.
+
+              THE STATE CAN OUTLIVE THE BATTLES. The phase entry only opens
+              `battles` when something is pending and the settlement clears it
+              when nothing is left, so this is the window between: ground that
+              stopped being contested after the object was written. */}
           {state.phase === 'Battles' && state.battles && seat && !battleVeil
+            && (!!state.battles.current || battlesLeft.length > 0)
             && onBattlePick && onBattlePlan && onBattleAnswer && (
             <BattlePanel
               // A FRESH PANEL PER BATTLE. The dial, the chosen disc and the

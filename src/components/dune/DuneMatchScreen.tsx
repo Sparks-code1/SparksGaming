@@ -63,6 +63,7 @@ import {
 } from '@/lib/dune/phaseAdvance'
 
 import { ShipmentPanel } from './ShipmentPanel'
+import { VictoryScreen, useVictoryCeremony } from './VictoryScreen'
 import { DuneGameScreen } from './DuneGameScreen'
 import type { PlacedForce } from './SetupWindow'
 import { WormPlacementPanel } from './WormPlacementPanel'
@@ -457,6 +458,8 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
    * a match dealt before hosts existed shows the button to every seat and
    * lets the server rule.
    */
+  /** Whether this browser still owes the table a victory ceremony. */
+  const victory = useVictoryCeremony(matchId, !!row?.winner)
   const hold = row && !row.winner ? advanceHold(row, now) : null
   const amHost = row?.host ? seat?.faction === row.host : true
   const stormOwed = row?.phase === 'Storm' && row.stormMoved !== row.turn
@@ -1356,10 +1359,27 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
         </div>
       )}
 
-      {/* THE THINGS THE BOARD CANNOT SAY, in one corner and only when they
-          apply. The right-hand column is the HUD, the left is the chat, so
-          this takes the top right — over a list of other seats, which is the
-          least costly thing to cover. */}
+      {/* ── THE CEREMONY ────────────────────────────────────────────────────
+          Ten turns of six people bidding, allying and betraying each other
+          used to end in a green box the size of "the storm rolled 4". This
+          stops the room instead — and then gets out of the way, because the
+          final position is the thing everyone wants to pore over once they
+          know the result. The notice column keeps the result permanently for
+          anyone who has closed this.
+
+          ONCE PER MATCH PER BROWSER: the row keeps saying there is a winner
+          for as long as anybody is looking at the finished board, so a
+          ceremony driven straight off `row.winner` would reopen on every
+          poll. See useVictoryCeremony. */}
+      {row?.winner && victory.show && (
+        <VictoryScreen
+          winner={row.winner}
+          spice={row.spiceRevealed ?? null}
+          players={row.players ?? []}
+          seat={seat?.faction ?? null}
+          onClose={victory.close}
+        />
+      )}
     </>
   )
 }

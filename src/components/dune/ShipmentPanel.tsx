@@ -18,7 +18,7 @@
  */
 import { useMemo, useState } from 'react'
 import { DUNE_TERRITORIES } from '@/data/dune/boardData'
-import { FACTION_LOOK } from './SeatLayer'
+import { factionInk,FACTION_LOOK } from './SeatLayer'
 import type { GuildShipKind } from '@/lib/dune/shipment'
 import type { Force, DuneGameState } from '@/types/Dune/Game'
 import type { FactionId } from '@/types/Dune/Faction'
@@ -87,7 +87,7 @@ export function ShipmentPanel({
         <span key={f} style={{
           marginRight: 6,
           opacity: i === shipping.at ? 1 : 0.45,
-          color: i === shipping.at ? FACTION_LOOK[f].colour : PALE,
+          color: i === shipping.at ? factionInk(f) : PALE,
           textDecoration: i < shipping.at ? 'line-through' : undefined,
         }}>{FACTION_LOOK[f].name}</span>
       ))}

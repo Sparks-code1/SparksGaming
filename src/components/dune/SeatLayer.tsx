@@ -102,6 +102,46 @@ export const FACTION_LOOK: Record<FactionId, { colour: string; name: string }> =
 }
 
 /**
+ * A faction's colour, made readable as TEXT on the dark panels.
+ *
+ * THE HARKONNEN ARE BLACK, and that is right on the board — a disc on sand, a
+ * piece you can pick out at arm's length. It is wrong the moment the same value
+ * is used for LETTERS on a panel that is itself nearly black: their name in the
+ * battle screen was #17171a on #0d1220 and simply could not be read.
+ *
+ * LIFTED BY LUMINANCE, not by naming the Harkonnen. Any colour too dark to read
+ * gets mixed toward white until it clears the floor, which keeps its hue — the
+ * Harkonnen stay a cold near-grey rather than becoming some other faction's
+ * colour — and means the next dark faction added needs no edit here.
+ *
+ * ONLY FOR TEXT AND THIN STROKES. Fills, discs and seat marks keep the real
+ * colour: they are large areas against sand, where black reads perfectly.
+ */
+export function factionInk(faction: FactionId): string {
+  const hex = FACTION_LOOK[faction]?.colour ?? '#f0e2bb'
+  const n = parseInt(hex.slice(1), 16)
+  const [r, g, b] = [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff]
+  // Rec. 601 luma, which is close enough for "can this be read" and needs no
+  // gamma work. The floor is set where the near-black factions fail and every
+  // other one passes untouched.
+  const luma = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+  // TWO NUMBERS, NOT ONE. The first says which colours need help; the second
+  // says how far to lift them, and it is well above the first on purpose. A
+  // single threshold lifts a colour to exactly the point it stopped failing,
+  // which is the darkest it can be while technically passing — the Harkonnen
+  // came out #515154 and were still a squint. Everything from the Emperor's
+  // red up (0.35) is left untouched; the Harkonnen (0.09) land on a clear
+  // silver.
+  const NEEDS_HELP = 0.32
+  const TARGET = 0.55
+  if (luma >= NEEDS_HELP) return hex
+  const t = Math.min(1, (TARGET - luma) / (1 - luma))
+  const lift = (c: number) => Math.round(c + (255 - c) * t)
+  return `#${[lift(r), lift(g), lift(b)]
+    .map(c => c.toString(16).padStart(2, '0')).join('')}`
+}
+
+/**
  * The mark for each faction, drawn in a 24-wide box centred on the origin.
  *
  * Kept to one or two paths each and to shapes that survive being 14px across —

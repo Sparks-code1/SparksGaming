@@ -457,9 +457,16 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
 
     // AND STILL AT THE OPEN. Refusing the use without also declining to open
     // the window would leave a battle stalled on a beat nobody may answer.
+    //
+    // THE SECOND CLAUSE GREW A GUARD and this pin moved with it, deliberately
+    // rather than by loosening: the ally question no longer opens for an ally
+    // whose plan is already in — see dunebattletest, which owns that rule. What
+    // this suite cares about is unchanged, that the STOP is still one of the
+    // things that keeps the window shut.
     check('...and the windows still decline to open',
       [ep.includes("if (isSuppressed((state.suppressed ?? []) as never,"),
-        ep.includes('const presWanted = (hasAtreides || !!presProxy)')],
+        ep.includes(
+          'const presWanted = (hasAtreides || (!!presProxy && !allyPastHelping))')],
       [true, true])
   }
 

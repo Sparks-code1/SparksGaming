@@ -739,19 +739,25 @@ Deno.serve(async req => {
             usedLeaders[plan.leader] = c.territoryId
           }
         }
-        // cards out of the hand, into the discard; a called traitor card is
-        // spent with them
+        // cards out of the hand, into the discard
         const row = (rowOf[seatId] ?? {}) as {
           cards?: string[]; traitors?: string[]; battlePlan?: unknown
         }
         const outCards = new Set(side.discards)
         const hand = (row.cards ?? []).filter((id) => !outCards.has(id))
         for (const id of side.discards) discard.push(id)
-        const other = outcome.sides.find((s) => s.faction !== f)!
-        const theirLeader = planOf(other.faction).leader
-        const traitors = calls.includes(f as never) && theirLeader
-          ? (row.traitors ?? []).filter((n) => n !== theirLeader)
-          : row.traitors
+
+        // ── A TRAITOR CARD IS NOT SPENT BY CALLING IT ─────────────────────
+        // It is something you KNOW about a leader, not something you use up.
+        // The holder keeps the card, so a leader revived out of the tanks and
+        // fielded against the same opponent again can be called again — and an
+        // opponent who has watched it happen once has to weigh that before
+        // paying to revive.
+        //
+        // The card used to be filtered off the row here, which quietly made
+        // every traitor a one-shot and made revival far safer than it should
+        // be. Ruled 2026-09-04.
+        const traitors = row.traitors
         // A BORROWED leader has fought its one battle: home it goes, alive
         // or dead — off the Harkonnen's list either way.
         const kept = (row as { capturedLeaders?: { name: string; from: string }[] })
@@ -786,19 +792,14 @@ Deno.serve(async req => {
           moves.push({ from: seatId, to: BANK, amount: side.spends, reason: 'battle-spice' })
         }
       }
-      // The proxy caller's row: the traitor card is spent from THEIR list —
-      // the call was theirs even though the winning side was their ally's —
-      // and their purse joins the table for the bounty to land in.
+      // The proxy caller's row: their purse joins the table so the bounty has
+      // somewhere to land. THE CARD IS NOT TAKEN OFF THEIR LIST — see the note
+      // above. A called traitor is knowledge rather than a consumable, and the
+      // proxy call is the same call made from a chair outside the battle.
       if (hkCalled) {
         const hkSeat0 = seatOfFaction['harkonnen']
         const hkRow0 = (rowOf[hkSeat0] ?? {}) as { traitors?: string[] }
-        const overLeader = planOf(hkProxy2!.over).leader
-        secretsPatch[hkSeat0] = {
-          ...hkRow0,
-          ...(overLeader
-            ? { traitors: (hkRow0.traitors ?? []).filter((n) => n !== overLeader) }
-            : null),
-        }
+        secretsPatch[hkSeat0] = { ...hkRow0 }
         purses[hkSeat0] = readSpice(hkRow0 as never)
       }
       const paid = moves.filter((m) => m.amount > 0)
@@ -3586,9 +3587,21 @@ Deno.serve(async req => {
         aggressor: c.aggressor as never, defender: c.defender as never,
         players: (state.players ?? []) as never,
       })
+      // ── AN ALLY WHO HAS ALREADY COMMITTED IS PAST HELPING ────────────────
+      // The alliance question exists so the ally can plan with the answer. Once
+      // the ally's plan is in, the answer cannot change anything — and the
+      // reveal was waiting on a question with nothing left to inform, so the
+      // whole table sat on the Atreides for a prompt that no longer mattered.
+      //
+      // ONLY THE PROXY CASE. The Atreides fighting their own battle keep the
+      // printed timing: their sheet lets them look before the reveal, and
+      // whether they have committed is not this rule's business.
+      const allyPastHelping = !!presProxy
+        && (!!plans[presProxy.ally] || committedNow.includes(presProxy.ally as never))
+
       // A STOPPED QUESTION never opens — and the reveal does not wait on a
       // window that cannot exist.
-      const presWanted = (hasAtreides || !!presProxy)
+      const presWanted = (hasAtreides || (!!presProxy && !allyPastHelping))
         // KARAMA-STOP: atreides abilities.battle
         && !isSuppressed((state.suppressed ?? []) as never,
           'atreides' as never, 'abilities.battle' as never,

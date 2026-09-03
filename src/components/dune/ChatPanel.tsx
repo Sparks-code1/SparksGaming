@@ -17,7 +17,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import type { FactionId } from '@/types/Dune/Faction'
-import { FACTION_LOOK } from './SeatLayer'
+import { factionInk,FACTION_LOOK } from './SeatLayer'
 
 const PALE = '#f0e2bb'
 
@@ -272,7 +272,7 @@ export function ChatPanel({
                 background: '#c9542a12',
               } : null),
             }}>
-            <b style={{ color: m.faction ? FACTION_LOOK[m.faction].colour : PALE }}>
+            <b style={{ color: m.faction ? factionInk(m.faction) : PALE }}>
               {/* THE PERSON FIRST, THE POWER AFTER. Whose word it is decides
                   whether you believe it; which faction they are decides what
                   the word is worth. A line from the game itself has no person

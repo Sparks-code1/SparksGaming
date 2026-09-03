@@ -383,8 +383,17 @@ check('the three windows have their seconds',
   check('...pays the winner from the bank alone — or the proxy caller',
     /moves\.push\(\{ from: BANK, to, amount: s\.amount, reason: 'battle' \}\)/.test(beat)
       && /\? seatOfFaction\['harkonnen'\] : seatId/.test(beat), true)
-  check('...spends a called traitor card',
-    /\(row\.traitors \?\? \[\]\)\.filter\(\(n\) => n !== theirLeader\)/.test(beat), true)
+  // A TRAITOR CARD IS KNOWLEDGE, NOT A CONSUMABLE. Calling one does not spend
+  // it: the holder keeps the card, so a leader revived out of the tanks and
+  // fielded against the same opponent again can be called again, and an
+  // opponent who has watched it happen once has to weigh that before paying to
+  // revive. It used to be filtered off the row here, which made every traitor
+  // a one-shot. Both halves are pinned — the keep AND the absence of the old
+  // filter — because reintroducing the filter is the whole regression.
+  check('...leaves a called traitor card on its holder\'s list',
+    [/const traitors = row\.traitors$/m.test(beat),
+      /filter\(\(n\) => n !== theirLeader\)/.test(beat)],
+    [true, false])
   check('...and the explosion burns the territory\'s spice',
     /if \(outcome\.clearSpice\) delete spiceOnBoard\[c\.territoryId\]/.test(beat), true)
   check('...harvesting the whole territory, bystanders included',
@@ -812,10 +821,21 @@ check('the three windows have their seconds',
   check('an expired silence is written to the row the foresight reads',
     /battlePlan: \{ territoryId: c\.territoryId, dial: 0 \},/.test(planCase), true)
   check('the question opens when the plan it reads commits — ally battles included, karama-stoppable',
-    /const presWanted = \(hasAtreides \|\| !!presProxy\)/.test(planCase)
+    /const presWanted = \(hasAtreides \|\| \(!!presProxy && !allyPastHelping\)\)/.test(planCase)
       && /const presNow = presWanted && opponentIn && !pres/.test(planCase)
       && /'abilities\.battle' as never,/.test(planCase)
       && /over: presOver, done: false,/.test(planCase), true)
+  // AN ALLY WHO HAS COMMITTED IS PAST HELPING. The alliance question exists so
+  // the ally can plan with the answer; once their plan is in it can change
+  // nothing — and the reveal WAITS on the question, so the whole table sat on
+  // the Atreides for a prompt that no longer mattered.
+  //
+  // ONLY THE PROXY CASE, which is why hasAtreides is not guarded by it: the
+  // Atreides fighting their own battle keep the printed timing.
+  check('...but not for an ally whose plan is already in',
+    /const allyPastHelping = !!presProxy$/m.test(planCase)
+      && /!!plans\[presProxy\.ally\] \|\| committedNow\.includes\(presProxy\.ally/.test(planCase),
+    true)
   check('...and the reveal WAITS on it — never on a window a stop keeps shut',
     /const mayReveal = allIn && \(!presWanted \|\| \(presNow\?\.done \?\? false\)\)/.test(planCase), true)
   const voiceCase = fn.slice(fn.indexOf("case 'BATTLE_VOICE'"), fn.indexOf("case 'BATTLE_PRESCIENCE'"))
@@ -1637,10 +1657,14 @@ check('the three windows have their seconds',
       /\|\| \(hkCalled && hkProxy2!\.ally === c\.aggressor\)/.test(fn9),
       /\|\| \(hkCalled && hkProxy2!\.ally === c\.defender\)/.test(fn9)],
     [true, true, true])
-  check('...spends the Harkonnen card and seats their purse for the bounty',
-    [/traitors: \(hkRow0\.traitors \?\? \[\]\)\.filter\(\(n\) => n !== overLeader\)/.test(fn9),
-      /purses\[hkSeat0\] = readSpice\(hkRow0 as never\)/.test(fn9)],
-    [true, true])
+  // THE SAME RULE FROM THE CHAIR OUTSIDE. A proxy call is the same call, so it
+  // spends nothing either — only the purse joins the table, so the bounty has
+  // somewhere to land.
+  check('...keeps the Harkonnen card and seats their purse for the bounty',
+    [/secretsPatch\[hkSeat0\] = \{ \.\.\.hkRow0 \}/.test(fn9),
+      /purses\[hkSeat0\] = readSpice\(hkRow0 as never\)/.test(fn9),
+      /filter\(\(n\) => n !== overLeader\)/.test(fn9)],
+    [true, true, false])
 
   // ── the beat's third chair, on the panel ────────────────────────────────
   const revealAt = 60_000

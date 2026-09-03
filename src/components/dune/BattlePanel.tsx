@@ -19,7 +19,7 @@
  * opposing leader; everyone else just continues.
  */
 import { useState } from 'react'
-import { FACTION_LOOK } from './SeatLayer'
+import { FACTION_LOOK, factionInk } from './SeatLayer'
 import { LeaderDisc } from './LeaderDisc'
 import { TreacheryCardFace } from './TreacheryCardFace'
 import DraggableResizable from '@/components/DraggableResizable'
@@ -248,7 +248,7 @@ function PlanLine({ faction, plan }: {
 }) {
   return (
     <div data-revealed-plan={faction} style={{ flex: 1, minWidth: 150 }}>
-      <b style={{ color: FACTION_LOOK[faction].colour }}>{FACTION_LOOK[faction].name}</b>
+      <b style={{ color: factionInk(faction) }}>{FACTION_LOOK[faction].name}</b>
       <div>
         Dialled <b>{dialText(plan.dial)}</b>
         {plan.spice ? <span data-plan-spice-shown=""> · {plan.spice} spice in support</span> : null}
@@ -461,7 +461,7 @@ export function BattlePanel({
             <button key={`${b.territoryId}|${f}`} type="button" disabled={busy}
               data-pick={`${b.territoryId}|${f}`}
               onClick={() => onPick(b.territoryId, f)} style={btn}>
-              Fight <span style={{ color: FACTION_LOOK[f].colour }}>{FACTION_LOOK[f].name}</span>
+              Fight <span style={{ color: factionInk(f) }}>{FACTION_LOOK[f].name}</span>
               {' '}in {territoryName(b.territoryId)}
             </button>
           )))}
@@ -623,7 +623,7 @@ export function BattlePanel({
       const disc = factionById(fa)?.leaders.find(l => l.name === plan.leader) ?? null
       return (
         <div key={fa} data-revealed-plan={fa} style={{ flex: 1, minWidth: 180 }}>
-          <b style={{ color: FACTION_LOOK[fa].colour }}>{FACTION_LOOK[fa].name}</b>
+          <b style={{ color: factionInk(fa) }}>{FACTION_LOOK[fa].name}</b>
           <div style={{ marginTop: 6, minHeight: 72 }}>
             {stage >= 1 ? (
               <div data-reveal-leader={fa} style={{
@@ -726,10 +726,10 @@ export function BattlePanel({
           display: 'flex', justifyContent: 'center', alignItems: 'baseline',
           gap: 14, margin: '10px 0 2px', fontSize: 26,
         }}>
-          <span style={{ color: FACTION_LOOK[c.aggressor].colour }}
+          <span style={{ color: factionInk(c.aggressor) }}
             data-strength-count={c.aggressor}>{countText(c.aggressor, 0)}</span>
           <span style={{ fontSize: 15, opacity: 0.6 }}>vs</span>
-          <span style={{ color: FACTION_LOOK[c.defender].colour }}
+          <span style={{ color: factionInk(c.defender) }}
             data-strength-count={c.defender}>{countText(c.defender, 1)}</span>
         </div>
         {plainOut.explosion && stage >= 3 && (
@@ -1282,7 +1282,7 @@ export function BattlePanel({
 
       {zoomLeader && (
         <DraggableResizable title={zoomLeader.leader.name}
-          accentColor={FACTION_LOOK[zoomLeader.faction].colour}
+          accentColor={factionInk(zoomLeader.faction)}
           width={280} storageKey={`dune-leader-${seat}`}
           onClose={() => setZoomLeader(null)}>
           <div data-layer="leader-zoom" style={{
@@ -1302,7 +1302,7 @@ export function BattlePanel({
       )}
       {zoomCard && (
         <DraggableResizable title={zoomCard.name}
-          accentColor={seat ? FACTION_LOOK[seat].colour : SAND}
+          accentColor={seat ? factionInk(seat) : SAND}
           width={CARD_ZOOM + 34} storageKey={`dune-card-battle-${seat}`}
           onClose={() => setZoomCard(null)}>
           <div data-layer="card-zoom" style={{ display: 'flex', justifyContent: 'center' }}>

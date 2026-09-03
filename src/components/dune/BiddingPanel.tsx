@@ -22,7 +22,7 @@
  * measured its own duration would count differently on every machine.
  */
 import { useEffect, useState } from 'react'
-import { SeatMark, FACTION_LOOK } from './SeatLayer'
+import { factionInk,SeatMark, FACTION_LOOK } from './SeatLayer'
 import { TreacheryCardFace, TreacheryCardBack, CARD_W, CARD_H } from './TreacheryCardFace'
 import DraggableResizable from '@/components/DraggableResizable'
 import { CARD_ZOOM } from './OwnStrip'
@@ -191,7 +191,7 @@ export function BiddingBar(
       <span style={{ opacity: 0.85 }}>
         {ask.high
           ? <>bid <strong>{ask.high.spice}</strong> to{' '}
-            <span style={{ color: FACTION_LOOK[ask.high.faction].colour }}>
+            <span style={{ color: factionInk(ask.high.faction) }}>
               {FACTION_LOOK[ask.high.faction].name}
             </span></>
           : 'no bids yet'}
@@ -374,7 +374,7 @@ export function BiddingPanel(props: BiddingPanelProps) {
             <div style={{ fontSize: 16 }}>
               {ask.high
                 ? <>Standing bid <strong>{ask.high.spice}</strong> to{' '}
-                  <span style={{ color: FACTION_LOOK[ask.high.faction].colour }}>
+                  <span style={{ color: factionInk(ask.high.faction) }}>
                     {FACTION_LOOK[ask.high.faction].name}
                   </span></>
                 : <span style={{ opacity: 0.8 }}>No bids yet</span>}
