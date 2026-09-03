@@ -432,6 +432,29 @@ const at = (phase: GamePhase, over: Partial<AdvanceState> = {}): AdvanceState =>
   const advCase = fn.slice(advAt, fn.indexOf('  switch (action.type) {', advAt))
   check('the endpoint has the advance', advAt > 0 && advCase.length > 800, true)
 
+  // ── EVERY PHASE NAMES ITSELF AT THE ENTRY ───────────────────────────────
+  // The switch that sets a phase up as it is entered had eight of nine, and
+  // Revival fell to the default — a branch whose comment said the phase was
+  // not built when it had been for weeks, and which wrote `placeholder: true`
+  // into public state. Because every write spreads the previous state forward,
+  // a match that reached Revival once carried that flag to the end of the
+  // game: a sentence in the state that was not about the game.
+  //
+  // A PHASE THAT NEEDS NOTHING STILL SAYS SO. The cost of the default was not
+  // the flag, it was that a finished phase and an unwritten one looked
+  // identical here. Naming all nine makes a tenth added without an entry
+  // visible as an absence rather than as silence.
+  for (const phase of DUNE_PHASES) {
+    check(`the entry switch names ${phase}`,
+      advCase.includes(`case '${phase}':`), true)
+  }
+  // AND NOTHING WRITES THE FLAG. The shed above clears it from live matches;
+  // this is what stops it coming back.
+  check('no entry writes a placeholder into the state',
+    /placeholder: true/.test(advCase), false)
+  check('...and the advance sheds one an old match is carrying',
+    /delete base.placeholder/.test(advCase), true)
+
   // WHO. The host's faction from the state; the row's creator for a match
   // dealt before hosts existed; anybody for a row with neither.
   check('the host is read from the state',

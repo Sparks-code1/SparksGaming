@@ -1158,6 +1158,17 @@ Deno.serve(async req => {
       // The pause's ready-up window ends with the pause: the advance that
       // moves the turn marker is what it was counting down to.
       if (state.phase === 'Mentat Pause') delete base.mentat
+      // A FLAG THAT NEVER MEANT ANYTHING, and never went away. Revival was
+      // the one phase with no entry case, so it fell to a default that wrote
+      // `placeholder: true` — and since every write spreads the previous
+      // state forward, a match that reached Revival once carried it to the
+      // end of the game. Nothing read it, which is why it survived: it was a
+      // sentence in the public state that was not about the game.
+      //
+      // UNCONDITIONAL, unlike the deletes above, because it is not keyed on
+      // a phase being left — it is old matches shedding it on their next
+      // advance. Safe to remove once no live match carries one.
+      delete base.placeholder
       // ── ALLIES SEPARATE, OR ARE SEPARATED ───────────────────────────────
       // Leaving the shipment phase with a pair still sharing ground (the
       // Polar Sink excepted), the rule's teeth close: the ally LATER in
@@ -1448,12 +1459,29 @@ Deno.serve(async req => {
           return await plainly({ battles, awaiting: first.faction })
         }
 
-        // ── The rest: not built, and said ──────────────────────────────────
-        // They enter, hold the look-window so the table sees where the turn
-        // is, and advance. Rules land here later; the loop does not wait for
-        // them.
+        // ── nothing to open ───────────────────────────────────────────────
+        // REVIVAL NEEDS NO ENTRY. Every other phase sets something up as it
+        // is entered — a roll, a window, a rotation, a card turned — and
+        // Revival sets up nothing: what a seat may revive is read off the
+        // tanks and their purse, both of which are already there. The rail
+        // opens on the phase, and the phase clock above is the whole of it.
+        //
+        // NAMED ANYWAY, rather than left to the default. It used to fall
+        // through, and a phase that is complete looked identical in this
+        // switch to one that is not.
+        case 'Revival':
+          return await plainly()
+
+        // ── anything unforeseen ───────────────────────────────────────────
+        // ALL NINE ARE NAMED ABOVE, so this is unreachable today. It stays
+        // as the answer for a tenth phase added without an entry: the plain
+        // write, which moves the pointer and opens nothing.
+        //
+        // IT DOES NOT THROW. Refusing the action would stall the turn for
+        // six people, and a phase that opens no window is a far smaller
+        // problem than one nobody can advance past.
         default:
-          return await plainly({ placeholder: true })
+          return await plainly()
       }
   }
 
