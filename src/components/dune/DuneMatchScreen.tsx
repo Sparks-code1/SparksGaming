@@ -603,6 +603,19 @@ export function DuneMatchScreen({ matchId, onExit }: DuneMatchScreenProps) {
     if (!res.ok) {
       setRefused(res.error?.code ?? 'refused')
       setRefusedBy(action.type)
+      // AND WHAT IT ACTUALLY SAID. The code alone is not enough to tell two
+      // opposite failures apart: 'network' is returned both when the fetch
+      // threw — nothing left this browser — and when the server answered
+      // with a status carrying no code of its own, which means the request
+      // arrived and something past the door went wrong. The message names
+      // which ("Could not reach the server…" against "Server refused the
+      // action (502)"), and it was being dropped one line above here, so a
+      // report of a refusal could not be diagnosed from what the player saw.
+      //
+      // TO THIS SEAT ONLY, like every other line say() writes: it is about
+      // one browser's request and means nothing to the other five.
+      const why = res.error?.message
+      if (why) say(`${action.type} refused — ${why}`)
       return null
     }
     // The row moved and so may this seat's own. Both are re-read rather than

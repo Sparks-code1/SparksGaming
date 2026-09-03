@@ -848,4 +848,51 @@ console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
     [true, false, true])
 }
 
+// ── 'network' means two opposite things, and the message is the difference ─
+// A REPORT OF A NETWORK REFUSAL COULD NOT BE DIAGNOSED. The code is returned
+// both when the fetch threw — nothing left the browser — and when the server
+// answered with a status whose body carried no code of its own, which means
+// the request arrived and something past the door went wrong. Those call for
+// opposite investigations, and only the message tells them apart.
+{
+  const thrown = await dispatchDuneAction('m1', { type: 'PING' } as never, {
+    client: clientFor('tok'),
+    fetchImpl: (() => Promise.reject(new TypeError('Failed to fetch'))) as never,
+  })
+  check('a fetch that threw says so',
+    [thrown.ok, thrown.ok ? null : thrown.error.code,
+      thrown.ok ? null : thrown.error.message.startsWith('Could not reach the server')],
+    [false, 'network', true])
+
+  const gateway = await dispatchDuneAction('m1', { type: 'PING' } as never, {
+    client: clientFor('tok'),
+    fetchImpl: (() => Promise.resolve(new Response(
+      '<html>502</html>', { status: 502 })) ) as never,
+  })
+  check('...and an answer with no code of its own says something else',
+    [gateway.ok, gateway.ok ? null : gateway.error.code,
+      gateway.ok ? null : gateway.error.message.includes('502')],
+    [false, 'network', true])
+
+  // THE SERVER NO LONGER LEAVES THAT GAP FOR ITS OWN CRASHES. An uncaught
+  // throw inside a case used to escape to the platform, come back as a 500
+  // with a body that is not ours, and leave no row in the action log — the
+  // one failure most worth a trace was the only one that never got one.
+  const ep = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+  check('the endpoint catches its own crash', ep.includes("code: 'action-threw'"), true)
+  check('...inside the answer, so the log still records it',
+    (() => {
+      const at = ep.indexOf('const answer = await (async (): Promise<Response> => {')
+      const logAt = ep.indexOf('await logAction({')
+      const catchAt = ep.indexOf("code: 'action-threw'")
+      return [at > 0 && catchAt > at, logAt > 0]
+    })(), [true, true])
+  check('...and the stack does not go into the table every seat reads',
+    (() => {
+      const catchAt = ep.indexOf("code: 'action-threw'")
+      const near = ep.slice(catchAt - 400, catchAt + 200)
+      return near.includes('console.error') && !near.includes('logAction')
+    })(), true)
+}
+
 process.exit(pass ? 0 : 1)

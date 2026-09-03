@@ -1537,7 +1537,29 @@ Deno.serve(async req => {
     } catch { /* the log is evidence, never a gate */ }
   }
 
+  /**
+   * WHAT THE ACTION DID — and, if it threw, that it threw.
+   *
+   * THE LOG COULD NOT SEE A CRASH. logAction runs on the Response this
+   * produces, so an uncaught throw inside any case escaped to the platform,
+   * came back as a 500 carrying a body that is not ours, and left NO ROW AT
+   * ALL — the one failure most worth a trace was the only one that never got
+   * one. "A refused action leaving no trace is how the auction bug stayed
+   * invisible" was the reason this log exists, and a crashed action was still
+   * leaving none.
+   *
+   * AND IT READ AS THE OPPOSITE FAULT. The client takes its code from that
+   * body, finds none, and falls back to 'network' — which says the request
+   * never left the browser, when in fact it arrived and died inside.
+   *
+   * Caught here so the answer is ours: a real code, and a row in the log
+   * naming the action. The error text goes to the sender, who is the one seat
+   * that can act on it; the LOG keeps only the code, because every seat reads
+   * that table and a stack trace is not theirs to read.
+   */
   const answer = await (async (): Promise<Response> => {
+    try {
+      return await (async (): Promise<Response> => {
   switch (action.type) {
     // ── Open the charity window ──────────────────────────────────────────────
     // The DEADLINE IS STAMPED HERE, not supplied by the caller. Clients count
@@ -5165,6 +5187,14 @@ Deno.serve(async req => {
     default:
       return json({ error: `unknown action ${action.type}`, code: 'unknown-action' }, 400)
   }
+      })()
+    } catch (e) {
+      console.error(`[dune-action] ${String(action.type)} threw:`, e)
+      return json({
+        error: String(e instanceof Error ? e.message : e),
+        code: 'action-threw',
+      }, 500)
+    }
   })()
 
   /**
