@@ -100,13 +100,43 @@ export async function expectRespondsToClick(
 export async function expectNothingOnTop(page: Page, selector: string, what: string) {
   const control = page.locator(selector).first()
   await expect(control).toBeVisible({ timeout: 15_000 })
+  // SCROLLED FIRST, because a click scrolls. Playwright brings a control into
+  // view before pressing it, so measuring where the control sits BEFORE that
+  // asks a question no click ever asks — and answers it with a layout
+  // complaint about a button that would have been pressed perfectly well. What
+  // survives this is the real thing: still off screen after the page has done
+  // everything it can to show it.
+  await control.scrollIntoViewIfNeeded({ timeout: 15_000 }).catch(() => {})
   const verdict = await control.evaluate((el: Element) => {
     const r = el.getBoundingClientRect()
     const x = r.left + r.width / 2
     const y = r.top + r.height / 2
+    const view = { w: window.innerWidth, h: window.innerHeight }
+    // OFF-SCREEN IS NOT COVERED, and saying so mattered: elementFromPoint
+    // returns null for a point outside the viewport, and folding that into
+    // the covered branch produced "covered by nothing — the point is outside
+    // the viewport — it is on screen and cannot be clicked", which is three
+    // contradictions in one sentence and sent the reader looking for an
+    // overlay that was never there. They are different faults with different
+    // fixes: one is a z-index, the other is a layout that does not fit.
+    const off = x < 0 || y < 0 || x > view.w || y > view.h
+    if (off) {
+      const past = y > view.h ? `${Math.round(y - view.h)}px below the fold`
+        : y < 0 ? `${Math.round(-y)}px above the top`
+        : x > view.w ? `${Math.round(x - view.w)}px past the right edge`
+        : `${Math.round(-x)}px past the left edge`
+      return {
+        verdict: 'offscreen' as const,
+        by: `${past} (viewport ${view.w}x${view.h}, its centre at ` +
+          `${Math.round(x)},${Math.round(y)})`,
+      }
+    }
     const top = document.elementFromPoint(x, y)
-    if (!top) return { covered: true, by: 'nothing — the point is outside the viewport' }
-    if (el.contains(top) || top.contains(el)) return { covered: false, by: '' }
+    // Null with the point INSIDE the viewport is a different thing again —
+    // nothing hit-tests there at all, which usually means a zero-size or
+    // pointer-events:none ancestor rather than either fault above.
+    if (!top) return { verdict: 'no-hit' as const, by: 'nothing hit-tests at its centre' }
+    if (el.contains(top) || top.contains(el)) return { verdict: 'clear' as const, by: '' }
     const name = (n: Element) => {
       const layer = n.getAttribute('data-layer')
       if (layer) return `[data-layer="${layer}"]`
@@ -122,9 +152,17 @@ export async function expectNothingOnTop(page: Page, selector: string, what: str
       chain.push(name(n))
       if (n.getAttribute('data-layer')) break
     }
-    return { covered: true, by: chain.join(' inside ') }
+    return { verdict: 'covered' as const, by: chain.join(' inside ') }
   })
-  expect(verdict.covered,
-    `${what} is covered at its own centre by ${verdict.by} — it is on screen and cannot be clicked`)
-    .toBe(false)
+  // EACH FAULT IN ITS OWN WORDS. The reader of a failing browser run is
+  // deciding what to go and look at, and "scroll to reach it" and "something
+  // is on top of it" send them to different files.
+  const said: Record<string, string> = {
+    offscreen: `${what} is off screen — ${verdict.by}. `
+      + 'A player at this window size would have to scroll to reach it.',
+    covered: `${what} is on screen but covered at its own centre by ${verdict.by}`,
+    'no-hit': `${what} is within the viewport but ${verdict.by} — check for a `
+      + 'zero-size box or a pointer-events:none ancestor',
+  }
+  expect(said[verdict.verdict] ?? '', said[verdict.verdict] ?? '').toBe('')
 }

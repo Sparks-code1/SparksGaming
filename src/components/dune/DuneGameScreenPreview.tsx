@@ -204,6 +204,7 @@ export default function DuneGameScreenPreview() {
   // kills (chaumas through no defence), because both faces of the rule are
   // what the sequence exists to show.
   const battling = q.has('battle')
+  const planning = q.get('battle') === 'plan'
   const [battleAt] = useState(() => Date.now())
   const battleState = {
     ...STATE, mode: 'advanced', phase: 'Battles', awaiting: null, auction: undefined,
@@ -218,9 +219,15 @@ export default function DuneGameScreenPreview() {
       current: {
         territoryId: 'territory-13', sectors: ['sector-10'],
         aggressor: 'atreides', defender: 'harkonnen',
-        committed: ['atreides', 'harkonnen'],
+        // AT ?dune-game&battle=plan the fight is staged BEFORE the reveal —
+        // nothing committed, no plans on the table — which is the only way to
+        // look at the form a player actually fills in. The reveal variant
+        // shows what happens after it; between them they were missing the
+        // part with the dial and the Commit button in it, which is exactly
+        // where a layout question about reaching Commit has to be asked.
+        committed: planning ? [] : ['atreides', 'harkonnen'],
         closesAt: battleAt + 600_000,
-        revealed: {
+        ...(planning ? {} : { revealed: {
           plans: {
             atreides: {
               dial: 2.5, spice: 1, leader: 'Lady Jessica',
@@ -229,7 +236,7 @@ export default function DuneGameScreenPreview() {
             harkonnen: { dial: 3, leader: 'Feyd-Rautha', weapon: 'chaumas', defence: 'shield' },
           },
           traitor: { answered: [], calls: [], closesAt: battleAt + 60_000 },
-        },
+        } }),
       },
     },
   } as unknown as DuneGameState
