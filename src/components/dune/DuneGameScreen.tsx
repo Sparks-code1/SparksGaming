@@ -102,6 +102,8 @@ import { WeatherPanel } from './WeatherPanel'
 import { AtomicsPanel } from './AtomicsPanel'
 import { mayAtomics } from '@/lib/dune/storm'
 import { KaramaPanel, KaramaGiveBackPanel } from './KaramaPanel'
+import { RulesCard } from './RulesCard'
+import DraggableResizable from '@/components/DraggableResizable'
 import { isKaramaCardId, isSuppressed } from '@/lib/dune/karama'
 import type { KaramaUse } from '@/lib/dune/karama'
 import type { TruthtranceQuestion } from '@/lib/dune/truthtrance'
@@ -351,6 +353,17 @@ export function DuneGameScreen({
   bidding = null, charity = null, setup = null, now,
 }: DuneGameScreenProps) {
   const [chatShut, setChatShut] = useState(false)
+  /**
+   * The rules card.
+   *
+   * LOCAL, and nothing about it is sent anywhere: reading the rules is not a
+   * move, and six people looking things up at once should not be six writes.
+   * The window remembers where it was left, which is DraggableResizable's
+   * doing and keyed below — whether it is OPEN deliberately is not remembered,
+   * because a reference card that reopens itself over the board every reload
+   * is in the way rather than to hand.
+   */
+  const [rulesOpen, setRulesOpen] = useState(false)
   /** The Guild's open window, if one stands. Written by the phase entry in
    *  advanced games only, and deleted the moment they answer. */
   const guildPick = (state.shipping as { guildPick?: { closesAt: number } } | undefined)
@@ -1693,6 +1706,25 @@ export function DuneGameScreen({
               </div>
             )
           })()}
+          {/* ── THE RULES CARD ───────────────────────────────────────────
+              THE ONE WINDOW THAT RIDES NOTHING. Every other panel below is
+              tied to a card in hand or a seat that has a decision; this is a
+              reference and is open when a player asked for it, whoever they
+              are — spectators included, who have the most reason to be
+              looking things up.
+
+              WIDE. It is three columns of prose and a faction sheet with
+              nine leader discs on it, and the point of "as big as it needs
+              to be" is that nobody reads rules through a letterbox. Resizable
+              and remembered from there. */}
+          {rulesOpen && (
+            <DraggableResizable title="Rules" width={640} height={620}
+              storageKey="dune-rules" initialTop={70} initialRight={300}
+              onClose={() => setRulesOpen(false)}>
+              <RulesCard seat={seat ?? null} />
+            </DraggableResizable>
+          )}
+
           {/* EACH PANEL RIDES THE CARD: rendered only while the card is
               still in the hand, so a landed play closes its own panel — the
               card leaving is the success signal. */}
@@ -2006,7 +2038,8 @@ export function DuneGameScreen({
               closes the setup column instead — it answers that column's
               questions, and across the board from them nobody found it. */}
           <PlayerHud rows={rows} awaiting={state.awaiting} seat={seat}
-            ready={setupWin?.ready ?? []} />
+            ready={setupWin?.ready ?? []}
+            onRules={() => setRulesOpen(true)} />
 
           {/* A spectator has no tray: there is nothing private to show them, and
               an empty one implies a hand they might be holding. */}

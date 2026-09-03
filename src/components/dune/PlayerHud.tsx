@@ -47,6 +47,15 @@ export interface PlayerHudProps {
    * shared row's setup window; absent outside setup.
    */
   ready?: readonly FactionId[]
+  /**
+   * Open the rules card, if this screen has one.
+   *
+   * OPTIONAL because the hud is also drawn in setup and in previews, where
+   * there is no card to open and a button that does nothing is worse than no
+   * button. The screen that owns the card passes the handler; nobody else
+   * grows a dead control.
+   */
+  onRules?: () => void
 }
 
 /** What a faction's elite forces are called. Display copy, not rules data. */
@@ -154,7 +163,7 @@ function Stat({ label, value, title }: { label: string; value: number; title: st
   )
 }
 
-export function PlayerHud({ rows, awaiting, seat, ready = [] }: PlayerHudProps) {
+export function PlayerHud({ rows, awaiting, seat, ready = [], onRules }: PlayerHudProps) {
   const ordered = pairAllies(rows)
   return (
     <aside data-layer="player-hud" aria-label="Players"
@@ -164,6 +173,27 @@ export function PlayerHud({ rows, awaiting, seat, ready = [] }: PlayerHudProps) 
         // Faction names and three counters. Nothing here is copy.
         userSelect: 'none', WebkitUserSelect: 'none',
       }}>
+      {/* ── THE RULES CARD ───────────────────────────────────────────────
+          ABOVE the faction list, because that is what it is mostly for: the
+          bubbles below say who everyone is, and the question that follows is
+          what that faction can do. It also answers the board — the ring on a
+          medallion, the wedge on the dial — so it is not filed under any one
+          phase and sits where it can be found from all nine. */}
+      {onRules && (
+        <button type="button" data-open-rules="" onClick={onRules}
+          style={{
+            display: 'block', width: '100%', padding: '6px 10px',
+            textAlign: 'left', cursor: 'pointer',
+            background: 'transparent', border: 0,
+            borderBottom: '1px solid #ffffff1f', color: PALE,
+            font: "400 12px Georgia, 'Times New Roman', serif",
+            letterSpacing: 1.4,
+          }}>
+          RULES
+          <span style={{ float: 'right', opacity: 0.5, letterSpacing: 0 }}>?</span>
+        </button>
+      )}
+
       <h2 style={{
         margin: 0, padding: '7px 10px', borderBottom: '1px solid #ffffff1f',
         fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 12,
