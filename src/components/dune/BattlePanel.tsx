@@ -304,7 +304,25 @@ export function BattlePanel({
     )
   }
 
-  const frame = (children: React.ReactNode, backdrop?: string | null) => (
+  /**
+   * The panel: a head that stays, a body that scrolls, and a foot that stays.
+   *
+   * WHY THE FOOT IS NOT IN THE SCROLL. The whole dialog used to be one
+   * scrolling box, so the button that commits a plan sat wherever the content
+   * above it happened to end — 862px down a 720px window, entirely below the
+   * fold on any 768-tall laptop, with nothing to say the panel scrolled. The
+   * one control the form exists to reach was the one control you had to go
+   * looking for, and how far you had to look depended on how many leaders your
+   * faction has.
+   *
+   * A FOOTER OUTSIDE THE SCROLLER rather than a sticky element inside it:
+   * sticky is defeated by any ancestor that clips, and this panel already has
+   * several. Flex gives the body `min-height: 0` so it is the part that
+   * shrinks, and the foot keeps its natural height at every window size.
+   */
+  const frame = (
+    children: React.ReactNode, backdrop?: string | null, foot?: React.ReactNode,
+  ) => (
     <div data-layer="battle" style={{
       position: 'absolute', inset: 0, background: '#000000a8',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -317,7 +335,8 @@ export function BattlePanel({
         {...(backdrop ? { 'data-backdrop': backdrop } : null)}
         style={{
         background: INK, color: SAND, border: `1px solid ${SAND}44`, borderRadius: 10,
-        padding: 16, width: 'min(560px, 100%)', maxHeight: '100%', overflowY: 'auto',
+        padding: 16, width: 'min(560px, 100%)', maxHeight: '100%',
+        display: 'flex', flexDirection: 'column', minHeight: 0,
         font: `14px ${SERIF}`, boxShadow: '0 18px 60px #000000cc',
         ...(backdrop ? {
           backgroundImage: `linear-gradient(rgba(13, 18, 32, 0.88), rgba(13, 18, 32, 0.93)), url(/dune-battle/${backdrop})`,
@@ -331,14 +350,27 @@ export function BattlePanel({
             ▼ board
           </button>
         </div>
-        {children}
-        {refusal && (
-          <div role="alert" data-battle-refusal={refusal}
-            style={{ marginTop: 10, fontSize: 12, color: '#e8a0a0' }}>
-            {refusedAction ? `${refusedAction}: ` : ''}
-            {PLAN_REFUSAL_TEXT[refusal] ?? `Refused: ${refusal}`}
-            {' '}<span style={{ opacity: 0.7 }}>({refusal})</span>
-          </div>
+        {/* THE PART THAT SCROLLS. minHeight 0 is not decoration: without it a
+            flex child refuses to shrink below its content and the foot is
+            pushed off the bottom again, which is the bug this replaced. */}
+        <div data-battle-scroll="" style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto' }}>
+          {children}
+          {refusal && (
+            <div role="alert" data-battle-refusal={refusal}
+              style={{ marginTop: 10, fontSize: 12, color: '#e8a0a0' }}>
+              {refusedAction ? `${refusedAction}: ` : ''}
+              {PLAN_REFUSAL_TEXT[refusal] ?? `Refused: ${refusal}`}
+              {' '}<span style={{ opacity: 0.7 }}>({refusal})</span>
+            </div>
+          )}
+        </div>
+        {/* AND THE PART THAT DOES NOT. A rule above it, because a button
+            floating over scrolled content reads as part of that content. */}
+        {foot && (
+          <div data-battle-foot="" style={{
+            flex: '0 0 auto', marginTop: 10, paddingTop: 10,
+            borderTop: `1px solid ${SAND}22`,
+          }}>{foot}</div>
         )}
       </div>
     </div>
@@ -1192,8 +1224,28 @@ export function BattlePanel({
           {PLAN_REFUSAL_TEXT[violation]}
         </p>
       )}
+
+
+      {zoomCard && (
+        <DraggableResizable title={zoomCard.name}
+          accentColor={seat ? FACTION_LOOK[seat].colour : SAND}
+          width={CARD_ZOOM + 34} storageKey={`dune-card-battle-${seat}`}
+          onClose={() => setZoomCard(null)}>
+          <div data-layer="card-zoom" style={{ display: 'flex', justifyContent: 'center' }}>
+            <TreacheryCardFace card={zoomCard} width={CARD_ZOOM} />
+          </div>
+        </DraggableResizable>
+      )}
+    </>,
+    null,
+    // ── THE FOOT: the one control this whole form exists to reach ────────
+    // Out of the scroll, so where it sits stops depending on how many leaders
+    // a faction has and how tall the window is. The reason it cannot pay is
+    // beside it rather than back up the form, because it is the reason the
+    // button next to it is disabled.
+    <>
       {!supported && (
-        <p data-dial-unsupported="" style={{ fontSize: 12, color: '#e8a0a0' }}>
+        <p data-dial-unsupported="" style={{ margin: '0 0 6px', fontSize: 12, color: '#e8a0a0' }}>
           No set of your pieces can pay {dialText(dial)} with {spiceStaged} spice.
         </p>
       )}
@@ -1208,20 +1260,9 @@ export function BattlePanel({
           ...(mayPlayCards && weapon ? { weapon } : null),
           ...(mayPlayCards && defence ? { defence } : null),
         })}
-        style={{ ...chosen, marginTop: 12 }}>
+        style={{ ...chosen, margin: 0 }}>
         Commit the plan — it reveals with theirs
       </button>
-
-      {zoomCard && (
-        <DraggableResizable title={zoomCard.name}
-          accentColor={seat ? FACTION_LOOK[seat].colour : SAND}
-          width={CARD_ZOOM + 34} storageKey={`dune-card-battle-${seat}`}
-          onClose={() => setZoomCard(null)}>
-          <div data-layer="card-zoom" style={{ display: 'flex', justifyContent: 'center' }}>
-            <TreacheryCardFace card={zoomCard} width={CARD_ZOOM} />
-          </div>
-        </DraggableResizable>
-      )}
     </>,
   )
 }
