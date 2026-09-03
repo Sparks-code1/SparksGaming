@@ -100,3 +100,12 @@ inside the switch and the spec re-run — both tests failed, the first with
       emperor BATTLE_PLAN → 500 action-threw
 
 — and the helper was put back. About 15s for the pair, on the local stack.
+
+## Staged previews
+
+Not part of a run, but the same idea: ?dune-game stages the screen against a
+fixture so a layout can be LOOKED at. ?battle=plan is the plan form before the
+reveal, ?ship is the shipment rail with a seat first in the rotation and both
+halves of its turn unspent — the only arrangement where the whole rail is live.
+Both were added because a control that has only ever been asserted about is a
+control nobody has seen.

@@ -771,8 +771,19 @@ const CALM: SectorId = 'sector-12'    // storms nothing the tests below stand on
     /Pick the shipment kind on the rail/.test(panel), true)
   check('...their select forms are gone',
     /From one territory to another/.test(panel), false)
-  check('...and the handoff ends the turn',
-    /End turn — next player/.test(panel), true)
+  // THE HANDOFF LIVES ON THE RAIL, AND ONLY THERE. It was on both — the same
+  // words and the same action on opposite sides of the screen — and a second
+  // copy of a control is not reassurance, it is a question about whether the
+  // two do the same thing.
+  check('the panel no longer carries its own end-turn',
+    /End turn/.test(panel), false)
+  check('...but still pushes an expired seat along, which the rail cannot',
+    /The clock has run out/.test(panel), true)
+  {
+    const rail = code('src/components/dune/ShipRail.tsx')
+    check('...and the rail is where the handoff is',
+      [/data-end-turn=""/.test(rail), /next player ▸/.test(rail)], [true, true])
+  }
 
   // ── AND THE HARNESS HAS THE CONTROLS THE REPORT MISSED ──────────────────
   const harness = code('src/components/dune/DuneMultiSeatView.tsx')

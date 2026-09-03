@@ -169,7 +169,7 @@ export default function DuneGameScreenPreview() {
   // out was to know about ?auction=off. A preview you cannot get out of is a
   // preview of one frame.
   const [card, setCard] = useState(
-    q.get('auction') === 'off' || q.has('battle') || q.has('nexus')
+    q.get('auction') === 'off' || q.has('battle') || q.has('ship') || q.has('nexus')
       || q.has('truthtrance') || q.has('stormshow') || q.has('blowshow')
       || q.has('atomicsshow')
       ? -1 : BIDDING.ask.index)
@@ -203,6 +203,27 @@ export default function DuneGameScreenPreview() {
   // watch it land again. One pairing blocks (crysknife on shield) and one
   // kills (chaumas through no defence), because both faces of the rule are
   // what the sequence exists to show.
+  /**
+   * The shipment rail, at ?dune-game&ship.
+   *
+   * The rail is where every shipment control lives and none of it was
+   * reachable from a preview — the staged fixtures went to the auction, the
+   * battle and the blow. This seat is first in the rotation with both halves
+   * of its turn unspent, which is the only arrangement where the whole rail
+   * is live at once.
+   */
+  const shipping = q.has('ship')
+  const [shipAt] = useState(() => Date.now())
+  const shipState = {
+    ...STATE, phase: 'Shipment and Movement', awaiting: seat, auction: undefined,
+    shipping: {
+      turn: 4, at: 0, done: {},
+      order: [seat ?? 'atreides', 'harkonnen', 'emperor',
+        'fremen', 'spacing-guild', 'bene-gesserit'],
+      closesAt: shipAt + 600_000,
+    },
+  } as unknown as DuneGameState
+
   const battling = q.has('battle')
   const planning = q.get('battle') === 'plan'
   const [battleAt] = useState(() => Date.now())
@@ -407,6 +428,7 @@ export default function DuneGameScreenPreview() {
     <>
       <DuneGameScreen
         state={settling ? setupState
+          : shipping ? shipState
           : battling ? battleState
           : nexusing ? nexusState
           : truthing ? truthState
@@ -424,6 +446,9 @@ export default function DuneGameScreenPreview() {
         onSend={seat ? () => {} : undefined}
         onNexus={nexusing && seat ? () => {} : undefined}
         onTruthtrance={seat ? () => {} : undefined}
+        onShipReserves={shipping && seat ? () => {} : undefined}
+        onShipSpecial={shipping && seat ? () => {} : undefined}
+        onPassTurn={shipping && seat ? () => {} : undefined}
         onBattlePick={seat ? () => {} : undefined}
         onBattlePlan={seat ? () => {} : undefined}
         onBattleAnswer={seat ? () => {} : undefined}

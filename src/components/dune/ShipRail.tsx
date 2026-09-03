@@ -219,11 +219,38 @@ export function ShipRail({
           {note}
         </span>
       )}
+      {/* ── THE HANDOFF ──────────────────────────────────────────────────
+          The one control on this rail that ENDS something rather than
+          staging something, and the only one there is now — it used to be
+          duplicated on the notice board. Given the faction's own colour and
+          a rule above it so it reads as the foot of the rail rather than
+          another bubble, and a bare browser button among hand-styled
+          controls reads as something nobody finished.
+
+          THE ARROW POINTS AT WHO GETS IT. "Next player" is the whole
+          meaning of the press and was doing that work in small grey type. */}
       {onEndTurn && (
-        <button type="button" data-end-turn="" onClick={onEndTurn}
-          style={{ marginTop: 10, width: '100%' }}>
-          End turn — next player
-        </button>
+        <div style={{
+          marginTop: 12, paddingTop: 10, borderTop: `1px solid ${PALE}22`,
+        }}>
+          <button type="button" data-end-turn="" onClick={onEndTurn}
+            style={{
+              display: 'block', width: '100%', padding: '7px 6px',
+              borderRadius: 6, cursor: 'pointer',
+              background: FACTION_LOOK[faction].colour,
+              border: `1px solid ${PALE}66`,
+              color: PALE, font: `600 11px ${SERIF}`,
+              letterSpacing: 0.6, lineHeight: 1.35,
+            }}>
+            End turn
+            <span style={{ display: 'block', opacity: 0.85, fontWeight: 400 }}>
+              next player ▸
+            </span>
+          </button>
+          <span style={{ display: 'block', marginTop: 5, opacity: 0.55 }}>
+            Anything unspent is spent.
+          </span>
+        </div>
       )}
     </div>
   )

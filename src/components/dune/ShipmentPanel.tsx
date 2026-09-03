@@ -193,11 +193,12 @@ export function ShipmentPanel({
             </div>
           )}
 
-          {/* THE EARLY HANDOFF: the clock is a ceiling, not a sentence. */}
-          <button disabled={busy} onClick={onPass}
-            style={{ display: 'block', width: '100%', marginTop: 8 }}>
-            End turn — next player
-          </button>
+          {/* THE EARLY HANDOFF LIVES ON THE RAIL, and only there. It was
+              here as well — the same words, the same action, two buttons on
+              opposite sides of the screen — and a second copy of a control
+              is not reassurance, it is a question about whether the two do
+              the same thing. See ShipRail's onEndTurn, which sits with the
+              rest of the shipment controls. */}
         </>
       )}
     </div>
