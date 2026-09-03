@@ -1629,7 +1629,10 @@ export function DuneGameScreen({
               handCount={state.players.find(p => p.faction === seat)?.handCount ?? null}
               battles={state.battles}
               forces={state.forces}
-              storm={state.storm}
+              // THE SAME LIST THE GATE ABOVE COUNTED. Derived once, here, so
+              // the pick list and the decision to draw it at all cannot come
+              // apart — see BattlePanelProps.pending.
+              pending={battlesLeft}
               tanks={state.tanks ?? null}
               seat={seat}
               hand={own?.cards ?? []}

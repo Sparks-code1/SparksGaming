@@ -4,9 +4,12 @@
  * BUILT IN THE BIDDING PANEL'S MOULD — a decision with a deadline floats over
  * the board, shuts out of the way, and never covers the chat or the HUD. It
  * renders from the PUBLIC battles object plus this seat's own secrets; where
- * battles are pending is derived from the forces by the same shared law the
- * server judges with (pendingBattles), so the pick list cannot disagree with
- * what the server will accept.
+ * battles are pending is HANDED IN by the screen, which derives it once off
+ * the same shared law the server judges with (pendingBattles). This file used
+ * to call that law itself and claim the same thing — while passing two of its
+ * three arguments, so a Karama on the Bene Gesserit advisors made the server
+ * count battles this list did not. One derivation is what makes the claim
+ * true rather than intended.
  *
  * WHAT THE PLAN FORM KNOWS: the seat's own hand and traitors, handed in as
  * props by the screen that holds the secrets. Nothing here fetches. The
@@ -104,7 +107,21 @@ const territoryName = (id: string) =>
 export interface BattlePanelProps {
   battles: NonNullable<DuneGameState['battles']>
   forces: NonNullable<DuneGameState['forces']>
-  storm: DuneGameState['storm']
+  /**
+   * The ground still contested, worked out by the caller.
+   *
+   * HANDED IN RATHER THAN DERIVED HERE, and that is the whole point of it. The
+   * panel used to call pendingBattles itself with two arguments, taking the
+   * default for the third — so a Karama on the Bene Gesserit's advisors, which
+   * makes robed forces fight and therefore ADDS battles, was counted by the
+   * endpoint and by the screen and not by this list. Three call sites, one of
+   * them wrong, all claiming to agree.
+   *
+   * With the list passed in there is one derivation and no way for a later
+   * edit to reintroduce the disagreement: a wrong count here is now a wrong
+   * count everywhere, which is a bug somebody notices.
+   */
+  pending: ReturnType<typeof pendingBattles>
   tanks: DuneGameState['tanks'] | null
   seat: FactionId | null
   /**
@@ -269,7 +286,7 @@ const zoomPip: React.CSSProperties = {
 }
 
 export function BattlePanel({
-  battles, forces, storm, tanks, seat, hand, traitors, now, busy,
+  battles, forces, pending, tanks, seat, hand, traitors, now, busy,
   traitorProxy = null, beatEligible = 2,
   refusal = null, refusedAction = null, handCount = null,
   onPick, onPlan, onAnswer, onVoice, onPrescience, prescienceAnswer = null,
@@ -445,7 +462,6 @@ export function BattlePanel({
 
   // ── the pick ────────────────────────────────────────────────────────────
   if (!c) {
-    const pending = pendingBattles(forces, storm)
     const mineToPick = seat === aggressor ? battlesFor(pending, aggressor) : []
     const expired = now >= battles.closesAt
     return frame(

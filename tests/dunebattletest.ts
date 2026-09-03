@@ -427,7 +427,7 @@ check('the three windows have their seconds',
   ]
   const draw = (over: Record<string, unknown> = {}) =>
     renderToStaticMarkup(createElement(BattlePanel, {
-      battles, forces: board, storm: CALM, tanks: null, seat: 'atreides' as FactionId,
+      battles, forces: board, pending: pendingBattles(board, CALM), tanks: null, seat: 'atreides' as FactionId,
       hand: ['crysknife', 'shield', CHEAP_HERO_ID], traitors: [FEYD], now: 1,
       busy: false, onPick: () => {}, onPlan: () => {}, onAnswer: () => {},
       ...over,
@@ -871,7 +871,7 @@ check('the three windows have their seconds',
   ]
   const draw = (over: Record<string, unknown> = {}) =>
     renderToStaticMarkup(createElement(BattlePanel, {
-      battles, forces: bgBoard, storm: CALM, tanks: null,
+      battles, forces: bgBoard, pending: pendingBattles(bgBoard, CALM), tanks: null,
       seat: 'bene-gesserit' as FactionId,
       hand: [], traitors: [], now: 1, busy: false,
       onPick: () => {}, onPlan: () => {}, onAnswer: () => {},
@@ -1171,7 +1171,7 @@ check('the three windows have their seconds',
   ]
   const drawAdv = (over: Record<string, unknown> = {}) =>
     renderToStaticMarkup(createElement(BattlePanel, {
-      battles: battles2, forces: advBoard, storm: CALM, tanks: null,
+      battles: battles2, forces: advBoard, pending: pendingBattles(advBoard, CALM), tanks: null,
       seat: 'emperor' as FactionId,
       hand: [], traitors: [], now: 1, busy: false,
       onPick: () => {}, onPlan: () => {}, onAnswer: () => {},
@@ -1494,7 +1494,7 @@ check('the three windows have their seconds',
   ]
   const draw4 = (over: Record<string, unknown> = {}) =>
     renderToStaticMarkup(createElement(BattlePanel, {
-      battles: battles4, forces: kwBoard, storm: CALM, tanks: null,
+      battles: battles4, forces: kwBoard, pending: pendingBattles(kwBoard, CALM), tanks: null,
       seat: 'atreides' as FactionId,
       hand: [], traitors: [], now: 1, busy: false,
       onPick: () => {}, onPlan: () => {}, onAnswer: () => {},
@@ -1691,7 +1691,7 @@ check('the three windows have their seconds',
   })
   const drawBeat = (battles9: object, overProps: object = {}) =>
     renderToStaticMarkup(createElement(BattlePanel, {
-      battles: battles9, forces: [], storm: 'sector-1', tanks: null,
+      battles: battles9, forces: [], pending: [], tanks: null,
       seat: 'harkonnen' as FactionId, hand: [], traitors: ['Hasimir Fenring'],
       now: revealAt + 10_000, busy: false,
       onPick: () => {}, onPlan: () => {}, onAnswer: () => {},

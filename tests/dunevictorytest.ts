@@ -126,6 +126,23 @@ console.log('--- an empty battle screen is not shown ---')
       /'bene-gesserit', 'advanced\.advisors',/.test(src),
       /pendingBattles\(\s*\(state\.forces \?\? \[\]\) as never, state\.storm as never, advisorsFight\)/.test(src)],
     [true, true, true])
+
+  // ── ONE DERIVATION, NOT TWO THAT AGREE ────────────────────────────────
+  // The panel used to call pendingBattles itself, passing two of its three
+  // arguments — so the endpoint and the screen counted a Karama'd advisor
+  // battle and the pick list did not. Three call sites, one wrong, all
+  // claiming to agree.
+  //
+  // The list is handed in now. This holds that shape rather than the old one,
+  // because "the panel counts it the same way" is a thing that drifts and
+  // "the panel does not count it" is a thing that cannot.
+  const panel = readFileSync('src/components/dune/BattlePanel.tsx', 'utf8')
+  check('the panel is given the list rather than working it out',
+    [/pending: ReturnType<typeof pendingBattles>/.test(panel),
+      /const pending = pendingBattles\(/.test(panel)],
+    [true, false])
+  check('...and the screen hands it the one it gated on',
+    /pending=\{battlesLeft\}/.test(src), true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
