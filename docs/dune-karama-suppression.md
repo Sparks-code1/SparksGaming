@@ -317,6 +317,27 @@ one idea rather than six.
 
 ### The rule that keeps this honest
 
+Two guards, because they answer different questions.
+
+**Does a check exist?** Every enforced entry must carry a
+`// KARAMA-STOP: <faction> <ref>` marker at its firing site with a real
+`isSuppressed` call within six lines, and every marker must belong to an
+enforced entry. Both directions: a flag with no check is a promise the game
+cannot keep, and a check with no flag is enforcement nobody may buy.
+
+**Can anybody reach it?** The first guard proves a check exists, not that a
+player can ever be in a position to buy it — and for two stops the answer was
+no. The scan walks `stoppablePhases` against the phase each check names: a rule
+that fires on a player ACTION is reachable from its own phase, because the
+action has to be sent and a Karama can be sent first; a rule that fires as a
+phase is ENTERED cannot be, because the entry happens in the same write that
+sets the phase, so something EARLIER must be able to name it. Which is which is
+read off where the marker sits — inside `advancePhase` is an entry, anywhere
+else is an action.
+
+That second guard exists because the Storm regression was found by being asked
+about twice rather than by anything failing.
+
 An ability gets its check **when the ability is built**, as part of building it.
 That rule failed twice — the Fremen desert radius shipped without one, and so did
 eighteen more — and the only reason anybody found out was by reading the list. It

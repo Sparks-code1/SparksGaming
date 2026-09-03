@@ -9,6 +9,7 @@ import { bgFollowsShip, bgAdvancedFollow, judgeBgFlip, movementRange,
 import { charityGrant, isEligibleForCharity } from '@/lib/dune/charity'
 import { pendingBattles } from '@/lib/dune/battle'
 import { DUNE_PHASES } from '@/types/Dune/Game'
+import type { GamePhase } from '@/types/Dune/Game'
 import { karamaOptions, playKarama, isKaramaFor, mayStopIn, stoppablePhases, stopTurnFor,
 } from '@/lib/dune/karama'
 import { TREACHERY_CARDS } from '@/data/dune/treachery'
@@ -707,6 +708,71 @@ check('the Bene Gesserit rules say worthless cards are Karamas',
       .filter(([, st]) => !st!.enforced)
       .map(([ref]) => `${id}.${ref}`)),
     [])
+
+  // ── every stop can be reached by somebody ──────────────────────────────
+  // THE GUARD ABOVE PROVES A CHECK EXISTS. It does not prove any player can
+  // ever be in a position to buy it, and for two stops the answer was no: the
+  // Fremen storm foreknowledge and their half share of a storm are both
+  // checked against the Storm phase, and the Storm is the FIRST phase of a
+  // turn. Nothing earlier in that turn could name it. They sat on the menu
+  // taking cards and doing nothing, and were found by being asked about twice
+  // rather than by anything failing.
+  //
+  // WHAT MAKES A PHASE REACHABLE. A rule that fires on a player ACTION is
+  // reachable from its own phase: the action has to be sent, and a Karama can
+  // be sent first. A rule that fires as the phase is ENTERED cannot be — the
+  // entry happens in the same write that sets the phase, so there is no
+  // moment inside it to act in, and something EARLIER must be able to name it.
+  //
+  // Which is which is read off where the marker sits: inside advancePhase is
+  // an entry, anywhere else is an action.
+  {
+    const ep = readFileSync('supabase/functions/dune-action/index.ts', 'utf8')
+    const entryFrom = ep.indexOf('async function advancePhase(')
+    const entryTo = ep.indexOf('const answer = await (async (): Promise<Response> => {')
+    check('advancePhase was found, and the action switch after it',
+      [entryFrom > 0, entryTo > entryFrom], [true, true])
+
+    const unreachable: string[] = []
+    const lines = ep.split(/\r?\n/)
+    let at = 0
+    for (const line of lines) {
+      const here = at
+      at += line.length + 1
+      const m = /\/\/ KARAMA-STOP: ([a-z-]+) ([a-zA-Z.#]+)/.exec(line)
+      if (!m) continue
+      // the phase the check beneath this marker names
+      const near = ep.slice(here, here + 420)
+      // SCOPED TO THE LIVE PHASE is its own answer. A check written against
+      // `state.phase` bites in whatever phase the action arrived in, which
+      // means it fires on an action by construction — the Bene Gesserit flips
+      // are the case, since their stand-up window spans three phases.
+      if (/Number\(state\.turn \?\? 0\), state\.phase as never\)/.test(near)) continue
+      const ph = /'([A-Z][^']*)' as never\)/.exec(near)?.[1] as GamePhase | undefined
+      if (!ph || !(DUNE_PHASES as readonly string[]).includes(ph)) {
+        unreachable.push(`${m[1]}.${m[2]} — no phase named under the marker`)
+        continue
+      }
+      const firesAtEntry = here > entryFrom && here < entryTo
+      if (!firesAtEntry) continue
+      // SOMETHING EARLIER MUST BE ABLE TO NAME IT.
+      const namers = (DUNE_PHASES as readonly GamePhase[])
+        .filter(c => c !== ph && mayStopIn(c, ph))
+      if (namers.length === 0) {
+        unreachable.push(
+          `${m[1]}.${m[2]} — fires as ${ph} is entered, and no other phase can name ${ph}`)
+      }
+    }
+    check('no stop fires in a phase nobody could have named', unreachable, [])
+
+    // AND THE ONE THAT NEEDED THE CROSSING still needs it: if the Pause ever
+    // stops reaching the coming storm, the scan above must go red rather than
+    // the two Fremen stops quietly going dead again.
+    check('the Storm is nameable from somewhere that is not the Storm',
+      (DUNE_PHASES as readonly GamePhase[])
+        .filter(c => c !== 'Storm' && mayStopIn(c, 'Storm')),
+      ['Mentat Pause'])
+  }
 
   // COUNTED OUT, not recomputed. A check that derived the expected number the
   // same way the code does would agree with any change, including a wrong one;
