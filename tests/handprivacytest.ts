@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 // Card hands are secret. Everything in matches.state is broadcast to every
 // connected client by the realtime changefeed, so a hand is private only if it
 // is ABSENT from the projected state — hiding it in the UI hides nothing from
@@ -393,6 +394,64 @@ check('the source state still holds every hand after projecting',
       return leaksOtherSeatsSecrets(v, id) || leaksDeckOrder(v)
     }), [false, false, false])
 }
+
+// ── The client has to survive the shape the projection produces ───────────
+//
+// A PROJECTION WITH NO READER IS THE SAME BUG ONE STEP LATER. viewForSeat and
+// publicView are correct and called, and then GameBoard crashed on what they
+// produce: 'p.cards is not iterable', because the display mirror spread
+// players[].cards for EVERY seat and after the split only the reading seat has
+// one. Both browsers went down at HQ placement — the first action in the match,
+// which is the write that applies publicView and heals a pre-split deal.
+console.log('--- the display mirror reads a projected board ---')
+{
+  const board = readFileSync('src/components/GameBoard.tsx', 'utf8')
+  const at = board.indexOf('mirrorServerCardsRef.current = ')
+  const fn = at < 0 ? '' : board.slice(at, at + 2200)
+
+  check('the mirror carries only the seats it can see',
+    /\.filter\(p => Array\.isArray\(p\.cards\)\)/.test(fn), true)
+  check('...and no longer spreads every seat\'s hand',
+    /s\.players\.map\(p => \[p\.id, \[\.\.\.p\.cards\]\]\)/.test(fn), false)
+
+  // ABSENT, NOT EMPTY. An empty array asserts a player holds nothing, which is
+  // false; absence says this client cannot see them, and cardCount is the
+  // honest number. Every reader already takes `?? []`.
+  check('...and does not pretend an unseen hand is an empty one',
+    /\[p\.id, \[\]\]/.test(fn), false)
+}
+
+// THE ONE READER THAT NEEDED THE COUNT INSTEAD. Mindshackle offers a trade
+// against a player whose ground you took, and asked the display mirror whether
+// they hold anything — which online is a question this client cannot answer.
+// Off cardCount it can: the number is public, and only the reducer needs the
+// cards themselves, on the server, with the real thing.
+{
+  const board = readFileSync('src/components/GameBoard.tsx', 'utf8')
+  const at = board.indexOf('const holds = (vid: string)')
+  const fn = at < 0 ? '' : board.slice(at, at + 700)
+  check('the Mindshackle victim check reads the count',
+    /p\.cardCount \?\? 0/.test(fn), true)
+  check('...rather than a hand it cannot see',
+    /newCardState\.playerHands\[vid\]/.test(board), false)
+}
+
+// AND THE HOTSEAT CARD PATHS ARE UNAFFECTED, checked rather than assumed: all
+// four sites that mutate players[].cards sit inside `if (!onlineMatchRef...)`,
+// and hotseat is returned by viewForSeat unprojected, so every player has a
+// hand there. The concern was an AI seat driven by the host — real in shape,
+// but those paths never run online.
+{
+  const board = readFileSync('src/components/GameBoard.tsx', 'utf8')
+  const spreads = [...board.matchAll(/\{ \.\.\.p, cards: (?:\[\.\.\.p\.cards|p\.cards\.filter)/g)]
+  check('every direct hand mutation is hotseat-only',
+    spreads.every(m => {
+      const before = board.slice(Math.max(0, m.index - 400), m.index)
+      return /if \(!onlineMatchRef\.current\) \{/.test(before)
+    }), true)
+  check('...and there are still four of them', spreads.length, 4)
+}
+
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 

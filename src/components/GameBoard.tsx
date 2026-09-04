@@ -1208,7 +1208,26 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       sideboard: [...piles.sideboard],
       resourceDeck: [...piles.resourceDeck],
       territoryDiscard: [...piles.territoryDiscard],
-      playerHands: Object.fromEntries(s.players.map(p => [p.id, [...p.cards]])),
+      // ── ONLY THE SEATS THIS CLIENT CAN SEE ──────────────────────────────
+      // Online, the row carries nobody's hand: mergeOwnSecrets puts THIS
+      // seat's back and everyone else keeps a cardCount with no `cards` at
+      // all. Spreading p.cards for every player therefore crashed the moment
+      // a match stopped being pre-split — which is the first action taken in
+      // it, because that write is the one that applies publicView.
+      //
+      // ABSENT, NOT EMPTY. An empty array says a player holds no cards, which
+      // is false; an absent key says this client cannot see them, and
+      // players[].cardCount is the honest number for anything that needs one.
+      // Every reader of this map already takes `?? []`, so absence is the
+      // shape they were written for.
+      //
+      // A PRE-SPLIT STATE STILL FILLS IT COMPLETELY, which matters: the
+      // SEED_CARD_PILES retro-fit above seeds hands from this map, and it only
+      // ever runs on a match old enough to have no server piles — which is a
+      // match old enough to still carry every hand inline.
+      playerHands: Object.fromEntries(s.players
+        .filter(p => Array.isArray(p.cards))
+        .map(p => [p.id, [...p.cards]])),
     }))
   }
 
@@ -4328,8 +4347,22 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (isCoin) {
       const drawPlayer = gameStateRef.current.players.find(p => p.id === playerId)
       if (drawPlayer?.factionId === 'mutants' && !drawPlayer.isAI && mutantHasEvolvePower('me-mindshackle')) {
+        // WHETHER A VICTIM HOLDS ANYTHING, off the count rather than the hand.
+        // Online this client cannot see another seat's cards at all — that is
+        // the point of the split — so a check against the display mirror found
+        // no victims and the offer never opened. cardCount is public and is
+        // exactly the number this question needs; the hand itself is only ever
+        // read by the reducer, which runs on the server with the real thing.
+        const holds = (vid: string) => {
+          const p = gameStateRef.current.players.find(x => x.id === vid) as
+            (typeof gameStateRef.current.players[number] & { cardCount?: number }) | undefined
+          if (!p) return false
+          return Array.isArray(p.cards)
+            ? p.cards.length > 0
+            : (p.cardCount ?? 0) > 0
+        }
         const victims = [...conqueredFromPlayerIdsRef.current]
-          .filter(vid => vid !== playerId && (newCardState.playerHands[vid] ?? []).length > 0)
+          .filter(vid => vid !== playerId && holds(vid))
         if (victims.length > 0) {
           setMindshackleOffer({ coinCardId: cardId, playerId })
         }
