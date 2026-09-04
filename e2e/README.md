@@ -273,3 +273,35 @@ offered a Nudge on turn 5`, which is the whole reason it exists. A throw that
 does not wedge: caught by the page-error assertion, which the stall check would
 never have reached. And the clean run above, in strict three-seat rotation with
 no seat skipped.
+
+### Ageing the campaign
+
+Four runs of the multi-turn spec — seventy-two hand-overs over three seatings —
+reached captures, card draws and failed attacks, and **not one** event, mission,
+elimination or milestone. Not because the driver handles them. Because a
+game-one campaign cannot reach them: `GameBoard` strips the base event cards
+outright and empties the mission deck unless `doubleWinnerMilestoneTriggered`.
+The rare half of the interrupt matrix is gated behind campaign progress, and
+replaying the first game walks into none of it.
+
+`ageCampaign` patches the campaign row's `legacy_state` flags with the service
+role — the one thing in `support/risk.ts` that reaches past the UI, and the
+honest tool for it: a campaign with games behind it is something the app writes
+over hours of play and has no screen for creating. Only the flags change; the
+board, roster and scars stay exactly as the app made them.
+
+The aged spec asserts the decks are **actually** in play (`MISSION ★`) before it
+plays a round. Ageing that silently failed would leave it identical to the spec
+above it and green for the wrong reason — proven by dropping the missions flag
+and watching it go red.
+
+Two things this needed on the way, both worth knowing:
+
+- **Campaigns are named per run.** Every run leaves its campaign behind, the way
+  the Dune specs leave their matches, and they were all "New World" — so a run
+  could not find its way back into its own. `newCampaign` returns the name it
+  used.
+- **A reload lands on the front door**, not in the campaign, so ageing has to
+  walk back in through the picker — and the picker's list is *fetched*, so
+  looking for the row immediately finds an empty list and reports the campaign
+  missing.

@@ -14,7 +14,7 @@
 import { test, expect } from '@playwright/test'
 import {
   soloGame, newCampaign, openSlots, playSetup, startGame, onBoard,
-  whoseTurn, passTurn, territoryIdNamed, playRounds, gameOver,
+  whoseTurn, passTurn, territoryIdNamed, playRounds, gameOver, ageCampaign,
 } from './support/risk'
 
 /**
@@ -212,6 +212,9 @@ test('several turns run through without the drivers wedging', async ({ page }) =
   // them are covered is not a thing to reason about from the code; it is a
   // thing to walk into.
   //
+  // EIGHTEEN HAND-OVERS — six rounds. Nine reached no interrupt at all, and
+  // an event card or an elimination is what this is fishing for; a game that
+  // ends inside the run is a legitimate finish and not a failure.
   // THREE SEATS, TWO OF THEM COMPUTERS, because two bots produce battles
   // between themselves as well as against the human — more captures, more
   // cards, more chances of an elimination inside the run.
@@ -228,7 +231,7 @@ test('several turns run through without the drivers wedging', async ({ page }) =
   await playSetup(page, 40, 'Harness')
   expect(await onBoard(page), 'never reached a board').toBe(true)
 
-  const held = await playRounds(page, { you: 'Harness', turns: 9 })
+  const held = await playRounds(page, { you: 'Harness', turns: 18 })
 
   // SAID OUT LOUD, because the assertions below are SKIPPED when the game ends
   // early and a silently weakened test is the thing this file keeps catching
@@ -243,12 +246,53 @@ test('several turns run through without the drivers wedging', async ({ page }) =
   // Unless the game ended early, which is a legitimate finish and not a fault
   // — a three-seat game can be over inside three rounds.
   if (!(await gameOver(page))) {
-    expect(held.length, `only ${held.length} of 9 turns were played`).toBe(9)
+    expect(held.length, `only ${held.length} of 18 turns were played`).toBe(18)
     for (const who of ['Harness', 'Bot One', 'Bot Two']) {
       expect(held.some(h => h.toLowerCase() === who.toLowerCase()),
         `${who} never held a turn across ${held.join(' → ')}`).toBe(true)
     }
   }
 
+  expect(crashes, `the page threw during play:\n${crashes.join('\n')}`).toEqual([])
+})
+
+test('an aged campaign plays through with its rare cards in the decks', async ({ page }) => {
+  // WHAT THE PLAIN MULTI-TURN SPEC CANNOT REACH. Four runs of it — seventy-two
+  // hand-overs over three seatings — turned up captures, card draws and failed
+  // attacks, and not one event, mission, elimination or milestone. Not because
+  // the driver handles them: because a GAME-ONE CAMPAIGN CANNOT REACH THEM.
+  // GameBoard strips the base event cards outright and empties the mission deck
+  // unless doubleWinnerMilestoneTriggered, so the rare half of the interrupt
+  // matrix is gated behind campaign progress and replaying the first game walks
+  // into none of it.
+  //
+  // So the campaign is aged first: missions back in play, the alien milestone
+  // (which brings the Aliens faction, weakness powers, Die Humans and Beam
+  // Down) and the nuclear one (missiles, the Fallout Zone, and the nuclear
+  // milestone the AI driver pauses for). Then the same rounds are played.
+  const crashes: string[] = []
+  page.on('pageerror', e => crashes.push(String(e)))
+
+  const world = await newCampaign(page, { others: ['Bot One', 'Bot Two'] })
+  await ageCampaign(page, { missions: true, aliens: true, nuclear: true }, world)
+  await startGame(page, { players: 3, ai: [1, 2] })
+  await playSetup(page, 60, 'Harness')
+  expect(await onBoard(page), 'an aged campaign never reached a board').toBe(true)
+
+  // THE DECKS ARE ACTUALLY IN PLAY, asserted rather than assumed. Ageing that
+  // silently failed would leave this spec identical to the one above it and
+  // green for the wrong reason — which is the exact failure this file keeps
+  // catching itself in.
+  const opening = await page.locator('body').innerText()
+  expect(/MISSION\n\s*★/.test(opening),
+    'the mission deck is still empty — the campaign was not aged').toBe(true)
+
+  const held = await playRounds(page, { you: 'Harness', turns: 18 })
+  console.log(`aged turns held: ${held.join(' → ')}`
+    + (await gameOver(page) ? ' (game ended inside the run)' : ''))
+
+  if (!(await gameOver(page))) {
+    expect(held.length, `only ${held.length} of 18 turns were played`).toBe(18)
+  }
   expect(crashes, `the page threw during play:\n${crashes.join('\n')}`).toEqual([])
 })

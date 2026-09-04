@@ -63,15 +63,23 @@ export async function press(page: Page, text: string | RegExp): Promise<void> {
  * the first thing anybody meets and nothing else asserts it is there.
  */
 export async function newCampaign(page: Page, opts: {
-  you?: string; others?: string[]
-} = {}): Promise<void> {
+  you?: string; others?: string[]; world?: string
+} = {}): Promise<string> {
   const you = opts.you ?? 'Harness'
   const others = opts.others ?? ['Bot One']
+  // A NAME OF ITS OWN. Every run leaves its campaign behind — deliberately,
+  // the same way the Dune specs leave their matches — and they were all called
+  // "New World", so a run that needed to find its way back into its own
+  // campaign could not tell it from the ninety before it.
+  const world = opts.world ?? `Harness ${Date.now().toString(36)}`
 
   await page.goto('/')
   await press(page, 'RISK LEGACY')
   await press(page, 'Create Campaign')
 
+  // THE WORLD NAME FIELD carries its default as a VALUE, not a placeholder,
+  // so it is found by position among the form's inputs rather than by text.
+  await page.locator('input').first().fill(world)
   await page.getByPlaceholder('What the board will call you').fill(you)
   await press(page, 'Create Campaign')
 
@@ -81,6 +89,7 @@ export async function newCampaign(page: Page, opts: {
     await page.getByPlaceholder('Add someone to the campaign').fill(name)
     await press(page, /^Add$/)
   }
+  return world
 }
 
 /**
@@ -579,4 +588,115 @@ export async function playRounds(page: Page, opts: {
     }
   }
   return seen
+}
+
+// ── The campaign's history ────────────────────────────────────────────────
+//
+// WHY THIS EXISTS. Four runs of the multi-turn spec — seventy-two hand-overs
+// across three seatings — reached captures, card draws and failed attacks, and
+// not one event, mission, elimination or milestone. Not because the AI driver
+// handles them, but because a GAME-ONE CAMPAIGN CANNOT REACH THEM: GameBoard
+// strips the base event cards outright and empties the mission deck unless
+// `doubleWinnerMilestoneTriggered`. The rare half of the interrupt matrix is
+// gated behind campaign progress, so no amount of replaying the first game
+// walks into it.
+//
+// So the campaign is aged. The row is patched with the service role, which is
+// the one thing in this file that reaches past the UI — and it is the honest
+// tool for it: a campaign with four games behind it is a thing the app writes
+// over hours of play and has no screen for creating.
+
+/** The milestones a campaign can have behind it, as the legacy blob spells them. */
+export interface Aged {
+  /** Puts the mission deck back in play. */
+  missions?: boolean
+  /** Aliens, their weakness powers, and Die Humans / Beam Down. */
+  aliens?: boolean
+  /** Missiles, the nuclear milestone and the Fallout Zone. */
+  nuclear?: boolean
+  /** The draft-order setup path instead of the plain one. */
+  draft?: boolean
+}
+
+/**
+ * Age the campaign this browser is sitting on, then reload into it.
+ *
+ * THROUGH THE ROW, NOT THE UI, and only the flags — the board, the roster and
+ * the scars are left exactly as the app created them, so what changes is which
+ * decks and which interrupts are in play and nothing else.
+ */
+export async function ageCampaign(
+  page: Page, want: Aged, world: string,
+): Promise<string> {
+  const { createClient } = await import('@supabase/supabase-js')
+  const { readStack } = await import('./stack')
+  const stack = readStack()
+  const admin = createClient(stack.api, stack.service, { auth: { persistSession: false } })
+
+  // WHICH CAMPAIGN THIS BROWSER IS IN, asked of the browser rather than
+  // guessed from "the newest row" — the specs run one after another against
+  // one database and the newest row is not reliably this test's.
+  const id = await page.evaluate(() => {
+    try { return localStorage.getItem('riskLegacy:activeCampaignId') } catch { return null }
+  })
+  if (!id) throw new Error('this browser is not in a campaign to age')
+
+  const { data, error } = await admin
+    .from('campaigns').select('legacy_state').eq('id', id).single()
+  if (error) throw new Error(`could not read the campaign: ${error.message}`)
+  const legacy = (data?.legacy_state ?? {}) as Record<string, unknown>
+
+  const patched = {
+    ...legacy,
+    ...(want.missions ? { doubleWinnerMilestoneTriggered: true } : null),
+    ...(want.aliens ? { alienMilestoneTriggered: true } : null),
+    ...(want.nuclear ? { nuclearMilestoneTriggered: true } : null),
+    ...(want.draft ? { draftOrderUnlocked: true } : null),
+  }
+  const up = await admin.from('campaigns').update({ legacy_state: patched }).eq('id', id)
+  if (up.error) throw new Error(`could not age the campaign: ${up.error.message}`)
+
+  // RELOADED, because the screen is holding the copy it read on the way in —
+  // and a reload lands on the front door, so the way back is the way in.
+  await page.reload()
+  await page.waitForTimeout(BEAT)
+  await press(page, 'RISK LEGACY')
+  await reopen(page, world)
+  return id
+}
+
+/**
+ * Open a named campaign from the picker.
+ *
+ * BY NAME, because the picker holds every campaign every run has ever left
+ * behind and they are otherwise identical. The row carries its world name and
+ * an Open or a Resume depending on whether a game is in progress, so the press
+ * is whichever of the two this row has.
+ */
+export async function reopen(page: Page, world: string): Promise<void> {
+  // THE LIST ARRIVES AFTER THE SCREEN DOES. Campaigns are fetched, so pressing
+  // through to the picker and looking immediately finds an empty list and
+  // reports the campaign missing — which is what it looked like for three
+  // runs. Wait for the name itself.
+  await expect(page.locator(`text=${world}`).first(),
+    `the picker never listed ${world}`).toBeVisible({ timeout: 15_000 })
+
+  // THE BUTTON WHOSE ROW CARRIES THE NAME. A div filtered by text matches
+  // every ancestor that contains it, and the innermost of those is the label
+  // itself with no button inside — so the walk goes the other way, from each
+  // Open/Resume up a few levels looking for the name.
+  const at = await page.$$eval('button', (els, w) => {
+    for (let i = 0; i < els.length; i++) {
+      const t = (els[i].textContent ?? '').trim()
+      if (t !== 'Open' && t !== 'Resume') continue
+      let n: HTMLElement | null = els[i].parentElement
+      for (let up = 0; up < 5 && n; up++, n = n.parentElement) {
+        if ((n.textContent ?? '').includes(w)) return i
+      }
+    }
+    return -1
+  }, world)
+  if (at < 0) throw new Error(`no campaign called ${world} in the picker`)
+  await page.locator('button').nth(at).click()
+  await page.waitForTimeout(BEAT)
 }
