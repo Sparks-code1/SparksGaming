@@ -936,16 +936,9 @@ export async function joinCampaign(
   }
 
   // ── Adding a name that is not on the roster yet ────────────────────────────
-  // STILL A TABLE WRITE, and the one thing the scoped policies genuinely take
-  // away: it works while the campaign is unclaimed (nobody has linked an
-  // account, so anybody holding the id may write) and is refused once anyone
-  // has. On a claimed campaign a member has to add the name first — the
-  // campaign screen does exactly that — and the newcomer then claims it above.
-  //
-  // Not routed through the rpc on purpose: adding a member is where every
-  // roster rule lives (name length, duplicates, the roster cap, the game number
-  // they joined on), and reimplementing those in plpgsql is how the two copies
-  // start disagreeing about who is allowed to play.
+  // THE RULES ARE STILL HERE. addRosterMember owns name length, duplicates, the
+  // roster cap and the game number somebody joined on, and it runs first so the
+  // joiner gets this project's wording rather than a database exception.
   const added = addRosterMember(
     roster,
     joinAs.name,
@@ -954,9 +947,42 @@ export async function joinCampaign(
   )
   if (!added.ok || !added.member) throw new Error(added.reason ?? 'Could not join that campaign')
 
-  const updated: LegacyState = { ...current, roster: added.roster }
-  await saveLegacyState(updated)
-  return { legacy: updated, playerId: added.member.id }
+  // A GUEST STILL WRITES THROUGH THE TABLE, and can only do so while the
+  // campaign is unclaimed — which is exactly when the policies allow it, and
+  // when there is no account for the rpc to put on a seat. Nothing here is a
+  // crossing: an unclaimed campaign is reachable by anyone holding its id.
+  if (!joinAs.userId) {
+    const updated: LegacyState = { ...current, roster: added.roster }
+    await saveLegacyState(updated)
+    return { legacy: updated, playerId: added.member.id }
+  }
+
+  // ── An account joining, which is the crossing ──────────────────────────────
+  // A SAVE CANNOT DO THIS. saveLegacyState upserts, so the write is checked
+  // against the UPDATE policy's USING on the row ALREADY THERE — and the whole
+  // point is that the joiner is not on that row yet. It failed with "(USING
+  // expression)", which reads like a broken save rather than the rule it is,
+  // and it is the ordinary way somebody joins a campaign they were sent a code
+  // for.
+  //
+  // THE ROSTER GOES, NOT THE CAMPAIGN. The rpc writes the array into whatever
+  // the server currently holds, so a joiner cannot overwrite scars, stickers or
+  // history on their way in — and cannot clobber whatever landed on the
+  // campaign while they were reading it. What the function enforces is only
+  // what a caller must not be trusted with: that their uid appears exactly
+  // once, and that nobody else's claimed seat is altered.
+  const { data, error } = await supabase.rpc('join_campaign_by_code', {
+    p_code: opts.code,
+    p_member_id: null,
+    p_roster: added.roster,
+  })
+  if (error) throw new Error(claimFailure(error.message))
+  const row = (data as JoinCodeRow[] | null ?? [])[0]
+  if (!row) throw new Error('That campaign could not be found — check the code and try again')
+
+  const legacy = hydrateLegacyState(row.legacy_state, row.id)
+  legacy.joinCode = row.join_code ?? opts.code
+  return { legacy, playerId: added.member.id }
 }
 
 /**
@@ -974,6 +1000,23 @@ function claimFailure(message: string): string {
   if (/sign in/i.test(message)) return 'Sign in before claiming a seat'
   if (/no roster member/i.test(message)) {
     return 'That player is no longer on the campaign roster'
+  }
+  // The whole-roster path's own two refusals. Both mean somebody else changed
+  // the campaign between this joiner reading it and pressing the button, which
+  // is a thing to try again rather than a thing to explain.
+  if (/your seat exactly once/i.test(message)) {
+    return 'You already have a seat in that campaign'
+  }
+  if (/alters a seat claimed/i.test(message)) {
+    return 'Somebody else joined while you were choosing — try again'
+  }
+  // ROW-LEVEL SECURITY, IN WORDS. A joiner who sees "new row violates
+  // row-level security policy (USING expression) for table campaigns" learns
+  // nothing they can act on, and it reads like a broken save rather than a
+  // campaign that is not open to them.
+  if (/row-level security/i.test(message)) {
+    return 'That campaign is not open to you — ask whoever runs it to add your'
+      + ' name, then join with the code again'
   }
   return `Could not join that campaign: ${message}`
 }

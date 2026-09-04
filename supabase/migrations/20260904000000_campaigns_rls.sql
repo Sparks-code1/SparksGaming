@@ -178,12 +178,15 @@ end $$;
 --    blob back unchanged, which is a write a non-member is rightly refused and
 --    which never had anything to save.
 --
--- 1b. ADDING A NEW NAME BY CODE still writes through the table, so it works
---    while the campaign is unclaimed and is refused once anyone has linked an
---    account. On a claimed campaign a member must add the name first (the
---    campaign screen does that) and the newcomer then claims it. Deliberate:
---    routing it through the rpc would mean reimplementing the roster rules —
---    name length, duplicates, the cap, the joining game number — in plpgsql.
+-- 1b. ADDING A NEW NAME BY CODE — HANDLED, and it was worse than this note
+--    first said. It is not a workflow change, it is the ORDINARY way somebody
+--    joins a campaign they were sent a code for, and it failed with
+--    "(USING expression)" because saveLegacyState upserts: the INSERT check
+--    passes (you are on the new roster) and the UPDATE USING fails (you were
+--    not on the old one). See 20260904120000_join_campaign_with_roster.sql,
+--    which takes the roster TypeScript computed and enforces only what a
+--    caller must not be trusted with. A guest still joins by saving, which
+--    only works on an unclaimed campaign — which is when it is allowed.
 --
 -- 2. A player who never claimed a seat loses access once anyone else claims
 --    one. Mixed campaigns — some accounts, some not — are the common case in

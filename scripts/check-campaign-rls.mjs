@@ -188,5 +188,75 @@ console.log('\n— an unclaimed campaign stays open, deliberately —')
   check('a campaign nobody has claimed is readable by anyone with the id', !!seen.data)
 }
 
+
+console.log('\n— joining a CLAIMED campaign as a new name —')
+{
+  // THE BREAK THIS CLOSES. saveLegacyState upserts, so adding yourself to a
+  // claimed roster passed the INSERT check (you are on the new roster) and
+  // failed the UPDATE USING (you were not on the old one) — the "(USING
+  // expression)" report. It is the ordinary way somebody joins with a code.
+  const joinId = crypto.randomUUID()
+  const joinCode = Array.from({ length: 6 },
+    () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)]).join('')
+  const ownerOnly = [{ id: 'p1', name: 'Owner', userId: owner.userId, joinedInGame: 1 }]
+  await admin.from('campaigns').insert({
+    id: joinId, world_name: 'Join Check', join_code: joinCode,
+    legacy_state: {
+      campaignId: joinId, worldName: 'Join Check', currentGameNumber: 1,
+      roster: ownerOnly, scars: ['keep-me'],
+    },
+  })
+
+  const proposed = [...ownerOnly,
+    { id: 'p2', name: 'Newcomer', userId: stranger.userId, joinedInGame: 1 }]
+  const joined = await stranger.client.rpc('join_campaign_by_code', {
+    p_code: joinCode, p_member_id: null, p_roster: proposed,
+  })
+  check('a newcomer can add themselves through the rpc',
+    !joined.error, joined.error?.message ?? '')
+
+  const row = await admin.from('campaigns').select('legacy_state').eq('id', joinId).single()
+  const roster = row.data?.legacy_state?.roster ?? []
+  check('...and the roster has both seats', roster.length === 2)
+  check('...with the newcomer\'s account on theirs',
+    roster.find(m => m.id === 'p2')?.userId === stranger.userId)
+
+  // ONLY THE ROSTER MOVED. The caller hands over an array, not a campaign, so
+  // a joiner cannot overwrite the scars, the stickers or the history on the way
+  // in — nor clobber whatever landed while they were reading it.
+  check('...and nothing else on the campaign was touched',
+    JSON.stringify(row.data?.legacy_state?.scars) === JSON.stringify(['keep-me']))
+
+  // RULE 1: exactly one seat is yours.
+  const greedy = await stranger.client.rpc('join_campaign_by_code', {
+    p_code: joinCode, p_member_id: null,
+    p_roster: [...proposed, { id: 'p3', name: 'Also Me', userId: stranger.userId }],
+  })
+  check('two seats for one account are refused',
+    !!greedy.error && /exactly once/i.test(greedy.error.message))
+
+  // RULE 2: nobody else's claimed seat is altered — in ANY field.
+  const thief = await stranger.client.rpc('join_campaign_by_code', {
+    p_code: joinCode, p_member_id: null,
+    p_roster: [
+      { id: 'p1', name: 'Owner', userId: stranger.userId, joinedInGame: 1 },
+      { id: 'p2', name: 'Newcomer', userId: stranger.userId, joinedInGame: 1 },
+    ],
+  })
+  check('taking somebody else\'s claimed seat is refused',
+    !!thief.error, thief.error?.message ?? 'no error')
+
+  const renamer = await stranger.client.rpc('join_campaign_by_code', {
+    p_code: joinCode, p_member_id: null,
+    p_roster: [
+      { id: 'p1', name: 'Renamed', userId: owner.userId, joinedInGame: 1 },
+      { id: 'p2', name: 'Newcomer', userId: stranger.userId, joinedInGame: 1 },
+    ],
+  })
+  check('...and so is editing any field of it',
+    !!renamer.error && /alters a seat claimed/i.test(renamer.error.message))
+}
+
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

@@ -213,13 +213,22 @@ console.log('\n— roster: accounts —')
   const sql = readFileSync(
     `${dir}/${files.find(f => f.endsWith('_campaigns_rls.sql'))}`, 'utf8')
 
-  // IT MUST SORT AFTER WHAT IS ALREADY APPLIED. db push goes in timestamp
+  // IT MUST SORT AFTER WHAT WAS ALREADY APPLIED. db push goes in timestamp
   // order and treats a file older than the last applied migration as history —
-  // an armed policy that never runs is worse than one still held.
-  const applied = files.filter(f => f.endsWith('.sql') && !f.includes('campaigns_rls')).sort()
+  // an armed policy that never runs is worse than one still held. That is why
+  // it was renumbered from 20260816160000.
+  //
+  // COMPARED AGAINST THE LAST MIGRATION THAT PREDATES THIS WORK, not against
+  // "every other file": a first version asserted it sorted LAST of all, which
+  // was true until the join-roster migration landed after it — correctly, and
+  // the pin failed for it. A test that breaks when the next migration is added
+  // is a test nobody keeps.
+  const PREDECESSOR = '20260831120000_dune_seat_key_is_the_account.sql'
+  check('the predecessor it was renumbered past is still there',
+    files.includes(PREDECESSOR))
   const armed = files.find(f => f.endsWith('_campaigns_rls.sql'))!
-  check('...and sorts last, so db push actually runs it',
-    armed > applied[applied.length - 1], `${armed} vs ${applied[applied.length - 1]}`)
+  check('...and the policies sort after it, so db push runs them',
+    armed > PREDECESSOR, `${armed} vs ${PREDECESSOR}`)
 
   // THE DELETE FOOTGUN, WRITTEN DOWN. An RLS-refused DELETE returns no error,
   // so the picker's ✕ goes quiet rather than failing. Whoever applies this has
@@ -256,6 +265,66 @@ console.log('\n— roster: accounts —')
   check('the picker offers no delete', !/deleteCampaign\(/.test(picker))
   check('...and keeps no dead confirmation behind it',
     !/confirmDelete/.test(picker))
+}
+
+
+// ── Joining as a NEW name crosses the same way ────────────────────────────
+//
+// saveLegacyState upserts, so adding yourself to a claimed roster passed the
+// INSERT check (you are on the new roster) and failed the UPDATE USING (you
+// were not on the old one) — reported as "(USING expression)", which reads like
+// a broken save rather than the rule it is. It is the ordinary way somebody
+// joins a campaign they were sent the code for, so it had to keep working.
+{
+  const api = readFileSync('src/lib/legacyApi.ts', 'utf8')
+  const at = api.indexOf('export async function joinCampaign(')
+  const fn = at < 0 ? '' : api.slice(at, api.indexOf('\n}', at))
+  const newHalf = fn.slice(fn.indexOf('Adding a name that is not on the roster'))
+
+  check('an account joining goes through the rpc',
+    /p_roster: added\.roster/.test(newHalf))
+
+  // THE ROSTER, NOT THE CAMPAIGN. Handing the whole blob would let a joiner
+  // overwrite scars, stickers and history on the way in, and clobber whatever
+  // landed while they were reading it.
+  check('...passing the roster rather than the whole campaign',
+    !/p_roster: updated/.test(newHalf) && !/p_roster: current/.test(newHalf))
+
+  // THE RULES ARE STILL IN TYPESCRIPT. addRosterMember owns the cap, the
+  // duplicates and the name length, and runs before the call so the joiner
+  // gets this project's wording.
+  check('the roster rule still runs first',
+    newHalf.indexOf('addRosterMember(') < newHalf.indexOf('supabase.rpc('))
+
+  // A GUEST HAS NO ACCOUNT TO PUT ON A SEAT, and an unclaimed campaign is
+  // writable by anyone holding its id — so that path stays a plain save.
+  check('a guest still joins by saving', /if \(!joinAs\.userId\) \{/.test(newHalf))
+}
+
+// ── And a refusal reaches the player in words ─────────────────────────────
+//
+// "new row violates row-level security policy (USING expression) for table
+// campaigns" tells a player nothing they can act on, and reads like a broken
+// save rather than a campaign that is not open to them.
+{
+  const api = readFileSync('src/lib/legacyApi.ts', 'utf8')
+  const at = api.indexOf('function claimFailure(')
+  const fn = at < 0 ? '' : api.slice(at, api.indexOf('\n}', at))
+
+  // THE GUARD, NOT THE PROSE. A first version matched /row-level security/ and
+  // stayed green with the branch gutted — the phrase is in the comment above it
+  // explaining why the branch exists. Match the test expression itself.
+  check('a row-level refusal is translated',
+    /if \(\/row-level security\/i\.test\(message\)\)/.test(fn))
+  check('...as are the roster rules the function enforces',
+    /if \(\/your seat exactly once\/i\.test\(message\)\)/.test(fn)
+      && /if \(\/alters a seat claimed\/i\.test\(message\)\)/.test(fn))
+
+  // THE PANEL SHOWS WHAT IT IS GIVEN. joinCampaign throws these, the panel
+  // catches and displays — so translating at the source covers every caller.
+  const panel = readFileSync('src/components/JoinCampaignPanel.tsx', 'utf8')
+  check('the panel shows the thrown message',
+    /setError\(e instanceof Error \? e\.message/.test(panel))
 }
 
 
