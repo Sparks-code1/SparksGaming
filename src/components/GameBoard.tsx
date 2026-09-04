@@ -4304,6 +4304,45 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     }
   }
 
+  /**
+   * Rewrite one seat's hand on THIS machine, and nowhere else.
+   *
+   * THE WRITE-SIDE COUNTERPART TO handSize, and it exists for the same reason:
+   * three fixes to this shape have each been made one site at a time, so a
+   * fourth per-site fix would move the problem along rather than end it. Both
+   * things a caller has to know about a hand now live in one place.
+   *
+   * ONLINE IT DOES NOTHING, because the reducer owns hands there. Every caller
+   * has already dispatched DRAW_CARD or TRADE_IN_CARDS and had it applied
+   * optimistically; repeating the change locally doubles a draw or drops a
+   * trade twice. All four sites carried their own `if (!onlineMatchRef.current)`
+   * to say so, which is four places to remember it and four chances for the
+   * fifth caller not to.
+   *
+   * AND A HAND THIS MACHINE CANNOT SEE IS NOT ITS TO REWRITE. The projection
+   * omits other seats' cards rather than emptying them, so `[...p.cards]` on
+   * such a seat throws — and `[...(p.cards ?? [])]`, the one-character fix that
+   * stops the throw, is worse than the throw: it INVENTS a hand, writing a
+   * one-card hand over a seat that holds five. Nothing here could reconstruct
+   * what was really held, so the only honest answer is to refuse and say so.
+   */
+  function reviseHandLocally(playerId: string, change: (cards: string[]) => string[]) {
+    if (onlineMatchRef.current) return
+    setGameState(prev => ({
+      ...prev,
+      players: prev.players.map(p => {
+        if (p.id !== playerId) return p
+        if (!Array.isArray(p.cards)) {
+          console.warn(
+            `[hand] refusing to rewrite ${p.id}'s hand: this machine cannot see it. `
+            + 'Writing one here would invent a hand rather than change one.')
+          return p
+        }
+        return { ...p, cards: change(p.cards) }
+      }),
+    }))
+  }
+
   function handleCardDrawSelect(cardId: string, isCoin: boolean) {
     const playerId = pendingCardDraws[0]
     if (!playerId) return
@@ -4383,16 +4422,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       }
     }
     setTroopsToPlace(troops)
-    // Online, the DRAW_CARD dispatch above already put the card in the hand
-    // (optimistic reducer apply) — adding it again here would double it.
-    if (!onlineMatchRef.current) {
-      setGameState(prev => ({
-        ...prev,
-        players: prev.players.map(p =>
-          p.id === playerId ? { ...p, cards: [...p.cards, cardId] } : p,
-        ),
-      }))
-    }
+    // Hotseat only — online, the DRAW_CARD dispatch above already put the card
+    // in the hand and adding it again would double it.
+    reviseHandLocally(playerId, cards => [...cards, cardId])
 
     // ── 5. Post-award effects ──────────────────────────────────────────────
     announceDepletion(depletion, starAwardPurchasedAfter)
@@ -4485,15 +4517,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     }
     const purchasedAfter = commitCardsAndStar(newCardState, depletion)
 
-    // Online, the DRAW_CARD dispatch above already put the card in the hand.
-    if (!onlineMatchRef.current) {
-      setGameState(prev => ({
-        ...prev,
-        players: prev.players.map(p =>
-          p.id === playerId ? { ...p, cards: [...p.cards, cardId] } : p,
-        ),
-      }))
-    }
+    // Hotseat only — online, the DRAW_CARD dispatch above already did it.
+    reviseHandLocally(playerId, cards => [...cards, cardId])
 
     announceDepletion(depletion, purchasedAfter)
 
@@ -4547,15 +4572,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       saveLegacyState(newLegacy).catch(() => {})
       return newLegacy
     })
-    // Online, the TRADE_IN_CARDS dispatch above already removed them.
-    if (!onlineMatchRef.current) {
-      setGameState(prev => ({
-        ...prev,
-        players: prev.players.map(p =>
-          p.id === playerId ? { ...p, cards: p.cards.filter(id => !tradedSet.has(id)) } : p,
-        ),
-      }))
-    }
+    // Hotseat only — online, the TRADE_IN_CARDS dispatch above already removed them.
+    reviseHandLocally(playerId, cards => cards.filter(id => !tradedSet.has(id)))
     // Alien Collaborator weakness power: +1 troop on card trade-in
     const currentPlayer = gameState.players[gameState.currentPlayerIndex]
     const isAlienCollaborator = currentPlayer &&
@@ -4619,15 +4637,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       const resourceDeck = [...(prev.resourceDeck ?? prev.coinDeck ?? []), ...spentCoinIds]
       return { ...prev, playerHands, territoryDiscard, resourceDeck }
     })
-    // Online, the TRADE_IN_CARDS dispatch above already removed them.
-    if (!onlineMatchRef.current) {
-      setGameState(prev => ({
-        ...prev,
-        players: prev.players.map(p =>
-          p.id === player.id ? { ...p, cards: p.cards.filter(id => !spentSet.has(id)) } : p,
-        ),
-      }))
-    }
+    // Hotseat only — online, the TRADE_IN_CARDS dispatch above already removed them.
+    reviseHandLocally(player.id, cards => cards.filter(id => !spentSet.has(id)))
 
     // Award the purchased star; compute the new total from known values so a
     // stale ref can never miss the just-awarded star

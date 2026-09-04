@@ -463,20 +463,44 @@ console.log('--- a hand you cannot see still has a size ---')
     /\bplayer\.cards\.length|\bcurrentPlayer\.cards\.length/.test(board), false)
 }
 
-// AND THE HOTSEAT CARD PATHS ARE UNAFFECTED, checked rather than assumed: all
-// four sites that mutate players[].cards sit inside `if (!onlineMatchRef...)`,
-// and hotseat is returned by viewForSeat unprojected, so every player has a
-// hand there. The concern was an AI seat driven by the host — real in shape,
-// but those paths never run online.
+// AND THE HOTSEAT CARD PATHS GO THROUGH ONE WRITER.
+//
+// They used to be four copies of the same shape, each carrying its own
+// `if (!onlineMatchRef.current)` and its own `[...p.cards]`, and this block
+// used to check that all four still had the guard. That is a pin that grows a
+// line every time somebody writes a fifth. Three fixes to this shape had each
+// been per-site; the fourth consolidated instead. Now there is ONE place that
+// writes a hand, so the two things a caller has to know — the reducer owns
+// hands online, and a hand this machine cannot see is not its to rewrite —
+// are asserted once, where they are decided.
+console.log('--- one writer owns every hand change ---')
 {
   const board = readFileSync('src/components/GameBoard.tsx', 'utf8')
-  const spreads = [...board.matchAll(/\{ \.\.\.p, cards: (?:\[\.\.\.p\.cards|p\.cards\.filter)/g)]
-  check('every direct hand mutation is hotseat-only',
-    spreads.every(m => {
-      const before = board.slice(Math.max(0, m.index - 400), m.index)
-      return /if \(!onlineMatchRef\.current\) \{/.test(before)
-    }), true)
-  check('...and there are still four of them', spreads.length, 4)
+
+  const at = board.indexOf('function reviseHandLocally(')
+  const fn = at < 0 ? '' : board.slice(at, at + 900)
+
+  check('it stands down online, where the reducer owns hands',
+    /if \(onlineMatchRef\.current\) return/.test(fn), true)
+  check('...and refuses a hand this machine cannot see',
+    /if \(!Array\.isArray\(p\.cards\)\)[\s\S]{0,260}?return p\n/.test(fn), true)
+
+  // THE TEMPTING ONE-CHARACTER FIX, banned by name. `?? []` stops the throw
+  // and starts a worse bug: it writes a one-card hand over a seat holding
+  // five, and nothing downstream can tell that happened.
+  check('...rather than inventing one with ?? []',
+    /p\.cards \?\? \[\]/.test(fn), false)
+
+  // AND NOBODY GOES ROUND IT. One spread of a hand in the whole file, and it
+  // is the one inside the writer.
+  const spreads = [...board.matchAll(/\{ \.\.\.p, cards:/g)]
+  check('there is exactly one place that writes a hand', spreads.length, 1)
+  check('...and it is inside the writer',
+    spreads.every(m => m.index > at && m.index < at + 900), true)
+
+  // The four callers that used to carry the shape themselves.
+  check('every hand change is routed through it',
+    [...board.matchAll(/reviseHandLocally\(/g)].length, 5)
 }
 
 
