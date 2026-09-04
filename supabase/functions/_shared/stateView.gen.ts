@@ -18,12 +18,20 @@ var SECRET_DECK_KEYS = [
 var activeCards = (state) => state.legacySnapshot?.activeGameCards ?? null;
 var legacyHands = (state) => activeCards(state)?.playerHands ?? {};
 var legacyMissions = (state) => activeCards(state)?.playerMissions ?? {};
+var serverPiles = (state) => state.cards ?? null;
+var PILE_PREFIX = "cards:";
+var ordersFrom = (piles) => Object.fromEntries(SECRET_DECK_KEYS.filter((k) => Array.isArray(piles[k])).map((k) => [k, piles[k]]));
+var withoutOrders = (piles) => ({
+  ...piles,
+  ...Object.fromEntries(SECRET_DECK_KEYS.filter((k) => Array.isArray(piles[k])).map((k) => [k, []]))
+});
 var withoutSecrets = (p) => {
   const { cards: _cards, missionCardId: _mission, ...rest } = p;
   return { ...rest, cardCount: p.cards.length };
 };
 function publicView(state) {
   const cards = activeCards(state);
+  const piles = serverPiles(state);
   return {
     ...state,
     players: state.players.map(withoutSecrets),
@@ -47,7 +55,20 @@ function publicView(state) {
           ...Object.fromEntries(SECRET_DECK_KEYS.filter((k) => k in cards).map((k) => [k, []]))
         }
       }
-    } : {}
+    } : {},
+    // AND THE SERVER PILES, which travelled untouched until now. Same rule,
+    // same key list, different store — the projection has to name both, because
+    // there is nothing in the shape of a GameState that makes one findable from
+    // the other.
+    //
+    // The client's OPTIMISTIC apply now draws from an empty territoryDeck, so a
+    // face-up card taken locally refills with nothing for the beat before the
+    // server's row arrives and corrects it. That is the same trade the legacy
+    // decks have always made, and it is the right way round: the alternative is
+    // publishing the draw order so the optimistic copy can be prettier. The
+    // authoritative refill is computed in apply-action from the hydrated piles,
+    // and no client-computed pile is ever written back.
+    ...piles ? { cards: withoutOrders(piles) } : {}
   };
 }
 function secretsFromState(state) {
@@ -62,13 +83,39 @@ function secretsFromState(state) {
 }
 function decksFromState(state) {
   const cards = activeCards(state);
-  if (!cards) return {};
-  return Object.fromEntries(SECRET_DECK_KEYS.filter((k) => Array.isArray(cards[k])).map((k) => [k, cards[k]]));
+  const piles = serverPiles(state);
+  return {
+    ...cards ? ordersFrom(cards) : {},
+    // Namespaced — see PILE_PREFIX. Both stores call their draw pile
+    // `territoryDeck`, and match_decks is keyed by name.
+    ...piles ? Object.fromEntries(
+      Object.entries(ordersFrom(piles)).map(([k, v]) => [PILE_PREFIX + k, v])
+    ) : {}
+  };
+}
+function deckOrdersIn(state) {
+  const secret = new Set(SECRET_DECK_KEYS);
+  const found = [];
+  const seen = /* @__PURE__ */ new Set();
+  const walk = (node, path) => {
+    if (node === null || typeof node !== "object") return;
+    if (seen.has(node)) return;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      node.forEach((v, i) => walk(v, `${path}[${i}]`));
+      return;
+    }
+    for (const [k, v] of Object.entries(node)) {
+      const at = path ? `${path}.${k}` : k;
+      if (secret.has(k) && Array.isArray(v) && v.length > 0) found.push(at);
+      else walk(v, at);
+    }
+  };
+  walk(state, "");
+  return found;
 }
 function leaksDeckOrder(state) {
-  const cards = activeCards(state);
-  if (!cards) return false;
-  return SECRET_DECK_KEYS.some((k) => Array.isArray(cards[k]) && cards[k].length > 0);
+  return deckOrdersIn(state).length > 0;
 }
 function mergeOwnSecrets(view, seatId, secrets) {
   if (!secrets) return view;
@@ -90,6 +137,10 @@ function mergeOwnSecrets(view, seatId, secrets) {
 }
 function hydrateState(view, secrets, decks) {
   const cards = activeCards(view);
+  const piles = serverPiles(view);
+  const fromStore = (wanted) => Object.fromEntries(
+    Object.entries(decks).filter(([k, v]) => Array.isArray(v) && k.startsWith(PILE_PREFIX) === (wanted === "pile")).map(([k, v]) => [wanted === "pile" ? k.slice(PILE_PREFIX.length) : k, v])
+  );
   const restoredHands = { ...legacyHands(view) };
   const restoredMissions = { ...legacyMissions(view) };
   for (const [seat, held] of Object.entries(secrets)) {
@@ -110,10 +161,13 @@ function hydrateState(view, secrets, decks) {
           // this split is the real order, and for one written after is the
           // empty array publicView left. Overwriting with [] either way would
           // shuffle a live game's draw pile into nothing on its next action.
-          ...Object.fromEntries(Object.entries(decks).filter(([, v]) => Array.isArray(v)))
+          ...fromStore("legacy")
         }
       }
     } : {},
+    // The server piles, restored on the same terms: only what came back, and a
+    // deck the store did not return is left exactly as the row had it.
+    ...piles ? { cards: { ...piles, ...fromStore("pile") } } : {},
     players: view.players.map((p) => {
       const { cardCount: _n, ...rest } = p;
       const held = secrets[p.id];
@@ -140,6 +194,7 @@ function leaksOtherSeatsSecrets(state, seatId) {
 export {
   SECRET_DECK_KEYS,
   SECRET_PLAYER_KEYS,
+  deckOrdersIn,
   decksFromState,
   hydrateState,
   leaksDeckOrder,

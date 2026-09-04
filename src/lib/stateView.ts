@@ -100,6 +100,52 @@ const legacyMissions = (state: { legacySnapshot?: unknown }): Record<string, str
   (activeCards(state)?.playerMissions as Record<string, string> | undefined) ?? {}
 
 /**
+ * THE SECOND DECK STORE, and the reason this file had a leak in it for months.
+ *
+ * There are two pile stores, not one. `legacySnapshot.activeGameCards` is the
+ * campaign blob's, and `GameState.cards` — ServerCardPiles — is the online
+ * match's contended piles, added when the piles moved server-side. Everything
+ * in this module went through `activeCards()`, which reads the first and has
+ * never heard of the second, so `state.cards.territoryDeck` travelled on the
+ * shared row in full view of every subscriber: the next territory card, and the
+ * whole order behind it, public for the life of every online match.
+ *
+ * `sideboard` and `territoryDiscard` stay where they are. They are face up on
+ * the table by rule, and SECRET_DECK_KEYS already excludes them.
+ */
+const serverPiles = (state: { cards?: unknown }): Record<string, unknown> | null =>
+  (state.cards as Record<string, unknown> | null | undefined) ?? null
+
+/**
+ * Rows from the server piles are namespaced, because both stores use the SAME
+ * deck names and match_decks is keyed by (match_id, deck). Unprefixed, the
+ * campaign's territoryDeck and the match's territoryDeck are one row, and
+ * whichever is written second silently destroys the other. The `deck` column is
+ * unconstrained text, so this needs no migration.
+ */
+const PILE_PREFIX = 'cards:'
+
+/** Every secret draw pile in one pile object, by name. */
+const ordersFrom = (piles: Record<string, unknown>): Record<string, string[]> =>
+  Object.fromEntries(SECRET_DECK_KEYS
+    .filter(k => Array.isArray(piles[k]))
+    .map(k => [k, piles[k] as string[]]))
+
+/**
+ * The same pile object with every secret order emptied.
+ *
+ * Emptied rather than deleted, for both stores and for the same reason: the
+ * keys have a shape the app reads, and a length of zero is honest — the client
+ * genuinely does not know what is left.
+ */
+const withoutOrders = <T extends Record<string, unknown>>(piles: T): T => ({
+  ...piles,
+  ...Object.fromEntries(SECRET_DECK_KEYS
+    .filter(k => Array.isArray(piles[k]))
+    .map(k => [k, []])),
+})
+
+/**
  * A player with their secrets removed and a count left in their place.
  *
  * Rebuilt without the secret keys rather than set to undefined: a key present
@@ -126,6 +172,7 @@ const withoutSecrets = (p: Player): SeatPlayer => {
  */
 export function publicView(state: GameState): SeatState {
   const cards = activeCards(state)
+  const piles = serverPiles(state)
   return {
     ...state,
     players: state.players.map(withoutSecrets),
@@ -152,6 +199,19 @@ export function publicView(state: GameState): SeatState {
         },
       },
     } : {}),
+    // AND THE SERVER PILES, which travelled untouched until now. Same rule,
+    // same key list, different store — the projection has to name both, because
+    // there is nothing in the shape of a GameState that makes one findable from
+    // the other.
+    //
+    // The client's OPTIMISTIC apply now draws from an empty territoryDeck, so a
+    // face-up card taken locally refills with nothing for the beat before the
+    // server's row arrives and corrects it. That is the same trade the legacy
+    // decks have always made, and it is the right way round: the alternative is
+    // publishing the draw order so the optimistic copy can be prettier. The
+    // authoritative refill is computed in apply-action from the hydrated piles,
+    // and no client-computed pile is ever written back.
+    ...(piles ? { cards: withoutOrders(piles) } : {}),
   } as SeatState
 }
 
@@ -182,24 +242,66 @@ export function secretsFromState(state: GameState): Record<string, SeatSecrets> 
  */
 export function decksFromState(state: GameState): Record<string, string[]> {
   const cards = activeCards(state)
-  if (!cards) return {}
-  return Object.fromEntries(SECRET_DECK_KEYS
-    .filter(k => Array.isArray(cards[k]))
-    .map(k => [k, cards[k] as string[]]))
+  const piles = serverPiles(state)
+  return {
+    ...(cards ? ordersFrom(cards) : {}),
+    // Namespaced — see PILE_PREFIX. Both stores call their draw pile
+    // `territoryDeck`, and match_decks is keyed by name.
+    ...(piles ? Object.fromEntries(
+      Object.entries(ordersFrom(piles)).map(([k, v]) => [PILE_PREFIX + k, v])) : {}),
+  }
 }
 
 /**
- * True when `state` still carries a deck order.
+ * Every place this state carries a secret deck order, as a path.
  *
  * Separate from leaksOtherSeatsSecrets because it is a different claim. That one
  * asks "is somebody ELSE's secret here", which is answered per seat. A deck is
  * nobody's, so there is no seat to ask about — its presence is a leak for every
  * reader at once, including the one holding the state.
+ *
+ * IT WALKS THE WHOLE STATE, and that is the entire point of this shape.
+ *
+ * The version before it asked `activeCards(state)` — the same helper, and so
+ * the same single location, that the projection uses. A guard built out of the
+ * projection's idea of where secrets live cannot catch the projection missing a
+ * place, because it is missing the same place: `GameState.cards` carried the
+ * draw order on the shared row of every online match, and this function
+ * cheerfully returned false the whole time. That is not a bug that gets caught
+ * by adding the second location to both — it is a bug that comes back the third
+ * time somebody puts cards somewhere new.
+ *
+ * So the only thing shared with publicView now is the list of what is SECRET, a
+ * name at a time, which is the one thing that should have a single definition.
+ * Where to look is not a list any more; it is everywhere.
+ *
+ * Returns PATHS rather than a boolean so a failure names the field. "A deck
+ * order is on the wire" sent people to the legacy block for months.
  */
+export function deckOrdersIn(state: unknown): string[] {
+  const secret = new Set<string>(SECRET_DECK_KEYS)
+  const found: string[] = []
+  const seen = new Set<object>()
+  const walk = (node: unknown, path: string) => {
+    if (node === null || typeof node !== 'object') return
+    if (seen.has(node)) return          // a cycle, or the same object twice
+    seen.add(node)
+    if (Array.isArray(node)) {
+      node.forEach((v, i) => walk(v, `${path}[${i}]`))
+      return
+    }
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+      const at = path ? `${path}.${k}` : k
+      if (secret.has(k) && Array.isArray(v) && v.length > 0) found.push(at)
+      else walk(v, at)
+    }
+  }
+  walk(state, '')
+  return found
+}
+
 export function leaksDeckOrder(state: SeatState): boolean {
-  const cards = activeCards(state)
-  if (!cards) return false
-  return SECRET_DECK_KEYS.some(k => Array.isArray(cards[k]) && (cards[k] as unknown[]).length > 0)
+  return deckOrdersIn(state).length > 0
 }
 
 /**
@@ -261,6 +363,15 @@ export function hydrateState(
   decks: Record<string, string[]>,
 ): GameState {
   const cards = activeCards(view)
+  const piles = serverPiles(view)
+  // Back to the store each row came from. They travel in one map because
+  // apply_match_write takes one, and the prefix is what tells them apart on the
+  // way home — unrouted, the campaign's draw pile would land in the match's
+  // piles and the reducer would deal a game out of the wrong deck.
+  const fromStore = (wanted: 'legacy' | 'pile') => Object.fromEntries(
+    Object.entries(decks)
+      .filter(([k, v]) => Array.isArray(v) && k.startsWith(PILE_PREFIX) === (wanted === 'pile'))
+      .map(([k, v]) => [wanted === 'pile' ? k.slice(PILE_PREFIX.length) : k, v]))
   // Rebuilt from the same secrets the players are, so the two copies of a hand
   // cannot come back disagreeing when they went out agreeing.
   const restoredHands: Record<string, string[]> = { ...legacyHands(view) }
@@ -283,10 +394,13 @@ export function hydrateState(
           // this split is the real order, and for one written after is the
           // empty array publicView left. Overwriting with [] either way would
           // shuffle a live game's draw pile into nothing on its next action.
-          ...Object.fromEntries(Object.entries(decks).filter(([, v]) => Array.isArray(v))),
+          ...fromStore('legacy'),
         },
       },
     } : {}),
+    // The server piles, restored on the same terms: only what came back, and a
+    // deck the store did not return is left exactly as the row had it.
+    ...(piles ? { cards: { ...piles, ...fromStore('pile') } } : {}),
     players: view.players.map(p => {
       const { cardCount: _n, ...rest } = p
       const held = secrets[p.id]

@@ -22,6 +22,7 @@ import { readFileSync } from 'node:fs'
 import {
   viewForSeat, publicView, secretsFromState, mergeOwnSecrets, hydrateState,
   leaksOtherSeatsSecrets, leaksDeckOrder, decksFromState, SECRET_DECK_KEYS,
+  deckOrdersIn,
 } from '@/lib/stateView'
 import type { SeatState } from '@/lib/stateView'
 import type { GameState } from '@/types/game'
@@ -74,6 +75,20 @@ const state = {
       resourceDeck: ['res-next'],
       sideboard: ['tc-face-1'],
     },
+  },
+  // AND THE SECOND PILE STORE — the same lesson one store further on, and it
+  // cost months. GameState.cards is the online match's contended piles, added
+  // when the piles moved server-side, and nothing in stateView had heard of it:
+  // every function went through activeCards(), which reads the legacy block
+  // alone. This fixture did not carry it either, so every "no deck order on the
+  // wire" assertion below was true of a state that could not have had one,
+  // while state.cards.territoryDeck rode the shared row of every online match
+  // in full view of every subscriber.
+  cards: {
+    territoryDeck: ['srv-next-1', 'srv-next-2'],
+    sideboard: ['srv-face-1'],
+    resourceDeck: ['srv-coin-1'],
+    territoryDiscard: ['srv-seen'],
   },
 } as unknown as GameState
 
@@ -295,9 +310,14 @@ check('the source state still holds every hand after projecting',
       Array.isArray(cards(shared).sideboard)], [true, true])
 
   // What goes to the store, and that it is the real order rather than a count.
+  // BOTH STORES' WORTH: the four unprefixed keys are the campaign block's, the
+  // two `cards:` ones are the online match's server piles. Listed in full
+  // rather than counted, so adding a store without namespacing it shows up here
+  // as a collision rather than as a passing test and a destroyed deck.
   check('every seeded deck is handed to the deck store',
     Object.keys(decksFromState(state)).sort(),
-    ['eventDeck', 'missionDeck', 'resourceDeck', 'territoryDeck'])
+    ['cards:resourceDeck', 'cards:territoryDeck',
+      'eventDeck', 'missionDeck', 'resourceDeck', 'territoryDeck'])
   check('...with the order intact',
     decksFromState(state).territoryDeck, ['tc-next-1', 'tc-next-2'])
   check('a state with no legacy block hands over no decks',
@@ -503,6 +523,75 @@ console.log('--- one writer owns every hand change ---')
     [...board.matchAll(/reviseHandLocally\(/g)].length, 5)
 }
 
+
+// THE SERVER PILES ARE A DECK STORE TOO, and they were never projected.
+console.log('--- both pile stores, not just the one the projection knew ---')
+{
+  const shared = publicView(state)
+  const wire = JSON.stringify(shared)
+
+  check('the match draw pile is off the shared row', wire.includes('srv-next-1'), false)
+  check('...and so is the coin pile', wire.includes('srv-coin-1'), false)
+
+  // FACE UP BY RULE, and they must stay readable: a client that cannot see the
+  // four face-up cards cannot pick one, and the discard is public in every
+  // version of this game. SECRET_DECK_KEYS excludes both, and this is the check
+  // that stops somebody "fixing the leak" by emptying the whole object.
+  check('the face-up sideboard survives', wire.includes('srv-face-1'), true)
+  check('...and so does the discard', wire.includes('srv-seen'), true)
+
+  // NAMESPACED. Both stores call their draw pile territoryDeck and match_decks
+  // is keyed by (match_id, deck): unprefixed they are ONE row, and whichever is
+  // written second silently destroys the other.
+  const decks = decksFromState(state)
+  check('both draw piles reach the store, under different keys',
+    [decks['territoryDeck']?.[0], decks['cards:territoryDeck']?.[0]],
+    ['tc-next-1', 'srv-next-1'])
+
+  // AND HOME AGAIN, each to the store it came from. Routing them wrongly would
+  // deal the campaign's next card out of the match's pile.
+  const back = hydrateState(shared, secretsFromState(state), decks)
+  const backCards = (back.legacySnapshot as unknown as
+    { activeGameCards: Record<string, string[]> }).activeGameCards
+  check('the campaign deck returns to the legacy block',
+    backCards.territoryDeck, ['tc-next-1', 'tc-next-2'])
+  check('the match deck returns to the server piles',
+    back.cards?.territoryDeck, ['srv-next-1', 'srv-next-2'])
+  check('...and the public halves are untouched by the round trip',
+    [back.cards?.sideboard, back.cards?.territoryDiscard],
+    [['srv-face-1'], ['srv-seen']])
+}
+
+// AND THE GUARD NO LONGER SHARES THE PROJECTION'S BLIND SPOT.
+//
+// leaksDeckOrder used to ask activeCards() — the same helper, and so the same
+// single location, that publicView used. A guard built from the projection's
+// idea of where secrets live cannot catch the projection missing a place: it is
+// missing the same place. It returned false for months over a state carrying
+// the draw order in plain sight.
+console.log('--- the guard looks everywhere ---')
+{
+  check('the raw state leaks in both stores, and each is named',
+    deckOrdersIn(state).sort(),
+    ['cards.resourceDeck', 'cards.territoryDeck',
+      'legacySnapshot.activeGameCards.eventDeck',
+      'legacySnapshot.activeGameCards.missionDeck',
+      'legacySnapshot.activeGameCards.resourceDeck',
+      'legacySnapshot.activeGameCards.territoryDeck'])
+
+  check('the projected row leaks nowhere', deckOrdersIn(publicView(state)), [])
+  check('...and neither does a seat view', leaksDeckOrder(viewForSeat(state, 'p1', online)), false)
+
+  // THE CHECK THAT IS ACTUALLY THE POINT. A deck order in a place nobody has
+  // thought of yet is exactly what the old guard could not see. This one is
+  // found without anybody adding a third location to a list.
+  const somewhereNew = {
+    ...publicView(state),
+    turn: { stash: { resourceDeck: ['res-hidden'] } },
+  } as unknown as Parameters<typeof deckOrdersIn>[0]
+  check('a deck order in a place no list mentions is still found',
+    deckOrdersIn(somewhereNew), ['turn.stash.resourceDeck'])
+}
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 

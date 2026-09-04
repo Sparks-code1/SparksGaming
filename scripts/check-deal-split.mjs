@@ -147,15 +147,36 @@ console.log('\n— the deal writes a row with nobody\'s hand on it —')
       byDeck.territoryDeck?.includes('LEGACY-DECK-1'), JSON.stringify(byDeck))
   }
 
-  // A SEPARATE GAP, FOUND BY THIS CHECK AND NOT CAUSED BY THE DEAL.
-  // GameState.cards — the server card piles — carries territoryDeck, and
-  // publicView does not touch it: activeCards() reads legacySnapshot only.
-  // So the draw order IS on the shared row for every online match, and has
-  // been since the piles moved server-side. leaksDeckOrder has the same
-  // blind spot, which is why nothing caught it. Asserted as the CURRENT
-  // behaviour so the day it changes, this says so rather than going quiet.
-  check('KNOWN GAP: GameState.cards still carries the draw order',
-    wire.includes('"T1"'), 'state.cards is projected now — update this check')
+  // THE GAP THIS CHECK FOUND, NOW CLOSED. GameState.cards — the server card
+  // piles — carried territoryDeck on the shared row of every online match from
+  // the day the piles moved server-side, because every function in stateView
+  // went through activeCards(), which reads the legacy block and has never
+  // heard of the second store. leaksDeckOrder asked the same helper, so the
+  // guard was blind in exactly the place the projection was.
+  //
+  // This assertion used to state the leak as current behaviour. It states the
+  // fix now, which is the same check with its sense inverted: the ONE thing
+  // worth asserting either way is what a subscriber can read off the row.
+  check('the match draw pile is off the shared row too',
+    !wire.includes('"T1"'), wire.slice(0, 200))
+  {
+    const { data: decks } = await admin.from('match_decks')
+      .select('deck, cards').eq('match_id', m.id)
+    const byDeck = Object.fromEntries((decks ?? []).map(d => [d.deck, d.cards]))
+    // NAMESPACED, because both stores call it territoryDeck and match_decks is
+    // keyed by (match_id, deck). Unprefixed they would be one row and the deal
+    // would write one draw pile over the other.
+    check('...and is in the deck store under its own key',
+      byDeck['cards:territoryDeck']?.includes('T1'), JSON.stringify(Object.keys(byDeck)))
+    check('...alongside the campaign deck, not on top of it',
+      byDeck.territoryDeck?.includes('LEGACY-DECK-1'), JSON.stringify(byDeck.territoryDeck))
+  }
+  // The face-up halves stay readable: a client that cannot see the sideboard
+  // cannot pick from it.
+  check('the face-up sideboard and discard stay on the row',
+    row?.state?.cards?.sideboard !== undefined
+    && Array.isArray(row?.state?.cards?.territoryDiscard),
+    JSON.stringify(row?.state?.cards))
 }
 
 console.log('\n— and it is dealt exactly once —')
