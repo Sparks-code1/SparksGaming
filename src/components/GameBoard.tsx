@@ -202,6 +202,24 @@ interface TerritoryHandles {
   flatPoly: number[]
 }
 
+/**
+ * How many cards a seat holds, whether or not this machine may see them.
+ *
+ * THE PROJECTION OMITS OTHER SEATS' HANDS RATHER THAN EMPTYING THEM. Absent
+ * means "not yours to look at" and `cardCount` is the honest number; `[]` would
+ * have said they hold nothing, which is a different claim and a false one. That
+ * is the right shape — but it makes `p.cards.length` a crash for every seat but
+ * your own, and the type still says `cards: string[]`, so nothing warns.
+ *
+ * ANY READER THAT ONLY WANTS THE SIZE MUST COME THROUGH HERE. Your own seat has
+ * the array (merged back from its secrets row), everyone else has the count,
+ * and offline has the array for everybody — one expression covers all three,
+ * and two copies of it drift.
+ */
+function handSize(p: { cards?: string[]; cardCount?: number }): number {
+  return Array.isArray(p.cards) ? p.cards.length : (p.cardCount ?? 0)
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 interface PlayerSetup {
@@ -8010,17 +8028,27 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
                   {/* Card count — same source as the Cards button, so the two
                       always agree. Shown for every player (hand contents stay
                       secret; only the total is public). */}
-                  <span
-                    title={`${player.cards.length} card${player.cards.length !== 1 ? 's' : ''} in hand (territory + resource)`}
-                    style={{
-                      marginLeft: 5, fontSize: 9, fontWeight: 'bold',
-                      color: player.cards.length > 0 ? '#C8940A' : 'rgba(200,148,10,0.40)',
-                      border: `1px solid rgba(200,148,10,${player.cards.length > 0 ? 0.5 : 0.22})`,
-                      borderRadius: 4, padding: '0 4px', whiteSpace: 'nowrap',
-                    }}
-                  >
-                    🃏 {player.cards.length}
-                  </span>
+                  {(() => {
+                    // THE COUNT, NOT THE HAND — which is exactly what this strip
+                    // always meant to show, and now the only thing it CAN show:
+                    // every seat but yours arrives without a cards array at all.
+                    // Reading .length off it took both browsers down at the
+                    // first opponent's turn.
+                    const held = handSize(player)
+                    return (
+                      <span
+                        title={`${held} card${held !== 1 ? 's' : ''} in hand (territory + resource)`}
+                        style={{
+                          marginLeft: 5, fontSize: 9, fontWeight: 'bold',
+                          color: held > 0 ? '#C8940A' : 'rgba(200,148,10,0.40)',
+                          border: `1px solid rgba(200,148,10,${held > 0 ? 0.5 : 0.22})`,
+                          borderRadius: 4, padding: '0 4px', whiteSpace: 'nowrap',
+                        }}
+                      >
+                        🃏 {held}
+                      </span>
+                    )
+                  })()}
                   {player.isAI && (
                     <span
                       title={`Computer opponent — ${player.aiDifficulty ? AI_DIFFICULTY_LABEL[player.aiDifficulty] : 'AI'}`}
@@ -9103,24 +9131,32 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       )}
 
       {/* Cards button — shows current player's hand */}
-      {currentPlayer && gameState.phase !== 'game-over' && (
+      {/* THE STAR IS ABOUT A HAND YOU CAN READ. findBestTradeIn needs the cards
+          themselves, and online you only ever hold your own — every other seat
+          arrives without the array. So the trade-in hint is offered when the
+          hand is visible and simply withheld when it is not, rather than
+          computed from a hand that is not there. The count below still shows
+          for everyone, because the count was always public. */}
+      {currentPlayer && gameState.phase !== 'game-over' && (() => {
+        const myHand = Array.isArray(currentPlayer.cards) ? currentPlayer.cards : null
+        const canTrade = !!myHand && !!findBestTradeIn(myHand) && gameState.phase === 'reinforce'
+        return (
         <button
           onClick={() => setShowCardHand(true)}
           style={{
             position: 'absolute', bottom: 60, right: 14,
             padding: '6px 14px', borderRadius: 5, fontSize: 11, zIndex: 20,
             border: '1px solid rgba(200,148,10,0.50)',
-            background: findBestTradeIn(currentPlayer.cards) && gameState.phase === 'reinforce'
-              ? 'rgba(200,148,10,0.22)'
-              : 'rgba(15,8,0,0.72)',
+            background: canTrade ? 'rgba(200,148,10,0.22)' : 'rgba(15,8,0,0.72)',
             color: '#C8940A', cursor: 'pointer', fontFamily: 'Georgia, serif',
             backdropFilter: 'blur(6px)', letterSpacing: 0.5,
           }}
         >
-          🃏 Cards ({currentPlayer.cards.length})
-          {findBestTradeIn(currentPlayer.cards) && gameState.phase === 'reinforce' && ' ★'}
+          🃏 Cards ({handSize(currentPlayer)})
+          {canTrade && ' ★'}
         </button>
-      )}
+        )
+      })()}
 
       {/* Red Star purchase — spend any 4 cards during reinforce. Two clicks
           on purpose: the first arms, the second buys through the SAME handler

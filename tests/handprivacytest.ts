@@ -436,6 +436,33 @@ console.log('--- the display mirror reads a projected board ---')
     /newCardState\.playerHands\[vid\]/.test(board), false)
 }
 
+// THE SAME BUG ONE STEP FURTHER ON — the SIZE of a hand, not its contents.
+// A card COUNT is public and always was, and both places that show one took it
+// as `p.cards.length`. After the split only your own seat has an array, so
+// every board with an opponent on it threw 'Cannot read properties of
+// undefined' and React unmounted the tree: two blank browsers, no DOM, nothing
+// to read. Found by the two-seat browser spec and by nothing else here — a
+// single page never holds a seat whose hand is hidden, so no unit suite and no
+// solo walk can see it.
+console.log('--- a hand you cannot see still has a size ---')
+{
+  const board = readFileSync('src/components/GameBoard.tsx', 'utf8')
+
+  check('handSize takes the array when there is one and the count when there is not',
+    /function handSize\([\s\S]{0,240}?Array\.isArray\(p\.cards\) \? p\.cards\.length : \(p\.cardCount \?\? 0\)/
+      .test(board), true)
+
+  // BOTH SITES THROUGH THE ONE READER. Pinned as the sites rather than as a
+  // ban on the expression, because the guarded ternary form elsewhere is
+  // correct and a blanket rule would have to call it a failure.
+  check('the strip beside the board counts through handSize',
+    /const held = handSize\(player\)/.test(board), true)
+  check('...and so does the Cards button',
+    /Cards \(\{handSize\(currentPlayer\)\}\)/.test(board), true)
+  check('...and neither takes .length off a seat it may not be able to see',
+    /\bplayer\.cards\.length|\bcurrentPlayer\.cards\.length/.test(board), false)
+}
+
 // AND THE HOTSEAT CARD PATHS ARE UNAFFECTED, checked rather than assumed: all
 // four sites that mutate players[].cards sit inside `if (!onlineMatchRef...)`,
 // and hotseat is returned by viewForSeat unprojected, so every player has a

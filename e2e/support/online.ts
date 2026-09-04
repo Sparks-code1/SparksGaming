@@ -200,8 +200,15 @@ export { BEAT }
  * written against the signed-out screen let the host open their account panel
  * and sit in it for sixty steps while the spec reported "never reached a
  * board".
+ *
+ * `✓ Ready` is the same button as `I'm Ready` wearing its other label, and
+ * pressing it UNDOES the ready that startFromLobby just cast. A walk that
+ * reached the lobby before the host's start had propagated took it as
+ * progress, un-readied the seat, and then hung on it as the screen moved on
+ * underneath. Nothing whose only effect is to undo a step this file has
+ * already taken belongs in a forward walk.
  */
-const CHROME = /^(👤|🔉|📜|←|Save$|Sign out$|Sign in$|Account)/
+const CHROME = /^(👤|🔉|📜|←|Save$|Sign out$|Sign in$|Account|✓ Ready)/
 
 /**
  * The lobby, driven explicitly: the joiner readies, the host starts.
@@ -241,6 +248,20 @@ export function isForward(label: string): boolean {
  * silently failed to select sat on a live prompt until the budget ran out.
  */
 export async function placeHQ(page: Page): Promise<void> {
+  // ── THE STAGE CAN END UNDERNEATH THIS ──────────────────────────────────
+  // settleOnto reads the screen, decides it is this seat's pick, and only then
+  // calls here — and between those two the pick can land and the whole setup
+  // can complete, because the other browser is moving at its own speed. Then
+  // the map is gone, the twelve clicks go to detached nodes, and thirty
+  // seconds later this reports that the map took the click as a hover. It did
+  // not: there was no map. Re-asked before every click, so leaving the stage
+  // is a quiet return and the caller's own loop sees the board on its next
+  // pass, while a map that IS still there and still refuses is the failure it
+  // always was.
+  const stillPlacing = async () =>
+    /PLACE YOUR HQ/.test(await page.locator('body').innerText())
+  if (!await stillPlacing()) return
+
   const open = await page.$$eval('polygon', els => {
     const out: number[] = []
     for (let i = 0; i < els.length; i++) {
@@ -249,11 +270,20 @@ export async function placeHQ(page: Page): Promise<void> {
     }
     return out
   })
-  if (!open.length) throw new Error('the HQ map offered no unblocked territory')
+  if (!open.length) {
+    if (!await stillPlacing()) return
+    throw new Error('the HQ map offered no unblocked territory')
+  }
 
   const confirm = page.locator('button', { hasText: /Confirm HQ/ })
+  // WHY THE CLICK WAS REFUSED, not just that it was. Swallowing these made a
+  // pointer-events refusal, a detached node and a bbox centre landing outside
+  // a concave polygon all look identical: twelve silent misses and a guess.
+  const refusals: string[] = []
   for (const at of open.slice(0, 12)) {
-    await page.locator('polygon').nth(at).click({ timeout: 5000 }).catch(() => {})
+    if (!await stillPlacing()) return
+    await page.locator('polygon').nth(at).click({ timeout: 2500 })
+      .catch((e: Error) => { refusals.push(`#${at}: ${e.message.split('\n')[0]}`) })
     await page.waitForTimeout(250)
     if (await confirm.count()) {
       await confirm.first().click({ timeout: 5000 }).catch(() => {})
@@ -263,5 +293,9 @@ export async function placeHQ(page: Page): Promise<void> {
   }
   throw new Error(
     `clicked ${Math.min(open.length, 12)} open territories and none selected — `
-    + 'the map took the click as a hover.\n' + await where(page))
+    + 'the map took the click as a hover.\n'
+    + (refusals.length
+      ? `the clicks were REFUSED:\n  ${refusals.slice(0, 4).join('\n  ')}\n`
+      : 'every click landed and none selected.\n')
+    + await where(page))
 }

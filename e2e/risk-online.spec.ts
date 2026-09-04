@@ -23,29 +23,47 @@ import { onBoard, whoseTurn } from './support/risk'
 test.setTimeout(420_000)
 
 /**
- * NOT GREEN YET, and marked so rather than left to fail the suite.
+ * THE WHOLE WALK, both browsers: two signed-in accounts, a campaign created and
+ * hosted, the joiner reaching it with the code (which is join_campaign_by_code
+ * doing the crossing), the joiner taking a lobby seat, THE HOST SEEING THEM
+ * ARRIVE, the host starting once the table is ready, the dice, the factions and
+ * the abilities answered independently on each screen, both HQs placed, and the
+ * two boards naming the same seat's turn.
  *
- * HOW FAR IT GETS, which is most of the way and all of the hard part: two
- * signed-in browsers, a campaign created and hosted, the joiner reaching it
- * with the code (which is join_campaign_by_code doing the crossing), the joiner
- * taking a lobby seat, THE HOST SEEING THEM ARRIVE — the first hand-off, and it
- * passes — the host starting once the table is ready, then the dice, the
- * factions and the abilities answered independently on each screen, and the
- * host's HQ placed.
+ * IT WAS THREE THINGS, AND THE ONE THAT MATTERED WAS NOT IN THE HARNESS. This
+ * spec sat fixme'd on a note saying the guest's click registered as a hover and
+ * that the second browser's map took clicks differently. Nothing about that was
+ * right, and the reason it read that way is worth keeping.
  *
- * WHERE IT STOPS: the guest's HQ click registers as a hover rather than a
- * selection, so no confirm bar appears and that browser never reaches the
- * board. placeHQ retries twelve territories looking for the bar and finds none,
- * which is why the run is slow as well as red. The host's identical click on
- * the same map works, so it is not the coordinate maths — something about the
- * second browser's map is taking the click differently, and finding out is the
- * next job.
+ * ONE — A REAL CRASH, which is what this file exists to find. The projection
+ * omits other seats' hands rather than emptying them, and the player strip and
+ * the Cards button still read `p.cards.length`. Every board with an opponent on
+ * it threw `Cannot read properties of undefined` and React unmounted the tree:
+ * two blank browsers, no DOM, no buttons. Only a second browser can see it —
+ * the solo specs never have a seat whose hand is hidden — and it had been
+ * shipped and not yet played.
  *
- * WHAT IS ALREADY WORTH HAVING: the helpers in support/online.ts. Two contexts,
- * two accounts, the lobby walk and bothAgreeItIs are the expensive parts and
- * they work.
+ * TWO — THE READY TOGGLE. "✓ Ready — click to un-ready" is the same button as
+ * "I'm Ready" wearing its other label. The blind walk reached the lobby in the
+ * beat before the host's start had propagated, took it for progress, and undid
+ * the ready this file had just cast. Then the screen moved on, the button went
+ * with it, and an untimed click waited on a control that no longer existed
+ * until the test timeout fired seven minutes later naming nothing.
+ *
+ * THREE — AND ONLY THEN THE HQ STAGE, though not as recorded. placeHQ was
+ * being called on a browser that had already reached the board: the stage ended
+ * between settleOnto reading the screen and placeHQ acting on it, so twelve
+ * clicks went to detached nodes and the helper reported, in its own words, that
+ * the map had taken the click as a hover. It had not. There was no map.
+ *
+ * THE LESSON IS ABOUT THE REPORT, NOT THE BUG. Each of these was intermittent,
+ * and each failed with either no message or a confidently wrong one, so all
+ * three were filed under the last thing anybody had watched go wrong. press()
+ * carries a click timeout now and placeHQ says whether its clicks were refused
+ * and why — a failure that names itself is worth more here than one more
+ * assertion.
  */
-test.fixme('a hosted game reaches both browsers, and the turn is the same turn', async ({ browser }) => {
+test('a hosted game reaches both browsers, and the turn is the same turn', async ({ browser }) => {
   const seats: Seat[] = []
   try {
     const host = await openSeat(browser, 0)
@@ -141,6 +159,20 @@ async function settleOnto(seat: Seat, me: string, budgetMs = 120_000): Promise<v
     // seat that waits forever still fails, and a seat that waits a while does
     // not.
     if (/Waiting for .+ to\b/i.test(said)) {
+      await seat.page.waitForTimeout(700)
+      continue
+    }
+
+    // ── STILL IN THE LOBBY, AND ALREADY READY ─────────────────────────────
+    // Nothing on this screen is this seat's to press. The ready is cast and
+    // its toggle now only takes it back; the seat-count chips are the host's
+    // shape controls; Start is the host's. The walk lands here whenever the
+    // host's start has not yet come round to this browser — a window of a beat
+    // or two, hit about one run in five — and pressing ANYTHING in it undid the
+    // ready this file had just cast. Excluding the toggle alone was not enough:
+    // the fallback then reached for a seat-count chip instead. The screen is
+    // simply not this seat's to act on, so it waits.
+    if (/✓ Ready — click to un-ready/.test(said)) {
       await seat.page.waitForTimeout(700)
       continue
     }

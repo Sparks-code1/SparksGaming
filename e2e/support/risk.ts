@@ -52,7 +52,15 @@ export async function press(page: Page, text: string | RegExp): Promise<void> {
   const button = page.locator('button', { hasText: text }).first()
   await expect(button, `no pressable button matching ${text}`)
     .toBeEnabled({ timeout: 10_000 })
-  await button.click()
+  // A TIMEOUT ON THE CLICK ITSELF, not only on the wait above. No
+  // actionTimeout is configured, so Playwright's default is to wait FOREVER —
+  // and a control that vanishes between the enabled check and the click does
+  // exactly that. Online, where the other browser can move this screen on at
+  // any moment, that window is real: an un-ready toggle pressed as the host
+  // started the game hung the whole run, and what the report showed was a
+  // seven-minute test timeout with no action named. Ten seconds and the
+  // button's own text is a failure somebody can read.
+  await button.click({ timeout: 10_000 })
   await page.waitForTimeout(BEAT)
 }
 
