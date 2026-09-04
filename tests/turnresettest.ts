@@ -13,7 +13,14 @@ function check(name: string, cond: boolean, detail = '') {
   else { fail++; console.log(`  FAIL ${name} ${detail}`) }
 }
 
-/** What GameBoard now applies at the turn hand-off. */
+/**
+ * What END_TURN applies at the turn hand-off.
+ *
+ * GameBoard used to apply this too, just before dispatching — two
+ * implementations of one rule, of which the reducer's always landed last. The
+ * component's copy is gone; this shape is now asserted in one place because it
+ * exists in one place.
+ */
 const resetPatch = (continentsAtTurnStart: number) => ({
   ...initialTurnState(),
   continentsAtTurnStart,

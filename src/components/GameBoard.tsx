@@ -59,7 +59,7 @@ import {
   CARD_TRADE_IN_VALUES, isPrivateMission, seedPrivateMissions, canClaimStarPower,
   shuffle,
 } from '@/data/cards'
-import { checkMission, computeHomelands, homelandContinentFor, canClaimTerritoryCard, wholeContinentsControlled, type TurnConquestState } from '@/lib/missionLogic'
+import { checkMission, computeHomelands, homelandContinentFor, canClaimTerritoryCard, type TurnConquestState } from '@/lib/missionLogic'
 import { isSeaLine, registerCustomSeaLines } from '@/data/seaLines'
 import SeaLinePlacementModal from './SeaLinePlacementModal'
 import { AI_DIFFICULTY_LABEL, AI_DIFFICULTY_BADGE } from '@/types/ai'
@@ -536,23 +536,24 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   const showWeaknessNoticeRef = useRef<(m: string) => void>(() => {})
   const matchSyncRef = useRef<{ noteApplied: (v: number) => void; noteActionApplied: (seq: number) => void } | null>(null)
 
-  // Synchronous per-turn state writer. Updates GameState.turn AND mirrors
-  // gameStateRef immediately, so PIXI/timer closures that read the value later
-  // in the same tick see it before React re-renders — exactly the old
-  // setState()+ref.current= dual-write these fields used before they moved into
-  // GameState.
+  // THERE IS NO setTurn ANY MORE, and that is the point rather than a tidy-up.
   //
-  // ONLINE WARNING: a setTurn patch exists only on this machine, and the next
-  // server echo replaces the whole GameState — combat tracking written this way
-  // was wiped mid-turn, which is why RESOLVE_COMBAT/END_TURN own those fields
-  // in the reducer now. What remains here is CARD-layer tracking the server
-  // cannot know yet (trade-ins, rich-card eligibility, scar shields); it is
-  // still echo-vulnerable online until card actions reach the server (#25).
-  const setTurnRef = useRef((patch: Partial<GameState['turn']>) => {
-    setGameState(prev => ({ ...prev, turn: { ...prev.turn, ...patch } }))
-    gameStateRef.current = { ...gameStateRef.current, turn: { ...gameStateRef.current.turn, ...patch } }
-  })
-  const setTurn = setTurnRef.current
+  // It was a synchronous local writer for GameState.turn, and it carried its own
+  // warning: a patch made this way exists only on this machine, and the next
+  // server echo replaces the whole GameState. Combat tracking written through it
+  // was wiped mid-turn, which is why RESOLVE_COMBAT and END_TURN took those
+  // fields into the reducer; what was left behind was the card layer — trade-in
+  // totals, rich-card eligibility, the knocked-out-rich flag — echo-vulnerable
+  // for exactly as long as it stayed here.
+  //
+  // Those four now belong to the actions that cause them: TRADE_IN_CARDS,
+  // RICH_CARD_ELIGIBLE and RESOLVE_COMBAT, each RECOMPUTING the value from state
+  // the reducer owns rather than accepting one from a payload. The fourth was a
+  // turn reset that END_TURN already did.
+  //
+  // Deleted rather than left unused, because the next person to want a quick
+  // per-turn write would have found it and used it, and it would have been
+  // wrong online in the same way for the same reason.
 
     // Player ids must be unique — an older bug could persist a duplicated player
     // into a saved game, producing duplicate React keys in the roster. Heal it.
@@ -4073,7 +4074,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         && playerId === gameStateRef.current.players[gameStateRef.current.currentPlayerIndex]?.id) {
       console.log(`[CardAward] World Capital — ${playerId} forgoes the draw to claim the mission`
         + ` (Capital goes to ${richTerritoryIds.join(' / ')})`)
-      setTurn({ eligibleForRichCard: true, richCardTerritoryIds: richTerritoryIds })
+      // THROUGH THE REDUCER, in both modes. This was a setTurn — right in
+      // hotseat, and online a patch the next server echo replaced with the
+      // untouched value, so the World Capital's own condition could be lost
+      // between earning it and claiming it at end of turn. The reducer is told
+      // only who; it works the territories out itself from the face-up row.
+      dispatch({ type: 'RICH_CARD_ELIGIBLE', playerId })
       const name = gameStateRef.current.players.find(p => p.id === playerId)?.name ?? 'Player'
       showWeaknessNotice(`⌃ ${name} could claim a 4+ coin card — forgoing the draw to take the World Capital instead`)
       return false
@@ -4537,20 +4543,18 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // the pile, territory cards to the discard — or the next echo restores the
     // spent cards. The troop bonus stays client-side: it arrives as ordinary
     // placements, which are already server actions.
-    if (onlineMatchRef.current) {
-      dispatch({ type: 'TRADE_IN_CARDS', playerId, cardIds: [...cardIds] })
-    }
-
-    // Private missions Advanced Tactics / Advanced Training both trigger on the
-    // act of trading in, so record the totals now — by the time the mission is
-    // claimed at end of turn the cards are long gone from the hand.
-    const resourcesOf = (id: string) => cardCoinValue(legacyStateRef.current?.cardResources, id)
-    const richCount = cardIds.filter(id => !!getTerritoryCard(id) && resourcesOf(id) >= 4).length
-    const resourceTotal = cardIds.reduce((sum, id) => sum + resourcesOf(id), 0)
-    setTurn({
-      richCardsTradedIn: gameStateRef.current.turn.richCardsTradedIn + richCount,
-      resourcesTradedIn: gameStateRef.current.turn.resourcesTradedIn + resourceTotal,
-    })
+    // BOTH MODES NOW, and before the hand is emptied below — the reducer
+    // verifies every id is in the hand, which it will not be a moment later.
+    // Online it also moves the piles; hotseat it keeps the mission counters and
+    // leaves cardState to own the rest.
+    //
+    // Advanced Tactics / Advanced Training both trigger on the ACT of trading
+    // in, and by the time the mission is claimed at end of turn the cards are
+    // long gone from the hand — so the totals are recorded at the trade or not
+    // at all. They were a setTurn here, which online the next echo replaced
+    // with the untouched values; the reducer computes them from the cards it
+    // has just confirmed, so there is nothing to trust and nothing to lose.
+    dispatch({ type: 'TRADE_IN_CARDS', playerId, cardIds: [...cardIds] })
     const playerHands = {
       ...cardState.playerHands,
       [playerId]: (cardState.playerHands[playerId] ?? []).filter(id => !tradedSet.has(id)),
@@ -5859,15 +5863,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         const currentPId = e.byPlayerId
         const state = gameStateRef.current
         const eliminated = state.players.filter(p => e.playerIds.includes(p.id))
-        // Forced Occupation private mission: did anyone knocked out here hold a
-        // card worth 3+ resources? Read from the effect, since their hand has
-        // already been transferred to the capturer.
-        {
-          const res = legacyStateRef.current?.cardResources ?? {}
-          if (e.capturedCardIds.some(id => (res[id] ?? 0) >= 3)) {
-            setTurn({ knockedOutRichPlayer: true })
-          }
-        }
+        // Forced Occupation is judged in the reducer now, inside RESOLVE_COMBAT
+        // and off the same hands it is transferring. It was read from this
+        // effect and written with a setTurn — the same fact, arrived at the
+        // same way, but a local patch that the next server echo replaced with
+        // the untouched flag. `capturedCardIds` stays on the effect: the
+        // history log and the mercenary deck still read it.
         // Eliminate-trigger scar card held by the conqueror
         const elimCard = heldCards.find(
           c => c.playerId === currentPId && getScarCard(c.cardId)?.trigger === 'eliminate',
@@ -6360,17 +6361,19 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       setShowFortify(false); fortifySrcRef.current = null; setLastFortify(null)
       setSaharaFortifyMode(false); saharaFortifyModeRef.current = false
       console.log(`[CardAward] Turn ended — pendingCardDraws at fortify exit: ${JSON.stringify(pendingCardDraws)}`)
-      // Reset from initialTurnState rather than naming the fields: this list was
-      // hand-maintained and had already fallen behind, leaving
-      // `eligibleForRichCard` stuck true for the rest of the game once the World
-      // Capital mission was claimed. Anything added to TurnState now clears here
-      // automatically, and only the fields that carry a computed value are named.
-      setTurn({
-        ...initialTurnState(),
-        // Wide Border is judged at the START of a turn, so snapshot the incoming
-        // player's whole-continent count here, off the end-of-turn board.
-        continentsAtTurnStart: wholeContinentsControlled(nextPlayerId, endTerritories),
-      })
+      // THE TURN RESET USED TO BE HERE, and it was dead in both modes.
+      //
+      // END_TURN in the reducer does exactly this — reset from
+      // initialTurnState() with continentsAtTurnStart snapshotted off the
+      // end-of-turn board — and BOTH of this function's END_TURN dispatches
+      // (the Join the War branch and the normal exit) are ungated, so the
+      // reducer's reset always landed after this one and overwrote it. Two
+      // implementations of one rule, the loser hand-maintained: this copy had
+      // already fallen behind once and left `eligibleForRichCard` stuck true
+      // for the rest of the game after the World Capital was claimed.
+      //
+      // Nothing between here and the dispatch reads `turn`, which is why
+      // removing it changes no behaviour rather than merely no OUTCOME.
       setBalkExpansionPending(null)
       conqueredFromPlayerIdsRef.current = new Set()
       // Mass Hypnosis expires at the beginning of the protector's next turn

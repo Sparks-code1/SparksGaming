@@ -512,6 +512,56 @@ function troopsAfterEntry(moving, cost) {
   if (survivors < 1) return 0;
   return cost?.falloutHalf ? Math.ceil(survivors / 2) : survivors;
 }
+function cardCoinValue(cardResources, cardId) {
+  return cardResources?.[cardId] ?? 1;
+}
+
+// src/data/seaLines.ts
+var RAW_SEA_PAIRS = [
+  // Pacific — North America ↔ Asia
+  ["alaska", "kamchatka"],
+  // North Atlantic — North America ↔ Europe
+  ["greenland", "iceland"],
+  // South Atlantic — South America ↔ Africa
+  ["brazil", "north-africa"],
+  // Mediterranean — Europe ↔ Africa
+  ["western-europe", "north-africa"],
+  // Red Sea — Africa ↔ Asia
+  ["east-africa", "middle-east"],
+  // Indian Ocean — Asia ↔ Australia
+  ["southeast-asia", "indonesia"],
+  // Sea of Japan / Pacific — Japan island connections
+  ["kamchatka", "japan"],
+  ["mongolia", "japan"],
+  // North Atlantic — Iceland island connections
+  ["iceland", "great-britain"],
+  ["iceland", "scandinavia"],
+  // South Pacific — Australia cluster sea links
+  ["indonesia", "new-guinea"],
+  ["indonesia", "western-australia"]
+];
+function pairKey(a, b) {
+  return [a, b].sort().join("|");
+}
+var SEA_LINE_SET = new Set(
+  RAW_SEA_PAIRS.map(([a, b]) => pairKey(a, b))
+);
+
+// src/lib/missionLogic.ts
+var CONTINENT_SIZES2 = TERRITORY_DEFINITIONS.reduce(
+  (acc, d) => ({ ...acc, [d.continentId]: (acc[d.continentId] ?? 0) + 1 }),
+  {}
+);
+function homelandContinentFor(legacy, factionId) {
+  if (!legacy?.doubleWinnerMilestoneTriggered) return null;
+  return (legacy.factionHomelands ?? {})[factionId] ?? null;
+}
+function canClaimTerritoryCard(playerId, territoryId, territories, homelandContinentId) {
+  const t = territories[territoryId];
+  if (!t) return false;
+  if (t.occupyingPlayerId === playerId) return true;
+  return !!homelandContinentId && t.continentId === homelandContinentId;
+}
 
 // src/lib/gameReducer.ts
 function createMathRng() {
@@ -1119,17 +1169,24 @@ function gameReducer(state, action, rng) {
       });
     }
     case "TRADE_IN_CARDS": {
-      const piles = state.cards;
-      if (!piles) return only(state);
       const player = state.players.find((p) => p.id === action.playerId);
       if (!player) return only(state);
       const ids = [...new Set(action.cardIds)];
       if (ids.length === 0 || !ids.every((id) => player.cards.includes(id))) return only(state);
       const coins = ids.filter((id) => id.startsWith("resource-"));
       const territory = ids.filter((id) => !coins.includes(id));
+      const res = state.legacySnapshot?.cardResources;
+      const turn = {
+        ...state.turn,
+        richCardsTradedIn: state.turn.richCardsTradedIn + territory.filter((id) => cardCoinValue(res, id) >= 4).length,
+        resourcesTradedIn: state.turn.resourcesTradedIn + ids.reduce((sum, id) => sum + cardCoinValue(res, id), 0)
+      };
+      const piles = state.cards;
+      if (!piles) return { state: { ...state, turn }, effects: [] };
       return {
         state: {
           ...state,
+          turn,
           cards: {
             ...piles,
             resourceDeck: [...piles.resourceDeck, ...coins],
@@ -1138,6 +1195,28 @@ function gameReducer(state, action, rng) {
           players: state.players.map((p) => p.id === action.playerId ? { ...p, cards: p.cards.filter((id) => !ids.includes(id)) } : p)
         },
         effects: [{ kind: "cards-traded", playerId: action.playerId, cardIds: ids }]
+      };
+    }
+    case "RICH_CARD_ELIGIBLE": {
+      if (wrongActor(state, action.playerId)) return only(state);
+      const cards = state.legacySnapshot?.activeGameCards;
+      if (cards?.currentMissionId !== "mc-world-capital") return only(state);
+      const player = state.players.find((p) => p.id === action.playerId);
+      if (!player) return only(state);
+      const res = state.legacySnapshot?.cardResources;
+      const homeland = homelandContinentFor(state.legacySnapshot, player.factionId);
+      const ids = [];
+      for (const cardId of cards.sideboard ?? []) {
+        if (!cardId.startsWith("tc-")) continue;
+        if (cardCoinValue(res, cardId) < 4) continue;
+        const tId = cardId.slice(3);
+        if (!canClaimTerritoryCard(action.playerId, tId, state.territories, homeland)) continue;
+        if (!ids.includes(tId)) ids.push(tId);
+      }
+      if (ids.length === 0) return only(state);
+      return {
+        state: { ...state, turn: { ...state.turn, eligibleForRichCard: true, richCardTerritoryIds: ids } },
+        effects: []
       };
     }
     case "MINDSHACKLE_TRADE": {
@@ -1356,6 +1435,7 @@ function applyCombatOutcome(state, action) {
   const territories = { ...state.territories, [action.srcId]: src, [action.tgtId]: tgt };
   let players = state.players;
   const effects = [];
+  let knockedOutRich = false;
   if (occupies) {
     if (preHqPlayerId && preHqPlayerId !== defenderId) {
       effects.push({ kind: "hq-captured", territoryId: action.tgtId, territoryName: tgt0.name, hqPlayerId: preHqPlayerId, byPlayerId: attackerId });
@@ -1366,6 +1446,9 @@ function applyCombatOutcome(state, action) {
     const eliminatedIds = players.filter((p) => !p.isEliminated && !Object.values(territories).some((t) => t.occupyingPlayerId === p.id)).map((p) => p.id);
     if (eliminatedIds.length > 0) {
       const capturedCards = players.filter((p) => eliminatedIds.includes(p.id)).flatMap((p) => p.cards);
+      knockedOutRich = capturedCards.some(
+        (id) => cardCoinValue(state.legacySnapshot?.cardResources, id) >= 3
+      );
       players = players.map((p) => {
         if (eliminatedIds.includes(p.id)) return { ...p, isEliminated: true, cards: [] };
         if (p.id === attackerId) return { ...p, cards: [...p.cards, ...capturedCards] };
@@ -1403,6 +1486,7 @@ function applyCombatOutcome(state, action) {
       } : {}
     };
   }
+  if (knockedOutRich) turn = { ...turn, knockedOutRichPlayer: true };
   return { state: { ...state, territories, players, turn, combatWindow: null, combat: null }, effects };
 }
 function singleDieDelta(part) {

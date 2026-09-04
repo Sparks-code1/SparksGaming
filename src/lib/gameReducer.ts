@@ -27,7 +27,11 @@
 
 import { initialTurnState, type ActiveCombat, type GameState, type ServerCardPiles, type PendingEventChoice } from '@/types/game'
 import type { Territory } from '@/types/territory'
-import { applyCustomSeaLines, applyHqReserveTroops, continentsHeldInFull, injectAlienIslandTerritory, legalJoinWarTerritoryIds, troopsAfterEntry } from '@/lib/gameLogic'
+import { applyCustomSeaLines, applyHqReserveTroops, cardCoinValue, continentsHeldInFull, injectAlienIslandTerritory, legalJoinWarTerritoryIds, troopsAfterEntry } from '@/lib/gameLogic'
+// The claim rule and the homeland lookup, shared with the draw modal and the AI
+// picker so RICH_CARD_ELIGIBLE cannot answer differently from the screen that
+// offered the card.
+import { canClaimTerritoryCard, homelandContinentFor } from '@/lib/missionLogic'
 
 // â”€â”€â”€ Injected randomness â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -250,6 +254,12 @@ export type Action =
    *  is gone â€” troops, owner, cities, any HQ (and its activeHqs entry).
    *  `clearScars` is the nuclear variant. */
   | { type: 'OBLITERATE_TERRITORY'; territoryId: string; clearScars?: boolean; /** Faction the blast does not touch — the Mutants in a Fallout Zone. */ sparePlayerId?: string }
+  /**
+   * This player earned a draw and was eligible for a 4+ coin card, so they
+   * forgo it for the World Capital. Carries only the player: the reducer works
+   * out which territories qualify, from the face-up row and the claim rule.
+   */
+  | { type: 'RICH_CARD_ELIGIBLE'; playerId: string }
   /** World Capital burying covered cities / a Riot demolishing an HQ city:
    *  the named cities are marked destroyed; `demolishHq` clears the HQ field. */
   | { type: 'DESTROY_CITIES'; territoryId: string; cityIds: string[]; demolishHq?: boolean }
@@ -1269,11 +1279,13 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
     }
 
     case 'TRADE_IN_CARDS': {
-      const piles = state.cards
-      if (!piles) return only(state)          // hotseat: cardState owns the piles
       const player = state.players.find(p => p.id === action.playerId)
       if (!player) return only(state)
       const ids = [...new Set(action.cardIds)]
+      // THE VERIFICATION, and it gates the counters as well as the piles. A
+      // trade-in of cards somebody does not hold buys nothing and counts for
+      // nothing — Advanced Tactics is two rich cards, and a client that could
+      // name any two would claim the mission without spending them.
       if (ids.length === 0 || !ids.every(id => player.cards.includes(id))) return only(state)
       // Coins go back into the pile (it can empty more than once per game);
       // territory cards are spent for good. Coin ids all share the
@@ -1281,9 +1293,37 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
       // 'resource-alien-island'), which spares the reducer a card-data import.
       const coins = ids.filter(id => id.startsWith('resource-'))
       const territory = ids.filter(id => !coins.includes(id))
+
+      // ── The mission counters, RECOMPUTED rather than accepted ─────────────
+      // Advanced Tactics (two 4+ cards traded in one turn) and Advanced
+      // Training (a resource total) both trigger on the ACT of trading, and by
+      // the time the mission is claimed at end of turn the cards are gone from
+      // the hand — so the totals have to be recorded here or not at all. They
+      // were a setTurn in the component: correct in hotseat, and online a local
+      // patch that the next server echo replaced with the untouched values,
+      // exactly the way combat tracking used to be lost. Nothing is taken from
+      // the payload; the values come from cards this reducer has just confirmed
+      // are in the hand, priced from the campaign's own resource table.
+      const res = state.legacySnapshot?.cardResources
+      const turn = {
+        ...state.turn,
+        richCardsTradedIn: state.turn.richCardsTradedIn
+          + territory.filter(id => cardCoinValue(res, id) >= 4).length,
+        resourcesTradedIn: state.turn.resourcesTradedIn
+          + ids.reduce((sum, id) => sum + cardCoinValue(res, id), 0),
+      }
+
+      // HOTSEAT STOPS HERE, with the counters kept. The component's cardState
+      // owns the piles and the hand there, and this case used to bail before
+      // doing anything at all — which is why the counters could not simply move
+      // into it and had to be dispatched for both modes.
+      const piles = state.cards
+      if (!piles) return { state: { ...state, turn }, effects: [] }
+
       return {
         state: {
           ...state,
+          turn,
           cards: {
             ...piles,
             resourceDeck: [...piles.resourceDeck, ...coins],
@@ -1293,6 +1333,47 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
             p.id === action.playerId ? { ...p, cards: p.cards.filter(id => !ids.includes(id)) } : p),
         },
         effects: [{ kind: 'cards-traded', playerId: action.playerId, cardIds: ids }],
+      }
+    }
+
+    /**
+     * The World Capital mission's condition: this player earned a draw and was
+     * eligible to take a card worth 4+ coins.
+     *
+     * NOTHING IS TAKEN FROM THE CALLER BUT THE PLAYER'S NAME. The territories
+     * are recomputed here from the face-up row, the campaign's resource table
+     * and the same claim rule the draw modal uses, so a machine cannot assert
+     * eligibility it does not have — and the two answers cannot drift, because
+     * there is only one.
+     *
+     * It refuses outright unless the World Capital is the face-up mission and
+     * the actor holds the turn. Eligibility is judged at the moment the draw is
+     * forgone; a claim arriving on somebody else's turn is stale by definition.
+     */
+    case 'RICH_CARD_ELIGIBLE': {
+      if (wrongActor(state, action.playerId)) return only(state)
+      const cards = state.legacySnapshot?.activeGameCards
+      if (cards?.currentMissionId !== 'mc-world-capital') return only(state)
+      const player = state.players.find(p => p.id === action.playerId)
+      if (!player) return only(state)
+
+      const res = state.legacySnapshot?.cardResources
+      const homeland = homelandContinentFor(state.legacySnapshot, player.factionId)
+      const ids: string[] = []
+      for (const cardId of cards.sideboard ?? []) {
+        // `tc-<territoryId>` is how TERRITORY_CARDS is built, so the mapping is
+        // a string rule rather than a card-data import — the same trade the
+        // 'resource-' prefix above makes.
+        if (!cardId.startsWith('tc-')) continue
+        if (cardCoinValue(res, cardId) < 4) continue
+        const tId = cardId.slice(3)
+        if (!canClaimTerritoryCard(action.playerId, tId, state.territories, homeland)) continue
+        if (!ids.includes(tId)) ids.push(tId)
+      }
+      if (ids.length === 0) return only(state)
+      return {
+        state: { ...state, turn: { ...state.turn, eligibleForRichCard: true, richCardTerritoryIds: ids } },
+        effects: [],
       }
     }
 
@@ -1763,6 +1844,8 @@ function applyCombatOutcome(
       const territories = { ...state.territories, [action.srcId]: src, [action.tgtId]: tgt }
       let players = state.players
       const effects: Effect[] = []
+      /** Forced Occupation: set below if an eliminated hand held a 3+ card. */
+      let knockedOutRich = false
 
       if (occupies) {
         // HQ log first (matches previous ordering), then victory/card award.
@@ -1784,6 +1867,12 @@ function applyCombatOutcome(
           .map(p => p.id)
         if (eliminatedIds.length > 0) {
           const capturedCards = players.filter(p => eliminatedIds.includes(p.id)).flatMap(p => p.cards)
+          // Forced Occupation: did anyone knocked out here hold a card worth 3+?
+          // Judged HERE, off the hands this reducer is transferring, rather than
+          // from the effect the component receives — same fact, but the
+          // component's answer was a setTurn the next echo threw away.
+          knockedOutRich = capturedCards.some(
+            id => cardCoinValue(state.legacySnapshot?.cardResources, id) >= 3)
           players = players.map(p => {
             if (eliminatedIds.includes(p.id)) return { ...p, isEliminated: true, cards: [] }
             if (p.id === attackerId) return { ...p, cards: [...p.cards, ...capturedCards] }
@@ -1840,6 +1929,13 @@ function applyCombatOutcome(
           } : {}),
         }
       }
+
+      // Forced Occupation, added after both branches because a knockout counts
+      // whichever way the battle went — a contested capture and an uncontested
+      // advance into the last territory both end somebody. Sticky for the turn:
+      // once true it stays true, so a later harmless capture cannot clear a
+      // mission that has already been earned.
+      if (knockedOutRich) turn = { ...turn, knockedOutRichPlayer: true }
 
       // The battle has resolved â€” its session and any missile window are over.
       return { state: { ...state, territories, players, turn, combatWindow: null, combat: null }, effects }

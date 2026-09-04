@@ -116,6 +116,13 @@ const SERVER_ACTIONS = new Set([
   // card is taken is picked client-side because it is random; the same trust
   // seam as RESOLVE_COMBAT's dice, and logged as received either way.
   'MINDSHACKLE_TRADE',
+  // The World Capital's condition — the current player forgoing a draw they
+  // were eligible to take. THE PAYLOAD IS JUST A PLAYER ID: the reducer works
+  // out which face-up cards qualify from its own board, the campaign's resource
+  // table and the same claim rule the draw modal uses, and refuses outright
+  // unless the World Capital is the face-up mission and the sender holds the
+  // turn. There is nothing here for a forged payload to assert.
+  'RICH_CARD_ELIGIBLE',
   // Event-card board effects + the last bare-write stragglers. Each is either
   // self-clamping in the reducer (APPLY_EVENT_TROOPS bounds deltas, MOVE_HQ /
   // JOIN_WAR / END_GAME are structural checks against the server's own board)
