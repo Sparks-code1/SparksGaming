@@ -164,6 +164,39 @@ console.log('\n— single-use cards really are single use —')
   // exactly the machine that has to write.
   check('...and it is not gated on a player owning it',
     /if \(pendingNuclear\) return '[^']*'\n/.test(fn + '\n'))
+
+  // ── AND SOMETHING ANSWERS IT WHEN NO HUMAN CAN ──────────────────────────
+  //
+  // The guard above cost a second bug the moment it landed. An AI can BE the
+  // one who fires the milestone — the third missile on a roll brings the fire
+  // whoever played it — so on a table whose last human has been eliminated the
+  // driver stands down on an announcement nobody is left to press, and the
+  // game stops for good. Playing straight through it was the first bug;
+  // waiting forever is the second, and the same guard causes it.
+  const cAt = board.indexOf('Answers every interrupt choice OWNED BY AN AI')
+  const cEnd = board.indexOf('Missile replenishment', cAt)
+  const concierge = cAt < 0 || cEnd < 0 ? '' : board.slice(cAt, cEnd)
+  check('the concierge is where it was found', concierge.length > 0)
+
+  // CLOSED, NOT SKIPPED. Clearing pendingNuclear would unblock the driver and
+  // lose the crater — quieter than the original bug and worse.
+  check('the concierge closes the announcement for the AI',
+    /if \(pendingNuclear && !showCombat[\s\S]{0,400}?handleNuclearMilestoneComplete\(\)/.test(concierge))
+
+  // ABOVE THE CURRENT-PLAYER BAIL, which is the whole trick: the milestone
+  // fires DURING an AI's turn, and that bail is the concierge handing such
+  // turns to the main loop — which is standing down on this very state. Below
+  // the bail this branch is unreachable in the only case it exists for, and
+  // nothing else in the file would notice.
+  check('...before it hands AI turns back to the main loop',
+    concierge.indexOf('handleNuclearMilestoneComplete') > 0
+    && concierge.indexOf('handleNuclearMilestoneComplete') < concierge.indexOf('the main loop has it'))
+
+  // ONLY WHEN NOBODY IS THERE. A human closes their own copy and reads it on
+  // the way past; answering it for them would make the campaign's loudest
+  // moment a flicker.
+  check('...and only when no live human is left to press it',
+    /!gameState\.players\.some\(p => !p\.isAI && !p\.isEliminated\)/.test(concierge))
 }
 
 

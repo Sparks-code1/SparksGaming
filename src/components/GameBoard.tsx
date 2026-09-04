@@ -2636,8 +2636,14 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // a board that had moved.
     //
     // UNGATED BY WHOSE IT IS, unlike the choices below, because it is nobody's:
-    // it shows on every machine and whoever is at this one closes it. The AI
-    // never fires missiles, so it is always a human who put it there.
+    // it shows on every machine and whoever is at this one closes it.
+    //
+    // AN AI CAN BE THE ONE WHO PUT IT THERE. The third missile on a roll fires
+    // the milestone whoever played it, so this entry ALONE hangs a table whose
+    // last human has been eliminated: the driver stands down here and there is
+    // nobody left to press. The AI-interrupt effect closes it in exactly that
+    // case. The two are a matched pair — either one without the other is a
+    // different half of the same bug.
     if (pendingNuclear) return 'the nuclear milestone'
     if (comebackEliminatedPlayer && !comebackEliminatedPlayer.isAI) return 'a comeback power'
     if (leadMissionPick && isHumanId(leadMissionPick.playerId)) return 'a mission pick'
@@ -3264,7 +3270,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   /**
    * Answers every interrupt choice OWNED BY AN AI while the turn is not a live
    * AI's — board-picked event rewards, faction follow-ups, the lead-faction
-   * mission pick, and the Join the War offer.
+   * mission pick, and the Join the War offer — plus the one interrupt that is
+   * owned by NOBODY and can land mid-AI-turn: the nuclear announcement, taken
+   * first and under its own rules.
    *
    * Resistance, Join the Cause, Control the People, Fortify and Riot are
    * handed to a player the BOARD picks — fewest territories, largest
@@ -3291,7 +3299,6 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
    */
   useEffect(() => {
     const cp = gameState.players[gameState.currentPlayerIndex]
-    if (cp?.isAI && !cp.isEliminated) return          // the main loop has it
     if (gameState.phase === 'game-over' || showWinScreen) return
     if (aiBusyRef.current) return
 
@@ -3300,10 +3307,45 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       const p = gameState.players.find(x => x.id === pid)
       return !!p && !!p.isAI && !p.isEliminated
     }
-    const step = (fn: () => void) => {
+    const step = (fn: () => void, ms = aiMs(900, 180)) => {
       aiBusyRef.current = true
-      window.setTimeout(() => { aiBusyRef.current = false; fn() }, aiMs(900, 180))
+      window.setTimeout(() => { aiBusyRef.current = false; fn() }, ms)
     }
+
+    // ── THE NUCLEAR ANNOUNCEMENT, WHEN NOBODY IS LEFT TO PRESS IT ──────────
+    // ABOVE the current-player bail below, and the only branch here that is.
+    // Every other one waits for the main loop to finish an AI's turn; this
+    // fires DURING one, and the main loop is standing down on it because
+    // pendingNuclear is a humanBlockingChoice. So exactly one of the two can
+    // answer it, and until this branch existed neither did — the announcement
+    // was in that list with no counterpart here, which is a stall rather than
+    // the old bug of playing straight through it.
+    //
+    // ONLY WHEN NO LIVE HUMAN REMAINS. A human at this machine closes their
+    // own copy and reads it on the way past, which is the entire point of an
+    // announcement — taking that from them would turn the campaign's loudest
+    // moment into a flicker. But a table whose last human has been eliminated
+    // plays itself out, and the third missile on a roll fires the milestone
+    // whoever played it, an AI included. Then there is nobody to press.
+    //
+    // CLOSED, NOT SKIPPED. handleNuclearMilestoneComplete is what dispatches
+    // OBLITERATE_TERRITORY, records the Bringer and writes the Fallout Zone.
+    // Clearing pendingNuclear here instead would unblock the driver and lose
+    // the crater — a quieter version of the bug the pair exists to stop.
+    //
+    // `!showCombat` mirrors the modal's own render gate, so this answers it in
+    // the place a human would have been offered it and never underneath a
+    // battle that is still on screen.
+    if (pendingNuclear && !showCombat
+      && !gameState.players.some(p => !p.isAI && !p.isEliminated)) {
+      // A longer beat than the rest of this effect: an eliminated human
+      // watching the endgame out should get to read the one announcement the
+      // whole campaign turns on.
+      step(() => handleNuclearMilestoneComplete(), aiMs(3200, 400))
+      return
+    }
+
+    if (cp?.isAI && !cp.isEliminated) return          // the main loop has it
 
     // Join the War — checked by isAI alone, NOT isAiOwned: the offered player
     // is by definition still eliminated. Join when a legal territory exists
