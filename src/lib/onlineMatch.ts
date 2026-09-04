@@ -81,17 +81,34 @@ export async function createOnlineMatch(
     throw new Error(`Could not seat the players: ${sErr.message}`)
   }
 
-  const { data: started, error: aErr } = await supabase
-    .from('matches')
-    .update({ state: initialState, status: 'active', updated_at: new Date().toISOString() })
-    .eq('id', matchId)
-    .select('version')
-    .single()
-  if (aErr || !started) {
+  // ── THE DEAL GOES THROUGH THE SERVER ────────────────────────────────────
+  // This used to be `.update({ state: initialState })` from here, raw — every
+  // seat's hand on a row the changefeed delivers whole to everybody. It healed
+  // on the match's first action, because that write applies publicView, but
+  // "heals on the first action" means the hands were public until somebody
+  // took a turn.
+  //
+  // AND THE CLIENT CANNOT FIX IT ITSELF, which is deliberate: match_secrets has
+  // no insert policy, because a write policy there would let a client rewrite
+  // its own hand. Projecting before writing from here would produce a row with
+  // no hands AND no secrets rows to put them back from, and the first action's
+  // hydrateState would throw rather than falling through to the inline hands it
+  // relies on today. Worse than the leak.
+  //
+  // So deal-match does it: the same publicView / secretsFromState /
+  // decksFromState the action path writes, in the same single transaction, with
+  // the service role. The row goes `active` in that write, so a match is never
+  // visible as active-without-a-board.
+  const { data: dealt, error: aErr } = await supabase.functions.invoke('deal-match', {
+    body: { matchId, state: initialState, expectedVersion: match.version },
+  })
+  const dealtVersion = (dealt as { version?: number } | null)?.version
+  if (aErr || typeof dealtVersion !== 'number') {
     await supabase.from('match_players').delete().eq('match_id', matchId)
     await supabase.from('matches').delete().eq('id', matchId)
-    throw new Error(`Could not start the match: ${aErr?.message ?? 'no row returned'}`)
+    throw new Error(`Could not start the match: ${aErr?.message ?? 'the deal was refused'}`)
   }
+  const started = { version: dealtVersion }
 
   // This game is the campaign's game now. A lobby somebody opened and then
   // started another way is a leftover that "the open lobby" would keep finding
