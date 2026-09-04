@@ -2603,6 +2603,23 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       const p = st.players.find(x => x.id === pid)
       return !!p && !p.isAI
     }
+    // ── THE NUCLEAR ANNOUNCEMENT HOLDS AN UNWRITTEN CRATER ──────────────────
+    // Every other entry in this list is a choice. This one is an announcement,
+    // which is why it was left out — but closing it is what DISPATCHES
+    // OBLITERATE_TERRITORY on the machine that owns the battle. Until somebody
+    // presses it the Fallout Zone does not exist.
+    //
+    // It belonged in neither list: not here, so the driver played straight
+    // through it, and not in the interrupt concierge below, so nothing answered
+    // it either. The result was an AI carrying on underneath an announcement
+    // holding a board change nobody had made yet, and a crater that landed
+    // whenever the human next looked at the screen — possibly turns later, onto
+    // a board that had moved.
+    //
+    // UNGATED BY WHOSE IT IS, unlike the choices below, because it is nobody's:
+    // it shows on every machine and whoever is at this one closes it. The AI
+    // never fires missiles, so it is always a human who put it there.
+    if (pendingNuclear) return 'the nuclear milestone'
     if (comebackEliminatedPlayer && !comebackEliminatedPlayer.isAI) return 'a comeback power'
     if (leadMissionPick && isHumanId(leadMissionPick.playerId)) return 'a mission pick'
     if (joinTheWarPlayerId && isHumanId(joinTheWarPlayerId)) return 'a Join the War placement'
@@ -5258,13 +5275,16 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     }
     const newCardState = { ...prevCards, playerHands }
     setCardState(newCardState)
-    setGameState(prev => ({
-      ...prev,
-      players: prev.players.map(p =>
-        p.id === playerId ? { ...p, cards: [...p.cards.filter(id => id !== coinCardId), stolen] }
-        : p.id === victimId ? { ...p, cards: [...p.cards.filter(id => id !== stolen), coinCardId] }
-        : p),
-    }))
+    // THROUGH THE REDUCER, because a hand swap is a board mutation and a bare
+    // setGameState for one is invisible online: it happened on the Mutant's
+    // screen, on nobody else's, and the next echo from the server put both
+    // hands back. The card taken is picked HERE — the pick is random and the
+    // reducer may not be — and travels with the action, the same shape as
+    // RESOLVE_COMBAT's dice.
+    dispatch({
+      type: 'MINDSHACKLE_TRADE',
+      playerId, victimId, coinCardId, stolenCardId: stolen,
+    })
     const victimName = gameStateRef.current.players.find(p => p.id === victimId)?.name ?? victimId
     const mutantName = gameStateRef.current.players.find(p => p.id === playerId)?.name ?? playerId
     setLegacyState(prev => {

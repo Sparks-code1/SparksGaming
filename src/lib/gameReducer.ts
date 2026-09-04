@@ -171,6 +171,28 @@ export type Action =
    */
   | { type: 'TRADE_IN_CARDS'; playerId: string; cardIds: string[] }
   /**
+   * The Mutants' Mindshackle: a resource card they just collected, swapped for
+   * one taken blind from a player whose ground they took this turn.
+   *
+   * WHICH CARD IS TAKEN IS DECIDED BY THE CALLER, not here, and travels with
+   * the action. The same shape as RESOLVE_COMBAT's dice and for the same
+   * reason: the pick is random, the reducer is not allowed to be, and a
+   * reducer that rolled its own would land a different card on every machine.
+   *
+   * IT USED TO BE A BARE setGameState, which is the one thing a board mutation
+   * may never be — the swap happened on the Mutant's screen, on nobody else's,
+   * and the next echo from the server put both hands back.
+   */
+  | {
+    type: 'MINDSHACKLE_TRADE'
+    playerId: string
+    victimId: string
+    /** The card the Mutants give up — one they are holding. */
+    coinCardId: string
+    /** The card they take — one the victim is holding. */
+    stolenCardId: string
+  }
+  /**
    * Board troop changes decided by an EVENT CARD (Join the Cause, Control the
    * People troops, the fortify event, Resistance, Riot, the fallout event,
    * Beam Down). The targets and amounts are event rules judged client-side
@@ -1272,6 +1294,37 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
         },
         effects: [{ kind: 'cards-traded', playerId: action.playerId, cardIds: ids }],
       }
+    }
+
+    case 'MINDSHACKLE_TRADE': {
+      const mutant = state.players.find(p => p.id === action.playerId)
+      const victim = state.players.find(p => p.id === action.victimId)
+      if (!mutant || !victim || mutant.id === victim.id) return only(state)
+      // BOTH CARDS MUST BE WHERE THE ACTION SAYS THEY ARE. The pick was made on
+      // one machine and applied on all of them, so by the time this lands the
+      // hands may have moved — a refusal is right, and silently swapping a card
+      // somebody no longer holds would mint one.
+      if (!mutant.cards.includes(action.coinCardId)) return only(state)
+      if (!victim.cards.includes(action.stolenCardId)) return only(state)
+
+      const swap = (p: typeof mutant) =>
+        p.id === action.playerId
+          ? {
+            ...p,
+            cards: [...p.cards.filter(id => id !== action.coinCardId), action.stolenCardId],
+          }
+          : p.id === action.victimId
+            ? {
+              ...p,
+              cards: [...p.cards.filter(id => id !== action.stolenCardId), action.coinCardId],
+            }
+            : p
+
+      // THE PILES ARE NOT TOUCHED. Nothing is drawn or discarded here — two
+      // cards change hands — and hands ride players[].cards, which is the copy
+      // an online match echoes back. The client's own display mirror is
+      // refreshed from this on every incoming state.
+      return { state: { ...state, players: state.players.map(swap) }, effects: [] }
     }
 
     case 'CONFIRM_FORTIFY': {

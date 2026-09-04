@@ -1140,6 +1140,21 @@ function gameReducer(state, action, rng) {
         effects: [{ kind: "cards-traded", playerId: action.playerId, cardIds: ids }]
       };
     }
+    case "MINDSHACKLE_TRADE": {
+      const mutant = state.players.find((p) => p.id === action.playerId);
+      const victim = state.players.find((p) => p.id === action.victimId);
+      if (!mutant || !victim || mutant.id === victim.id) return only(state);
+      if (!mutant.cards.includes(action.coinCardId)) return only(state);
+      if (!victim.cards.includes(action.stolenCardId)) return only(state);
+      const swap = (p) => p.id === action.playerId ? {
+        ...p,
+        cards: [...p.cards.filter((id) => id !== action.coinCardId), action.stolenCardId]
+      } : p.id === action.victimId ? {
+        ...p,
+        cards: [...p.cards.filter((id) => id !== action.stolenCardId), action.coinCardId]
+      } : p;
+      return { state: { ...state, players: state.players.map(swap) }, effects: [] };
+    }
     case "CONFIRM_FORTIFY": {
       const src = state.territories[action.srcId];
       const dst = state.territories[action.dstId];

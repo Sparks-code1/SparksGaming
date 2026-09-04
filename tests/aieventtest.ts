@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 // Events must resolve on an AI turn, and must not leave the AI stuck.
 //
 // Most event kinds resolve when the card display is CLOSED, not when it is
@@ -127,6 +128,44 @@ console.log('\n— single-use cards really are single use —')
   check('every ninth-city event id has an effect',
     NINTH_CITY_EVENT_CARD_IDS.every(id => !!EVENT_EFFECTS[id]))
 }
+
+// ── The nuclear milestone is an announcement holding a board change ────────
+//
+// THE SAME SHAPE AS EVERY EVENT ABOVE, which is why it belongs in this file:
+// it resolves when the display is CLOSED, not when it opens.
+// handleNuclearMilestoneComplete is what dispatches OBLITERATE_TERRITORY, so
+// until somebody presses the modal the Fallout Zone does not exist.
+//
+// It was in NEITHER of the two lists that make an interrupt safe on an AI turn:
+// not in humanBlockingChoice, so the driver played straight through it, and not
+// in the interrupt concierge, so nothing answered it either. An AI carried on
+// underneath an announcement holding an unmade board change, and the crater
+// landed whenever the human next looked — possibly turns later, onto a board
+// that had moved on.
+{
+  const board = readFileSync('src/components/GameBoard.tsx', 'utf8')
+  const at = board.indexOf('function humanBlockingChoice()')
+  const fn = at < 0 ? '' : board.slice(at, board.indexOf('\n  }', at))
+
+  check('the driver stands down for the nuclear announcement',
+    /if \(pendingNuclear\) return/.test(fn))
+
+  // AND IT IS STILL THE CLOSE THAT WRITES THE CRATER. If that ever stops being
+  // true the guard above is unnecessary — and if the guard is removed while it
+  // IS true, the bug comes straight back. Pinned together for that reason.
+  const done = board.indexOf('function handleNuclearMilestoneComplete()')
+  const doneFn = done < 0 ? '' : board.slice(done, done + 1600)
+  check('...because closing it is what makes the crater',
+    /dispatch\(\{\s*[\r\n]+\s*type: 'OBLITERATE_TERRITORY'/.test(doneFn))
+
+  // NOBODY'S CHOICE, so unlike the entries around it this one is not gated on
+  // whose it is: the announcement shows on every machine and whoever is at
+  // this one closes it. Gating it on a player would put it back to sleep on
+  // exactly the machine that has to write.
+  check('...and it is not gated on a player owning it',
+    /if \(pendingNuclear\) return '[^']*'\n/.test(fn + '\n'))
+}
+
 
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

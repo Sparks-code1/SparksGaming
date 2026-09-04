@@ -109,6 +109,13 @@ const SERVER_ACTIONS = new Set([
   // as received either way.
   'DRAW_CARD',
   'TRADE_IN_CARDS',
+  // The Mutants' Mindshackle: two cards change hands, neither drawn nor
+  // discarded. The reducer refuses unless BOTH cards are in the hands the
+  // action names, so a forged payload can only swap cards that are really
+  // there — which is a swap the Mutant could have asked for anyway. Which
+  // card is taken is picked client-side because it is random; the same trust
+  // seam as RESOLVE_COMBAT's dice, and logged as received either way.
+  'MINDSHACKLE_TRADE',
   // Event-card board effects + the last bare-write stragglers. Each is either
   // self-clamping in the reducer (APPLY_EVENT_TROOPS bounds deltas, MOVE_HQ /
   // JOIN_WAR / END_GAME are structural checks against the server's own board)
