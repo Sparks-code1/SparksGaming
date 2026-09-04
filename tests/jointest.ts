@@ -233,5 +233,31 @@ console.log('\n— roster: accounts —')
 }
 
 
+// ── The delete tells the truth, and is not offered ────────────────────────
+//
+// An RLS-refused DELETE is not an error: it matches no rows and returns
+// success. deleteCampaign checked only `error`, so it reported a deletion that
+// had not happened — and the picker's ✕ opened a confirmation, took the press,
+// refreshed the list, and left the campaign sitting there. A control that
+// appeared to do the one irreversible thing in the app and did nothing.
+{
+  const api = readFileSync('src/lib/legacyApi.ts', 'utf8')
+  const at = api.indexOf('export async function deleteCampaign(')
+  const fn = at < 0 ? '' : api.slice(at, api.indexOf('\n}', at))
+
+  check('the delete counts what it removed',
+    /delete\(\{ count: 'exact' \}\)/.test(fn))
+  check('...and raises when that is nothing',
+    /if \(!count\)/.test(fn) && /was not deleted/.test(fn))
+
+  // THE OTHER HALF: nobody may delete, so nobody is offered the press. A
+  // button whose only outcome is a refusal is worse than a missing one.
+  const picker = readFileSync('src/components/CampaignPicker.tsx', 'utf8')
+  check('the picker offers no delete', !/deleteCampaign\(/.test(picker))
+  check('...and keeps no dead confirmation behind it',
+    !/confirmDelete/.test(picker))
+}
+
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

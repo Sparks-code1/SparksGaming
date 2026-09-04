@@ -1143,12 +1143,40 @@ export async function listCampaigns(): Promise<CampaignSummary[]> {
   }
 }
 
-/** Remove a campaign and its game history. */
+/**
+ * Remove a campaign and its game history.
+ *
+ * NOTHING CALLS THIS ANY MORE. The picker's ✕ was its only caller and is gone —
+ * a control whose one outcome is a refusal should not be offered. It is kept
+ * rather than deleted because the refusal it now reports is the useful part: if
+ * a policy is ever added, or a script or admin path wants this, it behaves
+ * correctly instead of lying. Delete it if that day does not come.
+ *
+ * IT REPORTS A REFUSAL, which took a policy change to become necessary. The
+ * campaigns table has no DELETE policy at all — a legacy campaign is the one
+ * thing here that must not be destroyable by a client — and an RLS-refused
+ * DELETE is not an error. It matches no rows and returns success. Checking only
+ * `error` therefore reported a deletion that had not happened, and the caller
+ * refreshed a list the campaign was still on.
+ *
+ * `count: 'exact'` with a returning select is what makes the difference
+ * visible: zero rows removed is the refusal, and it is raised as one.
+ *
+ * THE SESSIONS GO FIRST AND ARE NOT CHECKED. They are scoped separately and a
+ * campaign that survives keeps its history either way; failing here on the
+ * sessions would report the wrong thing about the campaign.
+ */
 export async function deleteCampaign(campaignId: string): Promise<void> {
   if (!campaignId) return
   await supabase.from('game_sessions').delete().eq('campaign_id', campaignId)
-  const { error } = await supabase.from('campaigns').delete().eq('id', campaignId)
+  const { error, count } = await supabase
+    .from('campaigns').delete({ count: 'exact' }).eq('id', campaignId)
   if (error) throw new Error(`Could not delete campaign: ${error.message}`)
+  if (!count) {
+    throw new Error(
+      'That campaign was not deleted — campaigns are kept once they are created,'
+      + ' and no player may destroy one.')
+  }
 }
 
 // ─── Scar metadata ────────────────────────────────────────────────────────────

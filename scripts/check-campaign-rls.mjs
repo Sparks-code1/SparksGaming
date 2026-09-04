@@ -132,6 +132,17 @@ console.log('\n— a claimed campaign is the roster\'s —')
     const row = await admin.from('campaigns').select('world_name').eq('id', id).maybeSingle()
     check('...and neither can its owner, by design', row.data?.world_name === 'RLS Check')
   }
+
+  // AND THE REFUSAL IS VISIBLE TO THE CALLER. This is the shape deleteCampaign
+  // now reads: no error, and a count of zero. Checking only `error` reported a
+  // deletion that never happened, which is how the picker's ✕ came to open a
+  // confirmation, take the press and change nothing.
+  {
+    const res = await owner.client
+      .from('campaigns').delete({ count: 'exact' }).eq('id', id)
+    check('a refused delete is silent but countable',
+      !res.error && res.count === 0, `error=${res.error?.message} count=${res.count}`)
+  }
 }
 
 console.log('\n— but the code still lets a stranger in —')

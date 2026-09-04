@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { listCampaigns, deleteCampaign, type CampaignSummary } from '@/lib/legacyApi'
+import { listCampaigns, type CampaignSummary } from '@/lib/legacyApi'
 import { formatJoinCode } from '@/lib/joinCode'
 
 interface Props {
@@ -35,8 +35,6 @@ function when(iso: string): string {
 export default function CampaignPicker({ onOpen, onNew, onJoin }: Props) {
   const [campaigns, setCampaigns] = useState<CampaignSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
 
   async function refresh() {
     setError(null)
@@ -50,18 +48,6 @@ export default function CampaignPicker({ onOpen, onNew, onJoin }: Props) {
 
   useEffect(() => { refresh() }, [])
 
-  async function remove(id: string) {
-    setBusy(true)
-    try {
-      await deleteCampaign(id)
-      setConfirmDelete(null)
-      await refresh()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not delete that campaign')
-    } finally {
-      setBusy(false)
-    }
-  }
 
   return (
     <div>
@@ -130,38 +116,23 @@ export default function CampaignPicker({ onOpen, onNew, onJoin }: Props) {
                 }}>
                 {c.gameInProgress ? 'Resume' : 'Open'}
               </button>
-              <button
-                onClick={() => setConfirmDelete(confirmDelete === c.id ? null : c.id)}
-                title="Delete campaign"
-                style={{
-                  padding: '6px 9px', borderRadius: 6, fontSize: 12, flexShrink: 0,
-                  border: '1px solid rgba(150,60,50,0.35)', background: 'transparent',
-                  color: '#8a4a40', cursor: 'pointer', fontFamily: 'Georgia, serif',
-                }}>
-                ✕
-              </button>
-            </div>
+              {/* ── NO DELETE, AND SO NO BUTTON ──────────────────────────────
+                  The campaigns table has no DELETE policy: a legacy campaign is
+                  the one thing in this game that must not be destroyable by a
+                  client, and that applies to its owner as much as to anyone
+                  else. Nobody is entitled, so there is nobody to offer this to.
 
-            {confirmDelete === c.id && (
-              <div style={{
-                marginTop: 9, paddingTop: 9, borderTop: '1px solid rgba(150,60,50,0.25)',
-                display: 'flex', alignItems: 'center', gap: 10,
-              }}>
-                <span style={{ flex: 1, fontSize: 11.5, color: '#e08070' }}>
-                  Delete <strong>{c.worldName}</strong> and its whole history? This cannot be undone.
-                </span>
-                <button onClick={() => remove(c.id)} disabled={busy} style={{
-                  padding: '5px 12px', borderRadius: 6, fontSize: 11.5, cursor: busy ? 'default' : 'pointer',
-                  border: '1px solid rgba(192,57,43,0.7)', background: 'rgba(192,57,43,0.22)',
-                  color: '#FFE8E0', fontFamily: 'Georgia, serif',
-                }}>{busy ? 'Deleting…' : 'Delete'}</button>
-                <button onClick={() => setConfirmDelete(null)} disabled={busy} style={{
-                  padding: '5px 12px', borderRadius: 6, fontSize: 11.5, cursor: 'pointer',
-                  border: '1px solid rgba(200,148,10,0.30)', background: 'transparent',
-                  color: '#9a8060', fontFamily: 'Georgia, serif',
-                }}>Cancel</button>
-              </div>
-            )}
+                  IT WAS WORSE THAN USELESS, not merely dead. An RLS-refused
+                  DELETE returns success with zero rows, so the ✕ opened its
+                  confirmation, took the press, refreshed the list, and left the
+                  campaign sitting there — a control that appeared to do the one
+                  irreversible thing in the app and did nothing.
+
+                  deleteCampaign now raises on a zero count, so the API tells
+                  the truth to whatever calls it. This is the other half: not
+                  offering the press at all. See
+                  supabase/migrations/20260904000000_campaigns_rls.sql. */}
+            </div>
           </div>
         ))}
       </div>

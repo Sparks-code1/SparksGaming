@@ -127,8 +127,11 @@ create policy "write own campaigns"
 --   Retire it — drop the ✕ from the picker, or make it hide the campaign
 --   locally rather than delete the row.
 --
--- Until one is chosen, deleteCampaign should at least tell the truth: it checks
--- only `error`, so add a count check and raise when nothing was removed.
+-- CHOSEN 2026-09-04: refusing, and the client no longer pretends otherwise.
+-- deleteCampaign counts what it removed and raises on zero, and the picker's
+-- ✕ is gone entirely — a control whose only outcome is a refusal should not be
+-- offered. deleteCampaign is kept, uncalled, because the refusal it now
+-- reports is the useful part if a policy or an admin path ever wants it.
 
 -- ── Verify ───────────────────────────────────────────────────────────────────
 do $$
@@ -194,8 +197,10 @@ end $$;
 --    scripts/check-seat-privacy.mjs, scripts/seed-dune-match.mjs and the e2e
 --    harness's ageCampaign. All four bypass RLS and are unaffected.
 --
--- 4. THE ✕ ON THE CAMPAIGN PICKER goes quiet — see the delete note above. It is
---    the only breakage here that fails SILENTLY rather than loudly.
+-- 4. THE ✕ ON THE CAMPAIGN PICKER is gone, which is why this no longer breaks.
+--    It was the only breakage here that failed SILENTLY, and it was fixed on
+--    both sides before arming: the button is not offered, and deleteCampaign
+--    raises rather than reporting a deletion that did not happen.
 --
 -- 5. THE PICKER LISTS LESS, which is the migration working. listCampaigns
 --    selects with no filter and has always returned every campaign in the
