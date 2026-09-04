@@ -263,7 +263,10 @@ async function openTerritories(page: Page): Promise<string[]> {
  * specs do not assert, and naming one would break the first time a scar card
  * blocked it.
  */
-async function clickAnyTerritory(page: Page): Promise<string> {
+// Exported for the online walk, whose HQ stage is the same map with a
+// different prompt: each player picks on their OWN screen rather than one
+// keyboard answering for everybody.
+export async function clickAnyTerritory(page: Page): Promise<string> {
   // BY INDEX AMONG THE POLYGONS, so the click lands on the SHAPE.
   //
   // getByTitle finds the <title> element, which is metadata: it has no box, it
@@ -331,7 +334,9 @@ async function settles(page: Page, tries = 12): Promise<boolean> {
 }
 
 /** Where the walk is, for a failure that has to say something useful. */
-async function where(page: Page): Promise<string> {
+// Exported for the online specs, whose failures are about two pages at once
+// and want the same "here is what the screen actually said" tail.
+export async function where(page: Page): Promise<string> {
   const said = (await page.locator('body').innerText()).slice(0, 200)
   return `screen said:\n${said}\nbuttons: ${(await pressable(page)).join(' | ')}`
 }

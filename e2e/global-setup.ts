@@ -7,6 +7,7 @@
  */
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { readStack, ensureAccounts, serveFunctions, dealMatch } from './support/stack'
+import { ensureOnlineAccounts } from './support/online'
 
 export default async function globalSetup() {
   const started = Date.now()
@@ -17,6 +18,9 @@ export default async function globalSetup() {
   process.env.E2E_SUPABASE_ANON_KEY = stack.anon
 
   await ensureAccounts(stack)
+  // Two more, for the online Risk specs. Separate from the Dune six so the
+  // two suites cannot tangle their fixtures together.
+  await ensureOnlineAccounts(stack)
   const functions = await serveFunctions(stack)
   // The pid, so teardown can end the tree it started.
   process.env.E2E_FUNCTIONS_PID = String(functions.pid ?? '')
