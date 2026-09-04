@@ -1,3 +1,4 @@
+import { readFileSync, readdirSync } from 'node:fs'
 import {
   JOIN_CODE_ALPHABET, JOIN_CODE_LENGTH,
   generateJoinCode, normalizeJoinCode, isValidJoinCode, formatJoinCode,
@@ -157,6 +158,80 @@ console.log('\n— roster: accounts —')
     check('unclaimed excludes account-linked members', free.join(',') === 'Chris,Sam', free.join(','))
   }
 }
+
+// ── The claim crosses the membership boundary in ONE place ────────────────
+//
+// campaigns is scoped to its roster: a claimed campaign is readable and
+// writable only by the accounts on it. A JOINER IS NOT ON IT YET, which makes
+// joining the one operation that must cross that line — so it crosses through
+// join_campaign_by_code, SECURITY DEFINER, with the code as the credential,
+// rather than through a hole in the policy.
+//
+// Everything below is a claim about the CLIENT. The policies themselves are
+// verified by the migration's own DO block when it is applied.
+{
+  const api = readFileSync('src/lib/legacyApi.ts', 'utf8')
+  const at = api.indexOf('export async function joinCampaign(')
+  const fn = at < 0 ? '' : api.slice(at, api.indexOf('\n}', at))
+
+  check('the claim goes through the rpc',
+    /supabase\.rpc\('join_campaign_by_code', \{[\s\S]{0,120}p_member_id: joinAs\.playerId/.test(fn))
+
+  // THE WRITE IS WHAT THE POLICIES REFUSE. A saveLegacyState on the claim path
+  // is the bug coming back, and it would work for whoever tested it — they are
+  // usually already a member.
+  const claimHalf = fn.slice(0, fn.indexOf('Adding a name that is not on the roster'))
+  check('...and the claim path saves nothing through the table',
+    !/saveLegacyState\(/.test(claimHalf))
+
+  // A GUEST WRITES NOTHING EITHER. Taking an unclaimed seat changes no field,
+  // and it used to save the blob back unchanged — a write a non-member is
+  // refused, for a change that was never there.
+  check('a guest taking a seat returns without writing',
+    /return \{ legacy: current, playerId: joinAs\.playerId \}/.test(fn))
+
+  // AND IT DOES NOT RE-READ THE ROW. loadLegacyState is a plain select, which
+  // a joiner cannot do on a claimed campaign — the lookup already fetched it
+  // through the rpc, so it is handed in.
+  check('the campaign is handed in rather than re-read',
+    !/loadLegacyState\(/.test(fn) && /opts: \{ code: string; current: LegacyState \}/.test(api))
+
+  // THE ROSTER RULES STAY IN TYPESCRIPT. The rpc checks two structural things;
+  // who may be on a roster is judged here, where it is tested.
+  check('the roster rule still runs before the rpc',
+    fn.indexOf('claimRosterSeat(') < fn.indexOf("supabase.rpc('join_campaign_by_code'"))
+}
+
+// ── The migration is armed, and says what it costs ────────────────────────
+{
+  const dir = 'supabase/migrations'
+  const files = readdirSync(dir)
+  check('the policies are no longer held back',
+    files.some(f => f.endsWith('_campaigns_rls.sql'))
+      && !files.some(f => f.endsWith('.hold')))
+
+  const sql = readFileSync(
+    `${dir}/${files.find(f => f.endsWith('_campaigns_rls.sql'))}`, 'utf8')
+
+  // IT MUST SORT AFTER WHAT IS ALREADY APPLIED. db push goes in timestamp
+  // order and treats a file older than the last applied migration as history —
+  // an armed policy that never runs is worse than one still held.
+  const applied = files.filter(f => f.endsWith('.sql') && !f.includes('campaigns_rls')).sort()
+  const armed = files.find(f => f.endsWith('_campaigns_rls.sql'))!
+  check('...and sorts last, so db push actually runs it',
+    armed > applied[applied.length - 1], `${armed} vs ${applied[applied.length - 1]}`)
+
+  // THE DELETE FOOTGUN, WRITTEN DOWN. An RLS-refused DELETE returns no error,
+  // so the picker's ✕ goes quiet rather than failing. Whoever applies this has
+  // to know that before a player reports it.
+  // Matched on a phrase that survives the comment's line wrapping — the first
+  // version of this pinned "appear to work", which the 80-column reflow had
+  // already split across two lines and two `--` prefixes.
+  check('the silent delete is called out',
+    /matches no rows and returns success/.test(sql))
+  check('the service-role readers are audited', /SERVICE ROLE/.test(sql))
+}
+
 
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

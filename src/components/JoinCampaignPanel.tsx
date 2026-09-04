@@ -69,6 +69,11 @@ export default function JoinCampaignPanel({ user, defaultName = '', onJoined, on
         seatId
           ? { kind: 'existing', playerId: seatId, userId: user?.id, userEmail: user?.email }
           : { kind: 'new', name, userId: user?.id, userEmail: user?.email },
+        // THE CODE AND THE COPY THE LOOKUP ALREADY FETCHED. A joiner is not on
+        // the roster yet, so once campaigns are scoped they can neither select
+        // the row again nor write it — the claim crosses that boundary through
+        // join_campaign_by_code, which takes the code rather than the id.
+        { code: normalizeJoinCode(code), current: found.legacy },
       )
       if (!seatId && name.trim()) onNameChosen?.(name.trim())
       onJoined(found.campaignId, result.playerId)

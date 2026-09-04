@@ -865,40 +865,117 @@ export interface JoinResult {
  * copy the lookup returned: between typing a code and pressing Join, someone
  * else may have taken the last seat or claimed the name being picked.
  */
-export async function joinCampaign(campaignId: string, joinAs: JoinAs): Promise<JoinResult> {
-  const current = await loadLegacyState(campaignId)
-  if (!current) throw new Error('That campaign could not be loaded — check your connection and try again')
+/**
+ * Take a seat in a campaign somebody gave you the code for.
+ *
+ * THE JOINER IS NOT ON THE ROSTER YET, which is the whole difficulty. Once
+ * campaigns are scoped to their roster, a joiner can neither READ the row (to
+ * see who they might be) nor WRITE it (to become somebody) — both are exactly
+ * what joining means, and both are refused by a policy that is otherwise
+ * correct. So the crossing happens in one audited place: join_campaign_by_code,
+ * SECURITY DEFINER, with the code itself as the credential.
+ *
+ * THE ROSTER RULES STAY HERE, in TypeScript. The rpc's claim half checks two
+ * structural things — that the member exists, and that the seat is not already
+ * somebody else's — and applies the link. Everything about WHO MAY BE ON a
+ * roster and what a name means is judged by lib/roster before the call, where
+ * it can be read and tested, rather than being written a second time in plpgsql
+ * where the two copies would eventually disagree.
+ *
+ * @param opts.code the join code this campaign was found with. Required to
+ *   claim: the rpc takes the code, not the id, because the code is the thing
+ *   the joiner was given and the thing that authorises the crossing.
+ * @param opts.current the campaign as the lookup returned it. Passed in rather
+ *   than re-read — the joiner cannot select the row yet, and the lookup already
+ *   fetched it through the same rpc a moment ago.
+ */
+export async function joinCampaign(
+  _campaignId: string,
+  joinAs: JoinAs,
+  opts: { code: string; current: LegacyState },
+): Promise<JoinResult> {
+  const current = opts.current
+  const roster = getRoster(current)
 
-  let roster = getRoster(current)
-  let playerId: string
-
-  if (joinAs.kind === 'new') {
-    const added = addRosterMember(
-      roster,
-      joinAs.name,
-      current.currentGameNumber,
-      joinAs.userId ? { userId: joinAs.userId, userEmail: joinAs.userEmail } : undefined,
-    )
-    if (!added.ok || !added.member) throw new Error(added.reason ?? 'Could not join that campaign')
-    roster = added.roster
-    playerId = added.member.id
-  } else {
+  // ── Taking a seat that is already on the roster ────────────────────────────
+  if (joinAs.kind === 'existing') {
     const seat = roster.find(m => m.id === joinAs.playerId)
     if (!seat) throw new Error('That player is no longer on the campaign roster')
-    if (joinAs.userId) {
-      const claimed = claimRosterSeat(roster, joinAs.playerId, joinAs.userId, joinAs.userEmail)
-      if (!claimed.ok) throw new Error(claimed.reason ?? 'Could not link that player')
-      roster = claimed.roster
-    } else if (seat.userId) {
-      // A guest cannot take a name someone has already tied to their account.
-      throw new Error(`${seat.name} is claimed by an account — pick an unclaimed name`)
+
+    if (!joinAs.userId) {
+      // A GUEST WRITES NOTHING. Playing as an unclaimed name changes no field
+      // in the blob — it used to save the state back unchanged, which is a
+      // write a non-member is rightly refused and which never had anything to
+      // save. The check that they may take it still runs.
+      if (seat.userId) {
+        throw new Error(`${seat.name} is claimed by an account — pick an unclaimed name`)
+      }
+      return { legacy: current, playerId: joinAs.playerId }
     }
-    playerId = joinAs.playerId
+
+    // JUDGED HERE, APPLIED THERE. claimRosterSeat is the rule; the rpc is the
+    // reach. Running it first means the joiner gets this project's own refusal
+    // wording rather than a Postgres exception, and means the rule has one home.
+    const claimed = claimRosterSeat(roster, joinAs.playerId, joinAs.userId, joinAs.userEmail)
+    if (!claimed.ok) throw new Error(claimed.reason ?? 'Could not link that player')
+
+    const { data, error } = await supabase.rpc('join_campaign_by_code', {
+      p_code: opts.code,
+      p_member_id: joinAs.playerId,
+    })
+    if (error) throw new Error(claimFailure(error.message))
+    const row = (data as JoinCodeRow[] | null ?? [])[0]
+    if (!row) throw new Error('That campaign could not be found — check the code and try again')
+
+    // THE SERVER'S COPY, not the one built here. The rpc returns the row it
+    // actually wrote, so what comes back has whatever else landed on that
+    // campaign while this joiner was reading it.
+    const legacy = hydrateLegacyState(row.legacy_state, row.id)
+    legacy.joinCode = row.join_code ?? opts.code
+    return { legacy, playerId: joinAs.playerId }
   }
 
-  const updated: LegacyState = { ...current, roster }
+  // ── Adding a name that is not on the roster yet ────────────────────────────
+  // STILL A TABLE WRITE, and the one thing the scoped policies genuinely take
+  // away: it works while the campaign is unclaimed (nobody has linked an
+  // account, so anybody holding the id may write) and is refused once anyone
+  // has. On a claimed campaign a member has to add the name first — the
+  // campaign screen does exactly that — and the newcomer then claims it above.
+  //
+  // Not routed through the rpc on purpose: adding a member is where every
+  // roster rule lives (name length, duplicates, the roster cap, the game number
+  // they joined on), and reimplementing those in plpgsql is how the two copies
+  // start disagreeing about who is allowed to play.
+  const added = addRosterMember(
+    roster,
+    joinAs.name,
+    current.currentGameNumber,
+    joinAs.userId ? { userId: joinAs.userId, userEmail: joinAs.userEmail } : undefined,
+  )
+  if (!added.ok || !added.member) throw new Error(added.reason ?? 'Could not join that campaign')
+
+  const updated: LegacyState = { ...current, roster: added.roster }
   await saveLegacyState(updated)
-  return { legacy: updated, playerId }
+  return { legacy: updated, playerId: added.member.id }
+}
+
+/**
+ * A Postgres refusal from the claim, in words a player can act on.
+ *
+ * The rpc raises with sqlstates chosen for this: 28000 nobody signed in, 42501
+ * the seat is taken, 22023 no such member. Passing the raw message through
+ * showed people "new row violates row-level security policy", which tells them
+ * nothing about what to do next.
+ */
+function claimFailure(message: string): string {
+  if (/already claimed/i.test(message)) {
+    return 'That seat has just been claimed by someone else — pick another name'
+  }
+  if (/sign in/i.test(message)) return 'Sign in before claiming a seat'
+  if (/no roster member/i.test(message)) {
+    return 'That player is no longer on the campaign roster'
+  }
+  return `Could not join that campaign: ${message}`
 }
 
 // ─── Local identity ──────────────────────────────────────────────────────────

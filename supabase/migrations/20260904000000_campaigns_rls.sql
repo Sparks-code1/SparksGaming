@@ -8,6 +8,12 @@
 --
 -- DO NOT APPLY BLIND. This changes who can read existing rows; see the
 -- breakage notes at the foot of this file.
+--
+-- ARMED 2026-09-04, renumbered from 20260816160000. It was held while the join
+-- path still claimed its seat by writing through the table, which these
+-- policies refuse; joinCampaign now goes through join_campaign_by_code's claim
+-- half. The number moved because `db push` applies in timestamp order and would
+-- otherwise treat a file older than the last applied migration as history.
 
 -- ── The rule ─────────────────────────────────────────────────────────────────
 -- The roster lives inside legacy_state as an array of members, each with an
@@ -103,9 +109,26 @@ create policy "write own campaigns"
     or campaign_has_member(legacy_state, auth.uid())
   );
 
--- No delete policy: nothing in the app deletes a campaign, and a legacy
--- campaign is the one thing in this game that must not be destroyable by a
--- client. Its absence refuses every delete.
+-- No delete policy: a legacy campaign is the one thing in this game that must
+-- not be destroyable by a client. Its absence refuses every delete.
+--
+-- THE ORIGINAL NOTE HERE SAID "nothing in the app deletes a campaign". THAT IS
+-- WRONG, and it is the sharpest edge on this migration. CampaignPicker has a ✕
+-- on every row which calls deleteCampaign, and an RLS-refused DELETE is not an
+-- error — it matches no rows and returns success. So the button will appear to
+-- work, the list will refresh, and the campaign will still be there.
+--
+-- Left refusing anyway, because the alternative is a policy that lets any
+-- member destroy a shared campaign for everyone. Two ways to close it, both a
+-- decision rather than a fix, and neither taken here:
+--
+--   Own it — a delete policy scoped to members, accepting that one player can
+--   end a campaign five others are in.
+--   Retire it — drop the ✕ from the picker, or make it hide the campaign
+--   locally rather than delete the row.
+--
+-- Until one is chosen, deleteCampaign should at least tell the truth: it checks
+-- only `error`, so add a count check and raise when nothing was removed.
 
 -- ── Verify ───────────────────────────────────────────────────────────────────
 do $$
@@ -142,17 +165,22 @@ end $$;
 
 -- ── What this breaks, and what has to land with it ───────────────────────────
 --
--- 1. JOIN BY CODE STOPS WORKING. legacyApi.ts:754 looks a campaign up by
---    join_code, and at that moment the joiner is not yet on the roster. On a
---    claimed campaign the select policy refuses the row and the join fails with
---    "not found" — indistinguishable from a wrong code.
+-- 1. JOIN BY CODE — HANDLED, 2026-09-04. Both halves now go through
+--    join_campaign_by_code: the lookup (findCampaignByJoinCode) already did,
+--    and joinCampaign's claim does now instead of writing through the table.
+--    The roster RULES stay in TypeScript — claimRosterSeat judges, the rpc
+--    reaches — so there is no second copy of them in plpgsql to disagree.
 --
---    This needs a SECURITY DEFINER rpc — join_campaign_by_code(code, member_id)
---    — that looks the row up with the definer's reach, adds the caller's
---    auth.uid() to the named roster member, and returns the campaign. That is
---    also the right place for it: joining is precisely the operation that must
---    cross the membership boundary, so it should be one audited function rather
---    than a hole in the policy.
+--    A guest taking an unclaimed seat now writes NOTHING. It used to save the
+--    blob back unchanged, which is a write a non-member is rightly refused and
+--    which never had anything to save.
+--
+-- 1b. ADDING A NEW NAME BY CODE still writes through the table, so it works
+--    while the campaign is unclaimed and is refused once anyone has linked an
+--    account. On a claimed campaign a member must add the name first (the
+--    campaign screen does that) and the newcomer then claims it. Deliberate:
+--    routing it through the rpc would mean reimplementing the roster rules —
+--    name length, duplicates, the cap, the joining game number — in plpgsql.
 --
 -- 2. A player who never claimed a seat loses access once anyone else claims
 --    one. Mixed campaigns — some accounts, some not — are the common case in
@@ -161,8 +189,26 @@ end $$;
 --    match_players, untouched here) but they cannot read the campaign blob,
 --    which is where scars, stickers and history live.
 --
--- 3. Anything reading a campaign outside a member session breaks. Worth
---    grepping for admin or tooling paths before applying.
+-- 3. Anything reading a campaign outside a member session breaks. Audited
+--    2026-09-04: apply-action reads campaigns with the SERVICE ROLE, and so do
+--    scripts/check-seat-privacy.mjs, scripts/seed-dune-match.mjs and the e2e
+--    harness's ageCampaign. All four bypass RLS and are unaffected.
+--
+-- 4. THE ✕ ON THE CAMPAIGN PICKER goes quiet — see the delete note above. It is
+--    the only breakage here that fails SILENTLY rather than loudly.
+--
+-- 5. THE PICKER LISTS LESS, which is the migration working. listCampaigns
+--    selects with no filter and has always returned every campaign in the
+--    database to everybody; afterwards it returns the unclaimed ones plus your
+--    own. Anyone who has been using it as a list of all campaigns will find
+--    theirs gone from other accounts' screens — correct, and worth saying out
+--    loud before somebody reports it as data loss.
+--
+-- 6. THE DEGRADED JOIN PATH cannot find claimed campaigns. When the join_code
+--    column is missing, findCampaignByJoinCode falls back to scanning every row
+--    for a code kept inside the blob — and it can only scan what it may read.
+--    That fallback only runs on a database without the column, which this
+--    project's has, so it is a footnote rather than a breakage.
 --
 -- Nothing here is reversible by a second migration alone: once the permissive
 -- policies are gone, a client that relied on them fails immediately. Apply it
