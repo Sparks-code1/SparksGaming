@@ -164,6 +164,24 @@ Two things silently stop clients seeing a release. Both look like success locall
 2. **The repo is private.** A client has no token, so every check 404s. The repo
    must be public for auto-update to work as configured.
 
+### Before chasing an online bug: are both screens on the same build?
+
+The badge beside the green **Live** marker reads `v<version>+<commit>` — this
+client's build, baked in at build time. Online, every client announces its own
+over realtime presence, and the badge shows the table:
+
+- `Live · v0.3.7+46cf45c · 2 here, same build` — everyone is on this build.
+- `Live · v0.3.7+46cf45c · ⚠ Linda on 0.3.6+b980bc5` — she is not, and it is
+  drawn as loudly as a dropped connection.
+
+The **commit is part of the id on purpose**: the web app redeploys on every
+push and the desktop app is cut from a release, so two screens can both say
+0.3.7 and be running different code. That is what made the 2026-09-05 rewind
+bug hard to place — nobody could say whether the two players were on the same
+build. Read both badges first; a mismatch is the first thing to fix, and a
+symptom that appears on one screen and not the other is exactly what one
+looks like.
+
 Check what a client actually sees. This must return **200**:
 
 ```bash

@@ -32,6 +32,8 @@ import {
 } from '@/lib/legacyApi'
 import { getScarCard, type ScarCard, MERCENARY_CARD_IDS, BIOHAZARD_CARD_IDS } from '@/data/scarCards'
 import { mergeOwnSecrets, HIDDEN_CARD_ID, type SeatState } from '@/lib/stateView'
+import { useBuildPresence } from '@/lib/buildPresence'
+import { BUILD_ID } from '@/lib/buildId'
 import CardHand from './CardHand'
 import JoinTheWarModal from './JoinTheWarModal'
 import CardDrawModal from './CardDrawModal'
@@ -7640,6 +7642,14 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
    * Incoming state REPLACES the board rather than being merged: the server is
    * the authority and a merge would be this client re-deciding what happened.
    */
+  // Which build every seat at this table is running — announced by each client
+  // over presence, shown beside the Live marker, mismatches named. Empty in
+  // hotseat and until this seat is known.
+  const buildPeers = useBuildPresence(
+    onlineMatch?.matchId ?? null,
+    localSeatId,
+    gameState.players.find(p => p.id === localSeatId)?.name ?? null,
+  )
   const { status: liveStatus, sync: matchSync } = useMatchSync(
     onlineMatch?.matchId ?? null,
     // Which seat this client sits at. It selects the match_secrets row whose
@@ -7735,6 +7745,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         status={liveStatus}
         onRetry={() => { void matchSync?.resync() }}
         expectedOnline={playOnline || !!legacyState.activeMatchId}
+        build={BUILD_ID}
+        seat={localSeatId}
+        peers={buildPeers}
       />
       {/* The battle screen for everyone who isn't the attacker: the defender
           with controls, spectators watching the same animation. */}

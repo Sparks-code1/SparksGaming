@@ -1,4 +1,5 @@
 import type { LiveStatus } from '@/lib/matchSync'
+import { buildMismatches, type SeatBuild } from '@/lib/buildPresence'
 
 /**
  * Whether this client is still hearing from the match.
@@ -12,13 +13,23 @@ import type { LiveStatus } from '@/lib/matchSync'
  * Renders nothing in hotseat: there is no connection to report on.
  */
 export default function LiveStatusBadge({
-  status, onRetry, expectedOnline = false,
+  status, onRetry, expectedOnline = false, build, seat = null, peers = [],
 }: {
   status: LiveStatus
   onRetry?: () => void
   /** This GAME is supposed to be online. Idle then stops meaning "hotseat,
    *  nothing to report" and starts meaning "your moves are going nowhere". */
   expectedOnline?: boolean
+  /** This client's build — `<version>+<commit>`. Shown beside the marker. */
+  build?: string
+  /** This client's seat, so its own presence entry is not reported as a peer. */
+  seat?: string | null
+  /**
+   * Every connected client's build, this one included, from presence. A table
+   * on more than one build is called out by name — the thing that was
+   * invisible until it produced a symptom.
+   */
+  peers?: readonly SeatBuild[]
 }) {
   // The state that cost a whole evening of testing: an online game whose sync
   // never attached, playing perfectly — locally. Every click looked fine on
@@ -54,23 +65,37 @@ export default function LiveStatusBadge({
   const degraded = status.state === 'reconnecting' || status.state === 'offline'
   const secondsAgo = status.lastSyncAt ? Math.round((Date.now() - status.lastSyncAt) / 1000) : null
 
+  // ── THE TABLE'S BUILDS ─────────────────────────────────────────────────
+  // `peers` is every connected client including this one; the others are
+  // whoever is not at this seat. A mismatch is anyone on a different build,
+  // named — and it is LOUD, like a dropped connection, because it is the same
+  // kind of fact: the two screens are not looking at the same game.
+  const others = peers.filter(p => p.seat !== seat)
+  const differing = build ? buildMismatches(build, others) : []
+  const mismatch = differing.length > 0
+  const here = peers.length
+  const loud = degraded || mismatch
+  const table = peers.length
+    ? ` · at the table: ${peers.map(p => `${p.name} ${p.build}`).join(', ')}`
+    : ''
+
   return (
     <div
       title={degraded
         ? `${status.message ?? 'Not receiving updates'}${secondsAgo !== null ? ` · last update ${secondsAgo}s ago` : ''}`
-        : `Receiving live updates · version ${status.version}`}
+        : `Receiving live updates · version ${status.version}${build ? ` · this build ${build}` : ''}${table}`}
       style={{
         position: 'fixed', top: 8, left: 8, zIndex: 9000,
         display: 'flex', alignItems: 'center', gap: 7,
-        padding: degraded ? '7px 12px' : '5px 10px',
+        padding: loud ? '7px 12px' : '5px 10px',
         borderRadius: 20,
-        background: look.bg,
-        border: `1px solid ${look.color}${degraded ? '99' : '44'}`,
+        background: mismatch && !degraded ? 'rgba(224,160,112,0.14)' : look.bg,
+        border: `1px solid ${mismatch && !degraded ? '#e0a070' : look.color}${loud ? '99' : '44'}`,
         backdropFilter: 'blur(6px)',
         fontFamily: 'Georgia, serif', fontSize: 11, color: look.color,
         // Healthy is a marker, not a message — it must not compete with the board.
-        opacity: degraded ? 1 : 0.75,
-        pointerEvents: degraded ? 'auto' : 'none',
+        opacity: loud ? 1 : 0.75,
+        pointerEvents: loud ? 'auto' : 'none',
       }}
     >
       <span style={{
@@ -78,6 +103,18 @@ export default function LiveStatusBadge({
         animation: status.state === 'live' ? undefined : 'pulse 1.4s ease-in-out infinite',
       }} />
       <span>{look.label}</span>
+      {/* This build, always; then the table — same build and how many, or who
+          is on what. The separators live inside the spans so the badge reads
+          as one sentence to anything that reads its text. */}
+      {build && <span style={{ opacity: 0.85 }}> · v{build}</span>}
+      {build && mismatch && (
+        <span style={{ color: '#e0a070', fontWeight: 'bold' }}>
+          {' '}· ⚠ {differing.map(d => `${d.name} on ${d.build}`).join(', ')}
+        </span>
+      )}
+      {build && !mismatch && here > 1 && (
+        <span style={{ opacity: 0.7 }}> · {here} here, same build</span>
+      )}
 
       {degraded && (
         <>

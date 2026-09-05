@@ -135,6 +135,25 @@ test('a hosted game reaches both browsers, and the turn is the same turn', async
     expect(first, 'nobody holds the opening turn').toBeTruthy()
     await bothAgreeItIs(seats, first!)
 
+    // ── AND EVERY SEAT SEES EVERY BUILD ────────────────────────────────────
+    // Each client announces `<version>+<commit>` over presence and the badge
+    // beside Live shows the table. This is the round trip the unit suite
+    // cannot make: both browsers here are the same dev server, so each must
+    // show the OTHER as present — "2 here, same build" — and both must name
+    // the same build. A table on different builds would read "⚠ Name on …"
+    // instead, which is the thing that used to be discovered from symptoms.
+    const badgeOf = (s: Seat) => s.page.locator('text=/Live\\s*·\\s*v\\S+/').first()
+    const builds: string[] = []
+    for (const s of seats) {
+      await expect(badgeOf(s), `${s.name}'s badge never showed both seats on one build`)
+        .toHaveText(/Live\s*·\s*v\S+\s*·\s*2 here, same build/, { timeout: 20_000 })
+      // `· v` rather than a bare `v`: the badge starts with the word "Live",
+      // whose own v matched first and captured the letter e.
+      builds.push((await badgeOf(s).innerText()).match(/·\s*v(\S+)/)?.[1] ?? '')
+    }
+    expect(builds[0], 'the two browsers reported different builds off one dev server').toBe(builds[1])
+    expect(builds[0], 'the build id carries no commit').toMatch(/^\d+\.\d+\.\d+\+[0-9a-f]{7}$/)
+
     // ── AND A MOVE MADE HERE STAYS MADE HERE ───────────────────────────────
     // The hand-off has a direction nothing above checks: a move has to stay
     // true on the machine that MADE it. It did not. matchSync drops the echoes
