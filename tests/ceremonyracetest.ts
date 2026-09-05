@@ -153,5 +153,58 @@ console.log('\n--- an ordinary append survives without naming a rebuild ---')
     (row.value.scars ?? []).map(s => s.territoryId).sort(), ['brazil', 'ukraine'])
 }
 
+// ─── 4. A MAP is not one value; it is one value per player ──────────────────
+//
+// The list merge above was written because two machines grow `scars` at once.
+// Seventeen LegacyState fields are Record<string, …> — missiles, purchasedStars,
+// playerWins, cardResources, comebackPowers, missilePowers, activeGameCards and
+// the rest — and those were still taken WHOLESALE: the rebuild replayed a map
+// built from whatever the losing machine happened to be holding, so every key
+// the winner had just written was destroyed. Two players spending a missile in
+// the same window is two keys of one map, and one of them was going home.
+console.log('--- two machines writing different keys of one map ---')
+{
+  const row = fakeRow({ ...base(), missiles: { p1: 3, p2: 3 } } as LegacyState)
+  const knownToTest = row.value                     // both machines read v1
+
+  // The host spends p1's missile and lands first.
+  row.save(row.version, { ...row.value, missiles: { p1: 2, p2: 3 } } as LegacyState)
+
+  // test's machine spent p2's, computed against v1 — so its map still says
+  // p1: 3, and taking it whole would hand the host their missile back.
+  const testSpend = { ...knownToTest, missiles: { p1: 3, p2: 2 } } as LegacyState
+  const rebuild = (f: LegacyState) => reapplyLegacyEdits(f, knownToTest, testSpend)
+  const res = row.save(1, testSpend, rebuild)
+  check('the rebuilt write is accepted', res.ok, true)
+  check('both spends survive — neither player is refunded',
+    row.value.missiles, { p1: 2, p2: 2 })
+}
+
+console.log('--- and a key one machine deleted stays deleted ---')
+{
+  const row = fakeRow({ ...base(), comebackPowers: { p1: 'aggressive' } } as LegacyState)
+  const known = row.value
+  row.save(row.version, { ...row.value, comebackPowers: { p1: 'aggressive', p2: 'resourceful' } } as LegacyState)
+
+  // This machine cleared p1's power. A merge that only ADDED keys would resurrect it.
+  const cleared = { ...known, comebackPowers: {} } as LegacyState
+  const res = row.save(1, cleared, (f: LegacyState) => reapplyLegacyEdits(f, known, cleared))
+  check('the rebuilt write is accepted', res.ok, true)
+  check("p1's power is gone and p2's is untouched",
+    row.value.comebackPowers, { p2: 'resourceful' })
+}
+
+console.log('--- null is a value, not an empty map ---')
+{
+  // activeGameCards is null between games, and that is a statement. Merging it
+  // key-by-key would turn "no card block" into "the winner's card block".
+  const row = fakeRow({ ...base(), activeGameCards: { missionDeck: ['m1'] } } as never)
+  const known = row.value
+  row.save(row.version, { ...row.value, activeGameCards: { missionDeck: ['m2'] } } as never)
+  const ended = { ...known, activeGameCards: null } as LegacyState
+  row.save(1, ended, (f: LegacyState) => reapplyLegacyEdits(f, known, ended))
+  check('clearing the card block still clears it', row.value.activeGameCards, null)
+}
+
 console.log(pass ? '\nceremonyracetest: all passed' : '\nceremonyracetest: FAILURES PRESENT')
 if (!pass) process.exit(1)

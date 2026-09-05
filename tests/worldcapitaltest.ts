@@ -2,6 +2,7 @@
 // worth 4+ coins. You forgo that card — the 2 Red Stars and the World Capital
 // replace it. Because no card is drawn, the "drawing forfeits your mission"
 // rule is satisfied rather than bypassed.
+import { readFileSync } from 'node:fs'
 import { checkMission, canClaimTerritoryCard } from '@/lib/missionLogic'
 import { cardCoinValue, worldCapitalReplacedCities, calcReinforcements } from '@/lib/gameLogic'
 import { applyLegacyToTerritories } from '@/lib/legacyApi'
@@ -220,6 +221,50 @@ const S = (id: string, targetId: string, description: string, name = id) =>
   const oldSave: any = { captured:false, eligibleForRichCard:true }
   check('a save predating the field restores it as empty',
     ({ ...initialTurnState(), ...oldSave }).richCardTerritoryIds, [])
+}
+
+// ── The write that lost the Capital ─────────────────────────────────────────
+//
+// placeWorldCapital read legacyStateRef.current for everything it wrote — the
+// seeding flag, the destroyed-mission list, and the stickers and destroyedCities
+// the covered cities are worked out from — then handed the finished object to
+// saveLegacyState with no way to rebuild it. Losing that race meant the change
+// was either dropped or replayed from a copy of the campaign that was already
+// out of date, and `activeGameCards` went over the winner's whole card block.
+//
+// It is a function of its argument now, passed as `reapply`, so the refusal
+// path can run it again on the row it re-read. Pinned as source because the
+// function lives inside the component and the property IS its shape.
+{
+  const board = readFileSync('src/components/GameBoard.tsx', 'utf8')
+  const at = board.indexOf('const applyCapital = (base: LegacyState): LegacyState =>')
+  const fn = at < 0 ? '' : board.slice(at, board.indexOf('\n    }', at))
+
+  check('placeWorldCapital builds its change as a function of a base copy', at > 0, true)
+
+  // THE WHOLE POINT. A single legacyStateRef read in here and the rebuild is
+  // computing from this machine's copy again, which is the original bug.
+  check('...and reads nothing from the local ref inside it',
+    /legacyStateRef/.test(fn), false)
+
+  // Every field it writes has to come from `base`, or the rebuild carries a
+  // stale value onto the winner's copy.
+  check('...deriving the covered cities from base',
+    /worldCapitalReplacedCities\(\s*base\.stickers, base\.destroyedCities/.test(fn), true)
+  check('...and appending to base\'s history rather than a captured one',
+    /historyLog: \[\.\.\.base\.historyLog/.test(fn), true)
+
+  // AND IT IS HANDED TO THE SAVE. The function existing changes nothing on its
+  // own — the refusal path only calls it if it was passed.
+  const save = board.indexOf('saveLegacyState(next, { reapply: applyCapital })')
+  check('...and it is passed to saveLegacyState as the rebuild', save > at, true)
+
+  // The seeding decision reads base too: a rebuild that re-seeded a deck the
+  // winner had already seeded would deal the private missions twice.
+  const seedAt = board.indexOf('const cardsFor = (base: LegacyState): ActiveGameCards =>')
+  const seedFn = seedAt < 0 ? '' : board.slice(seedAt, seedAt + 700)
+  check('the private-mission seeding asks base whether it has already happened',
+    /base\.privateMissionsSeeded[\s\S]{0,200}base\.destroyedMissionIds/.test(seedFn), true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

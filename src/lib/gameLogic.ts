@@ -55,6 +55,17 @@ export function mergeLegacyEdits<T extends MergeableLegacy>(
   return out
 }
 
+/**
+ * A record to merge key-by-key — not an array, not null, not a class instance.
+ *
+ * Arrays are excluded because they have their own merge above, and null because
+ * `activeGameCards` is legitimately null between games and must stay a wholesale
+ * replace: "no card block" is a value, not an empty map.
+ */
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
 /** Identity for merging list entries: the id when there is one, else the value. */
 function entryKey(v: unknown): string {
   if (v && typeof v === 'object') {
@@ -101,6 +112,27 @@ export function reapplyLegacyEdits<T extends MergeableLegacy>(
       const kept = current.filter(x => !removed.has(entryKey(x)))
       const keptKeys = new Set(kept.map(entryKey))
       out[key] = [...kept, ...added.filter(x => !keptKeys.has(entryKey(x)))] as T[keyof T]
+      continue
+    }
+    // ── A MAP KEEPS THE ROW'S KEYS AND TAKES ONLY THE ONES WE CHANGED ──────
+    // Seventeen LegacyState fields are Record<string, …> — missiles,
+    // purchasedStars, playerWins, cardResources, comebackPowers, missilePowers,
+    // chosenFactionAbilities, namedContinents, activeGameCards and the rest.
+    // Taking the whole edited object, as this used to, replays a map built from
+    // whatever this machine happened to be holding: every key the WINNER wrote
+    // is destroyed, including keys for players this machine has no news about.
+    // Arrays were already merged entry-by-entry for exactly this reason; a map
+    // is the same problem keyed by string, and the same answer — start from the
+    // freshly-read row, apply this screen's own keys, honour its deletions.
+    if (isPlainObject(e) && isPlainObject(b)) {
+      const current = isPlainObject(out[key]) ? { ...(out[key] as Record<string, unknown>) } : {}
+      for (const k of Object.keys(e)) {
+        if (!Object.is(e[k], b[k])) current[k] = e[k]
+      }
+      for (const k of Object.keys(b)) {
+        if (!(k in e)) delete current[k]
+      }
+      out[key] = current as T[keyof T]
       continue
     }
     out[key] = e

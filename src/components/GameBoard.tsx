@@ -3991,47 +3991,92 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     const gameNumber = gameStateRef.current.gameNumber
     const territoryName = gameStateRef.current.territories[territoryId]?.name ?? territoryId
 
-    // Placing the World Capital unlocks the private missions: shuffle them into
-    // the SAME deck as the standard ones, so the face-up card may be either kind
-    // from here on.
-    const seedPrivate = !legacyStateRef.current?.privateMissionsSeeded
-    const nextCards: ActiveGameCards = seedPrivate
-      ? { ...baseCards, missionDeck: seedPrivateMissions(
-          baseCards.missionDeck ?? [],
-          legacyStateRef.current?.destroyedMissionIds ?? [],
-          `${gameNumber}:${territoryId}`,
-        ) }
-      : baseCards
-    if (seedPrivate) setCardState(nextCards)
+    // ── EVERYTHING THIS WRITES IS DERIVED FROM THE COPY IT IS GIVEN ────────
+    //
+    // It used to read legacyStateRef.current for all of it — the seeding flag,
+    // the destroyed-mission list, the stickers and destroyedCities the covered
+    // cities are worked out from — and then hand the finished object to
+    // saveLegacyState with no way to rebuild it. When that write lost a race,
+    // the rebuild replayed values computed against a copy of the campaign that
+    // was already out of date, and `activeGameCards` went over the winner's
+    // whole card block. This is the write that cost the campaign its Capital.
+    //
+    // As a function of `base` it can be run again on whatever the database
+    // actually holds: the refusal path re-reads the row and calls this with it,
+    // so the second attempt is computed from the row rather than from a
+    // month-old ref. It is also idempotent — placing the Capital twice on the
+    // same territory produces the same object — because a rebuild may run after
+    // the first attempt partly landed.
+    // THE CARD BLOCK STILL COMES FROM `baseCards`, deliberately. It is a
+    // parameter of this function precisely because a caller that has already
+    // queued a card update this tick holds the only newer copy — completeMission
+    // does, when it flips the next mission face up — and no copy read back from
+    // the database can supply it. What DOES come from `base` is the decision:
+    // whether the private missions still need seeding, and which are already
+    // destroyed. Those were read off legacyStateRef, and they are the reason a
+    // rebuild seeded a deck that had already been seeded.
+    const cardsFor = (base: LegacyState): ActiveGameCards =>
+      base.privateMissionsSeeded
+        ? baseCards
+        : { ...baseCards, missionDeck: seedPrivateMissions(
+            baseCards.missionDeck ?? [],
+            base.destroyedMissionIds ?? [],
+            // Keyed on the placement rather than a clock, so a rebuild shuffles
+            // the deck into the SAME order the first attempt did.
+            `${gameNumber}:${territoryId}`,
+          ) }
 
-    const replaced = worldCapitalReplacedCities(
-      legacyStateRef.current?.stickers, legacyStateRef.current?.destroyedCities,
-      territoryId, completingPlayer.id, gameNumber)
-    const replacedNames = replaced.replacedNames
-    const stamp = new Date().toISOString()
-    const log = [{ gameNumber, timestamp: stamp,
-      entry: `${completingPlayer.name} placed the World Capital at ${territoryName}` }]
-    if (replacedNames.length > 0) {
-      log.push({ gameNumber, timestamp: stamp,
-        entry: `The World Capital covers ${replacedNames.join(' and ')} — that city is gone` })
-    }
-    setLegacyState(prev => {
-      const next: LegacyState = {
-        ...prev,
+    const applyCapital = (base: LegacyState): LegacyState => {
+      const covered = worldCapitalReplacedCities(
+        base.stickers, base.destroyedCities, territoryId, completingPlayer.id, gameNumber)
+      return {
+        ...base,
         privateMissionsSeeded: true,
         worldCapitalTerritoryId: territoryId,
-        activeGameCards: nextCards,
-        destroyedCities: [...(prev.destroyedCities ?? []), ...replaced.replaced],
-        historyLog: [...prev.historyLog, ...log],
+        activeGameCards: cardsFor(base),
+        destroyedCities: [...(base.destroyedCities ?? []), ...covered.replaced],
+        historyLog: [...base.historyLog, ...logLines(covered.replacedNames)],
       }
+    }
+
+    // The lines are built from a fixed stamp so a rebuild appends the SAME
+    // entries the first attempt did, and the merge's dedup recognises them
+    // rather than logging the Capital twice.
+    const stamp = new Date().toISOString()
+    function logLines(replacedNames: string[]) {
+      const log = [{ gameNumber, timestamp: stamp,
+        entry: `${completingPlayer.name} placed the World Capital at ${territoryName}` }]
+      if (replacedNames.length > 0) {
+        log.push({ gameNumber, timestamp: stamp,
+          entry: `The World Capital covers ${replacedNames.join(' and ')} — that city is gone` })
+      }
+      return log
+    }
+
+    // The card store and the notice below are this machine's own UI, so they are
+    // computed from the copy it is holding — outside the updater, because a
+    // setState updater does not run before the next statement and reading the
+    // ref back here would race it.
+    const held = legacyStateRef.current
+    if (!held?.privateMissionsSeeded) setCardState(cardsFor(held))
+    const heldCovered = worldCapitalReplacedCities(
+      held?.stickers, held?.destroyedCities,
+      territoryId, completingPlayer.id, gameNumber)
+    const replacedNames = heldCovered.replacedNames
+
+    setLegacyState(prev => {
+      const next = applyCapital(prev)
       legacyStateRef.current = next
-      saveLegacyState(next).catch(() => {})
+      // THE REBUILD. On a refusal the save path re-reads the row and calls this
+      // with what the database actually holds, so the second attempt is computed
+      // from the row rather than from the copy this machine started with.
+      saveLegacyState(next, { reapply: applyCapital }).catch(() => {})
       return next
     })
 
     // The board reads cities off gameState, so drop the covered ones there too —
     // through the reducer, or the burial exists on this machine only.
-    const covered = [...new Set(replaced.replaced.map(r => r.cityId))]
+    const covered = [...new Set(heldCovered.replaced.map(r => r.cityId))]
     if (covered.length > 0) {
       dispatch({ type: 'DESTROY_CITIES', territoryId, cityIds: covered })
     }
