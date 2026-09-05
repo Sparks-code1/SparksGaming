@@ -5983,11 +5983,37 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
               factionId: ep.factionId,
               conquerorName: conqueror?.name ?? 'the enemy',
             })
+            // ── FIRST BLOOD: EVERY SCREEN LEARNS IT, ONE MACHINE RECORDS IT ──
+            //
+            // This ran on every machine in the match, remote included — the one
+            // legacy WRITE in this case without the `!remote` guard its
+            // neighbours carry. It was correct by accident rather than by
+            // design: the flag is set to the same value everywhere and the
+            // mercenary ids dedup, so N clients racing to write the same thing
+            // happened to converge. Nothing about the next field added here
+            // would be so forgiving, and until then it cost a campaign write
+            // per machine per elimination, N-1 of them losing the version race
+            // and burning a re-read and a retry each.
+            //
+            // The local update stays on every machine, because the flag is read
+            // by this screen — the mercenary entry in the legacy panel, and
+            // whether the comeback modal calls itself the first — and there is
+            // no subscription that would otherwise bring it round.
+            const markFirstBlood = (b: LegacyState): LegacyState =>
+              b.firstEliminationTriggered
+                ? b
+                : {
+                  ...b,
+                  firstEliminationTriggered: true,
+                  scarDeck: [...new Set([...(b.scarDeck ?? []), ...MERCENARY_CARD_IDS])],
+                }
             setLegacyState(prev => {
               if (prev.firstEliminationTriggered) return prev
-              const merged = [...(prev.scarDeck ?? []), ...MERCENARY_CARD_IDS]
-              const next = { ...prev, firstEliminationTriggered: true, scarDeck: [...new Set(merged)] }
-              saveLegacyState(next).catch(() => {})
+              const next = markFirstBlood(prev)
+              // Idempotent, so the rebuild is a no-op against a row where
+              // another machine got there first rather than a second shuffle of
+              // the mercenaries into the deck.
+              if (!remote) saveLegacyState(next, { reapply: markFirstBlood }).catch(() => {})
               return next
             })
           }
