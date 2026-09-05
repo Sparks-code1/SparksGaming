@@ -206,5 +206,76 @@ console.log('--- null is a value, not an empty map ---')
   check('clearing the card block still clears it', row.value.activeGameCards, null)
 }
 
+// ─── 5. The same line, logged by two machines ───────────────────────────────
+//
+// The dedup key used to be `timestamp|entry`, and the timestamp is the one part
+// of an entry guaranteed to DIFFER between machines: each stamps its own
+// new Date().toISOString(). So two clients recording one event produced two
+// keys milliseconds apart, both survived the union, and the campaign log grew a
+// duplicate of every line written while two people were playing.
+console.log('--- one event, two machines, one line ---')
+{
+  const line = (gameNumber: number, entry: string, timestamp: string) => ({ gameNumber, entry, timestamp })
+  const row = fakeRow({ ...base(), historyLog: [] } as LegacyState)
+  const known = row.value
+
+  // Both machines log the elimination; their clocks differ by 40ms.
+  row.save(row.version, {
+    ...row.value,
+    historyLog: [line(1, 'Khan Industries was eliminated', '2026-09-05T10:00:00.000Z')],
+  } as LegacyState)
+
+  const mine = {
+    ...known,
+    historyLog: [line(1, 'Khan Industries was eliminated', '2026-09-05T10:00:00.040Z')],
+  } as LegacyState
+  row.save(1, mine, (f: LegacyState) => reapplyLegacyEdits(f, known, mine))
+
+  check('the elimination is logged once, not twice',
+    row.value.historyLog.map(h => h.entry), ['Khan Industries was eliminated'])
+}
+
+console.log('--- but two different lines are still two lines ---')
+{
+  const line = (gameNumber: number, entry: string, timestamp: string) => ({ gameNumber, entry, timestamp })
+  const row = fakeRow({ ...base(), historyLog: [] } as LegacyState)
+  const known = row.value
+  row.save(row.version, {
+    ...row.value, historyLog: [line(1, 'A scar was placed on Ukraine', '2026-09-05T10:00:00.000Z')],
+  } as LegacyState)
+
+  const mine = {
+    ...known, historyLog: [line(1, 'A scar was placed on Brazil', '2026-09-05T10:00:00.010Z')],
+  } as LegacyState
+  row.save(1, mine, (f: LegacyState) => reapplyLegacyEdits(f, known, mine))
+  check('both scars are recorded',
+    row.value.historyLog.map(h => h.entry).sort(),
+    ['A scar was placed on Brazil', 'A scar was placed on Ukraine'])
+}
+
+console.log('--- and the game number is part of the identity ---')
+{
+  // The SAME sentence in a later game is a different event. Keying on the text
+  // alone would swallow "the campaign moved to game 3" every time it recurred.
+  const line = (gameNumber: number, entry: string, timestamp: string) => ({ gameNumber, entry, timestamp })
+  const row = fakeRow({
+    ...base(), historyLog: [line(1, 'Balkania took the World Capital', '2026-09-05T10:00:00.000Z')],
+  } as LegacyState)
+  const known = row.value
+  row.save(row.version, { ...row.value, worldName: 'W2' } as LegacyState)
+
+  const mine = {
+    ...known,
+    historyLog: [
+      line(1, 'Balkania took the World Capital', '2026-09-05T10:00:00.000Z'),
+      line(4, 'Balkania took the World Capital', '2026-09-05T11:00:00.000Z'),
+    ],
+  } as LegacyState
+  row.save(1, mine, (f: LegacyState) => reapplyLegacyEdits(f, known, mine))
+  check('the same sentence in a later game is kept',
+    row.value.historyLog.map(h => `${h.gameNumber}:${h.entry}`),
+    ['1:Balkania took the World Capital', '4:Balkania took the World Capital'])
+}
+
 console.log(pass ? '\nceremonyracetest: all passed' : '\nceremonyracetest: FAILURES PRESENT')
 if (!pass) process.exit(1)

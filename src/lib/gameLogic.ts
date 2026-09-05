@@ -9,8 +9,32 @@ const CONTINENT_SIZES: Record<string, number> = TERRITORY_DEFINITIONS.reduce(
 
 /** The shape `mergeLegacyEdits` needs to know about; everything else is opaque. */
 interface MergeableLegacy {
-  historyLog?: Array<{ timestamp?: string; entry?: string }>
+  historyLog?: Array<{ gameNumber?: number; timestamp?: string; entry?: string }>
 }
+
+/**
+ * What makes two history entries the SAME line.
+ *
+ * NOT THE TIMESTAMP. Each machine stamps its own `new Date().toISOString()`, so
+ * two clients recording one event produced two keys a few milliseconds apart,
+ * both survived the union below, and the campaign log grew a duplicate of every
+ * line written while two people were playing. The timestamp is the one part of
+ * an entry guaranteed to differ between machines, which made it the worst
+ * possible choice of identity.
+ *
+ * The game number and the text are what both machines agree on: same game, same
+ * sentence, same event. The cost is that a line legitimately repeated verbatim
+ * within one game — the same scar on the same territory twice, say — merges
+ * down to one. That is a known and accepted trade: it needs two machines racing
+ * AND an identical sentence in the same game, where the duplicate-every-line
+ * bug needed only the first. A stable id minted per entry would settle it
+ * outright, and is where to go if it ever bites.
+ *
+ * ONE DEFINITION, used by both merges. They had a copy each, which is how a
+ * fix to one would have silently left the other duplicating.
+ */
+const historyKey = (e: { gameNumber?: number; entry?: string }) =>
+  `${e.gameNumber}|${e.entry}`
 
 /**
  * Fold a screen's edited copy of the campaign state back onto the LATEST one.
@@ -44,13 +68,13 @@ export function mergeLegacyEdits<T extends MergeableLegacy>(
 
   // Both sides appended to the log; keep both, in the order they happened.
   const base = baseline.historyLog ?? []
-  const seen = new Set(base.map(e => `${e.timestamp}|${e.entry}`))
-  const addedByEdit = (edited.historyLog ?? []).filter(e => !seen.has(`${e.timestamp}|${e.entry}`))
+  const seen = new Set(base.map(e => historyKey(e)))
+  const addedByEdit = (edited.historyLog ?? []).filter(e => !seen.has(historyKey(e)))
   const latestLog = latest.historyLog ?? []
-  const latestKeys = new Set(latestLog.map(e => `${e.timestamp}|${e.entry}`))
+  const latestKeys = new Set(latestLog.map(e => historyKey(e)))
   ;(out as MergeableLegacy).historyLog = [
     ...latestLog,
-    ...addedByEdit.filter(e => !latestKeys.has(`${e.timestamp}|${e.entry}`)),
+    ...addedByEdit.filter(e => !latestKeys.has(historyKey(e))),
   ]
   return out
 }
@@ -142,13 +166,13 @@ export function reapplyLegacyEdits<T extends MergeableLegacy>(
   }
 
   const baseLog = baseline.historyLog ?? []
-  const seen = new Set(baseLog.map(e => `${e.timestamp}|${e.entry}`))
-  const addedByEdit = (edited.historyLog ?? []).filter(e => !seen.has(`${e.timestamp}|${e.entry}`))
+  const seen = new Set(baseLog.map(e => historyKey(e)))
+  const addedByEdit = (edited.historyLog ?? []).filter(e => !seen.has(historyKey(e)))
   const freshLog = fresh.historyLog ?? []
-  const freshKeys = new Set(freshLog.map(e => `${e.timestamp}|${e.entry}`))
+  const freshKeys = new Set(freshLog.map(e => historyKey(e)))
   ;(out as MergeableLegacy).historyLog = [
     ...freshLog,
-    ...addedByEdit.filter(e => !freshKeys.has(`${e.timestamp}|${e.entry}`)),
+    ...addedByEdit.filter(e => !freshKeys.has(historyKey(e))),
   ]
   return out
 }
