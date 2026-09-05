@@ -15,7 +15,7 @@
 // the bump once in each — which is how the online copy of each gained a guard
 // the offline copy did not. They live in gameLogic now and are checked here.
 import { readFileSync } from 'node:fs'
-import { foldMissileSpends, nextGameNumber } from '@/lib/gameLogic'
+import { foldMissileSpends, nextGameNumber, claimComebackPower } from '@/lib/gameLogic'
 
 let pass = 0, fail = 0
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -63,6 +63,52 @@ console.log('\n— and the campaign advances exactly one game —')
   check('a campaign left behind is brought forward', nextGameNumber(2, 4), 5)
 }
 
+// ── An exclusive pool is the other shape a merge cannot rescue ──────────────
+//
+// A comeback power is a permanent mark and no two factions may ever hold the
+// same one. Both claim paths took the first id THEIR OWN copy said was free,
+// and that copy is a snapshot: two players knocked out by one stroke choose on
+// two machines, both offered the same power, and the merge keeps one faction
+// key from each side while deduping the single id in `claimedComebackPowers`.
+// Two factions, one power, and a claimed list that says it went once — nothing
+// downstream can tell, and legacy state is the thing you cannot undo.
+console.log('\n— a comeback power is claimed against the copy it is written to —')
+{
+  const POOL = ['aggressive', 'resourceful', 'defensive']
+  const empty = { comebackPowers: {}, claimedComebackPowers: [] as string[] }
+
+  const first = claimComebackPower(empty, 'khan', POOL)
+  check('with nothing claimed, the pool is taken in order', first.powerId, 'aggressive')
+  check('...and the faction is recorded holding it',
+    first.next.comebackPowers, { khan: 'aggressive' })
+  check('...and the id is spent', first.next.claimedComebackPowers, ['aggressive'])
+
+  // THE COLLISION. This machine chose a power that the row says has since gone.
+  const taken = { comebackPowers: { balkania: 'aggressive' }, claimedComebackPowers: ['aggressive'] }
+  const clash = claimComebackPower(taken, 'khan', POOL, 'aggressive')
+  check('a preference already taken is replaced, not duplicated', clash.powerId, 'resourceful')
+  check('...and the caller is told it was re-chosen', clash.rechosen, true)
+  check('...leaving one faction per power',
+    clash.next.comebackPowers, { balkania: 'aggressive', khan: 'resourceful' })
+
+  // A preference still free is honoured — the human's choice is not overridden
+  // for the sake of being cautious.
+  const free = claimComebackPower(taken, 'khan', POOL, 'defensive')
+  check('a preference still free is honoured', free.powerId, 'defensive')
+  check('...and is not reported as re-chosen', free.rechosen, false)
+
+  // IDEMPOTENT, which is what makes it safe to hand to `reapply`: the rebuild
+  // may run against a row where this very claim already landed.
+  const again = claimComebackPower(first.next, 'khan', POOL)
+  check('a faction that already holds one is left alone', again.powerId, null)
+  check('...and its state is returned untouched', again.next === first.next, true)
+
+  // An exhausted pool claims nothing rather than handing out a second copy of
+  // the last power.
+  const all = { comebackPowers: {}, claimedComebackPowers: [...POOL] }
+  check('an exhausted pool claims nothing', claimComebackPower(all, 'khan', POOL).powerId, null)
+}
+
 // ── The wiring. The rules being right buys nothing if the sites do not use them.
 console.log('\n— every counter site hands the save a way to rebuild —')
 {
@@ -97,7 +143,25 @@ console.log('\n— every counter site hands the save a way to rebuild —')
   check('...and passed through to the save',
     board.includes('saveFinishedCampaign(completed, closeOut)'), true)
 
-  // 4. The win screen's close-out.
+  // 4. Both comeback-power claims, which must pick against the row they write.
+  check('the AI claim goes through the shared rule',
+    /claimComebackPower\(b, ep\.factionId, COMEBACK_POWER_IDS\)/.test(board), true)
+  // COUNTED, not merely present. Both claim paths spell their rebuild
+  // identically, so `.test()` was satisfied by either one — unwiring the AI's
+  // left the human's matching and the pin green over the bug. Found by the
+  // sabotage that was supposed to prove it worked.
+  check('...and BOTH claims carry their own rebuild',
+    [...board.matchAll(/saveLegacyState\(next, \{ reapply: claim \}\)/g)].length, 2)
+  check("the human's claim passes their choice as a PREFERENCE, not a decision",
+    /claimComebackPower\(b, fId, COMEBACK_POWER_IDS, powerId\)/.test(board), true)
+  // Neither may reach back into a snapshot to decide what is free — that is the
+  // bug, and it reads as perfectly reasonable code.
+  const claimAt = board.indexOf('const claim = (b: LegacyState): LegacyState => {')
+  check('no claim decides from claimedComebackPowers it read elsewhere',
+    /COMEBACK_POWERS\.find\(c => !claimed\.includes\(c\.id\)\)/.test(board), false)
+  check('the claim helpers exist where expected', claimAt > 0, true)
+
+  // 5. The win screen's close-out.
   check('the win screen close-out is a function of the row',
     win.includes('const cleanUp = (b: LegacyState): LegacyState =>'), true)
   check('...and passed as the rebuild',

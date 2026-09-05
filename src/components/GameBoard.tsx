@@ -23,7 +23,7 @@ import WinScreen from './WinScreen'
 import LegacyPanel from './LegacyPanel'
 import CampaignCompleteScreen from './CampaignCompleteScreen'
 import { campaignOutcome, applyCampaignCompletion, championLabel, type CampaignOutcome } from '@/lib/campaign'
-import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALIEN_ISLAND_TERRITORY_ID, calcDraftTroops, applyHqReserveTroops, expandClickAction, legalJoinWarTerritoryIds, cardCoinValue, campaignLeadFaction, endGameRecap, resolveResourceDepletion, type ResourceDepletion, troopsAfterEntry, minTroopsToEnter, LEAD_FACTION_WORLD_CAPITAL_TROOPS, worldCapitalReplacedCities, citiesLostOn, reapplyLegacyEdits, countCitiesOn, resolveRiot, resolveResistance, type RiotCityResult, FORTIFICATION_SUPPLY, fortificationsPlaced, canPlaceFortification, FORTIFY_EVENT_TROOPS, FORTIFY_EVENT_CITIES , canSpendForStar, starPurchaseSelection, foldMissileSpends, nextGameNumber } from '@/lib/gameLogic'
+import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALIEN_ISLAND_TERRITORY_ID, calcDraftTroops, applyHqReserveTroops, expandClickAction, legalJoinWarTerritoryIds, cardCoinValue, campaignLeadFaction, endGameRecap, resolveResourceDepletion, type ResourceDepletion, troopsAfterEntry, minTroopsToEnter, LEAD_FACTION_WORLD_CAPITAL_TROOPS, worldCapitalReplacedCities, citiesLostOn, reapplyLegacyEdits, countCitiesOn, resolveRiot, resolveResistance, type RiotCityResult, FORTIFICATION_SUPPLY, fortificationsPlaced, canPlaceFortification, FORTIFY_EVENT_TROOPS, FORTIFY_EVENT_CITIES , canSpendForStar, starPurchaseSelection, foldMissileSpends, nextGameNumber, claimComebackPower } from '@/lib/gameLogic'
 import {
   defaultLegacyState, saveLegacyState, loadLegacyState, awardRedStars,
   applyLegacyToTerritories, pickUnlocks, SCAR_META, saveGameSession,
@@ -37,6 +37,8 @@ import CardDrawModal from './CardDrawModal'
 import EventCardDisplay from './EventCardDisplay'
 import SoundSettings from './SoundSettings'
 import ComebackPowerModal, { COMEBACK_POWERS } from './ComebackPowerModal'
+/** Every comeback power id, in offer order — the pool claimComebackPower picks from. */
+const COMEBACK_POWER_IDS = COMEBACK_POWERS.map(c => c.id)
 import { MILESTONES } from '@/data/milestones'
 import NinthCityUnlockModal from './NinthCityUnlockModal'
 import FirstEliminationMilestoneModal from './FirstEliminationMilestoneModal'
@@ -5813,24 +5815,33 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
    * the first's claim). Acting machine only: this is a legacy write.
    */
   function autoClaimComebackPower(ep: Player) {
-    setLegacyState(prev => {
-      if ((prev.comebackPowers ?? {})[ep.factionId]) return prev
-      const claimed = prev.claimedComebackPowers ?? []
-      const pick = COMEBACK_POWERS.find(c => !claimed.includes(c.id))
-      if (!pick) return prev
-      const next: LegacyState = {
-        ...prev,
-        firstEliminationTriggered: true,
-        comebackPowers: { ...(prev.comebackPowers ?? {}), [ep.factionId]: pick.id },
-        claimedComebackPowers: [...claimed, pick.id],
-        historyLog: [...prev.historyLog, {
-          gameNumber: gameStateRef.current.gameNumber,
-          entry: `🔵 ${ep.name} claimed the "${pick.name}" comeback power`,
-          timestamp: new Date().toISOString(),
+    const gameNumber = gameStateRef.current.gameNumber
+    // Fixed, so a rebuild appends the line the first attempt wrote rather than a
+    // second one stamped a few milliseconds later.
+    const stamp = new Date().toISOString()
+    /**
+     * Claim on top of ANY copy — this machine's, or the row's if the write is
+     * refused. The pick is made against whatever it is handed, so a power taken
+     * since is not taken twice.
+     */
+    const claim = (b: LegacyState): LegacyState => {
+      const { next, powerId } = claimComebackPower(b, ep.factionId, COMEBACK_POWER_IDS)
+      if (!powerId) return b
+      const name = COMEBACK_POWERS.find(c => c.id === powerId)?.name ?? powerId
+      return {
+        ...next,
+        historyLog: [...next.historyLog, {
+          gameNumber,
+          entry: `🔵 ${ep.name} claimed the "${name}" comeback power`,
+          timestamp: stamp,
         }],
       }
+    }
+    setLegacyState(prev => {
+      const next = claim(prev)
+      if (next === prev) return prev
       legacyStateRef.current = next
-      saveLegacyState(next).catch(() => {})
+      saveLegacyState(next, { reapply: claim }).catch(() => {})
       return next
     })
   }
@@ -9477,16 +9488,35 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
           isFirstElimination={isFirstElimination}
           onSelect={(powerId) => {
             const fId = comebackEliminatedPlayer.factionId
-            setLegacyState(prev => {
-              const comebackPowers = { ...(prev.comebackPowers ?? {}), [fId]: powerId }
-              const claimedComebackPowers = [...(prev.claimedComebackPowers ?? []), powerId]
-              const next = {
-                ...prev,
-                firstEliminationTriggered: true,
-                comebackPowers,
-                claimedComebackPowers,
+            // THE MODAL OFFERS WHAT THIS MACHINE BELIEVES IS FREE, and that
+            // belief is a snapshot. Two players knocked out by one stroke choose
+            // on two screens, each shown the same power because neither has
+            // heard of the other's claim — and no merge can sort that out
+            // afterwards: it keeps both faction keys and dedups the one id, so
+            // the campaign ends up with two factions holding one power and a
+            // claimed list that says it went once.
+            //
+            // The pick is therefore made against the copy being written to. On
+            // a refusal that copy is the freshly-read row, so a power taken in
+            // the meantime is swapped for the next free one rather than
+            // duplicated. Refusing outright would be worse: it leaves an
+            // eliminated player with no power at all.
+            const claim = (b: LegacyState): LegacyState => {
+              const { next, rechosen } = claimComebackPower(b, fId, COMEBACK_POWER_IDS, powerId)
+              if (rechosen) {
+                const taken = (next.comebackPowers ?? {})[fId]
+                const name = COMEBACK_POWERS.find(c => c.id === taken)?.name ?? taken
+                // Said out loud rather than swapped behind their back — it is a
+                // permanent mark on their own faction.
+                showWeaknessNoticeRef.current(
+                  `🔵 That comeback power was claimed first — ${name} taken instead`)
               }
-              saveLegacyState(next).catch(() => {})
+              return next
+            }
+            setLegacyState(prev => {
+              const next = claim(prev)
+              if (next === prev) return prev
+              saveLegacyState(next, { reapply: claim }).catch(() => {})
               return next
             })
             closeEventChoice(() => setComebackEliminatedPlayer(null))

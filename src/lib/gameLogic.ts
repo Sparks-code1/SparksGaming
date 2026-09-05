@@ -103,6 +103,63 @@ export function foldMissileSpends(
 }
 
 /**
+ * Claim a comeback power for a faction, on top of whatever the campaign holds.
+ *
+ * A power is a PERMANENT campaign mark and the pool is exclusive: no two
+ * factions may hold the same one, ever. Both claim paths — the AI's automatic
+ * pick and the human's choice in the modal — took the first id their own copy
+ * said was unclaimed, and that copy is a snapshot. Two players eliminated by
+ * one stroke choose on two machines, both offered the same power because
+ * neither had heard of the other's claim, and the merge that follows is
+ * powerless to help: it sees one key added to `comebackPowers` on each side and
+ * keeps both, and one id added to `claimedComebackPowers` twice, which dedups.
+ * Two factions, one power, and a claimed list that says it went once. Nothing
+ * downstream can tell that happened, and legacy state is the thing you cannot
+ * undo.
+ *
+ * So the pick is made against the copy it is being written to. Handed to
+ * `reapply`, that copy is the freshly-read row: a preference that is still free
+ * is honoured, one that has been taken since is replaced by the next free
+ * power, and a faction that already holds one is left completely alone.
+ *
+ * @param preferred what this machine chose, if a human chose it. Ignored the
+ *   moment somebody else has taken it — the alternative is refusing the claim,
+ *   which leaves an eliminated player with no power at all.
+ * @returns the new state, which power was actually taken, and whether that
+ *   differs from what was asked for.
+ */
+export function claimComebackPower<T extends {
+  comebackPowers?: Record<string, string>
+  claimedComebackPowers?: string[]
+  firstEliminationTriggered?: boolean
+}>(
+  base: T,
+  factionId: string,
+  /** Every power in the campaign, in the order they are offered. */
+  allPowerIds: readonly string[],
+  preferred?: string | null,
+): { next: T; powerId: string | null; rechosen: boolean } {
+  const unchanged = { next: base, powerId: null, rechosen: false }
+  // Already holds one: idempotent, so a rebuild against a row where this claim
+  // already landed cannot take a second power for the same faction.
+  if ((base.comebackPowers ?? {})[factionId]) return unchanged
+  const claimed = base.claimedComebackPowers ?? []
+  const wanted = preferred && !claimed.includes(preferred) ? preferred : null
+  const powerId = wanted ?? allPowerIds.find(id => !claimed.includes(id)) ?? null
+  if (!powerId) return unchanged
+  return {
+    next: {
+      ...base,
+      firstEliminationTriggered: true,
+      comebackPowers: { ...(base.comebackPowers ?? {}), [factionId]: powerId },
+      claimedComebackPowers: [...claimed, powerId],
+    },
+    powerId,
+    rechosen: !!preferred && powerId !== preferred,
+  }
+}
+
+/**
  * Which game the campaign moves to once `finished` is over.
  *
  * IDEMPOTENT, and it has to be. The old expression was
