@@ -13,7 +13,7 @@ function scarLabel(type: string): string {
 }
 import { FACTION_COLORS, MOCK_PLAYERS } from '@/data/mockGameState'
 import { victoryWinnerId } from '@/lib/roster'
-import { FORTIFICATION_SUPPLY, fortificationsPlaced, SCAR_CANCEL_LIMIT, scarCancelsLeft, canCancelScar, recordedGameNumber } from '@/lib/gameLogic'
+import { FORTIFICATION_SUPPLY, fortificationsPlaced, SCAR_CANCEL_LIMIT, scarCancelsLeft, canCancelScar, recordedGameNumber, nextGameNumber } from '@/lib/gameLogic'
 import { playCity } from '@/lib/sounds'
 import { CONTINENT_BONUSES, TERRITORY_DEFINITIONS, MAP_WIDTH, MAP_HEIGHT } from '@/data/territoryData'
 import { TERRITORY_CARDS } from '@/data/cards'
@@ -449,25 +449,41 @@ export default function WinScreen({
     // Return unused scar cards for this game back to the pool.
     // Dedupe by unique ID — every scar-card id is unique, so a card can never
     // legitimately appear twice in the deck.
-    const unusedCardIds = (legacy.dealtScars ?? [])
-      .filter(d => d.gameNumber === gameNumber && !d.placed)
-      .map(d => d.cardId)
-    const scarDeckWithReturned = [...new Set([...(legacy.scarDeck ?? []), ...unusedCardIds])]
-    const cleaned: LegacyState = {
-      ...legacy,
-      purchasedStars: {},
-      // Never behind the game just finished: a campaign whose bump was lost
-      // once would otherwise stay one behind forever.
-      currentGameNumber: Math.max(legacy.currentGameNumber, gameNumber) + 1,
-      scarDeck: scarDeckWithReturned,
-      // Drop the unplaced deal records — their cards are back in the deck, so a
-      // stale entry must never resurface in a future game's hand.
-      dealtScars: (legacy.dealtScars ?? []).filter(d => !(d.gameNumber === gameNumber && !d.placed)),
+    /**
+     * Close the game out on top of ANY base — this screen's copy, or the
+     * server's if another machine's write beats ours.
+     *
+     * IDEMPOTENT, which the old expression was not. It bumped with
+     * `Math.max(currentGameNumber, gameNumber) + 1`, so applying it to a
+     * campaign that had ALREADY advanced past this game moved it on again: the
+     * campaign would skip a game. That was safe only while nothing could re-run
+     * it, and handing this to `reapply` is exactly the thing that can.
+     *
+     * The returned scar cards go idempotent for free: the second pass finds no
+     * unplaced deal records for this game, because the first pass dropped them.
+     */
+    const cleanUp = (b: LegacyState): LegacyState => {
+      const unusedCardIds = (b.dealtScars ?? [])
+        .filter(d => d.gameNumber === gameNumber && !d.placed)
+        .map(d => d.cardId)
+      return {
+        ...b,
+        purchasedStars: {},
+        // Never behind the game just finished — a campaign whose bump was lost
+        // once would otherwise stay one behind forever — and never ahead of it
+        // twice.
+        currentGameNumber: nextGameNumber(b.currentGameNumber, gameNumber),
+        scarDeck: [...new Set([...(b.scarDeck ?? []), ...unusedCardIds])],
+        // Drop the unplaced deal records — their cards are back in the deck, so
+        // a stale entry must never resurface in a future game's hand.
+        dealtScars: (b.dealtScars ?? []).filter(d => !(d.gameNumber === gameNumber && !d.placed)),
+      }
     }
+    const cleaned: LegacyState = cleanUp(legacy)
     setSaving(true)
     const winName = signedName.trim() || winner.name
     await Promise.all([
-      saveLegacyState(cleaned),
+      saveLegacyState(cleaned, { reapply: cleanUp }),
       saveGameSession(cleaned.campaignId, gameNumber, winName, winner.factionId, legacyEvents),
     ]).catch(() => {})
     setSaving(false)

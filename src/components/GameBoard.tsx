@@ -23,7 +23,7 @@ import WinScreen from './WinScreen'
 import LegacyPanel from './LegacyPanel'
 import CampaignCompleteScreen from './CampaignCompleteScreen'
 import { campaignOutcome, applyCampaignCompletion, championLabel, type CampaignOutcome } from '@/lib/campaign'
-import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALIEN_ISLAND_TERRITORY_ID, calcDraftTroops, applyHqReserveTroops, expandClickAction, legalJoinWarTerritoryIds, cardCoinValue, campaignLeadFaction, endGameRecap, resolveResourceDepletion, type ResourceDepletion, troopsAfterEntry, minTroopsToEnter, LEAD_FACTION_WORLD_CAPITAL_TROOPS, worldCapitalReplacedCities, citiesLostOn, reapplyLegacyEdits, countCitiesOn, resolveRiot, resolveResistance, type RiotCityResult, FORTIFICATION_SUPPLY, fortificationsPlaced, canPlaceFortification, FORTIFY_EVENT_TROOPS, FORTIFY_EVENT_CITIES , canSpendForStar, starPurchaseSelection } from '@/lib/gameLogic'
+import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALIEN_ISLAND_TERRITORY_ID, calcDraftTroops, applyHqReserveTroops, expandClickAction, legalJoinWarTerritoryIds, cardCoinValue, campaignLeadFaction, endGameRecap, resolveResourceDepletion, type ResourceDepletion, troopsAfterEntry, minTroopsToEnter, LEAD_FACTION_WORLD_CAPITAL_TROOPS, worldCapitalReplacedCities, citiesLostOn, reapplyLegacyEdits, countCitiesOn, resolveRiot, resolveResistance, type RiotCityResult, FORTIFICATION_SUPPLY, fortificationsPlaced, canPlaceFortification, FORTIFY_EVENT_TROOPS, FORTIFY_EVENT_CITIES , canSpendForStar, starPurchaseSelection, foldMissileSpends, nextGameNumber } from '@/lib/gameLogic'
 import {
   defaultLegacyState, saveLegacyState, loadLegacyState, awardRedStars,
   applyLegacyToTerritories, pickUnlocks, SCAR_META, saveGameSession,
@@ -3465,20 +3465,38 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     const bringer = gameState.players.find(p => p.factionId === ls.nuclearBringerFactionId)
     const mutants = gameState.players.find(p => p.factionId === 'mutants')
     if (!bringer || !mutants) return
-    setLegacyState(prev => {
-      if (prev.bringerBonusMissilesGame === gameState.gameNumber) return prev
-      const missiles = { ...(prev.missiles ?? {}), [bringer.id]: ((prev.missiles ?? {})[bringer.id] ?? 0) + 2 }
-      const next: LegacyState = {
-        ...prev,
-        missiles,
+    const stamp = new Date().toISOString()
+    // ── +2 IS A DELTA, AND A DELTA MUST BE RE-DERIVED ─────────────────────
+    // This effect has no dependency array and no authority gate, so it runs on
+    // EVERY machine in the match. Each one read its own copy, added 2 to it,
+    // and wrote the total. The guard below makes that safe as long as both
+    // machines started from the same number — and they usually did, which is
+    // why it has held. Where it fails is a machine whose copy predates a
+    // missile spend somebody else recorded: its total is the old count plus 2,
+    // and replaying that ABSOLUTE value hands the spent missile back.
+    //
+    // Applied to whatever the row holds instead, and idempotent by the game
+    // number in the same breath, so the bonus lands exactly once whichever
+    // machine gets there first.
+    const grantBonus = (b: LegacyState): LegacyState => {
+      if (b.bringerBonusMissilesGame === gameState.gameNumber) return b
+      return {
+        ...b,
+        missiles: { ...(b.missiles ?? {}), [bringer.id]: ((b.missiles ?? {})[bringer.id] ?? 0) + 2 },
         bringerBonusMissilesGame: gameState.gameNumber,
-        historyLog: [...prev.historyLog, {
+        historyLog: [...b.historyLog, {
           gameNumber: gameState.gameNumber,
           entry: `☢ ${bringer.name} (Bringer of Nuclear Fire) received 2 bonus missiles — the Mutants are in play`,
-          timestamp: new Date().toISOString(),
+          // Fixed, so a rebuild appends the line the first attempt wrote rather
+          // than a second one a few milliseconds later.
+          timestamp: stamp,
         }],
       }
-      saveLegacyState(next).catch(() => {})
+    }
+    setLegacyState(prev => {
+      if (prev.bringerBonusMissilesGame === gameState.gameNumber) return prev
+      const next = grantBonus(prev)
+      saveLegacyState(next, { reapply: grantBonus }).catch(() => {})
       return next
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4377,6 +4395,35 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
    * one-card hand over a seat that holds five. Nothing here could reconstruct
    * what was really held, so the only honest answer is to refuse and say so.
    */
+  /**
+   * Spend one of a player's missiles, as a SUBTRACTION from whatever the row
+   * holds rather than as a total computed here.
+   *
+   * The difference only shows when the write loses a race. "This player now has
+   * two" is a claim about the whole campaign, and replaying it onto a copy that
+   * moved on undoes whatever moved; "one fewer than you have" is a claim about
+   * one player and survives being applied to a newer row. It is the same reason
+   * the campaign's lists are merged by entry rather than replaced.
+   *
+   * Deliberately NOT idempotent — spending twice should cost two missiles. That
+   * is safe because a refused write lands nothing, so the rebuild subtracts
+   * exactly once from a row that never saw the first attempt.
+   */
+  function spendMissile(playerId: string) {
+    const spend = (b: LegacyState): LegacyState => ({
+      ...b,
+      missiles: {
+        ...(b.missiles ?? {}),
+        [playerId]: Math.max(0, ((b.missiles ?? {})[playerId] ?? 0) - 1),
+      },
+    })
+    setLegacyState(prev => {
+      const next = spend(prev)
+      saveLegacyState(next, { reapply: spend }).catch(() => {})
+      return next
+    })
+  }
+
   function reviseHandLocally(playerId: string, change: (cards: string[]) => string[]) {
     if (onlineMatchRef.current) return
     setGameState(prev => ({
@@ -6631,12 +6678,23 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
    * re-writing once closes that window, which is worth a round trip given the
    * alternative is the table replaying a game they already finished.
    */
-  async function saveFinishedCampaign(finished: LegacyState) {
-    await saveLegacyState(finished)
+  async function saveFinishedCampaign(
+    finished: LegacyState,
+    /**
+     * How to rebuild this close-out on the server's copy if the write is
+     * refused. Required from the caller that folds the missile ledger — an
+     * unguarded save there replayed a subtraction computed against a captured
+     * copy — and optional for the one whose state is already a rebuild.
+     */
+    reapply?: (fresh: LegacyState) => LegacyState,
+  ) {
+    await saveLegacyState(finished, reapply ? { reapply } : undefined)
     const stored = await loadLegacyState(finished.campaignId).catch(() => null)
     if (stored?.gameInProgress || stored?.activeGameState) {
       console.warn('[Finalize] A late autosave resurrected the finished game — rewriting')
-      await saveLegacyState(finished)
+      // Rebuilt from what the re-read actually returned, not from the copy that
+      // lost: the resurrecting autosave is by definition newer than `finished`.
+      await saveLegacyState(reapply ? reapply(stored) : finished, reapply ? { reapply } : undefined)
     }
   }
 
@@ -6653,15 +6711,32 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // writes the legacy blob — single-writer rule). This is the one moment the
     // ledger flows back: fold the spends into the campaign's missile counts.
     const spends = gameStateRef.current.missileSpends ?? {}
-    const missiles = Object.keys(spends).length > 0
-      ? Object.fromEntries(Object.entries(working.missiles ?? {}).map(
-          ([pid, n]) => [pid, Math.max(0, (n ?? 0) - (spends[pid] ?? 0))],
-        ))
-      : working.missiles
-    const completed = {
-      ...working, gameInProgress: false, activeGameState: null,
-      purchasedStars: {}, activeMatchId: null, missiles,
+    /**
+     * Close the game out on top of ANY base — the copy this machine is holding,
+     * or the server's if another write beats ours.
+     *
+     * THE SAME SHAPE finalizeOnlineEndgame's applyFinalize already had, and the
+     * asymmetry was the bug: the online path folded the missile ledger through
+     * an idempotent rebuild while this one subtracted from a captured `working`
+     * and handed the result to an unguarded save. A ledger fold is the one
+     * arithmetic that must never run twice — the missiles are simply gone the
+     * second time — so it is guarded on `gameInProgress`, which is true exactly
+     * once per game and is set false by this very function.
+     */
+    const closeOut = (b: LegacyState): LegacyState => {
+      if (!b.gameInProgress) return b
+      return {
+        ...b,
+        gameInProgress: false, activeGameState: null,
+        purchasedStars: {}, activeMatchId: null,
+        // Spectator missiles were charged to the MATCH ledger (the server never
+        // writes the legacy blob — single-writer rule). This is the one moment
+        // the ledger flows back, subtracted from the row rather than from a
+        // copy captured before it.
+        missiles: foldMissileSpends(b.missiles, spends),
+      }
     }
+    const completed = closeOut(working)
 
     // The campaign ends after 15 games — or the moment the lead is unassailable.
     // Crown the champion here rather than returning to the lobby.
@@ -6676,7 +6751,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
 
     setLegacyState(completed)
     try {
-      await saveFinishedCampaign(completed)
+      await saveFinishedCampaign(completed, closeOut)
     } catch {
       // Do NOT advance to the lobby on a failed write: the lobby would reload
       // the pre-game row and silently discard everything this game produced.
@@ -6894,15 +6969,16 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       // finalizeAndReturnToLobby's half: fold the match missile ledger, close
       // the game record. The match ROW stays open — the continue gate still
       // rides it — and closes when the gate resolves.
-      const missiles = Object.keys(spends).length > 0
-        ? Object.fromEntries(Object.entries(next.missiles ?? {}).map(
-            ([pid, n]) => [pid, Math.max(0, (n ?? 0) - (spends[pid] ?? 0))]))
-        : next.missiles
+      const missiles = foldMissileSpends(next.missiles, spends)
       return {
         ...next,
         purchasedStars: {},
-        // Never behind the game just finished — see WinScreen's finalize.
-        currentGameNumber: Math.max(next.currentGameNumber, gameNumber) + 1,
+        // Never behind the game just finished, and never past it twice. The
+        // early return above already makes this whole function idempotent, so
+        // the old `Math.max(...) + 1` was safe here — but it is the expression
+        // that was NOT safe in WinScreen, and one definition of the rule is
+        // better than two that only one of us has checked.
+        currentGameNumber: nextGameNumber(next.currentGameNumber, gameNumber),
         scarDeck: [...new Set([...(next.scarDeck ?? []), ...unusedCardIds])],
         dealtScars: (next.dealtScars ?? []).filter(d => !(d.gameNumber === gameNumber && !d.placed)),
         // activeMatchId SURVIVES this write, and that is load-bearing: clearing
@@ -9095,23 +9171,16 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
                 dispatch({ type: 'COMBAT_SET_EMP', key: combatKeyRef.current })
               }
             }}
-            onAttackerUsedMissile={() => {
-              setLegacyState(prev => {
-                const missiles = { ...(prev.missiles ?? {}), [currentPlayer.id]: Math.max(0, ((prev.missiles ?? {})[currentPlayer.id] ?? 0) - 1) }
-                const next = { ...prev, missiles }
-                saveLegacyState(next).catch(() => {})
-                return next
-              })
-            }}
-            onDefenderUsedMissile={() => {
-              if (!defPlayerId) return
-              setLegacyState(prev => {
-                const missiles = { ...(prev.missiles ?? {}), [defPlayerId]: Math.max(0, ((prev.missiles ?? {})[defPlayerId] ?? 0) - 1) }
-                const next = { ...prev, missiles }
-                saveLegacyState(next).catch(() => {})
-                return next
-              })
-            }}
+            // THE HOTSEAT MISSILE PHASE. Online the same click goes through the
+            // shared window and is charged to the MATCH ledger, folded into the
+            // campaign once at the end — so these two run on one machine by
+            // construction. They still spend by DELTA rather than by total: a
+            // campaign open on a second device is all it takes for the write to
+            // be refused, and replaying "this player has N-1" computed from a
+            // copy that predates somebody else's change refunds whatever else
+            // moved. `spendMissile` subtracts from the row instead.
+            onAttackerUsedMissile={() => spendMissile(currentPlayer.id)}
+            onDefenderUsedMissile={() => { if (defPlayerId) spendMissile(defPlayerId) }}
             onMissilePlaced={(side, totalThisRoll) => {
               // Nuclear Milestone: 3 missiles placed on a single combat roll
               if (totalThisRoll < 3) return

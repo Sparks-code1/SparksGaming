@@ -80,6 +80,46 @@ export function mergeLegacyEdits<T extends MergeableLegacy>(
 }
 
 /**
+ * The campaign's missile counts with a match's spectator-missile ledger folded in.
+ *
+ * Spectator missiles are charged to the MATCH (GameState.missileSpends) because
+ * the server never writes the legacy blob. This is the one moment they flow
+ * back, and it is arithmetic that must run EXACTLY once: the missiles are
+ * simply gone the second time, with nothing in the result to say it happened
+ * twice. The caller owns that guard — both finalize paths key it on a flag they
+ * also set — and this function owns only the subtraction.
+ *
+ * Written out twice before, once per finalize path, which is how the online one
+ * gained an idempotent rebuild and the offline one did not.
+ */
+export function foldMissileSpends(
+  missiles: Record<string, number> | undefined,
+  spends: Record<string, number> | undefined,
+): Record<string, number> {
+  if (!spends || Object.keys(spends).length === 0) return missiles ?? {}
+  return Object.fromEntries(Object.entries(missiles ?? {}).map(
+    ([pid, n]) => [pid, Math.max(0, (n ?? 0) - (spends[pid] ?? 0))],
+  ))
+}
+
+/**
+ * Which game the campaign moves to once `finished` is over.
+ *
+ * IDEMPOTENT, and it has to be. The old expression was
+ * `Math.max(current, finished) + 1`, which advances on EVERY application — so
+ * running it against a campaign that had already moved past this game skipped a
+ * game entirely. That was survivable only while nothing could re-run it, and
+ * handing the close-out to `reapply` is precisely the thing that can.
+ *
+ * Still catches up: a campaign whose bump was lost once would otherwise stay a
+ * game behind forever, so anything at or before the finished game jumps to the
+ * one after it.
+ */
+export function nextGameNumber(current: number, finished: number): number {
+  return current > finished ? current : finished + 1
+}
+
+/**
  * A record to merge key-by-key — not an array, not null, not a class instance.
  *
  * Arrays are excluded because they have their own merge above, and null because
