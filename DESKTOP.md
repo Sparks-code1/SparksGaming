@@ -112,6 +112,39 @@ sees the new version.
 > **Only the NSIS installer auto-updates.** The portable `.exe` has nowhere to
 > install to, so portable users must download new versions manually.
 
+> **No blockmap, and no differential updates.** `nsis.differentialPackage` is
+> `false`, so each update downloads the whole installer. That is not a
+> regression: no published release has ever carried a `.blockmap`, and
+> `latest.yml` has never carried the `blockMapSize` field that would make
+> electron-updater ask for one, so deltas have never actually worked here.
+>
+> What the blockmap DID do was produce a second draft on every release. NSIS
+> emitted it and the installer back to back with no build work between them, and
+> electron-builder's publisher cache is written only after an `await` — so the
+> second artifact arrived while the first was still inside that await, found an
+> empty cache, and built a SECOND GitHub publisher. Each one then created its
+> own draft, because GitHub allows any number of drafts to share a tag name.
+> That is why every release since 0.3.4 produced two: one holding just the
+> blockmap, one holding everything else.
+>
+> Turning the blockmap off leaves NSIS emitting a single artifact, which closes
+> the window the second publisher was created in. It also drops
+> `configureDifferentialAwareArchiveOptions` (1 MB dictionary, solid compression
+> off), so the installer comes out slightly smaller. Changed 2026-09-05.
+>
+> To get deltas back, the blockmap has to reach the PUBLISHED release rather
+> than the orphaned draft — which means building and uploading as separate
+> steps: `npm run dist`, then upload all four files from `release/` by hand.
+
+> **Pre-creating the draft does not help**, and one failure mode of it is
+> silent. electron-builder does look for an existing draft, but it matches
+> `tag_name` by exact string against `v<version>` and `<version>` — a draft
+> saved from the web UI without confirming a tag has no tag name and is never
+> found. Worse, if it finds a matching release that is NOT a draft, it uploads
+> NOTHING and logs "GitHub release not created": re-running `npm run release`
+> at a version you have already published looks like it worked and ships
+> nothing.
+
 > `npm run dist` still builds locally without publishing anything.
 
 
