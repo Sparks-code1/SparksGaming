@@ -871,14 +871,15 @@ function gameReducer(state, action, rng) {
           effects: [{ kind: "card-drawn", playerId: action.playerId, cardId: action.cardId, source: "face-up", newSpot1Id }]
         };
       }
-      if (!piles.resourceDeck.includes(action.cardId)) return only(state);
+      const top = piles.resourceDeck[0];
+      if (!top) return only(state);
       return {
         state: {
           ...state,
-          cards: { ...piles, resourceDeck: piles.resourceDeck.filter((id) => id !== action.cardId) },
-          players: state.players.map((p) => p.id === action.playerId ? { ...p, cards: [...p.cards, action.cardId] } : p)
+          cards: { ...piles, resourceDeck: piles.resourceDeck.slice(1) },
+          players: state.players.map((p) => p.id === action.playerId ? { ...p, cards: [...p.cards, top] } : p)
         },
-        effects: [{ kind: "card-drawn", playerId: action.playerId, cardId: action.cardId, source: "coin", newSpot1Id: null }]
+        effects: [{ kind: "card-drawn", playerId: action.playerId, cardId: top, source: "coin", newSpot1Id: null }]
       };
     }
     case "APPLY_EVENT_TROOPS": {

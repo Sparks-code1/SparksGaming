@@ -443,7 +443,7 @@ export async function toPlace(page: Page): Promise<number> {
  * tried first because it is nearly always still right; the sweep behind it is
  * the whole map in order and costs a few seconds on the turn after a loss.
  */
-async function draftableTerritory(
+export async function draftableTerritory(
   page: Page, hint?: string,
 ): Promise<{ id: string; owed: number }> {
   const owed = await toPlace(page)

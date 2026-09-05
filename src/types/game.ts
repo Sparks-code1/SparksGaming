@@ -264,6 +264,15 @@ export interface ServerCardPiles {
   resourceDeck: string[]
   /** Territory cards spent in trade-ins. */
   territoryDiscard: string[]
+  /**
+   * How many cards the face-down piles hold — set by publicView on the shared
+   * row, where the piles themselves are emptied. A pile's HEIGHT is public in
+   * the physical game (you can see it on the table); its ORDER is the secret.
+   * The client rebuilds a pile of this length to show and draw from; the
+   * server, which holds the real order, never reads these.
+   */
+  territoryDeckCount?: number
+  resourceDeckCount?: number
 }
 
 /** One combat round's final dice, held open for spectator missiles. */

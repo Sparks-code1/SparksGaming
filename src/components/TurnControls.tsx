@@ -19,6 +19,13 @@ interface Props {
   /** Who named each continent — its namer collects +1 troop for holding it. */
   namedContinents?: Record<string, { namedByPlayerId: string }>
   onNextPhase: () => void
+  /**
+   * Whether the seat at this screen may drive the turn. Hotseat: always.
+   * Online: only when the current player is this machine's seat — every other
+   * screen watches the phase and holds none of its controls. Defaults to true
+   * so hotseat callers change nothing.
+   */
+  canAct?: boolean
   onUndoPlacement: () => void
   onUndoFortify: () => void
   canUndoFortify: boolean
@@ -66,7 +73,7 @@ function hexToRgb(hex: number) {
   return `${r},${g},${b}`
 }
 
-export default function TurnControls({ gameState, troopsToPlace, placementsCount, fortifyDone, pendingCardDraws, balkRoundUp = false, worldCapitalTerritoryId = null, primitiveWeakness = false, continentBonusModifiers = [], namedContinents = {}, onNextPhase, onUndoPlacement, onUndoFortify, canUndoFortify }: Props) {
+export default function TurnControls({ gameState, troopsToPlace, placementsCount, fortifyDone, pendingCardDraws, balkRoundUp = false, worldCapitalTerritoryId = null, primitiveWeakness = false, continentBonusModifiers = [], namedContinents = {}, onNextPhase, onUndoPlacement, onUndoFortify, canUndoFortify, canAct = true }: Props) {
   const phase = gameState.phase as GamePhase
   const cfg = PHASE_CONFIG[phase]
   if (!cfg) return null
@@ -245,8 +252,8 @@ export default function TurnControls({ gameState, troopsToPlace, placementsCount
         </div>
       )}
 
-      {/* Draft-phase undo / confirm buttons */}
-      {phase === 'reinforce' && (
+      {/* Draft-phase undo / confirm buttons — the acting seat's only */}
+      {canAct && phase === 'reinforce' && (
         <>
           <button
             onClick={onUndoPlacement}
@@ -270,8 +277,8 @@ export default function TurnControls({ gameState, troopsToPlace, placementsCount
         </>
       )}
 
-      {/* Fortify-phase undo button */}
-      {phase === 'fortify' && fortifyDone && (
+      {/* Fortify-phase undo button — the acting seat's only */}
+      {canAct && phase === 'fortify' && fortifyDone && (
         <button
           onClick={onUndoFortify}
           disabled={!canUndoFortify}
@@ -293,22 +300,27 @@ export default function TurnControls({ gameState, troopsToPlace, placementsCount
         </button>
       )}
 
-      {/* Next phase button */}
-      <button
-        onClick={onNextPhase}
-        disabled={isDisabled}
-        style={{
-          ...nextBtnStyle(cfg.color, isDisabled),
-          borderLeft: 'none',
-          borderRadius: '0 6px 6px 0',
-        }}
-      >
-        {phase === 'reinforce'
-          ? (troopsToPlace === 0 ? '✓ Confirm' : cfg.nextLabel)
-          : (phase === 'fortify' && pendingCardDraws.length > 0)
-            ? '🃏 Pick a Card First'
-            : cfg.nextLabel}
-      </button>
+      {/* Next phase button — the acting seat's, and nobody else's. Every
+          screen in an online match shows the phase; only one may end it.
+          Rendered for all of them, "End Attack →" and "End Fortify →" sat on
+          the watchers' screens as if the turn were theirs to close. */}
+      {canAct && (
+        <button
+          onClick={onNextPhase}
+          disabled={isDisabled}
+          style={{
+            ...nextBtnStyle(cfg.color, isDisabled),
+            borderLeft: 'none',
+            borderRadius: '0 6px 6px 0',
+          }}
+        >
+          {phase === 'reinforce'
+            ? (troopsToPlace === 0 ? '✓ Confirm' : cfg.nextLabel)
+            : (phase === 'fortify' && pendingCardDraws.length > 0)
+              ? '🃏 Pick a Card First'
+              : cfg.nextLabel}
+        </button>
+      )}
     </div>
   )
 }

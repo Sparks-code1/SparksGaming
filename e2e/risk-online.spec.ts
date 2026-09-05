@@ -66,8 +66,13 @@ test.setTimeout(420_000)
 test('a hosted game reaches both browsers, and the turn is the same turn', async ({ browser }) => {
   const seats: Seat[] = []
   try {
-    const host = await openSeat(browser, 0)
-    const guest = await openSeat(browser, 1)
+    // A SLOWER NETWORK THAN LOOPBACK, on purpose — see openSeat. Both seats,
+    // because which one holds the opening turn is decided by dice later, and
+    // the hold at the end needs the acting seat to be the one whose realtime
+    // arrives after its own POST returns. 1.5 s is far more than a loopback
+    // response takes and far less than any hand-off below is allowed.
+    const host = await openSeat(browser, 0, { slowRealtime: 1500 })
+    const guest = await openSeat(browser, 1, { slowRealtime: 1500 })
     seats.push(host, guest)
 
     // ── The lobby, through the real screens ────────────────────────────────
@@ -129,6 +134,85 @@ test('a hosted game reaches both browsers, and the turn is the same turn', async
     const first = await whoseTurn(host.page)
     expect(first, 'nobody holds the opening turn').toBeTruthy()
     await bothAgreeItIs(seats, first!)
+
+    // ── AND A MOVE MADE HERE STAYS MADE HERE ───────────────────────────────
+    // The hand-off has a direction nothing above checks: a move has to stay
+    // true on the machine that MADE it. It did not. matchSync drops the echoes
+    // of a client's own actions, so the last board the wire delivered to the
+    // acting seat is the state at the START of its turn — and every action
+    // rewrote that seat's secrets row, which re-emitted that stale board onto
+    // the acting screen with the move missing. Troops back at the HQ, draft
+    // phase again, the turn announced again; the opponent's screen fine
+    // throughout, because the acting seat's echoes DO reach them.
+    //
+    // So the acting seat places its whole draft and moves to attack, and then
+    // this WAITS — three seconds, long past the secrets echo — asserting the
+    // whole time that the screen has not gone back to the draft. A hold is the
+    // assertion; a snapshot taken the instant after the press passes either
+    // way.
+    // ── ON THE SECOND SEAT TO ACT, WHICH IS THE ONLY ONE THE BUG CAN REACH ──
+    // A seat's cached wire board is only ever refreshed by the OTHER seat's
+    // actions — its own echoes are dropped. The seat that acts FIRST in a
+    // match has therefore never received a board at all: the host dealt it,
+    // every version since was its own, and its cache is null, so the stale
+    // re-emit is a no-op there. Two earlier versions of this hold ran on
+    // whoever won the dice, which was the host, and passed with the bug fully
+    // restored because they were holding on the one seat that cannot see it.
+    // The instrumented trace showed the re-emit firing three times on the
+    // watching seat and never on the acting one.
+    //
+    // So the first seat plays its turn out and hands over, and the hold is
+    // done by the second — who has now received a whole turn of the other's
+    // states and holds exactly the cache the bug needs. That is Linda's seat.
+    const { toPlace, draftableTerritory, clickTerritory, press: pressOn, passTurn } = await import('./support/risk')
+    const opener = seats.find(s => s.name.toLowerCase() === first!.toLowerCase())!
+    const actor = seats.find(s => s !== opener)!
+    const watcher = opener
+    await passTurn(opener.page)
+    await bothAgreeItIs(seats, actor.name)
+
+    expect(await toPlace(actor.page), 'the acting seat was owed no reinforcements').toBeGreaterThan(0)
+    const spot = await draftableTerritory(actor.page)
+    for (let i = 0; i < 40 && (await toPlace(actor.page)) > 0; i++) {
+      await clickTerritory(actor.page, spot.id)
+    }
+    expect(await toPlace(actor.page), 'the draft never reached zero').toBe(0)
+
+    // Into the attack phase, however many presses the controls want.
+    for (let i = 0; i < 3; i++) {
+      if (/End Attack/.test(await actor.page.locator('body').innerText())) break
+      await pressOn(actor.page, /✓ Confirm|Begin Attack/)
+    }
+    expect(await actor.page.locator('body').innerText(),
+      'the acting seat never reached the attack phase').toMatch(/End Attack/)
+
+    // THE PHASE HEADER, NOT THE BUTTONS. A first version of this hold watched
+    // for "Begin Attack" and "N to place" and passed with the bug fully
+    // restored — because the revert puts the BOARD back to the deal while the
+    // draft counter is React state that does not revert with it, so the
+    // screen after a revert reads "✓ Confirm" and "✓ all placed": draft
+    // phase, wearing the labels of a finished draft. The header says which
+    // phase the board is in and says it from the board.
+    //
+    // AND IT NEEDED THE SLOW NETWORK ABOVE TO FAIL AT ALL. With the header
+    // check fixed it STILL passed against the restored bug, because on
+    // loopback the realtime echo of your own action beats your POST response,
+    // matchSync forwards it, and the cached board is current by the time the
+    // secrets echo re-emits it. The bug's precondition is the response winning.
+    // The 1.5 s hold on realtime frames guarantees it, which is the ordering a
+    // real player on a real network gets — and the one this test was silently
+    // never exercising.
+    const until = Date.now() + 3_000
+    while (Date.now() < until) {
+      const said = await actor.page.locator('body').innerText()
+      expect(said, 'the acting screen went back to the draft after its own move')
+        .not.toMatch(/\bDRAFT\b|✓ Confirm|Begin Attack|\d+ to place|all placed/)
+      expect(said, 'the acting screen left the attack phase').toMatch(/End Attack/)
+      await actor.page.waitForTimeout(250)
+    }
+    // And the opponent sees the same phase — the truth did land.
+    await expect(watcher.page.locator('text=/\\battack\\b/i').first(),
+      'the watching seat never saw the attack phase').toBeVisible({ timeout: 15_000 })
   } finally {
     await closeSeats(seats)
   }

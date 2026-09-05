@@ -62,11 +62,27 @@ console.log('\n— a face-up take shifts the row and refills spot 1 —')
   check('the effect names the refill', (eff as { newSpot1Id?: string })?.newSpot1Id === 'tc-china')
 }
 
-console.log('\n— a coin draw takes from the pile —')
+console.log('\n— a coin draw takes the TOP of the pile, whatever the client named —')
 {
+  // The pile is ['resource-1', 'resource-2']. This used to honour a request
+  // for resource-2 — the client choosing from a pile it could see, which was
+  // only possible because the shared row leaked the order. Since the deck
+  // split the client holds the pile's height and nothing else, so it cannot
+  // name a card, and the physical rule was always "draw the top coin". The
+  // reducer deals from what it holds and does not consult the id sent.
   const { state: s } = gameReducer(base(), draw({ cardId: 'resource-2', source: 'coin' }), rng)
-  check('the coin is in the hand', s.players[0].cards.includes('resource-2'))
-  check('and gone from the pile', s.cards?.resourceDeck.join(',') === 'resource-1')
+  check('the top coin is in the hand', s.players[0].cards.includes('resource-1'))
+  check('...not the one the client named', !s.players[0].cards.includes('resource-2'))
+  check('and the pile lost its head', s.cards?.resourceDeck.join(',') === 'resource-2')
+
+  // What the client actually sends now: a placeholder that names no card.
+  const { state: p } = gameReducer(base(), draw({ cardId: 'hidden-card', source: 'coin' }), rng)
+  check('a placeholder id draws the top coin just the same', p.players[0].cards.includes('resource-1'))
+
+  // An empty pile deals nothing, rather than an undefined card.
+  const empty = { ...base(), cards: { ...base().cards!, resourceDeck: [] } }
+  const { state: e, effects } = gameReducer(empty, draw({ cardId: 'hidden-card', source: 'coin' }), rng)
+  check('an empty pile refuses the draw', e === empty && effects.length === 0)
 }
 
 console.log('\n— the pile is the truth: a taken card cannot be taken again —')

@@ -31,6 +31,7 @@ import {
   type LegacyEvent, type UnlockOption,
 } from '@/lib/legacyApi'
 import { getScarCard, type ScarCard, MERCENARY_CARD_IDS, BIOHAZARD_CARD_IDS } from '@/data/scarCards'
+import { mergeOwnSecrets, HIDDEN_CARD_ID, type SeatState } from '@/lib/stateView'
 import CardHand from './CardHand'
 import JoinTheWarModal from './JoinTheWarModal'
 import CardDrawModal from './CardDrawModal'
@@ -1223,11 +1224,25 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   mirrorServerCardsRef.current = (s: GameState) => {
     const piles = s.cards
     if (!piles) return
+    // ── A PILE OF THE RIGHT HEIGHT, WITH NO ORDER IN IT ──────────────────
+    // Since the deck split the row carries each face-down pile EMPTIED and a
+    // count beside it — the order is the secret, the height never was. Copying
+    // the emptied array here, as this did, made the draw modal read "no coins
+    // left" and left the client unable to name a card to draw. The pile is
+    // rebuilt to its true height out of ids that name no card: every length
+    // read is honest, the draw modal offers the pile, and a coin draw sends
+    // the placeholder, which the reducer ignores in favour of its own top.
+    // A row from before the split still carries the real arrays and no count,
+    // and is copied as before.
+    const pile = (real: string[] | undefined, count: number | undefined) =>
+      typeof count === 'number' && (real?.length ?? 0) === 0
+        ? Array.from({ length: count }, () => HIDDEN_CARD_ID)
+        : [...(real ?? [])]
     setCardState(prev => ({
       ...prev,
-      territoryDeck: [...piles.territoryDeck],
+      territoryDeck: pile(piles.territoryDeck, piles.territoryDeckCount),
       sideboard: [...piles.sideboard],
-      resourceDeck: [...piles.resourceDeck],
+      resourceDeck: pile(piles.resourceDeck, piles.resourceDeckCount),
       territoryDiscard: [...piles.territoryDiscard],
       // ── ONLY THE SEATS THIS CLIENT CAN SEE ──────────────────────────────
       // Online, the row carries nobody's hand: mergeOwnSecrets puts THIS
@@ -7633,6 +7648,20 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     localSeatId,
     {
       onState: (state, version) => {
+        // ── NEVER BACKWARDS ──────────────────────────────────────────────────
+        // matchSync drops anything at or below the version this client applied,
+        // so nothing here should ever be older than what is on screen. It was,
+        // though — the secrets channel re-emitted a stale board straight to
+        // this handler for a month, and this trusted it: the acting player's
+        // moves vanished and their version pointer rolled back, so their next
+        // action was refused as stale. A second path into a consumer is exactly
+        // the case a guard at the consumer exists for; this one no longer
+        // shares the transport's blind spot.
+        const held = onlineMatchRef.current?.version ?? -1
+        if (version < held) {
+          console.warn(`[Sync] refusing state v${version} — this screen is at v${held}`)
+          return
+        }
         gameStateRef.current = state
         setGameState(state)
         // The server's card piles ride the state — keep the display deck/hands
@@ -7640,6 +7669,18 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         mirrorServerCardsRef.current(state)
         onlineMatchRef.current = { matchId: onlineMatch!.matchId, version }
         setOnlineMatch({ matchId: onlineMatch!.matchId, version })
+      },
+      // THIS SEAT'S HAND, patched onto the board this screen is holding — not
+      // onto the last board the wire delivered, which on the acting machine is
+      // the state at the start of its turn. See useMatchSync for the history.
+      onSecrets: secrets => {
+        const seat = localSeatRef.current
+        if (!seat) return           // the hook re-subscribes once the seat is known
+        const merged = mergeOwnSecrets(
+          gameStateRef.current as unknown as SeatState, seat, secrets) as unknown as GameState
+        gameStateRef.current = merged
+        setGameState(merged)
+        mirrorServerCardsRef.current(merged)
       },
       // Effects carry what a state diff cannot say — which dice were rolled,
       // who was eliminated. Only fires for messages received live, and only for
@@ -7856,6 +7897,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
           continentBonusModifiers={legacyState.continentBonusModifiers ?? []}
           namedContinents={legacyState.namedContinents ?? {}}
           onNextPhase={handleNextPhase}
+          // Hotseat: everyone at the one screen. Online: this seat, on its own
+          // turn, and nobody else — the watchers see the phase, not its controls.
+          canAct={!onlineMatch || localSeatId === gameState.players[gameState.currentPlayerIndex]?.id}
           onUndoPlacement={handleUndoPlacement}
           onUndoFortify={handleUndoFortify}
           canUndoFortify={!!lastFortify}

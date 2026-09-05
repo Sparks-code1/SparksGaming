@@ -4,6 +4,7 @@
 //
 // The subscription itself needs Supabase, so what is exercised here is the pure
 // logic around it, reached by driving the same handler shape the channel calls.
+import { readFileSync } from 'node:fs'
 import type { SecretsRow } from '@/lib/secretsSync'
 
 let pass = true
@@ -65,6 +66,53 @@ check('with no expected seat, rows are taken as given', route(raw('p2')).mine.le
 check('an arbitrary shape survives the round trip',
   toRow(raw('p1', { spice: 12, traitors: ['x'], bid: null }))?.data,
   { spice: 12, traitors: ['x'], bid: null })
+
+// ── The hand arrives ALONE, never wearing the last board the wire delivered ──
+//
+// useMatchSync used to answer a secrets-row update by re-emitting `lastPublic`
+// with the new hand merged in. But matchSync drops every echo at or below the
+// version this client already applied, and that version is bumped on each POST
+// response — so the echoes of a client's OWN actions never arrive, and
+// `lastPublic` is only ever refreshed by the other machine. On the acting
+// player's screen it is the state at the start of their turn. apply_match_write
+// rewrites every seat's secrets row on every action, so every move the acting
+// player made put their turn-start board back on their own screen: troops back
+// at the HQ, draft phase again, the turn announced again, and their next action
+// refused as stale because the version pointer had rolled back with it. The
+// opponent's screen was fine the whole time — a bug with a direction.
+//
+// Pinned as source: the hook is closed over a live channel and the bug needs two
+// channels racing, which is the two-seat browser spec's job. These say the
+// shape that made it possible is gone and the shape that stops it is present.
+{
+  const hook = readFileSync('src/lib/useMatchSync.ts', 'utf8')
+  // The join is createSeatMerge — pure, and the thing seatmergetest drives.
+  // These pin its SHAPE; that file pins its behaviour.
+  const at = hook.indexOf('secretsArrived(secrets: SeatSecrets) {')
+  const onSecrets = at < 0 ? '' : hook.slice(at, hook.indexOf('\n    },', at))
+
+  check('the secrets side of the join was found', at > 0, true)
+  // THE BUG. A board going out from the secrets side is one this client did
+  // not just compute — on the acting machine, the start of its own turn.
+  check('a secrets update sends no board', /onState\(|\bemit\(/.test(onSecrets), false)
+  check('...it hands the hand over on its own', /onSecrets\?\.\(lastSecrets\)/.test(onSecrets), true)
+  // The hand-before-board case still needs covering, and it is covered by the
+  // OTHER direction: every public state that arrives is merged with the latest
+  // secrets. Remove that and the first hand of a match sits in a variable.
+  check('...and a public state still picks up the latest hand',
+    /mergeOwnSecrets\(lastPublic, seatId, lastSecrets\)/.test(hook), true)
+
+  const board = readFileSync('src/components/GameBoard.tsx', 'utf8')
+  const stateAt = board.indexOf('onState: (state, version) => {')
+  const onState = stateAt < 0 ? '' : board.slice(stateAt, stateAt + 1400)
+  // THE GUARD AT THE CONSUMER. The transport already orders versions; this is
+  // the check that does not share its blind spot, which is exactly where the
+  // stale re-emit walked in.
+  check('the board refuses a state older than the one on screen',
+    /if \(version < held\)[\s\S]{0,120}?return/.test(onState), true)
+  check('...and patches an arriving hand onto the board it is HOLDING',
+    /onSecrets: secrets => \{[\s\S]{0,300}?mergeOwnSecrets\(\s*gameStateRef\.current/.test(board), true)
+}
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')
 

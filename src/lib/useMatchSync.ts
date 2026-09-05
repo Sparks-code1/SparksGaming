@@ -26,10 +26,76 @@ const IDLE: LiveStatus = { state: 'idle', version: -1, attempts: 0, lastSyncAt: 
  * force a resync (after a version conflict) or record a version it applied
  * from its own action response.
  */
+/**
+ * What the hook hands its caller, beyond the transport's own events.
+ *
+ * `onSecrets` delivers this seat's hidden state ON ITS OWN, to be patched onto
+ * whatever board the caller is currently holding. It does not come with a
+ * board — see the note inside the hook for why that used to be the case and
+ * what it did to the acting player's screen.
+ */
+export type MatchSyncHandlers = SyncHandlers & {
+  onSecrets?: (secrets: SeatSecrets) => void
+}
+
+/**
+ * The join between the public row and this seat's hidden state.
+ *
+ * PURE — no React, no channel — so the one thing it exists to get right can be
+ * driven in a unit test with a faked transport and no browser: the ORDER in
+ * which a board and a hand arrive, and what goes out when each does.
+ *
+ * Two facts decide the shape. First, matchSync drops every echo at or below
+ * the version this client already applied, and that version is recorded the
+ * moment its own POST returns — so the echoes of THIS client's own actions
+ * never reach `publicArrived`, and `lastPublic` is only ever refreshed by the
+ * other machine. On the acting player's screen it is the state at the START of
+ * their turn. Second, apply_match_write rewrites every seat's secrets row on
+ * every action, so `secretsArrived` fires on the acting machine after each of
+ * its own moves.
+ *
+ * Put those together and the old behaviour — answer a secrets update by
+ * re-emitting `lastPublic` with the hand merged in — put the start-of-turn
+ * board back on the acting player's screen after every move they made,
+ * straight past the version guard because it never went through one. Troops
+ * back at the HQ, draft phase again, the turn announced again, and the next
+ * action refused as stale because the version pointer rolled back with it.
+ * The opponent's screen was fine the whole time.
+ *
+ * So the hand goes out ALONE, to be patched onto whatever board the consumer
+ * is holding — the only copy that is current on the machine that is acting.
+ * The hand-before-board case is still covered from the other side: every
+ * public state that arrives is merged with the latest hand.
+ */
+export function createSeatMerge(
+  seatId: string | null,
+  handlers: Pick<MatchSyncHandlers, 'onState' | 'onSecrets'>,
+) {
+  let lastPublic: SeatState | null = null
+  let lastSecrets: SeatSecrets | null = null
+  return {
+    /** A public state that cleared matchSync's version guard. */
+    publicArrived(state: SeatState, version: number) {
+      lastPublic = state
+      const merged = seatId ? mergeOwnSecrets(lastPublic, seatId, lastSecrets) : lastPublic
+      // The projection is what the client renders. It is a GameState as far
+      // as the board is concerned; the cast is here rather than inside
+      // mergeOwnSecrets so the type keeps saying that other seats' hands are
+      // absent everywhere else.
+      handlers.onState(merged as unknown as GameState, version)
+    },
+    /** This seat's secrets row moved. The hand, on its own — never a board. */
+    secretsArrived(secrets: SeatSecrets) {
+      lastSecrets = secrets
+      handlers.onSecrets?.(lastSecrets)
+    },
+  }
+}
+
 export function useMatchSync(
   matchId: string | null,
   seatId: string | null,
-  handlers: SyncHandlers,
+  handlers: MatchSyncHandlers,
   transport?: SyncTransport,
 ): { status: LiveStatus; sync: MatchSync | null } {
   const [status, setStatus] = useState<LiveStatus>(IDLE)
@@ -49,24 +115,14 @@ export function useMatchSync(
 
     // ── the two halves of the state, and where they are put together ────────
     // The public row carries nobody's hand; this seat's comes from
-    // match_secrets on a channel of its own. Either can arrive first and either
-    // can arrive again, so both are held and the merge is re-emitted whenever
-    // one of them moves — a hand that turned up after the board would otherwise
-    // sit in a variable until the next unrelated update.
-    let lastPublic: SeatState | null = null
-    let lastSecrets: SeatSecrets | null = null
-
-    const emit = (version: number) => {
-      if (!lastPublic) return
-      const merged = seatId ? mergeOwnSecrets(lastPublic, seatId, lastSecrets) : lastPublic
-      // The projection is what the client renders. It is a GameState as far as
-      // the board is concerned; the cast is here rather than inside
-      // mergeOwnSecrets so the type keeps saying that other seats' hands are
-      // absent everywhere else.
-      handlersRef.current.onState(merged as unknown as GameState, version)
-    }
-
-    let lastVersion = -1
+    // match_secrets on a channel of its own. The join is createSeatMerge, above
+    // and pure, because the order the two arrive in is the whole difficulty and
+    // it has to be testable without a browser. Handlers read through the ref
+    // so the merge sees the latest render's closures.
+    const merge = createSeatMerge(seatId, {
+      onState: (s, v) => handlersRef.current.onState(s, v),
+      onSecrets: s => handlersRef.current.onSecrets?.(s),
+    })
 
     const sync = startMatchSync(matchId, {
       onState: (s, v) => {
@@ -84,9 +140,7 @@ export function useMatchSync(
             + 'next action) or publicView is not being applied on write.',
           )
         }
-        lastPublic = s as unknown as SeatState
-        lastVersion = v
-        emit(v)
+        merge.publicArrived(s as unknown as SeatState, v)
       },
       onAction: (a, e, seq) => handlersRef.current.onAction?.(a, e, seq),
       onStatus: s => { setStatus(s); handlersRef.current.onStatus?.(s) },
@@ -101,8 +155,9 @@ export function useMatchSync(
       ? startSecretsSync(matchId, {
         expectPlayerId: seatId,
         onSecrets: row => {
-          lastSecrets = row.data as unknown as SeatSecrets
-          emit(lastVersion)
+          // The hand, on its own — never the board this seat last saw. Why is
+          // on createSeatMerge; what it cost is in the two-seat browser spec.
+          merge.secretsArrived(row.data as unknown as SeatSecrets)
         },
         // Not a normal event. RLS is what keeps another seat's row off this
         // socket, so one arriving means the policy is wrong.

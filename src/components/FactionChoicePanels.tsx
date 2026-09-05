@@ -50,6 +50,25 @@ export function factionRgb(factionId: string | null | undefined): string {
   return factionId ? hexToRgb(FACTION_COLORS[factionId] ?? 0x888888) : 'rgb(200,148,10)'
 }
 
+/**
+ * The faction's own colour for its NAME — unless that colour would vanish.
+ *
+ * The screens are near-black, and two factions are too: the Saharan Republic
+ * is 0x1a1a1a and the Mutants 0x8b0000. Painting their names in their own
+ * colour made them unreadable, and made "available" indistinguishable from
+ * "taken" — a picked Saharan card and an unpicked one were both a dark smudge
+ * with a dark dot, and the only difference was a 0.45 opacity nobody can see
+ * on black. Relative luminance below 60 (of 255) hands the name the screen's
+ * text colour instead; every other faction is at 91 or above and keeps its own.
+ * The swatch beside it keeps the true colour, with a light rim so a black dot
+ * still reads as a black dot.
+ */
+export function factionNameColour(hex: number): string {
+  const r = (hex >> 16) & 0xff, g = (hex >> 8) & 0xff, b = hex & 0xff
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+  return luminance < 60 ? '#E8DCC8' : hexToRgb(hex)
+}
+
 // ─── The faction card list ───────────────────────────────────────────────────
 
 interface FactionListProps {
@@ -103,8 +122,15 @@ export function FactionChoiceList({
             >
               {/* Faction name row */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 7 }}>
-                <div style={{ width: 10, height: 10, borderRadius: '50%', background: taken ? '#333' : col, flexShrink: 0 }} />
-                <span style={{ fontSize: 13, fontWeight: 'bold', color: taken ? '#4a3020' : col }}>{FACTION_NAMES[fid]}</span>
+                <div style={{
+                  width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
+                  background: taken ? '#333' : col,
+                  // A rim, so the two near-black factions' swatches are visible
+                  // against the near-black card. Faint enough to be nothing on
+                  // a bright colour.
+                  border: '1px solid rgba(232,220,200,0.45)',
+                }} />
+                <span style={{ fontSize: 13, fontWeight: 'bold', color: taken ? '#4a3020' : factionNameColour(FACTION_COLORS[fid as FactionId] ?? 0x888888) }}>{FACTION_NAMES[fid]}</span>
                 {taken && <span style={{ fontSize: 9, color: '#3a2810', marginLeft: 4 }}>(taken)</span>}
               </div>
               {/* Lead faction — most campaign wins. Owns the World Capital

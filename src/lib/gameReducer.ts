@@ -926,15 +926,25 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
         }
       }
 
-      if (!piles.resourceDeck.includes(action.cardId)) return only(state)
+      // ── A COIN DRAW TAKES THE TOP OF THE PILE, AND THE PILE IS THE SERVER'S ──
+      // This used to require the client to NAME the card and checked it was in
+      // the pile. Since the deck split the client holds the pile's length and
+      // nothing else — the order is exactly the secret — so it cannot name
+      // one, and every coin draw online was refused with the pile showing as
+      // empty. The reducer deals from what it holds; the client's cardId is
+      // not consulted for a coin draw at all. On the client's own optimistic
+      // run the "top" is a placeholder, which CardHand does not render and the
+      // seat's secrets row replaces a round trip later.
+      const top = piles.resourceDeck[0]
+      if (!top) return only(state)
       return {
         state: {
           ...state,
-          cards: { ...piles, resourceDeck: piles.resourceDeck.filter(id => id !== action.cardId) },
+          cards: { ...piles, resourceDeck: piles.resourceDeck.slice(1) },
           players: state.players.map(p =>
-            p.id === action.playerId ? { ...p, cards: [...p.cards, action.cardId] } : p),
+            p.id === action.playerId ? { ...p, cards: [...p.cards, top] } : p),
         },
-        effects: [{ kind: 'card-drawn', playerId: action.playerId, cardId: action.cardId, source: 'coin', newSpot1Id: null }],
+        effects: [{ kind: 'card-drawn', playerId: action.playerId, cardId: top, source: 'coin', newSpot1Id: null }],
       }
     }
 

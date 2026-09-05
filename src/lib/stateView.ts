@@ -146,6 +146,16 @@ const withoutOrders = <T extends Record<string, unknown>>(piles: T): T => ({
 })
 
 /**
+ * The pile object with publicView's height fields removed — the inverse of the
+ * counts it adds on the way out, applied on the way back in. A hydrated state
+ * carries the real piles; a count beside them is only ever stale.
+ */
+const withoutCounts = <T extends Record<string, unknown>>(piles: T): T => {
+  const { territoryDeckCount: _t, resourceDeckCount: _r, ...rest } = piles
+  return rest as T
+}
+
+/**
  * A player with their secrets removed and a count left in their place.
  *
  * Rebuilt without the secret keys rather than set to undefined: a key present
@@ -211,9 +221,36 @@ export function publicView(state: GameState): SeatState {
     // publishing the draw order so the optimistic copy can be prettier. The
     // authoritative refill is computed in apply-action from the hydrated piles,
     // and no client-computed pile is ever written back.
-    ...(piles ? { cards: withoutOrders(piles) } : {}),
+    // THE HEIGHT OF EACH PILE GOES WITH IT. Emptying the arrays hid the order,
+    // which was the point — and also hid how many cards were left, which was
+    // not: the draw modal read `resourceDeck.length > 0` and showed the coins
+    // as gone, and the client could no longer name a card to draw. A pile's
+    // height is public in the physical game; the client rebuilds a pile of
+    // this length to show and to draw from, and the server deals from the
+    // real one.
+    ...(piles ? {
+      cards: {
+        ...withoutOrders(piles),
+        territoryDeckCount: Array.isArray(piles.territoryDeck) ? (piles.territoryDeck as unknown[]).length : 0,
+        resourceDeckCount: Array.isArray(piles.resourceDeck) ? (piles.resourceDeck as unknown[]).length : 0,
+      },
+    } : {}),
   } as SeatState
 }
+
+/**
+ * What stands in for a face-down card on the client.
+ *
+ * The shared row carries the piles' heights and not their order, so the client
+ * rebuilds each pile as this many copies of one id that names no card. It is
+ * what a coin draw sends as `cardId` (the reducer deals the real top from its
+ * own pile and never reads it), what the client's optimistic run puts in the
+ * hand for the beat before the seat's secrets row replaces it, and what
+ * CardHand declines to render because it is neither a territory card nor a
+ * coin. cardCoinValue falls back to 1 for an unknown id, which for a coin is
+ * the right value.
+ */
+export const HIDDEN_CARD_ID = 'hidden-card'
 
 /**
  * What each seat's match_secrets row must hold, keyed by seat id.
@@ -399,8 +436,12 @@ export function hydrateState(
       },
     } : {}),
     // The server piles, restored on the same terms: only what came back, and a
-    // deck the store did not return is left exactly as the row had it.
-    ...(piles ? { cards: { ...piles, ...fromStore('pile') } } : {}),
+    // deck the store did not return is left exactly as the row had it. The
+    // counts publicView put beside them are a WIRE artefact — the client
+    // rebuilds a pile of that height to show and draw from — and stay off the
+    // state the reducer runs on, where the real piles are the truth and a
+    // count would only ever be stale.
+    ...(piles ? { cards: withoutCounts({ ...piles, ...fromStore('pile') }) } : {}),
     players: view.players.map(p => {
       const { cardCount: _n, ...rest } = p
       const held = secrets[p.id]

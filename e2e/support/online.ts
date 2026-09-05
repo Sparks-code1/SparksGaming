@@ -73,7 +73,26 @@ export async function ensureOnlineAccounts(stack: Stack): Promise<void> {
  * boots — otherwise the first render is a signed-out screen correcting itself,
  * and a spec that raced that correction would be testing the correction.
  */
-export async function openSeat(browser: Browser, which: 0 | 1): Promise<Seat> {
+export async function openSeat(
+  browser: Browser, which: 0 | 1,
+  opts: {
+    /**
+     * Hold every realtime frame from the server for this many milliseconds
+     * before the page sees it. Zero or absent is the real network.
+     *
+     * WHY A SPEC WOULD WANT A SLOWER NETWORK. matchSync drops any echo at or
+     * below the version this client has already applied, and the client
+     * records a version the moment its own POST returns. So whether the echo
+     * of your OWN action ever reaches your handlers is a race between the HTTP
+     * response and the websocket push — and on localhost the push wins every
+     * time, which is the one ordering in which the stale-board bug cannot
+     * happen. On a real network the response routinely wins. Delaying the
+     * frames makes the response win here too, so the spec exercises the
+     * ordering a real player gets rather than the one a loopback gives.
+     */
+    slowRealtime?: number
+  } = {},
+): Promise<Seat> {
   const stack = readStack()
   const { email, name } = ONLINE_ACCOUNTS[which]
 
@@ -91,6 +110,16 @@ export async function openSeat(browser: Browser, which: 0 | 1): Promise<Seat> {
     [storageKey(stack.api), JSON.stringify(data.session)] as const,
   )
   const page = await context.newPage()
+  if (opts.slowRealtime) {
+    const delay = opts.slowRealtime
+    // BEFORE goto, or the socket is already open and unrouted. Client→server
+    // frames pass straight through; only what the server pushes is held.
+    await page.routeWebSocket(/realtime\/v1/, ws => {
+      const server = ws.connectToServer()
+      ws.onMessage(m => server.send(m))
+      server.onMessage(m => { setTimeout(() => ws.send(m), delay) })
+    })
+  }
   await page.goto('/')
   return { context, page, name, email, userId: data.user.id }
 }

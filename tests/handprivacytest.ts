@@ -427,7 +427,10 @@ console.log('--- the display mirror reads a projected board ---')
 {
   const board = readFileSync('src/components/GameBoard.tsx', 'utf8')
   const at = board.indexOf('mirrorServerCardsRef.current = ')
-  const fn = at < 0 ? '' : board.slice(at, at + 2200)
+  // To the end of the function rather than a fixed span: the mirror grew a
+  // pile-rebuilding helper in front of the seat filter this looks for, and a
+  // 2200-char window stopped short of it.
+  const fn = at < 0 ? '' : board.slice(at, board.indexOf('\n  }\n', at))
 
   check('the mirror carries only the seats it can see',
     /\.filter\(p => Array\.isArray\(p\.cards\)\)/.test(fn), true)
