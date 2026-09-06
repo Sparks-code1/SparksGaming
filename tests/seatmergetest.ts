@@ -128,6 +128,31 @@ console.log('\n— the hand-before-board case is still covered, from the other s
     seen[1], { kind: 'state', version: 1, cards: ['tc-ural'] })
 }
 
+console.log('\n— the host holds the computer seats it plays, beside its own —')
+{
+  // Online a computer seat has no machine of its own: the host's plays it, and
+  // holds its row under "read the seats you play". Each row is handed over
+  // naming its seat, and a board is merged with EVERY hand held.
+  const seen: Array<{ kind: string; seat?: string; cards?: string[]; hands?: Array<string[] | undefined> }> = []
+  const merge = createSeatMerge('p1', {
+    onState: s => seen.push({ kind: 'state', hands: s.players.map(p => p.cards) }),
+    onSecrets: (h, seat) => seen.push({ kind: 'hand', seat, cards: h.cards }),
+  })
+  merge.secretsArrived({ cards: ['tc-ural'], missionCardId: null, legacyHand: [], legacyMission: null } as SeatSecrets)
+  merge.secretsArrived({ cards: ['tc-peru', 'tc-egypt'], missionCardId: null, legacyHand: [], legacyMission: null } as SeatSecrets, 'ai-1')
+  check('each hand is handed over naming its seat — the own seat by default', seen, [
+    { kind: 'hand', seat: 'p1', cards: ['tc-ural'] },
+    { kind: 'hand', seat: 'ai-1', cards: ['tc-peru', 'tc-egypt'] },
+  ])
+  const table = {
+    ...board(1, 'reinforce').state,
+    players: [{ id: 'p1', name: 'One', cardCount: 1 }, { id: 'ai-1', name: 'Computer', cardCount: 2, isAI: true }],
+  }
+  merge.publicArrived(table as unknown as SeatState, 1)
+  check('the board arrives wearing both hands, each on its own seat',
+    seen[2], { kind: 'state', hands: [['tc-ural'], ['tc-peru', 'tc-egypt']] })
+}
+
 console.log('\n— a spectator has no seat and gets no hand —')
 {
   const seen: string[] = []

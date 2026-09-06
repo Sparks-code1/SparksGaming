@@ -3,7 +3,9 @@ import {
   startMatchSync, type LiveStatus, type MatchSync, type SyncHandlers, type SyncTransport,
 } from '@/lib/matchSync'
 import { startSecretsSync } from '@/lib/secretsSync'
-import { mergeOwnSecrets, leaksOtherSeatsSecrets, type SeatSecrets } from '@/lib/stateView'
+import {
+  mergeOwnSecrets, leaksOtherSeatsSecrets, describeOtherSeatsSecrets, type SeatSecrets,
+} from '@/lib/stateView'
 import type { GameState } from '@/types/game'
 import type { SeatState } from '@/lib/stateView'
 
@@ -29,13 +31,14 @@ const IDLE: LiveStatus = { state: 'idle', version: -1, attempts: 0, lastSyncAt: 
 /**
  * What the hook hands its caller, beyond the transport's own events.
  *
- * `onSecrets` delivers this seat's hidden state ON ITS OWN, to be patched onto
+ * `onSecrets` delivers one seat's hidden state ON ITS OWN, to be patched onto
  * whatever board the caller is currently holding. It does not come with a
  * board — see the note inside the hook for why that used to be the case and
- * what it did to the acting player's screen.
+ * what it did to the acting player's screen. `seatId` says whose hand it is:
+ * this client's own, or a computer seat this machine plays.
  */
 export type MatchSyncHandlers = SyncHandlers & {
-  onSecrets?: (secrets: SeatSecrets) => void
+  onSecrets?: (secrets: SeatSecrets, seatId: string) => void
 }
 
 /**
@@ -72,22 +75,30 @@ export function createSeatMerge(
   handlers: Pick<MatchSyncHandlers, 'onState' | 'onSecrets'>,
 ) {
   let lastPublic: SeatState | null = null
-  let lastSecrets: SeatSecrets | null = null
+  // ONE HAND PER SEAT THIS CLIENT HOLDS: its own, and — on the host — the
+  // computer seats it plays, each merged back under the seat it belongs to.
+  // A spectator holds none and its boards pass through untouched.
+  const lastSecrets: Record<string, SeatSecrets> = {}
   return {
     /** A public state that cleared matchSync's version guard. */
     publicArrived(state: SeatState, version: number) {
       lastPublic = state
-      const merged = seatId ? mergeOwnSecrets(lastPublic, seatId, lastSecrets) : lastPublic
+      const merged = Object.entries(lastSecrets)
+        .reduce((view, [seat, secrets]) => mergeOwnSecrets(view, seat, secrets), lastPublic)
       // The projection is what the client renders. It is a GameState as far
       // as the board is concerned; the cast is here rather than inside
       // mergeOwnSecrets so the type keeps saying that other seats' hands are
       // absent everywhere else.
       handlers.onState(merged as unknown as GameState, version)
     },
-    /** This seat's secrets row moved. The hand, on its own — never a board. */
-    secretsArrived(secrets: SeatSecrets) {
-      lastSecrets = secrets
-      handlers.onSecrets?.(lastSecrets)
+    /**
+     * A held seat's secrets row moved. The hand, on its own — never a board.
+     * Unnamed, it is this client's own seat; a computer seat's row names it.
+     */
+    secretsArrived(secrets: SeatSecrets, forSeat: string | null = seatId) {
+      if (!forSeat) return
+      lastSecrets[forSeat] = secrets
+      handlers.onSecrets?.(secrets, forSeat)
     },
   }
 }
@@ -96,8 +107,20 @@ export function useMatchSync(
   matchId: string | null,
   seatId: string | null,
   handlers: MatchSyncHandlers,
-  transport?: SyncTransport,
+  opts: {
+    transport?: SyncTransport
+    /**
+     * Other seats this machine PLAYS, whose secrets it therefore holds: the
+     * computer seats, on the host. Their rows come down the same channel and
+     * are merged back under their own seat — see createSeatMerge.
+     */
+    alsoHeld?: string[]
+  } = {},
 ): { status: LiveStatus; sync: MatchSync | null } {
+  const { transport } = opts
+  // Keyed as a string, so the subscription is rebuilt when the SET of seats
+  // changes and not on every render that passes a fresh array.
+  const heldKey = (opts.alsoHeld ?? []).join(',')
   const [status, setStatus] = useState<LiveStatus>(IDLE)
   const syncRef = useRef<MatchSync | null>(null)
   // Handlers are usually inline arrow functions, so a new identity every
@@ -121,7 +144,7 @@ export function useMatchSync(
     // so the merge sees the latest render's closures.
     const merge = createSeatMerge(seatId, {
       onState: (s, v) => handlersRef.current.onState(s, v),
-      onSecrets: s => handlersRef.current.onSecrets?.(s),
+      onSecrets: (s, seat) => handlersRef.current.onSecrets?.(s, seat),
     })
 
     const sync = startMatchSync(matchId, {
@@ -134,8 +157,12 @@ export function useMatchSync(
         // while shouting is more useful than one that stops. See the note about
         // matches written before the split in stateView.hydrateState.
         if (seatId && leaksOtherSeatsSecrets(s as unknown as SeatState, seatId)) {
+          // NAMED, so a report can be acted on: which seat, which key, at what
+          // version. "Another seat's hand" alone sent a whole run's worth of
+          // console lines to the archaeology pile.
           console.error(
-            '[privacy] the match state received from the wire carries another seat\'s hand. '
+            `[privacy] the match state received from the wire carries another seat's hand `
+            + `(v${v}: ${describeOtherSeatsSecrets(s as unknown as SeatState, seatId).join(', ')}). `
             + 'Either the server is writing pre-split state (which self-heals on that match\'s '
             + 'next action) or publicView is not being applied on write.',
           )
@@ -154,15 +181,18 @@ export function useMatchSync(
     const stopSecrets = seatId
       ? startSecretsSync(matchId, {
         expectPlayerId: seatId,
+        alsoHeld: heldKey ? heldKey.split(',') : [],
         onSecrets: row => {
           // The hand, on its own — never the board this seat last saw. Why is
           // on createSeatMerge; what it cost is in the two-seat browser spec.
-          merge.secretsArrived(row.data as unknown as SeatSecrets)
+          // The ROW says whose hand: this seat's, or a computer seat's.
+          merge.secretsArrived(row.data as unknown as SeatSecrets, row.playerId)
         },
         // Not a normal event. RLS is what keeps another seat's row off this
         // socket, so one arriving means the policy is wrong.
         onForeignRow: row => console.error(
-          `[privacy] received seat ${row.playerId}'s secrets while sitting at ${seatId} — the RLS policy on match_secrets is not holding`),
+          `[privacy] received seat ${row.playerId}'s secrets while sitting at ${seatId}`
+          + `${heldKey ? ` (and playing ${heldKey})` : ''} — the RLS policy on match_secrets is not holding`),
       })
       : null
 
@@ -180,7 +210,7 @@ export function useMatchSync(
       sync.stop()
       syncRef.current = null
     }
-  }, [matchId, seatId, transport])
+  }, [matchId, seatId, transport, heldKey])
 
   return { status, sync: syncRef.current }
 }

@@ -102,6 +102,14 @@ export function startSecretsSync(
     /** This client's seat, used only to RECOGNISE a foreign row, never to filter. */
     expectPlayerId?: string
     /**
+     * Other seats this session PLAYS, and so holds the rows of: the computer
+     * seats of a match it created. They come down this same socket under the
+     * policy "read the seats you play", and are delivered as its own — the
+     * row names the seat. Never a way to see more: RLS decides what arrives,
+     * this decides only what counts as foreign.
+     */
+    alsoHeld?: string[]
+    /**
      * Which authenticated session to listen on. Defaults to the app's.
      *
      * NOT a way to see more. A client is a SESSION, and match_secrets is
@@ -121,7 +129,10 @@ export function startSecretsSync(
   const deliver = (raw: RawRow | null | undefined) => {
     const row = toRow(raw ?? {})
     if (!row) return
-    if (handlers.expectPlayerId && row.playerId !== handlers.expectPlayerId) {
+    const held = handlers.expectPlayerId
+      ? [handlers.expectPlayerId, ...(handlers.alsoHeld ?? [])]
+      : null
+    if (held && !held.includes(row.playerId)) {
       handlers.onForeignRow?.(row)
       return
     }

@@ -23,12 +23,13 @@ const toRow = (r: RawRow): SecretsRow | null =>
     ? { matchId: r.match_id, playerId: r.player_id, data: r.data ?? {}, updatedAt: r.updated_at ?? '' }
     : null
 
-function route(raw: RawRow, expectPlayerId?: string) {
+function route(raw: RawRow, expectPlayerId?: string, alsoHeld?: string[]) {
   const mine: SecretsRow[] = []
   const foreign: SecretsRow[] = []
   const row = toRow(raw)
   if (!row) return { mine, foreign, ignored: true }
-  if (expectPlayerId && row.playerId !== expectPlayerId) foreign.push(row)
+  const held = expectPlayerId ? [expectPlayerId, ...(alsoHeld ?? [])] : null
+  if (held && !held.includes(row.playerId)) foreign.push(row)
   else mine.push(row)
   return { mine, foreign, ignored: false }
 }
@@ -60,6 +61,25 @@ check('...carrying the seat it actually belonged to', foreign.foreign[0].playerI
 // RLS allowed through is taken at face value.
 check('with no expected seat, rows are taken as given', route(raw('p2')).mine.length, 1)
 
+// ── The seats you play ───────────────────────────────────────────────────────
+// A computer seat has no account and no machine of its own: the host's plays
+// it, and under the policy "read the seats you play" holds its row as well.
+// Such a row is delivered as the host's own, named for the seat it belongs to
+// (the row says whose) — and a seat this session does NOT play is as foreign
+// as it ever was. Nothing here widens what arrives; RLS decides that. This
+// decides only what counts as a policy failure.
+check('a computer seat this session plays is delivered',
+  route(raw('ai-1'), 'p1', ['ai-1']).mine.map(r => r.playerId), ['ai-1'])
+check('...a rival human seat is still foreign beside it',
+  route(raw('p2'), 'p1', ['ai-1']).foreign.map(r => r.playerId), ['p2'])
+check('...and playing nobody extra changes nothing',
+  route(raw('ai-1'), 'p1', []).foreign.length, 1)
+{
+  const channel = readFileSync('src/lib/secretsSync.ts', 'utf8')
+  check('the channel routes by the seats this session plays, own seat first',
+    channel.includes('[handlers.expectPlayerId, ...(handlers.alsoHeld ?? [])]'), true)
+}
+
 // ── secrets are opaque to this layer ─────────────────────────────────────────
 // It carries whatever a game keeps per seat. Dune's first is one number; the
 // channel must not care.
@@ -88,19 +108,19 @@ check('an arbitrary shape survives the round trip',
   const hook = readFileSync('src/lib/useMatchSync.ts', 'utf8')
   // The join is createSeatMerge — pure, and the thing seatmergetest drives.
   // These pin its SHAPE; that file pins its behaviour.
-  const at = hook.indexOf('secretsArrived(secrets: SeatSecrets) {')
+  const at = hook.indexOf('secretsArrived(secrets: SeatSecrets')
   const onSecrets = at < 0 ? '' : hook.slice(at, hook.indexOf('\n    },', at))
 
   check('the secrets side of the join was found', at > 0, true)
   // THE BUG. A board going out from the secrets side is one this client did
   // not just compute — on the acting machine, the start of its own turn.
   check('a secrets update sends no board', /onState\(|\bemit\(/.test(onSecrets), false)
-  check('...it hands the hand over on its own', /onSecrets\?\.\(lastSecrets\)/.test(onSecrets), true)
+  check('...it hands the hand over on its own, naming its seat', /onSecrets\?\.\(secrets, forSeat\)/.test(onSecrets), true)
   // The hand-before-board case still needs covering, and it is covered by the
   // OTHER direction: every public state that arrives is merged with the latest
   // secrets. Remove that and the first hand of a match sits in a variable.
-  check('...and a public state still picks up the latest hand',
-    /mergeOwnSecrets\(lastPublic, seatId, lastSecrets\)/.test(hook), true)
+  check('...and a public state still picks up the latest hand of every seat held',
+    /Object\.entries\(lastSecrets\)[\s\S]{0,200}mergeOwnSecrets\(view, seat, secrets\), lastPublic\)/.test(hook), true)
 
   const board = readFileSync('src/components/GameBoard.tsx', 'utf8')
   const stateAt = board.indexOf('onState: (state, version) => {')
@@ -110,8 +130,8 @@ check('an arbitrary shape survives the round trip',
   // stale re-emit walked in.
   check('the board refuses a state older than the one on screen',
     /if \(version < held\)[\s\S]{0,120}?return/.test(onState), true)
-  check('...and patches an arriving hand onto the board it is HOLDING',
-    /onSecrets: secrets => \{[\s\S]{0,300}?mergeOwnSecrets\(\s*gameStateRef\.current/.test(board), true)
+  check('...and patches an arriving hand onto the board it is HOLDING, under the seat the row names',
+    /onSecrets: \(secrets, forSeat\) => \{[\s\S]{0,400}?const seat = forSeat \?\? localSeatRef\.current[\s\S]{0,300}?mergeOwnSecrets\(\s*gameStateRef\.current as unknown as SeatState, seat, secrets\)/.test(board), true)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

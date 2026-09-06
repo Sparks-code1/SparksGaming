@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import * as PIXI from 'pixi.js'
 import type { Territory, ScarType } from '@/types/territory'
 import type { GameState, EndGameState, PendingEventKind } from '@/types/game'
@@ -223,6 +223,20 @@ interface TerritoryHandles {
  */
 function handSize(p: { cards?: string[]; cardCount?: number }): number {
   return Array.isArray(p.cards) ? p.cards.length : (p.cardCount ?? 0)
+}
+
+/**
+ * The cards themselves, if this machine holds them — null if it does not.
+ *
+ * THE READER FOR ANYTHING THAT NEEDS THE IDS rather than the count: a trade-in,
+ * a card to play. Online only this seat's own hand is here, plus — on the host
+ * — the hands of the computer seats it plays, and those arrive on the secrets
+ * channel, which can be a beat behind the turn. Null means NOT HELD, never
+ * empty: an empty array is a real hand with nothing in it. A reader that wants
+ * ids and finds null skips what it was going to do; it does not throw.
+ */
+function heldHand(p: { cards?: string[] }): string[] | null {
+  return Array.isArray(p.cards) ? p.cards : null
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -3125,10 +3139,19 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       // draft. Uses the same coin math as the human hand, so upgraded and
       // multi-coin territory cards are priced identically.
       if (!aiTradedThisTurnRef.current) {
-        const decision = aiTradeInDecision(cp.cards, legacyState.cardResources, diff, {
+        aiTradedThisTurnRef.current = true
+        // THROUGH heldHand, NOT cp.cards. Online a computer seat's hand reaches
+        // the host on the secrets channel (the policy "read the seats you
+        // play"), and it can be a beat behind the turn. This read was
+        // `cp.cards.length` on a seat carrying only a cardCount, inside a
+        // passive effect — and it took the host's whole board down on the
+        // first computer turn of a new campaign. A hand not held is a turn the
+        // computer does not cash in; it is never a crash.
+        const hand = heldHand(cp)
+        if (!hand) console.warn(`[AI] ${cp.name}'s hand is not held on this machine — no trade-in this turn`)
+        const decision = hand && aiTradeInDecision(hand, legacyState.cardResources, diff, {
           rivalOnMatchPoint: rivalsOnMatchPoint(gameState, legacyState, cp.id).length > 0,
         })
-        aiTradedThisTurnRef.current = true
         if (decision) {
           run(() => {
             console.log(`[AI] ${cp.name} trades ${decision.cardIds.length} cards / ${decision.totalCoins} coins for ${decision.troops} troops — ${decision.reason}`)
@@ -7650,6 +7673,17 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     localSeatId,
     gameState.players.find(p => p.id === localSeatId)?.name ?? null,
   )
+  // ── The hands this machine holds beyond its own ─────────────────────────
+  // Online the host's machine plays the computer seats, so it is entitled to
+  // their secrets too (match_secrets: "read the seats you play") and asks the
+  // hook for them by seat. Everyone else holds only their own row; hotseat has
+  // every hand on the board already. Keyed as a string so the set, not the
+  // array, is what changes.
+  const computerSeatsKey = gameState.players.filter(p => p.isAI).map(p => p.id).join(',')
+  const hostsComputers = !!onlineMatch?.matchId && aiAuthority
+  const heldSeats = useMemo(
+    () => (hostsComputers && computerSeatsKey) ? computerSeatsKey.split(',') : [],
+    [hostsComputers, computerSeatsKey])
   const { status: liveStatus, sync: matchSync } = useMatchSync(
     onlineMatch?.matchId ?? null,
     // Which seat this client sits at. It selects the match_secrets row whose
@@ -7683,8 +7717,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       // THIS SEAT'S HAND, patched onto the board this screen is holding — not
       // onto the last board the wire delivered, which on the acting machine is
       // the state at the start of its turn. See useMatchSync for the history.
-      onSecrets: secrets => {
-        const seat = localSeatRef.current
+      onSecrets: (secrets, forSeat) => {
+        // Whose hand: this seat's own, or — on the host — a computer seat's.
+        const seat = forSeat ?? localSeatRef.current
         if (!seat) return           // the hook re-subscribes once the seat is known
         const merged = mergeOwnSecrets(
           gameStateRef.current as unknown as SeatState, seat, secrets) as unknown as GameState
@@ -7730,6 +7765,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         for (const e of effects) applyEffectRef.current(e, true)
       },
     },
+    { alsoHeld: heldSeats },
   )
   matchSyncRef.current = matchSync
 

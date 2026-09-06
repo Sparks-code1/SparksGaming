@@ -497,6 +497,26 @@ export function viewForSeat(state: GameState, seatId: string, opts: ViewOptions)
 export const SECRET_PLAYER_KEYS = ['cards', 'missionCardId'] as const
 
 /**
+ * The leaks, named: which seat, which key, how many — for the message that
+ * fires when the wire carries a hand it must not. leaksOtherSeatsSecrets says
+ * whether; this says what, so a report can be acted on without a debugger.
+ */
+export function describeOtherSeatsSecrets(state: SeatState, seatId: string): string[] {
+  const out: string[] = []
+  for (const p of state.players) {
+    if (p.id === seatId) continue
+    for (const k of SECRET_PLAYER_KEYS) {
+      if (k in p) out.push(`${p.id}.${k}=${JSON.stringify((p as unknown as Record<string, unknown>)[k])}`)
+    }
+  }
+  const hands = legacyHands(state)
+  for (const id of Object.keys(hands)) {
+    if (id !== seatId && (hands[id]?.length ?? 0) > 0) out.push(`legacy.${id}[${hands[id]!.length}]`)
+  }
+  return out
+}
+
+/**
  * True when `state` still carries a secret belonging to somebody other than
  * `seatId`. Intended for tests and for a runtime assertion at the point state
  * arrives from the wire — the check that distinguishes absent from hidden.

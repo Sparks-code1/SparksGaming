@@ -208,6 +208,20 @@ function viewForSeat(state, seatId, opts) {
   return mergeOwnSecrets(publicView(state), seatId, secretsFromState(state)[seatId] ?? null);
 }
 var SECRET_PLAYER_KEYS = ["cards", "missionCardId"];
+function describeOtherSeatsSecrets(state, seatId) {
+  const out = [];
+  for (const p of state.players) {
+    if (p.id === seatId) continue;
+    for (const k of SECRET_PLAYER_KEYS) {
+      if (k in p) out.push(`${p.id}.${k}=${JSON.stringify(p[k])}`);
+    }
+  }
+  const hands = legacyHands(state);
+  for (const id of Object.keys(hands)) {
+    if (id !== seatId && (hands[id]?.length ?? 0) > 0) out.push(`legacy.${id}[${hands[id].length}]`);
+  }
+  return out;
+}
 function leaksOtherSeatsSecrets(state, seatId) {
   if (state.players.some((p) => p.id !== seatId && SECRET_PLAYER_KEYS.some((k) => k in p))) return true;
   const hands = legacyHands(state);
@@ -219,6 +233,7 @@ export {
   SECRET_PLAYER_KEYS,
   deckOrdersIn,
   decksFromState,
+  describeOtherSeatsSecrets,
   hydrateState,
   leaksDeckOrder,
   leaksOtherSeatsSecrets,
