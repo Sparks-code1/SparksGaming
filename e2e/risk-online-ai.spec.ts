@@ -107,6 +107,23 @@ test('a computer seat takes its turn on the host without taking the host down', 
             'the panel that opened is not the watcher\'s own').toBeVisible({ timeout: 10_000 })
           await standing()
           await watcher.page.locator('button[title="Close"]').first().click()
+          // THE SCAR TRAY IS THE WATCHER'S TOO. Keyed to the actor it showed the
+          // actor's cards with a Play button on every screen. The top-left
+          // reference panel names each held card's owner, so the watcher's own
+          // card is known; the tray (bottom-left) must carry it and not the
+          // actor's, and offer no Play off-turn — nor any other actor-only
+          // control (Mobile Forces, Mobile HQ, the draft missile powers).
+          const said = await watcher.page.locator('body').innerText()
+          const ownerOf: Record<string, string> = {}
+          for (const m of said.matchAll(/(Bunker|Ammo Shortage|Fortification|Mercenary|Biohazard)[\s\S]{0,80}?●\s*([^\n]+)/g)) ownerOf[m[2].trim().toLowerCase()] = m[1]
+          const mine = ownerOf[watcher.name.toLowerCase()], theirs = ownerOf[s.name.toLowerCase()]
+          const tray = watcher.page.locator('div[style*="bottom: 60px"][style*="left: 14px"]')
+          const trayText = (await tray.count()) ? await tray.first().innerText() : ''
+          if (mine) expect(trayText, watcher.name + "'s tray does not show their own " + mine).toContain(mine)
+          if (theirs && theirs !== mine) expect(trayText, watcher.name + "'s tray shows the actor's " + theirs).not.toContain(theirs)
+          expect(await watcher.page.locator('button', { hasText: /^Play$/ }).count(), watcher.name + ' is offered Play on a turn that is not theirs').toBe(0)
+          expect(await watcher.page.locator('button', { hasText: /Mobile Forces|Mobile HQ|Stealthy|Convincing|Rally/ }).count(),
+            watcher.name + ' is offered an actor-only control').toBe(0)
         }
         // THE FIRST HUMAN TURN PLACES IN A BURST and watches its own pill: two
         // clicks before the first has landed, then the count must only fall.

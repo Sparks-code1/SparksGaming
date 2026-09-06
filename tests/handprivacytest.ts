@@ -489,7 +489,7 @@ console.log('--- a hand you cannot see still has a size ---')
   // current player at one keyboard — never the acting seat (2026-09-06: every
   // screen showed the actor's count, and opening it mapped a hidden hand).
   check('...and so does the Cards button, for the hand this machine holds',
-    /Cards \(\{handSize\(handOwner\)\}\)/.test(board) && !/handSize\(currentPlayer\)/.test(board), true)
+    /Cards \(\{handSize\(viewer\)\}\)/.test(board) && !/handSize\(currentPlayer\)/.test(board), true)
   check('...and neither takes .length off a seat it may not be able to see',
     /\bplayer\.cards\.length|\bcurrentPlayer\.cards\.length/.test(board), false)
 }

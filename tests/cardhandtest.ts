@@ -72,16 +72,31 @@ console.log('\n— the reducer refuses a hand it does not hold —')
   check('...and the hidden seat is still exactly as it arrived', own.state.players[1], hidden)
 }
 
-console.log('\n— the board keys the panel to its own seat online —')
+console.log('\n— the board keys every "you" panel to its own seat online —')
 {
   const board = bare(readFileSync('src/components/GameBoard.tsx', 'utf8'))
-  check('handOwner is this seat online and the current player at one keyboard',
-    /const handOwner = onlineMatch\s*\?\s*\(localSeatId \? gameState\.players\.find\(p => p\.id === localSeatId\) \?\? null : null\)\s*:\s*currentPlayer/.test(board), true)
-  check('the Cards button counts the owner', /🃏 Cards \(\{handSize\(handOwner\)\}\)/.test(board), true)
+  check('viewer is this seat online and the current player at one keyboard',
+    /const viewer = onlineMatch\s*\?\s*\(localSeatId \? gameState\.players\.find\(p => p\.id === localSeatId\) \?\? null : null\)\s*:\s*currentPlayer/.test(board), true)
+  check('myTurn is the viewer being the acting seat', /const myTurn = !!viewer && viewer\.id === currentPlayer\?\.id/.test(board), true)
+  check('the Cards button counts the viewer', /🃏 Cards \(\{handSize\(viewer\)\}\)/.test(board), true)
   check('...never the current player', /handSize\(currentPlayer\)/.test(board), false)
-  check('the panel opens the owner', /<CardHand\s+player=\{handOwner\}/.test(board), true)
-  check('...and trades only on the owner\'s own turn',
-    /canTradeIn=\{gameState\.phase === 'reinforce' && handOwner\.id === currentPlayer\?\.id\}/.test(board), true)
+  check('the panel opens the viewer', /<CardHand\s+player=\{viewer\}/.test(board), true)
+  check('...and trades only on the viewer\'s own turn',
+    /canTradeIn=\{gameState\.phase === 'reinforce' && myTurn\}/.test(board), true)
+  // THE SWEEP (2026-09-06, "Hugh's Ammo Shortage on every screen"): the scar
+  // tray is the viewer's, playable on the viewer's turn; the actor-only
+  // controls — Mobile Forces, Mobile HQ, the draft missile powers — render on
+  // the actor's machine alone.
+  check('the scar tray shows the viewer\'s cards', /const myCards = heldCards\.filter\(c => c\.playerId === viewer\.id\)/.test(board), true)
+  check('...never the current player\'s', /heldCards\.filter\(c => c\.playerId === currentPlayer\.id\)/.test(board), false)
+  check('...with Play only on the viewer\'s turn', /isImmediate && !blockedByCombat && myTurn && \(\s*<button/.test(board), true)
+  check('...and a word for the off-turn card', /isImmediate && !blockedByCombat && !myTurn && \([\s\S]{0,120}?on your turn/.test(board), true)
+  check('Mobile Forces renders on the actor\'s machine only',
+    /\{myTurn && \(\(\) => \{\s*const cp = gameState\.players\[gameState\.currentPlayerIndex\]\s*const ability = cp \? \(legacyStateRef/.test(board), true)
+  check('Mobile HQ too',
+    /\{myTurn && \(\(\) => \{\s*const cp = gameState\.players\[gameState\.currentPlayerIndex\]\s*if \(!cp\) return null\s*if \(\(legacyState\.comebackPowers \?\? \{\}\)\[cp\.factionId\] !== 'mobile-hq'\)/.test(board), true)
+  check('the draft missile powers too',
+    /gameState\.phase === 'reinforce' && myTurn && \(\(\) => \{\s*const cp = gameState\.players\[gameState\.currentPlayerIndex\]\s*if \(!cp\) return null\s*const owned = \(legacyState\.missilePowers/.test(board), true)
   check('the readers come from the module, not a local copy',
     /import \{ handSize, heldHand \} from '@\/lib\/hand'/.test(board) && !/^function handSize\(/m.test(board), true)
 }

@@ -7790,16 +7790,22 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   const fortifySrcTerritory = fortifySrcId ? (gameState.territories[fortifySrcId] ?? null) : null
   const fortifyDstTerritory = fortifyDstId ? (gameState.territories[fortifyDstId] ?? null) : null
 
-  // WHOSE HAND THE CARDS BUTTON AND THE PANEL ARE ABOUT. Hotseat: the player at
-  // the keyboard, who is the current player. Online: THIS MACHINE'S OWN SEAT,
-  // whoever's turn it is. Both were keyed to currentPlayer — right at one
-  // keyboard, and online it put the ACTOR's count on every screen and, when
-  // clicked, opened the actor's hand, which is hidden on every machine but one:
-  // `.map` on undefined, and the board came down (2026-09-06). A watcher with
-  // no seat has no hand and no button.
-  const handOwner = onlineMatch
+  // ── THE SEAT THIS MACHINE SPEAKS FOR, and whether it is its turn ─────────
+  // Hotseat: the player at the keyboard, who is the current player, so every
+  // "you" is the actor. Online: THIS MACHINE'S OWN SEAT, whoever's turn it is.
+  // Two kinds of element read these and must not confuse them:
+  //   · a panel about YOU — your hand, your scar cards — keys on `viewer`;
+  //   · a control for the ACTOR — a fortify button, a power to fire — renders
+  //     only on `myTurn`, the way TurnControls already hides its buttons.
+  // Both used to key on currentPlayer, right at one keyboard and wrong on a
+  // network: every screen showed the actor's card count and, clicked, opened
+  // the actor's hidden hand (the board came down); every screen showed the
+  // actor's scar cards with a Play button (2026-09-06). A watcher with no seat
+  // has no hand, no cards and no buttons.
+  const viewer = onlineMatch
     ? (localSeatId ? gameState.players.find(p => p.id === localSeatId) ?? null : null)
     : currentPlayer
+  const myTurn = !!viewer && viewer.id === currentPlayer?.id
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', background: '#C4A830' }}>
@@ -8987,8 +8993,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
           ⚠ <strong>Ammo Shortage</strong> — defender's highest die −1
         </HintBar>
       )}
-      {/* Saharan Republic Mobile Forces — early fortify button */}
-      {(() => {
+      {/* Saharan Republic Mobile Forces — early fortify button. The ACTOR's
+          control: on any other screen it fired an action the server would
+          refuse, so it is not offered there. */}
+      {myTurn && (() => {
         const cp = gameState.players[gameState.currentPlayerIndex]
         const ability = cp ? (legacyStateRef.current?.chosenFactionAbilities ?? {})[cp.factionId] : null
         if (ability !== 'sahara-anytime-fortify') return null
@@ -9029,8 +9037,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         )
       })()}
 
-      {/* Mobile HQ comeback power — move an HQ to an adjacent owned territory */}
-      {(() => {
+      {/* Mobile HQ comeback power — move an HQ to an adjacent owned territory.
+          The actor's control; see Mobile Forces above. */}
+      {myTurn && (() => {
         const cp = gameState.players[gameState.currentPlayerIndex]
         if (!cp) return null
         if ((legacyState.comebackPowers ?? {})[cp.factionId] !== 'mobile-hq') return null
@@ -9099,8 +9108,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         )
       })()}
 
-      {/* Missile power activations — draft phase (Stealthy / Convincing / Rally) */}
-      {gameState.phase === 'reinforce' && (() => {
+      {/* Missile power activations — draft phase (Stealthy / Convincing / Rally).
+          The actor's controls; see Mobile Forces above. */}
+      {gameState.phase === 'reinforce' && myTurn && (() => {
         const cp = gameState.players[gameState.currentPlayerIndex]
         if (!cp) return null
         const owned = (legacyState.missilePowers ?? {})[cp.factionId] ?? []
@@ -9424,9 +9434,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
           hand is visible and simply withheld when it is not, rather than
           computed from a hand that is not there. The count below still shows
           for everyone, because the count was always public. */}
-      {handOwner && gameState.phase !== 'game-over' && (() => {
-        const myHand = heldHand(handOwner)
-        const myTurn = handOwner.id === currentPlayer?.id
+      {viewer && gameState.phase !== 'game-over' && (() => {
+        const myHand = heldHand(viewer)
         const canTrade = !!myHand && !!findBestTradeIn(myHand) && gameState.phase === 'reinforce' && myTurn
         return (
         <button
@@ -9440,7 +9449,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             backdropFilter: 'blur(6px)', letterSpacing: 0.5,
           }}
         >
-          🃏 Cards ({handSize(handOwner)})
+          🃏 Cards ({handSize(viewer)})
           {canTrade && ' ★'}
         </button>
         )
@@ -9451,7 +9460,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
           the card-hand modal uses. The old inline copy of the buy had no
           guard, no history line, no confirmation — and once double-fired,
           selling one star for four cards and recording two. */}
-      {currentPlayer && handOwner?.id === currentPlayer.id && gameState.phase === 'reinforce' && (() => {
+      {currentPlayer && myTurn && gameState.phase === 'reinforce' && (() => {
         const hand = cardState.playerHands[currentPlayer.id] ?? []
         const toSpendArr = starPurchaseSelection(hand, id => !!getCoinCard(id))
         if (!toSpendArr) return null
@@ -9718,9 +9727,11 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         />
       )}
 
-      {/* Held scar cards tray — current player's unplaced cards */}
-      {currentPlayer && (() => {
-        const myCards = heldCards.filter(c => c.playerId === currentPlayer.id)
+      {/* Held scar cards tray — the VIEWER's unplayed cards, playable on their turn.
+          Keyed to the current player, every screen showed the actor's cards with
+          a Play button — Hugh's Ammo Shortage on four screens (2026-09-06). */}
+      {viewer && (() => {
+        const myCards = heldCards.filter(c => c.playerId === viewer.id)
         if (myCards.length === 0) return null
         return (
           <div style={{
@@ -9757,7 +9768,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
                       <div style={{ fontSize: 8, color: '#8a4020', fontStyle: 'italic' }}>must play before dice roll</div>
                     )}
                   </div>
-                  {isImmediate && !blockedByCombat && (
+                  {isImmediate && !blockedByCombat && !myTurn && (
+                    <span style={{ fontSize: 9, color: '#5a4030', fontStyle: 'italic' }}>on your turn</span>
+                  )}
+                  {isImmediate && !blockedByCombat && myTurn && (
                     <button
                       onClick={() => setActiveCardId(isActive ? null : cardId)}
                       style={{
@@ -10428,12 +10442,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       })()}
 
       {/* Card hand overlay */}
-      {showCardHand && handOwner && (
+      {showCardHand && viewer && (
         <CardHand
-          player={handOwner}
+          player={viewer}
           gameState={gameState}
           cardResources={legacyState.cardResources ?? {}}
-          canTradeIn={gameState.phase === 'reinforce' && handOwner.id === currentPlayer?.id}
+          canTradeIn={gameState.phase === 'reinforce' && myTurn}
           onTradeIn={handleTradeIn}
           onBuyStar={handleBuyStar}
           onClose={() => setShowCardHand(false)}
