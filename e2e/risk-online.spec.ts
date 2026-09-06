@@ -14,8 +14,8 @@
  */
 import { test, expect } from '@playwright/test'
 import {
-  openSeat, hostCampaign, joinByCode, startFromLobby, bothAgreeItIs, closeSeats, placeHQ,
-  isForward, type Seat,
+  openSeat, hostCampaign, joinByCode, startFromLobby, bothAgreeItIs, closeSeats, settleOnto,
+  type Seat,
 } from './support/online'
 import { onBoard, whoseTurn } from './support/risk'
 
@@ -236,78 +236,3 @@ test('a hosted game reaches both browsers, and the turn is the same turn', async
     await closeSeats(seats)
   }
 })
-
-/**
- * Answer whatever this browser's own seat is asked, until a board appears.
- *
- * ONLINE SETUP IS ANSWERED ON EACH PLAYER'S OWN SCREEN — the dice, the faction,
- * the HQ — so each browser drives itself and neither may click for the other.
- * That is the rule under test as much as it is the mechanism: a screen that let
- * one machine answer for both is how a setup document goes out of step.
- */
-async function settleOnto(seat: Seat, me: string, budgetMs = 120_000): Promise<void> {
-  const { askedOf, press, where } = await import('./support/risk')
-  const until = Date.now() + budgetMs
-
-  while (Date.now() < until) {
-    if (await onBoard(seat.page)) return
-    const said = await seat.page.locator('body').innerText()
-
-    // ── WAITING IS NOT BEING STUCK ────────────────────────────────────────
-    // Online setup asks each player on their own screen, so a browser spends
-    // most of this walk with nothing to do and the screen says so. A first
-    // version counted STEPS, and the host — waiting perfectly correctly for
-    // the guest to choose an ability — spent its whole allowance waiting and
-    // reported that it never reached a board. Time is the honest budget: a
-    // seat that waits forever still fails, and a seat that waits a while does
-    // not.
-    if (/Waiting for .+ to\b/i.test(said)) {
-      await seat.page.waitForTimeout(700)
-      continue
-    }
-
-    // ── STILL IN THE LOBBY, AND ALREADY READY ─────────────────────────────
-    // Nothing on this screen is this seat's to press. The ready is cast and
-    // its toggle now only takes it back; the seat-count chips are the host's
-    // shape controls; Start is the host's. The walk lands here whenever the
-    // host's start has not yet come round to this browser — a window of a beat
-    // or two, hit about one run in five — and pressing ANYTHING in it undid the
-    // ready this file had just cast. Excluding the toggle alone was not enough:
-    // the fallback then reached for a seat-count chip instead. The screen is
-    // simply not this seat's to act on, so it waits.
-    if (/✓ Ready — click to un-ready/.test(said)) {
-      await seat.page.waitForTimeout(700)
-      continue
-    }
-
-    // ── THE MAP STAGE, which is not a button ──────────────────────────────
-    // Each player places their own HQ on their own screen, and the prompt says
-    // so — "your pick — choose on the map".
-    if (/PLACE YOUR HQ/.test(said)) {
-      // MINE OR THEIRS. Both players see the map; only the one being asked is
-      // told it is their pick.
-      if (/your pick/i.test(said)) await placeHQ(seat.page)
-      else await seat.page.waitForTimeout(700)
-      continue
-    }
-
-    // Somebody else's decision, on a screen that names its picker: wait it out
-    // rather than answering for them. Neither browser may click for the other
-    // — that is the rule under test as much as it is the mechanism.
-    const asked = await askedOf(seat.page)
-    if (asked && asked.toLowerCase() !== me.toLowerCase()) {
-      await seat.page.waitForTimeout(700)
-      continue
-    }
-
-    const live = await seat.page.$$eval('button:not([disabled])',
-      els => els.map(e => (e.textContent ?? '').trim()))
-    const go = live.filter(isForward)
-      .find(n => /continue|▶|→|confirm|roll|start|begin/i.test(n))
-      ?? live.filter(isForward)[0]
-    if (!go) { await seat.page.waitForTimeout(700); continue }
-    await press(seat.page, go.slice(0, 24)).catch(() => {})
-  }
-  throw new Error(
-    `${me} never reached a board in ${budgetMs / 1000}s.\n${await where(seat.page)}`)
-}

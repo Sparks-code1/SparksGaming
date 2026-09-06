@@ -40,11 +40,13 @@ on any API that is not loopback.
 
 ## How long
 
-About **30 seconds** wall clock, all in:
+About **7 minutes** wall clock for the whole run, 26 tests, one worker. The
+Dune specs are seconds each; the Risk walks are a minute or two apiece, and
+the two online specs (two real browsers, a lobby, a deal) are the longest:
 
 - ~2s setup — accounts, edge function, and a real match dealt through the lobby
 - ~7s for Vite to boot and Playwright to start Chromium
-- ~1.2–3s per test, 10 tests, one worker
+- seconds per Dune test; 20–120s per Risk test
 
 The first run after a fresh `supabase start` is slower — 12s or so of setup
 rather than 2s — because Deno caches the edge function's imports. One worker is
@@ -305,3 +307,52 @@ Two things this needed on the way, both worth knowing:
   walk back in through the picker — and the picker's list is *fetched*, so
   looking for the row immediately finds an empty list and reports the campaign
   missing.
+
+## risk-online.spec.ts and risk-online-ai.spec.ts
+
+Two real browsers, two accounts, one hosted game: the host opens a campaign and
+a lobby, the guest joins by code, and the walk asserts that a move made on one
+machine is seen by the other (`bothAgreeItIs`) — every online bug so far has
+been a machine that never found out, or found out and had it taken away again
+by an echo. `openSeat(..., { slowRealtime })` holds the realtime frames so the
+POST response beats the socket, which is the ordering that hid the rewind on
+loopback for a month.
+
+### The computer seat
+
+`risk-online-ai.spec.ts` adds one computer to the table (`seatComputers`) and
+lets the host answer setup for it (`settleOnto(host, name, { alsoFor })` —
+faction, ability and HQ are host clicks online; only the dice and the weakness
+pick are automatic). Then it asserts the host is **still standing** when the
+computer hands the turn back: a `pageerror` on the host page fails the test
+with the error's own text, and so does losing the board.
+
+It was written against the unfixed client first, and failed there with the
+field report's exact line — `the host screen crashed: Cannot read properties
+of undefined (reading 'length')` — twice, before the fix went in. Two things
+it needed on the way:
+
+- **The computer has to play after the GUEST has.** The host's board keeps
+  every hand it dealt until a state arrives from the *other* machine — its own
+  actions never echo back — so a computer that opens the game drafts on a
+  board that still has its cards, and nothing crashes. The split shape only
+  reaches the host once the guest has acted. The first version of the loop
+  took any computer turn and passed on the broken code.
+- **Both halves of the fix are observed, not assumed.** The board warns
+  `hand is not held on this machine` when the computer's hand has not reached
+  it; the spec fails on that warning, so a run that merely did not crash
+  because the guard skipped the trade-in cannot pass. And it fails on any
+  `[privacy]` console line on either screen — the guest must not receive the
+  computer's row.
+
+That last assertion found a second thing: the host's wire check fired on every
+mount, at **v0**. `startLobby` wrote the opening position raw into the row —
+every seat's hand inline (`cards: []` at that point, but present, and the check
+is rightly about absence) — and left the match's first action to split it into
+secrets rows. `createOnlineMatch` had stopped doing that when `deal-match` was
+written; the lobby path had not. Projecting that write instead was tried first
+and broke the match outright — no inline hands and no secrets rows means every
+action comes back `secrets-missing`, which is what the spec's wedged computer
+turn was. The lobby now deals through `deal-match` like the other path, and the
+check's message names the seat, the key and the version, because "another
+seat's hand" alone was not something anybody could act on.

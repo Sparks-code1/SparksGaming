@@ -26,7 +26,7 @@ import { expect, type Browser, type BrowserContext, type Page } from '@playwrigh
 import { createClient } from '@supabase/supabase-js'
 import { readStack, type Stack } from './stack'
 import { storageKey } from './seat'
-import { press, whoseTurn, where } from './risk'
+import { press, whoseTurn, where, askedOf, onBoard } from './risk'
 
 /** Long enough for a save to land, short enough that a hang still fails fast. */
 const BEAT = 400
@@ -327,4 +327,103 @@ export async function placeHQ(page: Page): Promise<void> {
       ? `the clicks were REFUSED:\n  ${refusals.slice(0, 4).join('\n  ')}\n`
       : 'every click landed and none selected.\n')
     + await where(page))
+}
+
+/**
+ * Answer whatever this browser's own seat is asked, until a board appears.
+ *
+ * ONLINE SETUP IS ANSWERED ON EACH PLAYER'S OWN SCREEN — the dice, the faction,
+ * the HQ — so each browser drives itself and neither may click for the other.
+ * That is the rule under test as much as it is the mechanism: a screen that let
+ * one machine answer for both is how a setup document goes out of step.
+ */
+export async function settleOnto(
+  seat: Seat, me: string,
+  opts: {
+    budgetMs?: number
+    /**
+     * Seats this machine also answers for, by name: the computer seats, on the
+     * host. Their faction, ability and HQ are host decisions online, made on
+     * the host screen under the computer name.
+     */
+    alsoFor?: (name: string) => boolean
+  } = {},
+): Promise<void> {
+  const until = Date.now() + (opts.budgetMs ?? 120_000)
+
+  while (Date.now() < until) {
+    if (await onBoard(seat.page)) return
+    const said = await seat.page.locator('body').innerText()
+
+    // ── WAITING IS NOT BEING STUCK ────────────────────────────────────────
+    // Online setup asks each player on their own screen, so a browser spends
+    // most of this walk with nothing to do and the screen says so. A first
+    // version counted STEPS, and the host — waiting perfectly correctly for
+    // the guest to choose an ability — spent its whole allowance waiting and
+    // reported that it never reached a board. Time is the honest budget: a
+    // seat that waits forever still fails, and a seat that waits a while does
+    // not.
+    if (/Waiting for .+ to\b/i.test(said)) {
+      await seat.page.waitForTimeout(700)
+      continue
+    }
+
+    // ── STILL IN THE LOBBY, AND ALREADY READY ─────────────────────────────
+    // Nothing on this screen is this seat's to press. The ready is cast and
+    // its toggle now only takes it back; the seat-count chips are the host's
+    // shape controls; Start is the host's. The walk lands here whenever the
+    // host's start has not yet come round to this browser — a window of a beat
+    // or two, hit about one run in five — and pressing ANYTHING in it undid the
+    // ready this file had just cast. Excluding the toggle alone was not enough:
+    // the fallback then reached for a seat-count chip instead. The screen is
+    // simply not this seat's to act on, so it waits.
+    if (/✓ Ready — click to un-ready/.test(said)) {
+      await seat.page.waitForTimeout(700)
+      continue
+    }
+
+    // ── THE MAP STAGE, which is not a button ──────────────────────────────
+    // Each player places their own HQ on their own screen, and the prompt says
+    // so — "your pick — choose on the map".
+    if (/PLACE YOUR HQ/.test(said)) {
+      // MINE OR THEIRS. Both players see the map; only the one being asked is
+      // told it is their pick.
+      if (/your pick/i.test(said)) await placeHQ(seat.page)
+      else await seat.page.waitForTimeout(700)
+      continue
+    }
+
+    // Somebody else's decision, on a screen that names its picker: wait it out
+    // rather than answering for them. Neither browser may click for the other
+    // — that is the rule under test as much as it is the mechanism.
+    const asked = await askedOf(seat.page)
+    if (asked && asked.toLowerCase() !== me.toLowerCase() && !opts.alsoFor?.(asked)) {
+      await seat.page.waitForTimeout(700)
+      continue
+    }
+
+    const live = await seat.page.$$eval('button:not([disabled])',
+      els => els.map(e => (e.textContent ?? '').trim()))
+    const go = live.filter(isForward)
+      .find(n => /continue|▶|→|confirm|roll|start|begin/i.test(n))
+      ?? live.filter(isForward)[0]
+    if (!go) { await seat.page.waitForTimeout(700); continue }
+    await press(seat.page, go.slice(0, 24)).catch(() => {})
+  }
+  throw new Error(
+    `${me} never reached a board in ${budgetMs / 1000}s.\n${await where(seat.page)}`)
+}
+
+/**
+ * The host seats computer players at the table.
+ *
+ * The lobby's TABLE panel is a row of counts per kind — Humans, Computers —
+ * each a strip of numbered buttons. The row is found by its label rather than
+ * by position, and the seat is confirmed by the 🤖 that marks it in the list.
+ */
+export async function seatComputers(host: Seat, n: number): Promise<void> {
+  const row = host.page.locator('div', { has: host.page.locator('span', { hasText: /^Computers$/ }) }).last()
+  await row.locator('button', { hasText: new RegExp(`^${n}$`) }).click({ timeout: 10_000 })
+  await expect(host.page.locator('text=🤖').first(),
+    'no computer seat appeared at the table').toBeVisible({ timeout: 15_000 })
 }
