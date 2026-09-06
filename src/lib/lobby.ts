@@ -501,9 +501,20 @@ export async function leaveLobby(matchId: string): Promise<void> {
 /**
  * Start the game. Host only, and only from a lobby that is actually ready.
  *
- * Writing `state` and `status` together is what makes exactly one game come out
- * of one lobby: a second press finds the match no longer in 'lobby' status, and
- * RLS refuses it. That is the fix for two machines each starting their own.
+ * THE DEAL IS NOT A CLIENT WRITE. This used to `.update({ state, status })`
+ * the row directly — the whole opening position, every seat's hand inline, on
+ * a row the changefeed delivers whole to everybody — and left the match's
+ * first action to split it into secrets rows. createOnlineMatch stopped doing
+ * exactly that when deal-match was written; this path kept doing it, so every
+ * lobby-started match spent its first version pre-split and its first action's
+ * hydrate depended on the inline hands being there. (Projecting the write
+ * instead was tried and broke the match outright: no inline hands and no
+ * secrets rows means every action is refused as `secrets-missing`.)
+ *
+ * deal-match writes publicView + secrets + decks + status in one CAS'd write,
+ * host-only, once. A second press finds no lobby left to deal and is refused
+ * — the same one-game-per-lobby guarantee the status compare-and-swap gave
+ * here, now given by the server.
  */
 export async function startLobby(matchId: string, initialState: GameState): Promise<Lobby> {
   const lobby = await readLobby(matchId)
@@ -512,15 +523,15 @@ export async function startLobby(matchId: string, initialState: GameState): Prom
   const readiness = lobbyReadiness(lobby)
   if (!readiness.canStart) throw new Error(readiness.reason ?? 'The game is not ready to start')
 
-  const { data, error } = await supabase
-    .from('matches')
-    .update({ state: initialState, status: 'active', updated_at: new Date().toISOString() })
-    .eq('id', matchId)
-    .eq('status', 'lobby')          // compare-and-swap: only one press wins
-    .select('id')
-    .maybeSingle()
-  if (error) throw new Error(`Could not start the game: ${error.message}`)
-  if (!data) throw new Error('Somebody else already started this game')
+  const { data: dealt, error } = await supabase.functions.invoke('deal-match', {
+    body: { matchId, state: initialState },
+  })
+  const version = (dealt as { version?: number } | null)?.version
+  if (error || typeof version !== 'number') {
+    // A refusal is most often the OTHER press having won: the caller re-reads
+    // the row and joins the game that is live rather than declaring failure.
+    throw new Error(`Could not start the game: ${error?.message ?? 'the deal was refused'}`)
+  }
   await closeOtherLobbies(lobby.campaignId, matchId)
   return (await readLobby(matchId))!
 }
