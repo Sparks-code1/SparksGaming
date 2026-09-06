@@ -23,7 +23,8 @@ import WinScreen from './WinScreen'
 import LegacyPanel from './LegacyPanel'
 import CampaignCompleteScreen from './CampaignCompleteScreen'
 import { campaignOutcome, applyCampaignCompletion, championLabel, type CampaignOutcome } from '@/lib/campaign'
-import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALIEN_ISLAND_TERRITORY_ID, calcDraftTroops, applyHqReserveTroops, expandClickAction, legalJoinWarTerritoryIds, cardCoinValue, campaignLeadFaction, endGameRecap, resolveResourceDepletion, type ResourceDepletion, troopsAfterEntry, minTroopsToEnter, LEAD_FACTION_WORLD_CAPITAL_TROOPS, worldCapitalReplacedCities, citiesLostOn, reapplyLegacyEdits, countCitiesOn, resolveRiot, resolveResistance, type RiotCityResult, FORTIFICATION_SUPPLY, fortificationsPlaced, canPlaceFortification, FORTIFY_EVENT_TROOPS, FORTIFY_EVENT_CITIES , canSpendForStar, starPurchaseSelection, foldMissileSpends, nextGameNumber, claimComebackPower } from '@/lib/gameLogic'
+import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALIEN_ISLAND_TERRITORY_ID, calcDraftTroops, applyHqReserveTroops, expandClickAction, legalJoinWarTerritoryIds, cardCoinValue, campaignLeadFaction, endGameRecap, resolveResourceDepletion, type ResourceDepletion, troopsAfterEntry, minTroopsToEnter, LEAD_FACTION_WORLD_CAPITAL_TROOPS, worldCapitalReplacedCities, citiesLostOn, reapplyLegacyEdits, countCitiesOn, resolveRiot, resolveResistance, type RiotCityResult, FORTIFICATION_SUPPLY, fortificationsPlaced, canPlaceFortification, FORTIFY_EVENT_TROOPS, FORTIFY_EVENT_CITIES , canSpendForStar, starPurchaseSelection, foldMissileSpends, nextGameNumber, claimComebackPower, controlledHqTerritoryIds,
+} from '@/lib/gameLogic'
 import {
   defaultLegacyState, saveLegacyState, loadLegacyState, awardRedStars,
   applyLegacyToTerritories, pickUnlocks, SCAR_META, saveGameSession,
@@ -2275,12 +2276,20 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     return null
   }
 
-  // In-game stars: HQ tokens on controlled territories + stars purchased with coins this game.
-  // Shown on the HUD. Does not include permanent campaign stars.
+  // In-game stars: every HQ this player controls — THEIR OWN INCLUDED — plus
+  // the stars bought with coins this game. Shown on the HUD; permanent
+  // campaign stars are not in it.
+  //
+  // THE OWN HQ COUNTS, and it has now gone both ways. 348f9ca (2026-08-15)
+  // took it out of every count after a game ended two captures early, on the
+  // reading that a red star is an HQ you took. The table plays the rulebook
+  // line instead — an HQ is worth a red star to whoever controls it — so a
+  // faction sits on one star from its first turn and needs three more, and
+  // the HUD shows it (2026-09-06). The AI had counted it this way all along
+  // (controlledHqTerritoryIds); the board now counts through the same
+  // function, so the eight copies that had to move together twice are gone.
   function countStars(playerId: string, territories: Record<string, Territory>) {
-    const hqStars = Object.values(territories).filter(
-      t => t.occupyingPlayerId === playerId && !!t.activeHqPlayerId && t.activeHqPlayerId !== playerId,
-    ).length
+    const hqStars = controlledHqTerritoryIds(playerId, territories).length
     const purchased = (legacyState.purchasedStars ?? {})[playerId] ?? 0
     return hqStars + purchased
   }
@@ -2631,9 +2640,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (gameState.phase === 'game-over' || showWinScreen) return
     for (const p of gameState.players) {
       if (p.isEliminated) continue
-      const hqStars = Object.values(gameState.territories).filter(
-        t => t.occupyingPlayerId === p.id && !!t.activeHqPlayerId && t.activeHqPlayerId !== p.id,
-      ).length
+      const hqStars = controlledHqTerritoryIds(p.id, gameState.territories).length
       const purchased = (legacyState.purchasedStars ?? {})[p.id] ?? 0
       if (hqStars + purchased >= 4) {
         setWinnerPlayerId(p.id)
@@ -4416,9 +4423,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (depletion.kind === 'award') {
       const winner = state.players.find(p => p.id === depletion.playerId)
       if (!winner) return
-      const hqStars = Object.values(state.territories).filter(
-        t => t.occupyingPlayerId === depletion.playerId && !!t.activeHqPlayerId && t.activeHqPlayerId !== depletion.playerId,
-      ).length
+      const hqStars = controlledHqTerritoryIds(depletion.playerId, state.territories).length
       const newStarTotal = hqStars + purchasedAfter
       console.log(`[CoinDeck] ${winner.name} final star total: ${newStarTotal} (hq=${hqStars} purchased=${purchasedAfter})`)
       if (newStarTotal >= 4) {
@@ -4852,9 +4857,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     showWeaknessNotice(`★ ${player.name} bought a red star — 4 cards spent (${purchasedAfter} bought this game)`)
 
     // 4-star victory check (HQ stars + purchased stars)
-    const hqStars = Object.values(gameStateRef.current.territories).filter(
-      t => t.occupyingPlayerId === player.id && !!t.activeHqPlayerId && t.activeHqPlayerId !== player.id,
-    ).length
+    const hqStars = controlledHqTerritoryIds(player.id, gameStateRef.current.territories).length
     if (hqStars + purchasedAfter >= 4) {
       setWinnerPlayerId(player.id)
       // It IS a star victory — recording it as 'mission' was a lie the
@@ -5669,9 +5672,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     })
     showWeaknessNotice(`⭐ ${player.name} used their ${missionDef?.name ?? 'star power'} — +1 red star (once per game)`)
 
-    const hqStars = Object.values(gameStateRef.current.territories).filter(
-      t => t.occupyingPlayerId === playerId && !!t.activeHqPlayerId && t.activeHqPlayerId !== playerId,
-    ).length
+    const hqStars = controlledHqTerritoryIds(playerId, gameStateRef.current.territories).length
     if (hqStars + purchasedAfter >= 4) {
       setWinnerPlayerId(playerId)
       setWinCondition('stars')
@@ -5856,9 +5857,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     }
 
     // 4-star win check (HQ stars + this game's earned stars)
-    const hqStars = Object.values(gameStateRef.current.territories).filter(
-      t => t.occupyingPlayerId === playerId && !!t.activeHqPlayerId && t.activeHqPlayerId !== playerId,
-    ).length
+    const hqStars = controlledHqTerritoryIds(playerId, gameStateRef.current.territories).length
     if (hqStars + purchasedAfter >= 4) {
       setWinnerPlayerId(playerId)
       setWinCondition('stars')
@@ -6279,9 +6278,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       // Check 4-star win condition for any player (HQ stars + purchased stars)
       const fourStarWinner = state.players.find(p => {
         if (p.isEliminated) return false
-        const hqStars = Object.values(state.territories).filter(
-          t => t.occupyingPlayerId === p.id && !!t.activeHqPlayerId && t.activeHqPlayerId !== p.id,
-        ).length
+        const hqStars = controlledHqTerritoryIds(p.id, state.territories).length
         const purchased = (legacyStateRef.current.purchasedStars ?? {})[p.id] ?? 0
         return hqStars + purchased >= 4
       })
@@ -7292,8 +7289,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         saveLegacyState(next, { reapply: applyStars }).catch(() => {})
         return next
       })
-      const hqStars = Object.values(st.territories)
-        .filter(t => t.occupyingPlayerId === p.id && !!t.activeHqPlayerId && t.activeHqPlayerId !== p.id).length
+      const hqStars = controlledHqTerritoryIds(p.id, st.territories).length
       const out = [`✓ ${p.name}: ${current} → ${target} earned star${target !== 1 ? 's' : ''} (+ ${hqStars} on HQs)`]
       if (hqStars + target >= 4) {
         out.push('⚠ that reaches 4 stars — the victory screen is about to open')
