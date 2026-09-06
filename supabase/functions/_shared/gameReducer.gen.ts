@@ -563,6 +563,9 @@ function canClaimTerritoryCard(playerId, territoryId, territories, homelandConti
   return !!homelandContinentId && t.continentId === homelandContinentId;
 }
 
+// src/lib/stateView.ts
+var HIDDEN_CARD_ID = "hidden-card";
+
 // src/lib/gameReducer.ts
 function createMathRng() {
   const next = () => Math.random();
@@ -853,7 +856,7 @@ function gameReducer(state, action, rng) {
       if (!piles) return only(state);
       const player = state.players.find((p) => p.id === action.playerId);
       if (!player) return only(state);
-      if (action.source === "face-up") {
+      if (action.source === "face-up" && action.cardId !== HIDDEN_CARD_ID) {
         const at = piles.sideboard.indexOf(action.cardId);
         if (at < 0) return only(state);
         const deck = [...piles.territoryDeck];

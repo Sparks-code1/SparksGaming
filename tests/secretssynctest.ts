@@ -124,7 +124,7 @@ check('an arbitrary shape survives the round trip',
 
   const board = readFileSync('src/components/GameBoard.tsx', 'utf8')
   const stateAt = board.indexOf('onState: (state, version) => {')
-  const onState = stateAt < 0 ? '' : board.slice(stateAt, stateAt + 1400)
+  const onState = stateAt < 0 ? '' : board.slice(stateAt, stateAt + 2600)
   // THE GUARD AT THE CONSUMER. The transport already orders versions; this is
   // the check that does not share its blind spot, which is exactly where the
   // stale re-emit walked in.

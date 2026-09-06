@@ -60,7 +60,13 @@ export default function CardDrawModal({ playerId, sideboard, resourceDeck, terri
 
   function handleTake() {
     if (!selected || leaving) return
-    const isCoin = getCoinCard(selected) !== undefined
+    // BY THE PILE, NOT BY THE CARD. Online the coin pile is a stack of
+    // placeholders — the order is the server's secret — and a placeholder has
+    // no card data to be a coin by. Classified by lookup, every online coin
+    // pick went out as a face-up draw of a card that was in no sideboard, and
+    // the server accepted it as a no-op: the card never came, the pile never
+    // moved (match 4698930d, seq 180). The pile the pick came off is the fact.
+    const isCoin = resourceDeck.includes(selected) || getCoinCard(selected) !== undefined
     setLeaving(true)
     setTimeout(() => onSelect(selected, isCoin), 300)
   }

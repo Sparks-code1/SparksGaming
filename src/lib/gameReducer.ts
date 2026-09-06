@@ -32,6 +32,7 @@ import { applyCustomSeaLines, applyHqReserveTroops, cardCoinValue, continentsHel
 // picker so RICH_CARD_ELIGIBLE cannot answer differently from the screen that
 // offered the card.
 import { canClaimTerritoryCard, homelandContinentFor } from '@/lib/missionLogic'
+import { HIDDEN_CARD_ID } from '@/lib/stateView'
 
 // â”€â”€â”€ Injected randomness â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -904,7 +905,13 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
       const player = state.players.find(p => p.id === action.playerId)
       if (!player) return only(state)
 
-      if (action.source === 'face-up') {
+      // A PLACEHOLDER IS A COIN DRAW WHATEVER THE SOURCE SAYS. The only pile a
+      // client can name a placeholder off is the coin pile — the sideboard is
+      // face-up and every id in it is real. A client that mislabelled one as
+      // face-up (it happened: the modal classified by card data, and a
+      // placeholder has none) was answered with a silent no-op, accepted and
+      // logged, while the table watched the pile not move.
+      if (action.source === 'face-up' && action.cardId !== HIDDEN_CARD_ID) {
         const at = piles.sideboard.indexOf(action.cardId)
         if (at < 0) return only(state)        // already taken â€” the pile is the truth
         const deck = [...piles.territoryDeck]

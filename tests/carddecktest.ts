@@ -79,6 +79,15 @@ console.log('\n— a coin draw takes the TOP of the pile, whatever the client na
   const { state: p } = gameReducer(base(), draw({ cardId: 'hidden-card', source: 'coin' }), rng)
   check('a placeholder id draws the top coin just the same', p.players[0].cards.includes('resource-1'))
 
+  // THE FIELD CASE (match 4698930d, seq 180): the client sent the placeholder
+  // labelled face-up, because the modal classified by card data and a
+  // placeholder has none. A placeholder can only have come off the coin pile,
+  // so it is a coin draw whatever the label says — the face-up branch would
+  // have looked for it in the sideboard and silently drawn nothing.
+  const { state: f, effects: fe } = gameReducer(base(), draw({ cardId: 'hidden-card', source: 'face-up' }), rng)
+  check('a placeholder sent as face-up still draws the top coin', f.players[0].cards.includes('resource-1'))
+  check('...and the pile lost its head for it', f.cards?.resourceDeck.join(',') === 'resource-2')
+  check('...and the effect calls it a coin', fe.some(e => e.kind === 'card-drawn' && (e as { source?: string }).source === 'coin'))
   // An empty pile deals nothing, rather than an undefined card.
   const empty = { ...base(), cards: { ...base().cards!, resourceDeck: [] } }
   const { state: e, effects } = gameReducer(empty, draw({ cardId: 'hidden-card', source: 'coin' }), rng)

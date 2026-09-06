@@ -4519,7 +4519,11 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
 
     let newSpot1Id: string | null = null
     if (isCoin) {
-      resourceDeck = resourceDeck.filter(id => id !== cardId)
+      // ONE card, by position. Online the pile is placeholders that all share
+      // an id, and a filter by id would empty it in one draw — which reads as
+      // the pile running out, and the pile running out awards a star.
+      const at = resourceDeck.indexOf(cardId)
+      if (at >= 0) resourceDeck.splice(at, 1)
     } else {
       // Taking a card shifts the row toward spot 4; a fresh card slides into spot 1
       sideboard = sideboard.filter(id => id !== cardId)
@@ -4635,7 +4639,11 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
 
     let newSpot1Id: string | null = null
     if (isCoin) {
-      resourceDeck = resourceDeck.filter(id => id !== cardId)
+      // ONE card, by position. Online the pile is placeholders that all share
+      // an id, and a filter by id would empty it in one draw — which reads as
+      // the pile running out, and the pile running out awards a star.
+      const at = resourceDeck.indexOf(cardId)
+      if (at >= 0) resourceDeck.splice(at, 1)
     } else {
       // Taking a card shifts the row toward spot 4; a fresh card slides into spot 1
       sideboard = sideboard.filter(id => id !== cardId)
