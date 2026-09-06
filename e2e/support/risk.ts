@@ -561,16 +561,16 @@ export async function passTurn(page: Page, hint?: string): Promise<string> {
  */
 export async function holdings(
   page: Page,
-): Promise<Record<string, { territories: number; troops: number }>> {
+): Promise<Record<string, { cards: number; territories: number; troops: number }>> {
   const said = await page.locator('body').innerText()
   // FROM THE ROSTER ONWARD. Player names appear all over a board — in the turn
   // banner, on scar cards, in the winners list — and only here are they
   // followed by the two counts.
   const tail = said.slice(said.lastIndexOf('CAMPAIGN WINNERS'))
-  const out: Record<string, { territories: number; troops: number }> = {}
-  for (const m of tail.matchAll(/([^\n🃏]+)🃏[^🗺]*🗺\s*(\d+)\s*⚔\s*(\d+)/g)) {
+  const out: Record<string, { cards: number; territories: number; troops: number }> = {}
+  for (const m of tail.matchAll(/([^\n🃏]+)🃏\s*(\d+)[^🗺]*🗺\s*(\d+)\s*⚔\s*(\d+)/g)) {
     out[m[1].trim().toLowerCase()] = {
-      territories: Number(m[2]), troops: Number(m[3]),
+      cards: Number(m[2]), territories: Number(m[3]), troops: Number(m[4]),
     }
   }
   return out

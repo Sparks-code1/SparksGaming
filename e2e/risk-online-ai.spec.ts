@@ -3,7 +3,7 @@ import {
   openSeat, hostCampaign, joinByCode, startFromLobby, bothAgreeItIs, closeSeats, seatComputers,
   settleOnto, type Seat,
 } from './support/online'
-import { onBoard, whoseTurn, passTurn, where, toPlace, draftableTerritory, placeBurst } from './support/risk'
+import { onBoard, whoseTurn, passTurn, where, toPlace, draftableTerritory, placeBurst, holdings } from './support/risk'
 
 test.setTimeout(420_000)
 
@@ -25,7 +25,7 @@ test('a computer seat takes its turn on the host without taking the host down', 
 
     // What "blank screen" looks like from outside: an error that escaped React.
     const crashes: string[] = []
-    host.page.on('pageerror', e => crashes.push(e.message))
+    for (const s of seats) s.page.on('pageerror', e => crashes.push(s.name + ': ' + e.message))
     // BOTH HALVES OF THE FIX, OBSERVED. The board warns when a computer's hand
     // has not reached it — so a run with no crash but that warning would be the
     // guard alone doing the work, with the policy silently not delivering. And
@@ -67,7 +67,7 @@ test('a computer seat takes its turn on the host without taking the host down', 
     if (broke.length) throw new Error(broke.join(' || ') + ' || HOST: ' + (await where(host.page)) + ' || GUEST: ' + (await where(guest.page)))
 
     const standing = async () => {
-      if (crashes.length) throw new Error('the host screen crashed: ' + crashes.join(' | '))
+      if (crashes.length) throw new Error('a screen crashed: ' + crashes.join(' | '))
       if (!(await onBoard(host.page))) throw new Error('the host lost the board: ' + (await where(host.page)))
     }
     const settleAway = async (from: string) => {
@@ -81,7 +81,7 @@ test('a computer seat takes its turn on the host without taking the host down', 
     // the host once the guest has acted. That was the table order reported:
     // the guest, then the host, then the computer on the host screen.
     const order: string[] = []
-    let guestPassed = false, computerPlayed = false, burstDone = false
+    let guestPassed = false, computerPlayed = false, burstDone = false, watcherChecked = false
     for (let step = 0; step < 8 && !computerPlayed; step++) {
       await standing()
       const now = await whoseTurn(host.page)
@@ -89,6 +89,25 @@ test('a computer seat takes its turn on the host without taking the host down', 
       if (human(now)) {
         const s = seats.find(x => x.name.toLowerCase() === now!.toLowerCase())!
         await bothAgreeItIs(seats, now!)
+        // THE WATCHER OPENS ITS OWN CARDS. Every screen used to key the Cards
+        // button and panel to the ACTING seat: the actor's count on every
+        // screen and, clicked, the actor's hand — hidden on every machine but
+        // one, so the panel mapped over nothing and the board came down. The
+        // button must count the watcher's own hand, the panel must be the
+        // watcher's own, and the watcher must still be standing afterwards.
+        if (!watcherChecked) {
+          watcherChecked = true
+          const watcher = seats.find(x => x !== s)!
+          const button = watcher.page.locator('button', { hasText: '🃏 Cards' }).first()
+          const shown = Number((await button.innerText()).match(/\((\d+)\)/)?.[1] ?? -1)
+          const own = (await holdings(watcher.page))[watcher.name.toLowerCase()]?.cards ?? -2
+          expect(shown, watcher.name + "'s Cards button shows " + shown + ' but the strip says they hold ' + own).toBe(own)
+          await button.click()
+          await expect(watcher.page.locator('text=' + watcher.name + "'s Cards").first(),
+            'the panel that opened is not the watcher\'s own').toBeVisible({ timeout: 10_000 })
+          await standing()
+          await watcher.page.locator('button[title="Close"]').first().click()
+        }
         // THE FIRST HUMAN TURN PLACES IN A BURST and watches its own pill: two
         // clicks before the first has landed, then the count must only fall.
         let hint: string | undefined

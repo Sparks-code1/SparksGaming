@@ -366,6 +366,16 @@ it needed on the way:
   `[privacy]` console line on either screen — the guest must not receive the
   computer's row.
 
+On the first human turn the **watching** seat opens its own Cards. Every
+screen used to key the Cards button and panel to the acting seat — the actor's
+count on every screen and, clicked, the actor's hand, hidden on every machine
+but one, so the panel mapped over nothing and the board came down
+(2026-09-06). The check reads the watcher's button, compares the count with the
+watcher's own row on the roster strip (`holdings` now returns `cards`), opens
+the panel, asserts it is the watcher's own and that no page error fired on
+either seat, then closes it. Re-keying the panel to `currentPlayer` fails it on
+the count.
+
 The first human turn of that spec also places in a **burst** — two clicks on
 one territory before the first has landed — and then watches that player's
 troop total on the roster strip for a couple of seconds: it must never dip
