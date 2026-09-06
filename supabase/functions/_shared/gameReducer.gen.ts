@@ -1537,10 +1537,12 @@ function hasDoubles(dice) {
   return dice.length >= 2 && new Set(dice).size < dice.length;
 }
 function compareRolls(atk, def, atkSixesWin = false) {
-  const pairs = Math.min(atk.length, def.length);
+  const a = [...atk].sort((x, y) => y - x);
+  const d = [...def].sort((x, y) => y - x);
+  const pairs = Math.min(a.length, d.length);
   let aLoss = 0, dLoss = 0;
   for (let i = 0; i < pairs; i++) {
-    if (atk[i] > def[i] || atkSixesWin && atk[i] === 6 && def[i] === 6) dLoss++;
+    if (a[i] > d[i] || atkSixesWin && a[i] === 6 && d[i] === 6) dLoss++;
     else aLoss++;
   }
   return { aLoss, dLoss };

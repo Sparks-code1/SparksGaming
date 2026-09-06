@@ -2112,13 +2112,25 @@ export function hasDoubles(dice: number[]): boolean {
   return dice.length >= 2 && new Set(dice).size < dice.length
 }
 
-/** Compare sorted attacker/defender dice pairwise; tie goes to defender unless
- *  attackerSixesWin. Returns troops lost by each side this round. */
+/**
+ * Pair the attacker's and defender's dice highest against highest, then next
+ * against next, for as many pairs as the smaller roll has; a tie goes to the
+ * defender unless attackerSixesWin. Returns troops lost by each side this round.
+ *
+ * SORTED HERE, NOT BY THE CALLER. Every caller already hands these over sorted
+ * — rollN sorts, the prompts sort, the missile path re-sorts after a flip — but
+ * a pairing that is right only when somebody upstream remembered to sort is a
+ * pairing waiting to go wrong the first time a client posts a roll in the
+ * order it fell. Sorting a sorted roll costs nothing and removes the one way
+ * this function could have paired a 1 against a 5.
+ */
 export function compareRolls(atk: number[], def: number[], atkSixesWin = false): { aLoss: number; dLoss: number } {
-  const pairs = Math.min(atk.length, def.length)
+  const a = [...atk].sort((x, y) => y - x)
+  const d = [...def].sort((x, y) => y - x)
+  const pairs = Math.min(a.length, d.length)
   let aLoss = 0, dLoss = 0
   for (let i = 0; i < pairs; i++) {
-    if (atk[i] > def[i] || (atkSixesWin && atk[i] === 6 && def[i] === 6)) dLoss++
+    if (a[i] > d[i] || (atkSixesWin && a[i] === 6 && d[i] === 6)) dLoss++
     else aLoss++
   }
   return { aLoss, dLoss }

@@ -73,6 +73,20 @@ console.log('\n— the reveal pairing covers all four corners —')
 
 console.log('\n— Unnatural Strength: attacker 6s beat defender 6s —')
 {
+  // THE PAIRING ITSELF, on the round a table disputed (2026-09-06): an
+  // attacker rolling three dice against a defender rolling two pairs its
+  // highest two, and the third die sits out. Read as "2 and 1 against 5 and
+  // 1" the attacker looks to lose both; it rolled 3, 2, 1, and loses one.
+  {
+    const r = compareRolls([3, 2, 1], [5, 1], false)
+    check("three dice against two: highest pairs highest, the third sits out", r.aLoss === 1 && r.dLoss === 1, JSON.stringify(r))
+    const tie = compareRolls([2, 1], [5, 1], false)
+    check("...and with only two attacker dice the 1 v 1 tie goes to the defender", tie.aLoss === 2 && tie.dLoss === 0, JSON.stringify(tie))
+    // Pairing must not depend on the caller having sorted: the same dice in
+    // the order they fell pair identically.
+    const shuffled = compareRolls([1, 3, 2], [1, 5], false)
+    check("the order the dice are handed over in changes nothing", shuffled.aLoss === 1 && shuffled.dLoss === 1, JSON.stringify(shuffled))
+  }
   // The real comparison function, not a description of it.
   check('normally a tied 6 goes to the defender',
     compareRolls([6], [6], false).aLoss === 1 && compareRolls([6], [6], false).dLoss === 0)
