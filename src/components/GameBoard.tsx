@@ -33,6 +33,7 @@ import {
 } from '@/lib/legacyApi'
 import { getScarCard, type ScarCard, MERCENARY_CARD_IDS, BIOHAZARD_CARD_IDS } from '@/data/scarCards'
 import { mergeOwnSecrets, HIDDEN_CARD_ID, type SeatState } from '@/lib/stateView'
+import { handSize, heldHand } from '@/lib/hand'
 import { useBuildPresence } from '@/lib/buildPresence'
 import { BUILD_ID } from '@/lib/buildId'
 import CardHand from './CardHand'
@@ -208,37 +209,8 @@ interface TerritoryHandles {
   flatPoly: number[]
 }
 
-/**
- * How many cards a seat holds, whether or not this machine may see them.
- *
- * THE PROJECTION OMITS OTHER SEATS' HANDS RATHER THAN EMPTYING THEM. Absent
- * means "not yours to look at" and `cardCount` is the honest number; `[]` would
- * have said they hold nothing, which is a different claim and a false one. That
- * is the right shape — but it makes `p.cards.length` a crash for every seat but
- * your own, and the type still says `cards: string[]`, so nothing warns.
- *
- * ANY READER THAT ONLY WANTS THE SIZE MUST COME THROUGH HERE. Your own seat has
- * the array (merged back from its secrets row), everyone else has the count,
- * and offline has the array for everybody — one expression covers all three,
- * and two copies of it drift.
- */
-function handSize(p: { cards?: string[]; cardCount?: number }): number {
-  return Array.isArray(p.cards) ? p.cards.length : (p.cardCount ?? 0)
-}
-
-/**
- * The cards themselves, if this machine holds them — null if it does not.
- *
- * THE READER FOR ANYTHING THAT NEEDS THE IDS rather than the count: a trade-in,
- * a card to play. Online only this seat's own hand is here, plus — on the host
- * — the hands of the computer seats it plays, and those arrive on the secrets
- * channel, which can be a beat behind the turn. Null means NOT HELD, never
- * empty: an empty array is a real hand with nothing in it. A reader that wants
- * ids and finds null skips what it was going to do; it does not throw.
- */
-function heldHand(p: { cards?: string[] }): string[] | null {
-  return Array.isArray(p.cards) ? p.cards : null
-}
+// handSize / heldHand — the two readers of a hand — live in src/lib/hand.ts
+// so that CardHand and anything else can reach them. See the note there.
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
@@ -1304,8 +1276,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       // ever runs on a match old enough to have no server piles — which is a
       // match old enough to still carry every hand inline.
       playerHands: Object.fromEntries(s.players
-        .filter(p => Array.isArray(p.cards))
-        .map(p => [p.id, [...p.cards]])),
+        .flatMap(p => { const held = heldHand(p); return held ? [[p.id, [...held]] as const] : [] })),
     }))
   }
 
@@ -7819,6 +7790,17 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   const fortifySrcTerritory = fortifySrcId ? (gameState.territories[fortifySrcId] ?? null) : null
   const fortifyDstTerritory = fortifyDstId ? (gameState.territories[fortifyDstId] ?? null) : null
 
+  // WHOSE HAND THE CARDS BUTTON AND THE PANEL ARE ABOUT. Hotseat: the player at
+  // the keyboard, who is the current player. Online: THIS MACHINE'S OWN SEAT,
+  // whoever's turn it is. Both were keyed to currentPlayer — right at one
+  // keyboard, and online it put the ACTOR's count on every screen and, when
+  // clicked, opened the actor's hand, which is hidden on every machine but one:
+  // `.map` on undefined, and the board came down (2026-09-06). A watcher with
+  // no seat has no hand and no button.
+  const handOwner = onlineMatch
+    ? (localSeatId ? gameState.players.find(p => p.id === localSeatId) ?? null : null)
+    : currentPlayer
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', background: '#C4A830' }}>
       {/* Missile strikes, over everything and clickable through — the battle
@@ -9442,9 +9424,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
           hand is visible and simply withheld when it is not, rather than
           computed from a hand that is not there. The count below still shows
           for everyone, because the count was always public. */}
-      {currentPlayer && gameState.phase !== 'game-over' && (() => {
-        const myHand = Array.isArray(currentPlayer.cards) ? currentPlayer.cards : null
-        const canTrade = !!myHand && !!findBestTradeIn(myHand) && gameState.phase === 'reinforce'
+      {handOwner && gameState.phase !== 'game-over' && (() => {
+        const myHand = heldHand(handOwner)
+        const myTurn = handOwner.id === currentPlayer?.id
+        const canTrade = !!myHand && !!findBestTradeIn(myHand) && gameState.phase === 'reinforce' && myTurn
         return (
         <button
           onClick={() => setShowCardHand(true)}
@@ -9457,7 +9440,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             backdropFilter: 'blur(6px)', letterSpacing: 0.5,
           }}
         >
-          🃏 Cards ({handSize(currentPlayer)})
+          🃏 Cards ({handSize(handOwner)})
           {canTrade && ' ★'}
         </button>
         )
@@ -9468,7 +9451,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
           the card-hand modal uses. The old inline copy of the buy had no
           guard, no history line, no confirmation — and once double-fired,
           selling one star for four cards and recording two. */}
-      {currentPlayer && gameState.phase === 'reinforce' && (() => {
+      {currentPlayer && handOwner?.id === currentPlayer.id && gameState.phase === 'reinforce' && (() => {
         const hand = cardState.playerHands[currentPlayer.id] ?? []
         const toSpendArr = starPurchaseSelection(hand, id => !!getCoinCard(id))
         if (!toSpendArr) return null
@@ -10445,12 +10428,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       })()}
 
       {/* Card hand overlay */}
-      {showCardHand && currentPlayer && (
+      {showCardHand && handOwner && (
         <CardHand
-          player={currentPlayer}
+          player={handOwner}
           gameState={gameState}
           cardResources={legacyState.cardResources ?? {}}
-          canTradeIn={gameState.phase === 'reinforce'}
+          canTradeIn={gameState.phase === 'reinforce' && handOwner.id === currentPlayer?.id}
           onTradeIn={handleTradeIn}
           onBuyStar={handleBuyStar}
           onClose={() => setShowCardHand(false)}

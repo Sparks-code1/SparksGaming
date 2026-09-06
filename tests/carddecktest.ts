@@ -54,7 +54,7 @@ const draw = (over: object = {}): Action =>
 console.log('\n— a face-up take shifts the row and refills spot 1 —')
 {
   const { state: s, effects } = gameReducer(base(), draw(), rng)
-  check('the card is in the hand', s.players[0].cards.join(',') === 'tc-peru,tc-brazil')
+  check('the card is in the hand', s.players[0].cards!.join(',') === 'tc-peru,tc-brazil')
   check('the row refilled from the deck head',
     s.cards?.sideboard.join(',') === 'tc-china,tc-egypt,tc-ural,tc-siam', s.cards?.sideboard.join(','))
   check('the deck shrank', s.cards?.territoryDeck.join(',') === 'tc-japan')
@@ -71,13 +71,13 @@ console.log('\n— a coin draw takes the TOP of the pile, whatever the client na
   // name a card, and the physical rule was always "draw the top coin". The
   // reducer deals from what it holds and does not consult the id sent.
   const { state: s } = gameReducer(base(), draw({ cardId: 'resource-2', source: 'coin' }), rng)
-  check('the top coin is in the hand', s.players[0].cards.includes('resource-1'))
-  check('...not the one the client named', !s.players[0].cards.includes('resource-2'))
+  check('the top coin is in the hand', s.players[0].cards!.includes('resource-1'))
+  check('...not the one the client named', !s.players[0].cards!.includes('resource-2'))
   check('and the pile lost its head', s.cards?.resourceDeck.join(',') === 'resource-2')
 
   // What the client actually sends now: a placeholder that names no card.
   const { state: p } = gameReducer(base(), draw({ cardId: 'hidden-card', source: 'coin' }), rng)
-  check('a placeholder id draws the top coin just the same', p.players[0].cards.includes('resource-1'))
+  check('a placeholder id draws the top coin just the same', p.players[0].cards!.includes('resource-1'))
 
   // THE FIELD CASE (match 4698930d, seq 180): the client sent the placeholder
   // labelled face-up, because the modal classified by card data and a
@@ -85,7 +85,7 @@ console.log('\n— a coin draw takes the TOP of the pile, whatever the client na
   // so it is a coin draw whatever the label says — the face-up branch would
   // have looked for it in the sideboard and silently drawn nothing.
   const { state: f, effects: fe } = gameReducer(base(), draw({ cardId: 'hidden-card', source: 'face-up' }), rng)
-  check('a placeholder sent as face-up still draws the top coin', f.players[0].cards.includes('resource-1'))
+  check('a placeholder sent as face-up still draws the top coin', f.players[0].cards!.includes('resource-1'))
   check('...and the pile lost its head for it', f.cards?.resourceDeck.join(',') === 'resource-2')
   check('...and the effect calls it a coin', fe.some(e => e.kind === 'card-drawn' && (e as { source?: string }).source === 'coin'))
   // An empty pile deals nothing, rather than an undefined card.
@@ -103,7 +103,7 @@ console.log('\n— the pile is the truth: a taken card cannot be taken again —
   check('a draw of a card in no pile is refused',
     gameReducer(base(), draw({ cardId: 'tc-nowhere' }), rng).state === base() || true)
   const ghost = gameReducer(base(), draw({ cardId: 'tc-nowhere' }), rng)
-  check('…and leaves the state untouched', ghost.state.players[0].cards.join(',') === 'tc-peru')
+  check('…and leaves the state untouched', ghost.state.players[0].cards!.join(',') === 'tc-peru')
 }
 
 console.log('\n— hotseat: no server piles, no reducer card actions —')
@@ -121,7 +121,7 @@ console.log('\n— a trade-in returns coins and discards territory cards —')
   const { state: s, effects } = gameReducer(st, {
     type: 'TRADE_IN_CARDS', playerId: 'p1', cardIds: ['tc-peru', 'resource-9', 'tc-madagascar'],
   } as Action, rng)
-  check('the hand is empty', s.players[0].cards.length === 0)
+  check('the hand is empty', s.players[0].cards!.length === 0)
   check('the coin went back to the pile', s.cards?.resourceDeck.join(',') === 'resource-1,resource-2,resource-9')
   check('territory cards went to the discard', s.cards?.territoryDiscard.join(',') === 'tc-peru,tc-madagascar')
   check('the effect announces it', effects.some(e => e.kind === 'cards-traded'))
@@ -147,10 +147,10 @@ console.log('\n— retro-fit: seeding piles into a pre-migration match —')
   } as Action)
   const { state: s } = gameReducer(old, seed(), rng)
   check('the piles exist afterwards', s.cards?.resourceDeck.join(',') === 'resource-3')
-  check('hands are restored onto the players', s.players[0].cards.join(',') === 'tc-peru,resource-1')
+  check('hands are restored onto the players', s.players[0].cards!.join(',') === 'tc-peru,resource-1')
   check('hands for players not in the match are ignored', s.players.length === 2)
   check('card actions work from then on',
-    gameReducer(s, draw({ cardId: 'resource-3', source: 'coin' }), rng).state.players[0].cards.includes('resource-3'))
+    gameReducer(s, draw({ cardId: 'resource-3', source: 'coin' }), rng).state.players[0].cards!.includes('resource-3'))
 
   // A match that already has piles cannot be re-seeded — racing seeders and
   // echoes are inert.

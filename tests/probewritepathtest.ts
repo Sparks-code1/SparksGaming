@@ -54,7 +54,7 @@ const rng = createMathRng()
 // legacy snapshot leak through.
 {
   const s = probeState('c', 'mk')
-  check('the board carries a hand on each seat', s.players.map(p => p.cards.length), [1, 1])
+  check('the board carries a hand on each seat', s.players.map(p => p.cards!.length), [1, 1])
   check('...and the second copy of them in the legacy snapshot',
     Object.keys((s as unknown as { legacySnapshot: { activeGameCards: { playerHands: object } } })
       .legacySnapshot.activeGameCards.playerHands).sort(), ['p1', 'p2'])

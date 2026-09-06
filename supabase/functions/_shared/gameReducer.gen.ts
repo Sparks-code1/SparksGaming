@@ -856,6 +856,8 @@ function gameReducer(state, action, rng) {
       if (!piles) return only(state);
       const player = state.players.find((p) => p.id === action.playerId);
       if (!player) return only(state);
+      const hand = player.cards;
+      if (!hand) return only(state);
       if (action.source === "face-up" && action.cardId !== HIDDEN_CARD_ID) {
         const at = piles.sideboard.indexOf(action.cardId);
         if (at < 0) return only(state);
@@ -869,7 +871,7 @@ function gameReducer(state, action, rng) {
           state: {
             ...state,
             cards: { ...piles, territoryDeck: deck, sideboard },
-            players: state.players.map((p) => p.id === action.playerId ? { ...p, cards: [...p.cards, action.cardId] } : p)
+            players: state.players.map((p) => p.id === action.playerId ? { ...p, cards: [...hand, action.cardId] } : p)
           },
           effects: [{ kind: "card-drawn", playerId: action.playerId, cardId: action.cardId, source: "face-up", newSpot1Id }]
         };
@@ -880,7 +882,7 @@ function gameReducer(state, action, rng) {
         state: {
           ...state,
           cards: { ...piles, resourceDeck: piles.resourceDeck.slice(1) },
-          players: state.players.map((p) => p.id === action.playerId ? { ...p, cards: [...p.cards, top] } : p)
+          players: state.players.map((p) => p.id === action.playerId ? { ...p, cards: [...hand, top] } : p)
         },
         effects: [{ kind: "card-drawn", playerId: action.playerId, cardId: top, source: "coin", newSpot1Id: null }]
       };
@@ -1175,8 +1177,10 @@ function gameReducer(state, action, rng) {
     case "TRADE_IN_CARDS": {
       const player = state.players.find((p) => p.id === action.playerId);
       if (!player) return only(state);
+      const hand = player.cards;
+      if (!hand) return only(state);
       const ids = [...new Set(action.cardIds)];
-      if (ids.length === 0 || !ids.every((id) => player.cards.includes(id))) return only(state);
+      if (ids.length === 0 || !ids.every((id) => hand.includes(id))) return only(state);
       const coins = ids.filter((id) => id.startsWith("resource-"));
       const territory = ids.filter((id) => !coins.includes(id));
       const res = state.legacySnapshot?.cardResources;
@@ -1196,7 +1200,7 @@ function gameReducer(state, action, rng) {
             resourceDeck: [...piles.resourceDeck, ...coins],
             territoryDiscard: [...piles.territoryDiscard, ...territory]
           },
-          players: state.players.map((p) => p.id === action.playerId ? { ...p, cards: p.cards.filter((id) => !ids.includes(id)) } : p)
+          players: state.players.map((p) => p.id === action.playerId ? { ...p, cards: hand.filter((id) => !ids.includes(id)) } : p)
         },
         effects: [{ kind: "cards-traded", playerId: action.playerId, cardIds: ids }]
       };
@@ -1227,14 +1231,16 @@ function gameReducer(state, action, rng) {
       const mutant = state.players.find((p) => p.id === action.playerId);
       const victim = state.players.find((p) => p.id === action.victimId);
       if (!mutant || !victim || mutant.id === victim.id) return only(state);
-      if (!mutant.cards.includes(action.coinCardId)) return only(state);
-      if (!victim.cards.includes(action.stolenCardId)) return only(state);
+      const mutantHand = mutant.cards, victimHand = victim.cards;
+      if (!mutantHand || !victimHand) return only(state);
+      if (!mutantHand.includes(action.coinCardId)) return only(state);
+      if (!victimHand.includes(action.stolenCardId)) return only(state);
       const swap = (p) => p.id === action.playerId ? {
         ...p,
-        cards: [...p.cards.filter((id) => id !== action.coinCardId), action.stolenCardId]
+        cards: [...mutantHand.filter((id) => id !== action.coinCardId), action.stolenCardId]
       } : p.id === action.victimId ? {
         ...p,
-        cards: [...p.cards.filter((id) => id !== action.stolenCardId), action.coinCardId]
+        cards: [...victimHand.filter((id) => id !== action.stolenCardId), action.coinCardId]
       } : p;
       return { state: { ...state, players: state.players.map(swap) }, effects: [] };
     }
@@ -1449,13 +1455,13 @@ function applyCombatOutcome(state, action) {
     }
     const eliminatedIds = players.filter((p) => !p.isEliminated && !Object.values(territories).some((t) => t.occupyingPlayerId === p.id)).map((p) => p.id);
     if (eliminatedIds.length > 0) {
-      const capturedCards = players.filter((p) => eliminatedIds.includes(p.id)).flatMap((p) => p.cards);
+      const capturedCards = players.filter((p) => eliminatedIds.includes(p.id)).flatMap((p) => p.cards ?? []);
       knockedOutRich = capturedCards.some(
         (id) => cardCoinValue(state.legacySnapshot?.cardResources, id) >= 3
       );
       players = players.map((p) => {
         if (eliminatedIds.includes(p.id)) return { ...p, isEliminated: true, cards: [] };
-        if (p.id === attackerId) return { ...p, cards: [...p.cards, ...capturedCards] };
+        if (p.id === attackerId) return { ...p, cards: [...p.cards ?? [], ...capturedCards] };
         return p;
       });
       effects.push({ kind: "players-eliminated", playerIds: eliminatedIds, byPlayerId: attackerId, capturedCardIds: capturedCards });

@@ -67,8 +67,10 @@ console.log('\n— the hook holds every seat this machine plays —')
 console.log('\n— the computer trade-in reads a hand it holds, or none —')
 {
   const board = bare(readFileSync('src/components/GameBoard.tsx', 'utf8'))
+  // heldHand moved to src/lib/hand.ts on 2026-09-06 so CardHand could reach it.
+  const hand = bare(readFileSync('src/lib/hand.ts', 'utf8'))
   check('heldHand is null for a hand this machine does not hold — never []',
-    /function heldHand\(p: \{ cards\?: string\[\] \}\): string\[\] \| null \{\s*return Array\.isArray\(p\.cards\) \? p\.cards : null/.test(board), true)
+    /export function heldHand\(p: \{ cards\?: string\[\]; cardCount\?: number \}\): string\[\] \| null \{\s*return Array\.isArray\(p\.cards\) \? p\.cards : null/.test(hand), true)
   check('the computer trade-in reads through it', /const hand = heldHand\(cp\)/.test(board), true)
   check('...never cp.cards directly', /aiTradeInDecision\(cp\.cards/.test(board), false)
   check('...and a hand not held is a skipped trade, not a crash',

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Player } from '@/types/player'
+import { handSize, heldHand } from '@/lib/hand'
 import { getTerritoryCard, getMissionCard, getCoinCard, checkMissionComplete, coinTradeInTroops } from '@/data/cards'
 import type { GameState } from '@/types/game'
 import { TERRITORY_DEFINITIONS } from '@/data/territoryData'
@@ -39,7 +40,32 @@ export default function CardHand({ player, gameState, cardResources, canTradeIn,
   // Cards animating out of the hand after a trade-in / star purchase
   const [leavingIds, setLeavingIds] = useState<Set<string>>(new Set())
 
-  const allCardIds = player.cards
+  // THROUGH heldHand, NOT player.cards. This was `player.cards.map(...)` on a
+  // hand this machine did not hold — the parent keyed the panel to the acting
+  // seat, so every other screen that opened it mapped over nothing and the
+  // whole board came down (2026-09-06, the fifth site of that shape). The
+  // parent now keys the panel to this machine's own seat; this is the guard
+  // for whatever keys it wrong next.
+  const held = heldHand(player)
+  if (!held) {
+    const n = handSize(player)
+    return (
+      <DraggableResizable
+        title={`🃏 ${player.name}'s Cards`}
+        accentColor="#C8940A"
+        width={360}
+        height={150}
+        storageKey="card-hand"
+        zIndex={1000}
+        onClose={onClose}
+      >
+        <div style={{ fontSize: 12, color: '#c8b080', lineHeight: 1.5 }}>
+          {player.name} holds {n} card{n === 1 ? '' : 's'}. Their hand is not visible on this machine — only your own is.
+        </div>
+      </DraggableResizable>
+    )
+  }
+  const allCardIds = held
   const territoryCards = allCardIds
     .map(id => ({ id, card: getTerritoryCard(id) }))
     .filter((x): x is { id: string; card: NonNullable<ReturnType<typeof getTerritoryCard>> } => x.card !== null && x.card !== undefined)

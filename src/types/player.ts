@@ -15,7 +15,14 @@ export interface Player {
 
   // per-game state
   troops: number          // troops available to place this turn
-  cards: string[]         // territory card ids in hand
+  /**
+   * Card ids in hand — PRESENT ONLY FOR HANDS THIS MACHINE HOLDS. Online every
+   * seat but your own (and, on the host, the computer seats) arrives with a
+   * cardCount and no array; hotseat has the array for everybody. Read it through
+   * handSize/heldHand in src/lib/hand.ts, never bare: the type being required
+   * is how five readers in a row compiled clean and crashed a real board.
+   */
+  cards?: string[]
   missionCardId: string | null   // secret mission card for this campaign game
   isEliminated: boolean
   /** True if they used their Join the War option this game (can't rejoin again) */

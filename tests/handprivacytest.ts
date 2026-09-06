@@ -131,7 +131,7 @@ check('hotseat keeps every mission', hot.map(p => p.missionCardId),
 // The server holds the real state; a view is a copy. If projecting edited it in
 // place, the seat projected first would strip the hands for everyone after.
 check('the source state still holds every hand after projecting',
-  state.players.map(p => p.cards.length), [2, 4, 0])
+  state.players.map(p => p.cards!.length), [2, 4, 0])
 
 // ── the shared row: nobody's hand, everybody's count ───────────────────────
 // The projection the leak actually turns on. matches.state is ONE record
@@ -152,7 +152,7 @@ check('the source state still holds every hand after projecting',
   check('and no seat can find a foreign secret in it',
     ['p1', 'p2', 'p3'].map(id => leaksOtherSeatsSecrets(shared, id)), [false, false, false])
   check('the source state is not mutated by projecting it',
-    state.players.map(p => p.cards.length), [2, 4, 0])
+    state.players.map(p => p.cards!.length), [2, 4, 0])
 
   // THE SECOND COPY. Everything above is about players[]; this is the same hands
   // again, one level down, and stripping one without the other strips nothing.
@@ -223,7 +223,7 @@ check('the source state still holds every hand after projecting',
 {
   const legacy = hydrateState(state as unknown as SeatState, {}, {})
   check('a pre-split row hydrates from its inline hands',
-    legacy.players.map(p => p.cards.length), [2, 4, 0])
+    legacy.players.map(p => p.cards!.length), [2, 4, 0])
 }
 
 // ── the client puts back its own, and only its own ────────────────────────
@@ -432,8 +432,8 @@ console.log('--- the display mirror reads a projected board ---')
   // 2200-char window stopped short of it.
   const fn = at < 0 ? '' : board.slice(at, board.indexOf('\n  }\n', at))
 
-  check('the mirror carries only the seats it can see',
-    /\.filter\(p => Array\.isArray\(p\.cards\)\)/.test(fn), true)
+  check('the mirror carries only the seats it can see — through heldHand, absent not empty',
+    /const held = heldHand\(p\); return held \? \[\[p\.id, \[\.\.\.held\]\] as const\] : \[\]/.test(fn), true)
   check('...and no longer spreads every seat\'s hand',
     /s\.players\.map\(p => \[p\.id, \[\.\.\.p\.cards\]\]\)/.test(fn), false)
 
@@ -471,17 +471,25 @@ console.log('--- a hand you cannot see still has a size ---')
 {
   const board = readFileSync('src/components/GameBoard.tsx', 'utf8')
 
+  // The readers moved to src/lib/hand.ts on 2026-09-06 so a component in
+  // another file can reach them — the fifth site of this shape was CardHand.
+  const hand = readFileSync('src/lib/hand.ts', 'utf8')
   check('handSize takes the array when there is one and the count when there is not',
-    /function handSize\([\s\S]{0,240}?Array\.isArray\(p\.cards\) \? p\.cards\.length : \(p\.cardCount \?\? 0\)/
-      .test(board), true)
+    /export function handSize\([\s\S]{0,240}?Array\.isArray\(p\.cards\) \? p\.cards\.length : \(p\.cardCount \?\? 0\)/
+      .test(hand), true)
+  check('...and the board imports it rather than keeping a copy',
+    /import \{ handSize, heldHand \} from '@\/lib\/hand'/.test(board) && !/^function handSize\(/m.test(board), true)
 
   // BOTH SITES THROUGH THE ONE READER. Pinned as the sites rather than as a
   // ban on the expression, because the guarded ternary form elsewhere is
   // correct and a blanket rule would have to call it a failure.
   check('the strip beside the board counts through handSize',
     /const held = handSize\(player\)/.test(board), true)
-  check('...and so does the Cards button',
-    /Cards \(\{handSize\(currentPlayer\)\}\)/.test(board), true)
+  // The button counts the hand this MACHINE holds — its own seat online, the
+  // current player at one keyboard — never the acting seat (2026-09-06: every
+  // screen showed the actor's count, and opening it mapped a hidden hand).
+  check('...and so does the Cards button, for the hand this machine holds',
+    /Cards \(\{handSize\(handOwner\)\}\)/.test(board) && !/handSize\(currentPlayer\)/.test(board), true)
   check('...and neither takes .length off a seat it may not be able to see',
     /\bplayer\.cards\.length|\bcurrentPlayer\.cards\.length/.test(board), false)
 }

@@ -12,6 +12,7 @@
  */
 import type { GameState } from '@/types/game'
 import type { Player } from '@/types/player'
+import { handSize } from '@/lib/hand'
 
 /**
  * A player as a seat sees them.
@@ -164,7 +165,7 @@ const withoutCounts = <T extends Record<string, unknown>>(piles: T): T => {
  */
 const withoutSecrets = (p: Player): SeatPlayer => {
   const { cards: _cards, missionCardId: _mission, ...rest } = p
-  return { ...rest, cardCount: p.cards.length }
+  return { ...rest, cardCount: handSize(p) }
 }
 
 /**
@@ -263,7 +264,9 @@ export function secretsFromState(state: GameState): Record<string, SeatSecrets> 
   const hands = legacyHands(state)
   const missions = legacyMissions(state)
   return Object.fromEntries(state.players.map(p => [p.id, {
-    cards: p.cards,
+    // A state that carries no hand for a seat cannot be split into secrets:
+    // writing an empty row would turn "not loaded" into "holds nothing".
+    cards: p.cards ?? (() => { throw new Error(`secretsFromState: seat ${p.id} carries no hand`) })(),
     missionCardId: p.missionCardId,
     legacyHand: hands[p.id] ?? [],
     legacyMission: missions[p.id] ?? null,
