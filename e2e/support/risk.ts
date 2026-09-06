@@ -321,9 +321,45 @@ export async function onBoard(page: Page): Promise<boolean> {
   // word alone is true on the ability screen and the walk would stop three
   // screens early. The board is the only screen in the app that draws to a
   // canvas: setup's map is an SVG of polygons, and every other screen is text.
-  if (!(await page.locator('canvas').count())) return false
+  // AND A MAP THAT HAS PAINTED. The board's shapes come from one SVG asset the
+  // page fetches; the fills, the troop markers and the Pixi hit areas are all
+  // built from it. A board whose asset never arrived, or whose hit canvas
+  // never mounted, is a grey world under a roster that still counts holdings,
+  // and a click on it goes nowhere. Three runs on 2026-09-06 failed exactly
+  // that way inside draftableTerritory and were reported as a game refusing
+  // troops. It is not a board yet — and paintReport says which part is missing.
+  const paint = await paintReport(page)
+  if (!paint.assetShapes || !paint.hitCanvas) return false
   return (await page.locator('text=/\\b(draft|attack|fortify|reinforce)\\b/i')
     .count()) > 0
+}
+
+/**
+ * What the board's map layers have actually drawn.
+ *
+ * THE DIFFERENCE BETWEEN A GAME THAT REFUSED AND A CANVAS THAT NEVER PAINTED.
+ * The roster strip is HTML and counts holdings out of game state; the map is
+ * three layers built from one fetched SVG asset — the fill overlay (the asset
+ * itself, injected as #risk-board-wiki-svg), the troop markers (an SVG of
+ * its own) and the Pixi hit canvas. Holdings on the strip and none on the
+ * map is an asset or a canvas that never arrived, not a rule.
+ */
+export async function paintReport(page: Page): Promise<{
+  painted: boolean; assetShapes: number; hitCanvas: number; markers: number; holdings: number; detail: string
+}> {
+  const r = await page.evaluate(() => {
+    const asset = document.querySelector('#risk-board-wiki-svg')
+    const assetShapes = asset ? asset.querySelectorAll('path, polygon').length : 0
+    const hitCanvas = document.querySelectorAll('div[style*="z-index: 3"] canvas').length
+    const markers = Array.from(document.querySelectorAll('svg[style*="z-index: 5"] text'))
+      .filter(t => /^\d+$/.test((t.textContent ?? '').trim())).length
+    return { assetShapes, hitCanvas, markers }
+  })
+  const held = Object.values(await holdings(page)).reduce((n, h) => n + h.territories, 0)
+  const painted = r.assetShapes > 0 && r.hitCanvas > 0 && (held === 0 || r.markers > 0)
+  const detail = `asset ${r.assetShapes} shapes · hit canvas ${r.hitCanvas ? 'present' : 'ABSENT'}`
+    + ` · ${r.markers} troop markers for ${held} holdings on the strip`
+  return { painted, ...r, holdings: held, detail }
 }
 
 /**
@@ -346,7 +382,10 @@ async function settles(page: Page, tries = 12): Promise<boolean> {
 // and want the same "here is what the screen actually said" tail.
 export async function where(page: Page): Promise<string> {
   const said = (await page.locator('body').innerText()).slice(0, 200)
+  // The map line is what tells an unpainted board from a game that refused.
+  const paint = await paintReport(page).catch(() => null)
   return `screen said:\n${said}\nbuttons: ${(await pressable(page)).join(' | ')}`
+    + `\nmap: ${paint ? paint.detail : 'unreadable'}`
 }
 
 /**
@@ -453,6 +492,12 @@ export async function draftableTerritory(
     await clickTerritory(page, id)
     const now = await toPlace(page)
     if (now < owed) return { id, owed: now }
+  }
+  const paint = await paintReport(page)
+  if (!paint.painted) {
+    throw new Error('the board never painted — ' + paint.detail + '. That is the environment'
+      + ' (the map asset or the hit canvas), not a game refusing troops.'
+      + `\n${await where(page)}`)
   }
   throw new Error('no territory on the map accepted a reinforcement.'
     + ' Either this seat owns nothing, or the map point maths is wrong.'

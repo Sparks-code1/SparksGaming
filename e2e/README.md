@@ -132,6 +132,27 @@ because Risk's screens carry no `data-` hooks the way Dune's grew them — a spe
 that finds a control the way a player finds it fails when a player would be
 lost, which is the right moment to fail.
 
+### A board that never painted is not a game refusing troops
+
+Three full-suite runs on 2026-09-06 failed the same way in the two-seat
+online spec: `draftableTerritory` swept the whole map and reported "no
+territory accepted a reinforcement" — with both screenshots showing a grey
+world under a roster strip still counting each seat's HQ, the sweep ending on
+"New Guinea, Unclaimed". Each passed alone. The strip is HTML and counts
+holdings out of game state; the map is three layers built from one fetched
+SVG asset (`/Risk_board_wiki.svg`, injected as `#risk-board-wiki-svg`): the
+fill overlay, the troop markers, and the Pixi hit areas. A state with holdings
+and a map with none is an asset or a canvas that never arrived, and a click on
+it goes nowhere.
+
+`paintReport` reads what the layers actually drew — asset shapes, the hit
+canvas inside the `z-index: 3` layer, numeric troop markers in the `z-index:
+5` SVG against the strip's holdings. `onBoard` now needs the asset and the hit
+canvas before it calls a screen a board, `where()` carries a `map:` line on
+every failure, and `draftableTerritory` says "the board never painted" with
+that line before it will blame the game. Proven by withholding the asset with
+`page.route(..., abort)`: the walk fails naming `asset 0 shapes`.
+
 ### Two maps, and they are not the same map
 
 Setup's HQ picker is an **SVG**, one `<polygon>` per territory, each carrying a
