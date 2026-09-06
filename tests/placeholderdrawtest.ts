@@ -62,6 +62,17 @@ console.log('\n— the board: one placeholder off the local pile, and a held ech
   check('...never a filter by id, which empties a pile of placeholders',
     /resourceDeck = resourceDeck\.filter\(id => id !== cardId\)/.test(board), false)
 
+  const stateAt = board.indexOf('onState: (state, version) => {')
+  const onState = stateAt < 0 ? '' : board.slice(stateAt, stateAt + 1600)
+  check('the wire handler was found', stateAt > 0, true)
+  check('a wire board waits while this seat\'s own actions are in flight, for a bounded time',
+    /if \(onlinePostsPending\.current > 0 && Date\.now\(\) - flightSinceRef\.current < HOLD_BOARD_MS\) \{\s*heldBoardRef\.current = true[\s\S]{0,200}?return/.test(onState), true)
+  check('...and the bound is a real number of seconds, not a debug value',
+    /const HOLD_BOARD_MS = 8_000/.test(board), true)
+  check('a thrown POST re-reads the row if a board was held on its account',
+    /if \(heldBoardRef\.current && isLast\(\)\) \{\s*heldBoardRef\.current = false\s*const row = await loadMatchState\(matchId\)/.test(board), true)
+  check('...and every settled response releases the hold',
+    (board.match(/heldBoardRef\.current = false/g) ?? []).length, 3)
 }
 
 console.log(pass ? '\nall placeholder-draw pins hold' : '\nFAILED')

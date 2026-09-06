@@ -713,3 +713,68 @@ export async function reopen(page: Page, world: string): Promise<void> {
   await page.locator('button').nth(at).click()
   await page.waitForTimeout(BEAT)
 }
+
+/**
+ * Place n troops on one territory as fast as the mouse can, then watch the
+ * player's troop total on the roster strip for a while: it must never DIP.
+ *
+ * THE STRIP, NOT THE DRAFT PILL. The pill is drawn from a local troops
+ * counter the wire state does not overwrite mid-turn, so it cannot show a
+ * rewind — the first probe watched it and saw nothing with the hold off. The
+ * strip sums the board's own territories, which the wire state replaces, and
+ * that is where the table saw the count step back.
+ *
+ * A count that goes back up is the acting screen taking a board from the wire
+ * that is newer than anything it applied and still older than its own last
+ * placement — the echo of placement N landing on the socket before N's POST
+ * response, with N+1 already applied optimistically. The table saw it as a
+ * brief rewind while placing (2026-09-06).
+ *
+ * THE ORDERING IS FORCED, NOT HOPED FOR. On loopback the local edge function
+ * answers before realtime delivers the echo, so the transport drops the echo
+ * and the race the table loses is never run here — an unforced burst passed
+ * with the hold switched off, proving nothing. So for the length of the
+ * burst the POST response is held back on this page (the request still
+ * reaches the server at once; only its answer is late), which puts the echo
+ * first every time. `slowPostMs` is that delay.
+ */
+export async function placeBurst(
+  page: Page, territoryId: string, n: number,
+  opts: { name: string; watchMs?: number; slowPostMs?: number },
+): Promise<{ rewound: boolean; seen: number[] }> {
+  const watchMs = opts.watchMs ?? 2500
+  const slowPostMs = opts.slowPostMs ?? 1500
+  // HANDLERS ARE WAITED FOR BEFORE THE ROUTE COMES OFF. Unrouting while one
+  // is still holding a response back leaves it to fulfil a route Playwright
+  // has already let go — "Route is already handled" — and the placement
+  // behind it dies, which is a different failure from the one being proven.
+  const inflight = new Set<Promise<void>>()
+  const late = async (route: import('@playwright/test').Route) => {
+    const work = (async () => {
+      const res = await route.fetch()
+      await new Promise(r => setTimeout(r, slowPostMs))
+      await route.fulfill({ response: res })
+    })()
+    inflight.add(work)
+    try { await work } finally { inflight.delete(work) }
+  }
+  await page.route('**/functions/v1/apply-action', late)
+  try {
+    const { x, y } = await territoryPoint(page, territoryId)
+    for (let i = 0; i < n; i++) await page.mouse.click(x, y)
+    const seen: number[] = []
+    let high = -Infinity, rewound = false
+    for (const until = Date.now() + watchMs; Date.now() < until;) {
+      const now = (await holdings(page))[opts.name.toLowerCase()]?.troops ?? -1
+      if (now < 0) { await page.waitForTimeout(50); continue }
+      seen.push(now)
+      if (now < high) rewound = true
+      high = Math.max(high, now)
+      await page.waitForTimeout(50)
+    }
+    return { rewound, seen }
+  } finally {
+    await Promise.allSettled([...inflight])
+    await page.unroute('**/functions/v1/apply-action', late)
+  }
+}

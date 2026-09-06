@@ -345,6 +345,33 @@ it needed on the way:
   `[privacy]` console line on either screen — the guest must not receive the
   computer's row.
 
+The first human turn of that spec also places in a **burst** — two clicks on
+one territory before the first has landed — and then watches that player's
+troop total on the roster strip for a couple of seconds: it must never dip
+(`placeBurst`). A dip is the acting screen taking a board off the socket that
+is newer than anything it applied and still older than its own last placement:
+the echo of placement N arriving before N's POST response, with N+1 already
+applied optimistically. That is the "brief rewind while placing" the table
+reported on 2026-09-06.
+
+Two things it took to make that check bite, both worth knowing:
+
+- **The ordering has to be forced.** On loopback the local edge function
+  answers before realtime delivers the echo, so the transport drops the echo
+  and the race is never run — an unforced burst passed with the hold switched
+  off, proving nothing. For the length of the burst the POST response is held
+  back on the acting page (`route.fetch` + wait + `fulfill`; the request still
+  reaches the server at once), which puts the echo first every time. The spec
+  also asserts the acting page logged `[Sync] holding board`, so a burst that
+  never reached the race cannot pass by accident.
+- **Probe the strip, not the pill.** The draft pill is drawn from a local
+  troops counter the wire state does not overwrite mid-turn, so it cannot show
+  a rewind; the first probe watched it and saw nothing with the hold off. The
+  roster strip sums the board's territories, which the wire state replaces.
+
+With the hold in `onState` switched off the spec fails naming the counts it
+saw — `11,11,10,10,…,10,11,11` — and with it on they never dip.
+
 That last assertion found a second thing: the host's wire check fired on every
 mount, at **v0**. `startLobby` wrote the opening position raw into the row —
 every seat's hand inline (`cards: []` at that point, but present, and the check

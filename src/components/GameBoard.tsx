@@ -390,8 +390,14 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
    * while the actor's screen showed eight troops.
    */
   const onlinePostQueue = useRef(new SerialQueue()).current
+  /** How long a wire board waits on this seat's own in-flight actions, at most. */
+  const HOLD_BOARD_MS = 8_000
   /** Actions queued or in flight — board echoes are skipped until the last. */
   const onlinePostsPending = useRef(0)
+  /** A wire board was held back while own actions were in flight (see onState). */
+  const heldBoardRef = useRef(false)
+  /** When the current run of in-flight actions began — the hold is bounded by it. */
+  const flightSinceRef = useRef(0)
 
   const dispatchOnlineRef = useRef(async (action: Action) => {
     if (!onlineMatchRef.current) { dispatchRef.current(action); return }
@@ -402,6 +408,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     const predictable = action.type !== 'DECLARE_ATTACK'
     if (predictable) dispatchRef.current(action)
 
+    if (onlinePostsPending.current === 0) flightSinceRef.current = Date.now()
     onlinePostsPending.current++
     await onlinePostQueue.run(matchId, async () => {
       try {
@@ -426,6 +433,22 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
           // never look like an action that landed.
           console.error('[Online] dispatch threw for', action.type, e)
           showWeaknessNoticeRef.current(`⚠ ${action.type} was not sent to the server: ${String(e)}`)
+          // A board held back while this was in flight (see onState) is truth
+          // this screen has not seen, and no response is coming to settle it.
+          // Read the row outright — the transport has already counted that
+          // version as applied, so a resync would drop it.
+          if (heldBoardRef.current && isLast()) {
+            heldBoardRef.current = false
+            const row = await loadMatchState(matchId).catch(() => null)
+            if (row) {
+              gameStateRef.current = row.state
+              setGameState(row.state)
+              mirrorServerCardsRef.current(row.state)
+              onlineMatchRef.current = { matchId, version: row.version }
+              setOnlineMatch(onlineMatchRef.current)
+              matchSyncRef.current?.noteApplied(row.version)
+            }
+          }
           return
         }
         if (result.error) {
@@ -452,6 +475,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             }
           }
           if (authoritative && isLast()) {
+            heldBoardRef.current = false
             gameStateRef.current = authoritative
             setGameState(authoritative)
             mirrorServerCardsRef.current(authoritative)
@@ -469,6 +493,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
           matchSyncRef.current?.noteActionApplied(result.seq)
         }
         if (isLast()) {
+          heldBoardRef.current = false
           gameStateRef.current = result.state
           setGameState(result.state)
           mirrorServerCardsRef.current(result.state)
@@ -7712,6 +7737,24 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         const held = onlineMatchRef.current?.version ?? -1
         if (version < held) {
           console.warn(`[Sync] refusing state v${version} — this screen is at v${held}`)
+          return
+        }
+        // ── NOT WHILE THIS SEAT'S OWN ACTIONS ARE IN FLIGHT ──────────────────
+        // The transport drops the echo of an action whose POST response has
+        // already come back. On a fast socket the echo comes FIRST — and it is
+        // then a legitimately newer board that predates every placement made
+        // optimistically since, so applying it stepped the acting screen back
+        // a troop until the next response landed and put it right. The comment
+        // on onlinePostsPending always promised that echoes wait for the last
+        // response; the responses kept the promise and this path did not. The
+        // last response settles the board (isLast); a POST that throws instead
+        // re-reads the row. Watchers have nothing in flight and are untouched.
+        // BOUNDED: a POST has no timeout, and a hung one must not also stop the
+        // rest of the table's moves from showing — past the bound the board is
+        // taken, rewind and all, which is the old behaviour.
+        if (onlinePostsPending.current > 0 && Date.now() - flightSinceRef.current < HOLD_BOARD_MS) {
+          heldBoardRef.current = true
+          console.info(`[Sync] holding board v${version} — ${onlinePostsPending.current} own action(s) in flight`)
           return
         }
         gameStateRef.current = state

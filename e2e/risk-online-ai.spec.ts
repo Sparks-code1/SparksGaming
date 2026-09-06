@@ -3,7 +3,7 @@ import {
   openSeat, hostCampaign, joinByCode, startFromLobby, bothAgreeItIs, closeSeats, seatComputers,
   settleOnto, type Seat,
 } from './support/online'
-import { onBoard, whoseTurn, passTurn, where } from './support/risk'
+import { onBoard, whoseTurn, passTurn, where, toPlace, draftableTerritory, placeBurst } from './support/risk'
 
 test.setTimeout(420_000)
 
@@ -33,6 +33,13 @@ test('a computer seat takes its turn on the host without taking the host down', 
     // as a privacy failure, and the guest did not create this match.
     const unheld: string[] = []
     host.page.on('console', m => { if (/is not held on this machine/.test(m.text())) unheld.push(m.text()) })
+    // The hold announcing itself on a seat's console is the proof the burst
+    // reached the race at all; a burst that never did proves nothing.
+    const holds = new Map<Seat, string[]>()
+    for (const s of seats) {
+      holds.set(s, [])
+      s.page.on('console', m => { if (m.text().includes('[Sync] holding board')) holds.get(s)!.push(m.text()) })
+    }
     const leaks: string[] = []
     for (const s of [host, guest]) s.page.on('console', m => { if (m.text().includes('[privacy]')) leaks.push(s.name + ': ' + m.text()) })
 
@@ -74,7 +81,7 @@ test('a computer seat takes its turn on the host without taking the host down', 
     // the host once the guest has acted. That was the table order reported:
     // the guest, then the host, then the computer on the host screen.
     const order: string[] = []
-    let guestPassed = false, computerPlayed = false
+    let guestPassed = false, computerPlayed = false, burstDone = false
     for (let step = 0; step < 8 && !computerPlayed; step++) {
       await standing()
       const now = await whoseTurn(host.page)
@@ -82,7 +89,18 @@ test('a computer seat takes its turn on the host without taking the host down', 
       if (human(now)) {
         const s = seats.find(x => x.name.toLowerCase() === now!.toLowerCase())!
         await bothAgreeItIs(seats, now!)
-        await passTurn(s.page)
+        // THE FIRST HUMAN TURN PLACES IN A BURST and watches its own pill: two
+        // clicks before the first has landed, then the count must only fall.
+        let hint: string | undefined
+        if (!burstDone && (await toPlace(s.page)) >= 3) {
+          const spot = await draftableTerritory(s.page)
+          const burst = await placeBurst(s.page, spot.id, 2, { name: s.name })
+          expect(burst.rewound, s.name + ' saw its own troops rewind while placing: ' + burst.seen.join(',')).toBe(false)
+          expect(holds.get(s)!.length, s.name + "'s burst never reached the hold — the echo did not beat the response, so nothing was proven").toBeGreaterThan(0)
+          hint = spot.id
+          burstDone = true
+        }
+        await passTurn(s.page, hint)
         await settleAway(now!)
         if (s === guest) guestPassed = true
         continue
