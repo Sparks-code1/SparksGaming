@@ -427,3 +427,32 @@ export async function seatComputers(host: Seat, n: number): Promise<void> {
   await expect(host.page.locator('text=🤖').first(),
     'no computer seat appeared at the table').toBeVisible({ timeout: 15_000 })
 }
+
+/**
+ * Put a coin card into a seat's hand, by the only door there is.
+ *
+ * Hands live in match_secrets, which no client may write; the service role
+ * may. The seat learns of it the way it learns of every draw — its own row
+ * changes, the changefeed delivers it, the board merges it — so what a spec
+ * then sees on the Cards button and in the panel is the real path, minus the
+ * capture that would otherwise be needed to earn a draw. The server keeps it:
+ * every write rebuilds the rows from the state it hydrated from these rows.
+ */
+export async function dealCoinTo(seat: Seat, cardId = 'resource-1'): Promise<void> {
+  const stack = readStack()
+  const admin = createClient(stack.api, stack.service, { auth: { persistSession: false } })
+  const { data: seats, error: sErr } = await admin.from('match_players')
+    .select('match_id, player_id, matches!inner(created_at, status)').eq('user_id', seat.userId)
+  if (sErr) throw new Error('could not find the seat: ' + sErr.message)
+  const rows = (seats ?? []) as unknown as Array<{ match_id: string; player_id: string; matches: { created_at: string; status: string } }>
+  const live = rows.filter(r => r.matches.status === 'active').sort((a, b) => b.matches.created_at.localeCompare(a.matches.created_at))[0]
+  if (!live) throw new Error(seat.name + ' has no active match to be dealt into')
+  const { data: row, error: rErr } = await admin.from('match_secrets').select('data')
+    .eq('match_id', live.match_id).eq('player_id', live.player_id).single()
+  if (rErr || !row) throw new Error('no secrets row for ' + seat.name + ': ' + (rErr?.message ?? 'none'))
+  const data = row.data as { cards?: string[] }
+  const cards = [...(data.cards ?? []), cardId]
+  const { error: wErr } = await admin.from('match_secrets').update({ data: { ...data, cards } })
+    .eq('match_id', live.match_id).eq('player_id', live.player_id)
+  if (wErr) throw new Error('could not deal to ' + seat.name + ': ' + wErr.message)
+}

@@ -55,7 +55,7 @@ export default function CardHand({ player, gameState, cardResources, canTradeIn,
         accentColor="#C8940A"
         width={360}
         height={150}
-        storageKey="card-hand"
+        storageKey="card-hand-hidden"
         zIndex={1000}
         onClose={onClose}
       >

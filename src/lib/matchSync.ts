@@ -82,7 +82,9 @@ export interface SyncTransport {
   open(
     matchId: string,
     onRow: (row: MatchRow) => void,
-    onAction: (action: Action, effects: Effect[], seq: number) => void,
+    /** `own` is true for a row this session's user authored — its own seat's
+     *  actions and, on the host, the computer's. See applyAction. */
+    onAction: (action: Action, effects: Effect[], seq: number, own?: boolean) => void,
     onStatus: (status: 'subscribed' | 'error' | 'closed', message?: string) => void,
   ): () => void
   /** Read the row as it stands right now. */
@@ -93,7 +95,7 @@ export interface SyncTransport {
    * RLS-filtered socket drops every event without an error), and dice a
    * spectator never receives are a battle that — for them — never happened.
    */
-  fetchActions(matchId: string, afterSeq: number): Promise<Array<{ action: Action; effects: Effect[]; seq: number }>>
+  fetchActions(matchId: string, afterSeq: number): Promise<Array<{ action: Action; effects: Effect[]; seq: number; own?: boolean }>>
   /** Wall clock, injectable so tests do not sleep. */
   setTimer(fn: () => void, ms: number): unknown
   clearTimer(handle: unknown): void
@@ -196,10 +198,18 @@ export function startMatchSync(
 
   /** Apply one action at most once, in order — shared by the live channel and
    *  the poll, so however a message arrives it cannot arrive twice. */
-  const applyAction = (action: Action, effects: Effect[], seq: number) => {
+  const applyAction = (action: Action, effects: Effect[], seq: number, own = false) => {
     if (stopped) return
-    if (seq <= actionApplied) return        // own echo or duplicate — drop it
+    if (seq <= actionApplied) return        // duplicate, or already applied — drop it
     actionApplied = seq
+    // AN ACTION THIS SESSION AUTHORED HAS HAD ITS EFFECTS HERE ALREADY — in the
+    // optimistic apply, or from its own POST response (DECLARE_ATTACK). The
+    // sequence guard above catches the echo of a response that has come back;
+    // on a fast socket the echo comes FIRST, passes as unseen, and ran the
+    // effects a second time — the computer's fortify animated twice on the host
+    // (2026-09-06). Authorship is the fact, not timing: an own row advances the
+    // sequence and runs nothing.
+    if (own) return
     handlers.onAction?.(action, effects, seq)
   }
 
@@ -251,7 +261,7 @@ export function startMatchSync(
       // joiner is caught up by the STATE, never by a replay of the log.
       if (actionApplied >= 0) {
         const missed = await transport.fetchActions(matchId, actionApplied)
-        for (const a of missed) applyAction(a.action, a.effects, a.seq)
+        for (const a of missed) applyAction(a.action, a.effects, a.seq, a.own)
       }
       publish({ lastSyncAt: Date.now() })
     } catch (e) {
@@ -296,9 +306,25 @@ export function startMatchSync(
 
 // ─── Supabase implementation ─────────────────────────────────────────────────
 
+/**
+ * This session's user, for telling its own action rows from everyone else's.
+ *
+ * Resolved once per open (the session is signed in before any match opens; the
+ * read is the local token). A row whose actor_user_id is this user was posted
+ * from this machine — its own seat's action, or the computer's when this
+ * machine is the host — and its effects already ran here. Null until known,
+ * which reads as "not own": a row is never dropped on a guess.
+ */
+let ownUserId: string | null = null
+const resolveOwnUser = () => supabase.auth.getUser()
+  .then(({ data }) => { ownUserId = data.user?.id ?? null })
+  .catch(() => { /* stays unknown; nothing is dropped */ })
+const isOwnRow = (actorUserId: string | null | undefined) => !!ownUserId && actorUserId === ownUserId
+
 export const supabaseTransport: SyncTransport = {
   open(matchId, onRow, onAction, onStatus) {
     let channel: ReturnType<typeof supabase.channel> | null = null
+    void resolveOwnUser()
     let cancelled = false
 
     const subscribeNow = () => {
@@ -322,8 +348,8 @@ export const supabaseTransport: SyncTransport = {
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'match_actions', filter: `match_id=eq.${matchId}` },
           payload => {
-            const row = payload.new as { action?: Action; effects?: Effect[]; seq?: number }
-            if (row?.action) onAction(row.action, row.effects ?? [], row.seq ?? 0)
+            const row = payload.new as { action?: Action; effects?: Effect[]; seq?: number; actor_user_id?: string | null }
+            if (row?.action) onAction(row.action, row.effects ?? [], row.seq ?? 0, isOwnRow(row.actor_user_id))
           },
         )
         .subscribe((s, err) => {
@@ -366,9 +392,10 @@ export const supabaseTransport: SyncTransport = {
   },
 
   async fetchActions(matchId, afterSeq) {
+    if (!ownUserId) await resolveOwnUser()
     const { data, error } = await supabase
       .from('match_actions')
-      .select('action, effects, seq')
+      .select('action, effects, seq, actor_user_id')
       .eq('match_id', matchId)
       .gt('seq', afterSeq)
       .order('seq', { ascending: true })
@@ -378,6 +405,7 @@ export const supabaseTransport: SyncTransport = {
       action: r.action as Action,
       effects: (r.effects ?? []) as Effect[],
       seq: r.seq as number,
+      own: isOwnRow(r.actor_user_id as string | null | undefined),
     }))
   },
 

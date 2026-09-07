@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import {
   openSeat, hostCampaign, joinByCode, startFromLobby, bothAgreeItIs, closeSeats, seatComputers,
-  settleOnto, type Seat,
+  settleOnto, dealCoinTo, type Seat,
 } from './support/online'
 import { onBoard, whoseTurn, passTurn, where, toPlace, draftableTerritory, placeBurst, holdings } from './support/risk'
 
@@ -40,6 +40,10 @@ test('a computer seat takes its turn on the host without taking the host down', 
       holds.set(s, [])
       s.page.on('console', m => { if (m.text().includes('[Sync] holding board')) holds.get(s)!.push(m.text()) })
     }
+    // Every action the board sees ARRIVE on the feed announces itself; on the
+    // host, during the computer's turn, every action is the host's own.
+    const spectated: string[] = []
+    host.page.on('console', m => { if (m.text().includes('[Spectate] action')) spectated.push(m.text()) })
     const leaks: string[] = []
     for (const s of [host, guest]) s.page.on('console', m => { if (m.text().includes('[privacy]')) leaks.push(s.name + ': ' + m.text()) })
 
@@ -99,12 +103,23 @@ test('a computer seat takes its turn on the host without taking the host down', 
           watcherChecked = true
           const watcher = seats.find(x => x !== s)!
           const button = watcher.page.locator('button', { hasText: '🃏 Cards' }).first()
+          // A COIN, DEALT INTO THE WATCHER'S HAND BY THE SERVER'S DOOR, must reach
+          // the button and the panel: "the tab says two but the panel shows only
+          // the territory card" was reported on 2026-09-06.
+          const before = Number((await button.innerText()).match(/\((\d+)\)/)?.[1] ?? 0)
+          await dealCoinTo(watcher)
+          await expect(button, watcher.name + "'s Cards button never counted the coin dealt to them")
+            .toHaveText(new RegExp('\\(' + (before + 1) + '\\)'), { timeout: 15_000 })
           const shown = Number((await button.innerText()).match(/\((\d+)\)/)?.[1] ?? -1)
           const own = (await holdings(watcher.page))[watcher.name.toLowerCase()]?.cards ?? -2
           expect(shown, watcher.name + "'s Cards button shows " + shown + ' but the strip says they hold ' + own).toBe(own)
           await button.click()
           await expect(watcher.page.locator('text=' + watcher.name + "'s Cards").first(),
             'the panel that opened is not the watcher\'s own').toBeVisible({ timeout: 10_000 })
+          await expect(watcher.page.locator('text=/Coin Cards \\(1\\)/').first(),
+            'the panel does not list the coin the watcher holds').toBeVisible({ timeout: 10_000 })
+          await expect(watcher.page.locator('text== 1 coin').first(),
+            'the coin card itself is not drawn in the panel').toBeVisible({ timeout: 5_000 })
           await standing()
           await watcher.page.locator('button[title="Close"]').first().click()
           // THE SCAR TRAY IS THE WATCHER'S TOO. Keyed to the actor it showed the
@@ -144,12 +159,36 @@ test('a computer seat takes its turn on the host without taking the host down', 
       // The computer's turn, driven by the host and watched by the guest. It
       // ends on its own; the host has to be there to see it end.
       if (guestPassed) computerPlayed = true
-      const until = Date.now() + 90_000
-      while (Date.now() < until) {
-        await standing()
-        if (human(await whoseTurn(host.page))) break
-        await host.page.waitForTimeout(500)
+      // THE HOST'S OWN MOVES NEVER COME BACK AS SOMEBODY ELSE'S. With its POST
+      // responses held, every echo of a computer action reaches the host's
+      // socket first — the ordering that once ran the effects twice, and
+      // animated a fortify to Greenland two times over (2026-09-06). Authorship
+      // decides now, so the host's feed must announce nothing during a turn in
+      // which every action is its own.
+      spectated.length = 0
+      const inflight = new Set<Promise<void>>()
+      const late = async (route: import('@playwright/test').Route) => {
+        const work = (async () => {
+          const res = await route.fetch()
+          await new Promise(r => setTimeout(r, 600))
+          await route.fulfill({ response: res })
+        })()
+        inflight.add(work)
+        try { await work } finally { inflight.delete(work) }
       }
+      await host.page.route('**/functions/v1/apply-action', late)
+      const until = Date.now() + 120_000
+      try {
+        while (Date.now() < until) {
+          await standing()
+          if (human(await whoseTurn(host.page))) break
+          await host.page.waitForTimeout(500)
+        }
+      } finally {
+        await Promise.allSettled([...inflight])
+        await host.page.unroute('**/functions/v1/apply-action', late)
+      }
+      expect(spectated, "the host's feed announced its own computer's actions arriving: " + spectated.length + ' of them').toEqual([])
       const back = await whoseTurn(host.page)
       expect(human(back), 'the computer never handed the turn back: ' + (back ?? 'nobody')).toBe(true)
       await bothAgreeItIs(seats, back!)
