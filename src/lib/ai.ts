@@ -17,6 +17,7 @@ import type { AIDifficulty } from '@/types/ai'
 import { TERRITORY_DEFINITIONS, CONTINENT_BONUSES } from '@/data/territoryData'
 import { getCoinCard, coinTradeInTroops } from '@/data/cards'
 import { cardCoinValue, livingCities } from '@/lib/gameLogic'
+import { redStarTotal } from '@/lib/redStars'
 import { isSeaLine, ISLAND_TERRITORY_IDS } from '@/data/seaLines'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -429,10 +430,7 @@ export function aiTradeInDecision(
 
 /** Red stars a player holds: HQs they control plus stars earned/bought. */
 export function playerRedStars(state: GameState, legacy: LegacyState, playerId: string): number {
-  const hqStars = Object.values(state.territories).filter(
-    t => t.occupyingPlayerId === playerId && !!t.activeHqPlayerId,
-  ).length
-  return hqStars + ((legacy.purchasedStars ?? {})[playerId] ?? 0)
+  return redStarTotal(legacy, playerId, state.territories)
 }
 
 /** Every rival's star count, highest first. 4 stars wins the game. */

@@ -31,6 +31,7 @@ import {
   onLegacyOverwritten, withLegacyEditBase,
   type LegacyEvent, type UnlockOption,
 } from '@/lib/legacyApi'
+import { redStarTotal, consolationStar, careerWins } from '@/lib/redStars'
 import { getScarCard, type ScarCard, MERCENARY_CARD_IDS, BIOHAZARD_CARD_IDS } from '@/data/scarCards'
 import { mergeOwnSecrets, HIDDEN_CARD_ID, placeholderIn, type SeatState } from '@/lib/stateView'
 import { handSize, heldHand } from '@/lib/hand'
@@ -2274,9 +2275,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   // (controlledHqTerritoryIds); the board now counts through the same
   // function, so the eight copies that had to move together twice are gone.
   function countStars(playerId: string, territories: Record<string, Territory>) {
-    const hqStars = controlledHqTerritoryIds(playerId, territories).length
-    const purchased = (legacyState.purchasedStars ?? {})[playerId] ?? 0
-    return hqStars + purchased
+    return redStarTotal(legacyState, playerId, territories)
   }
 
   // ── Apply combat result to game state ────────────────────────────────────
@@ -2625,9 +2624,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (gameState.phase === 'game-over' || showWinScreen) return
     for (const p of gameState.players) {
       if (p.isEliminated) continue
-      const hqStars = controlledHqTerritoryIds(p.id, gameState.territories).length
-      const purchased = (legacyState.purchasedStars ?? {})[p.id] ?? 0
-      if (hqStars + purchased >= 4) {
+      if (redStarTotal(legacyState, p.id, gameState.territories) >= 4) {
         setWinnerPlayerId(p.id)
         // Four stars IS the star victory, whatever awarded the last one —
         // calling it 'mission' put a lie in the victory log and announced
@@ -3494,20 +3491,28 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       for (const p of gameState.players) {
         // Career wins; fall back to signatures on the board for campaigns that
         // predate playerWins (resolved by roster id, not by name)
-        const wins = (prev.playerWins ?? {})[p.id] ?? playerSignatureCount(prev, p.id)
+        const wins = careerWins(prev, p.id)
         missiles[p.id] = wins
         if (wins > 0) granted.push(`${p.name} ×${wins}`)
       }
+      // The other half of the same rule: a player yet to sign the board brings
+      // a red star instead of a missile (redStars.ts). Nothing to store — the
+      // count reads it off the record — but the log says who starts on two.
+      const unsigned = gameState.players.filter(p => consolationStar(prev, p.id) > 0).map(p => p.name)
+      const lines = [
+        ...(granted.length > 0 ? [`🚀 Missiles replenished — one per career win: ${granted.join(', ')}`] : []),
+        ...(unsigned.length > 0 ? [`★ Consolation stars — one for each player yet to sign the board: ${unsigned.join(', ')}`] : []),
+      ]
       const next: LegacyState = {
         ...prev,
         missiles,
         missilesReplenishedGame: gameState.gameNumber,
-        historyLog: granted.length > 0
-          ? [...prev.historyLog, {
+        historyLog: lines.length > 0
+          ? [...prev.historyLog, ...lines.map(entry => ({
               gameNumber: gameState.gameNumber,
-              entry: `🚀 Missiles replenished — one per career win: ${granted.join(', ')}`,
+              entry,
               timestamp: new Date().toISOString(),
-            }]
+            }))]
           : prev.historyLog,
       }
       saveLegacyState(next).catch(() => {})
@@ -4408,9 +4413,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     if (depletion.kind === 'award') {
       const winner = state.players.find(p => p.id === depletion.playerId)
       if (!winner) return
-      const hqStars = controlledHqTerritoryIds(depletion.playerId, state.territories).length
-      const newStarTotal = hqStars + purchasedAfter
-      console.log(`[CoinDeck] ${winner.name} final star total: ${newStarTotal} (hq=${hqStars} purchased=${purchasedAfter})`)
+      const newStarTotal = redStarTotal(legacyStateRef.current, depletion.playerId, state.territories, purchasedAfter)
+      console.log(`[CoinDeck] ${winner.name} final star total: ${newStarTotal} (earned=${purchasedAfter})`)
       if (newStarTotal >= 4) {
         console.log(`[CoinDeck] 4-star victory triggered for ${winner.name}!`)
         setWinnerPlayerId(winner.id)
@@ -4842,8 +4846,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     showWeaknessNotice(`★ ${player.name} bought a red star — 4 cards spent (${purchasedAfter} bought this game)`)
 
     // 4-star victory check (HQ stars + purchased stars)
-    const hqStars = controlledHqTerritoryIds(player.id, gameStateRef.current.territories).length
-    if (hqStars + purchasedAfter >= 4) {
+    if (redStarTotal(legacyStateRef.current, player.id, gameStateRef.current.territories, purchasedAfter) >= 4) {
       setWinnerPlayerId(player.id)
       // It IS a star victory — recording it as 'mission' was a lie the
       // victory log told about every 4-star win.
@@ -5657,8 +5660,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     })
     showWeaknessNotice(`⭐ ${player.name} used their ${missionDef?.name ?? 'star power'} — +1 red star (once per game)`)
 
-    const hqStars = controlledHqTerritoryIds(playerId, gameStateRef.current.territories).length
-    if (hqStars + purchasedAfter >= 4) {
+    if (redStarTotal(legacyStateRef.current, playerId, gameStateRef.current.territories, purchasedAfter) >= 4) {
       setWinnerPlayerId(playerId)
       setWinCondition('stars')
       setUnlockOptions(pickUnlocks(gameStateRef.current.gameNumber))
@@ -5842,8 +5844,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     }
 
     // 4-star win check (HQ stars + this game's earned stars)
-    const hqStars = controlledHqTerritoryIds(playerId, gameStateRef.current.territories).length
-    if (hqStars + purchasedAfter >= 4) {
+    if (redStarTotal(legacyStateRef.current, playerId, gameStateRef.current.territories, purchasedAfter) >= 4) {
       setWinnerPlayerId(playerId)
       setWinCondition('stars')
       setUnlockOptions(pickUnlocks(gameStateRef.current.gameNumber))
@@ -6263,9 +6264,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       // Check 4-star win condition for any player (HQ stars + purchased stars)
       const fourStarWinner = state.players.find(p => {
         if (p.isEliminated) return false
-        const hqStars = controlledHqTerritoryIds(p.id, state.territories).length
-        const purchased = (legacyStateRef.current.purchasedStars ?? {})[p.id] ?? 0
-        return hqStars + purchased >= 4
+        return redStarTotal(legacyStateRef.current, p.id, state.territories) >= 4
       })
       if (fourStarWinner) {
         setWinnerPlayerId(fourStarWinner.id)
@@ -7242,8 +7241,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         const troops = held.reduce((s, t) => s + t.troops, 0)
         const hqStars = held.filter(t => !!t.activeHqPlayerId).length
         const stars = purchased[p.id] ?? 0
+        const unsigned = consolationStar(legacyStateRef.current, p.id) ? ' + 1 unsigned' : ''
         return `${p.id} ${p.name}${p.isAI ? ' (AI)' : ''}${p.isEliminated ? ' — eliminated' : ''}`
-          + ` — ${held.length} territories, ${troops} troops, ★ ${stars} earned + ${hqStars} HQ`
+          + ` — ${held.length} territories, ${troops} troops, ★ ${stars} earned + ${hqStars} HQ${unsigned}`
           + `, 🚀 ${missilesInHand(p.id)}`
       })
     }
@@ -7279,8 +7279,9 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         return next
       })
       const hqStars = controlledHqTerritoryIds(p.id, st.territories).length
-      const out = [`✓ ${p.name}: ${current} → ${target} earned star${target !== 1 ? 's' : ''} (+ ${hqStars} on HQs)`]
-      if (hqStars + target >= 4) {
+      const unsigned = consolationStar(legacyStateRef.current, p.id) ? ', + 1 unsigned' : ''
+      const out = [`✓ ${p.name}: ${current} → ${target} earned star${target !== 1 ? 's' : ''} (+ ${hqStars} on HQs${unsigned})`]
+      if (redStarTotal(legacyStateRef.current, p.id, st.territories, target) >= 4) {
         out.push('⚠ that reaches 4 stars — the victory screen is about to open')
       }
       return out
@@ -8948,6 +8949,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
           <div style={{ fontSize: 14, color: '#000', fontFamily: 'Arial, sans-serif', fontWeight: 'bold', paddingLeft: 2, display: 'flex', gap: 16 }}>
             <span>4 cards = <span style={{ color: '#c0392b' }}>★</span></span>
             <span>HQ = <span style={{ color: '#c0392b' }}>★</span></span>
+            <span>No signature yet = <span style={{ color: '#c0392b' }}>★</span></span>
           </div>
 
         </div>

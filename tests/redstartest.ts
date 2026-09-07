@@ -59,8 +59,11 @@ console.log('\n— the board counts through the one function —')
   const board = bare(readFileSync('src/components/GameBoard.tsx', 'utf8'))
   check('no copy of the own-HQ exclusion survives on the board',
     /activeHqPlayerId !== (playerId|p\.id|player\.id|depletion\.playerId)/.test(board), false)
-  check('every star count on the board goes through controlledHqTerritoryIds — HUD, win check, coin-deck award, star powers, join-war re-entry, readout',
-    (board.match(/controlledHqTerritoryIds\([^)]*\)\.length/g) ?? []).length >= 8, true)
+  check('every star count on the board goes through redStarTotal — HUD, win check, coin-deck award, star powers, join-war re-entry, readout',
+    (board.match(/redStarTotal\(/g) ?? []).length >= 8, true)
+  const stars = bare(readFileSync('src/lib/redStars.ts', 'utf8'))
+  check('...and redStarTotal counts HQs through controlledHqTerritoryIds',
+    /controlledHqTerritoryIds\(playerId, territories\)\.length \+ earned \+ consolationStar\(legacy, playerId\)/.test(stars), true)
   const reducer = bare(readFileSync('src/lib/gameReducer.ts', 'utf8'))
   check('the Mobile HQ check still asks for your OWN HQ, which is a different question',
     /from\.activeHqPlayerId !== action\.playerId/.test(reducer), true)

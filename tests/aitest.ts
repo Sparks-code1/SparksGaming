@@ -84,7 +84,9 @@ const starState: any = {
   },
   turn: initialTurnState(), currentPlayerIndex: 0,
 }
-const starLegacy: any = { purchasedStars: { r1: 1, r2: 1 } }
+// Signed players, so the consolation star (one per player yet to sign the
+// board, 2026-09-07) does not enter these counts; it is checked on its own below.
+const starLegacy: any = { purchasedStars: { r1: 1, r2: 1 }, playerWins: { me: 1, r1: 1, r2: 1 } }
 check('stars = HQs controlled + stars earned', playerRedStars(starState, starLegacy, 'r1'), 3)
 check('a rival with only a bought star', playerRedStars(starState, starLegacy, 'r2'), 1)
 check('rivals ranked by stars', rivalStarCounts(starState, starLegacy, 'me'),
@@ -92,7 +94,9 @@ check('rivals ranked by stars', rivalStarCounts(starState, starLegacy, 'me'),
 check('a rival on 3 stars is flagged as match point',
   rivalsOnMatchPoint(starState, starLegacy, 'me'), ['r1'])
 check('nobody at 3 stars -> no match point',
-  rivalsOnMatchPoint(starState, { purchasedStars: {} } as any, 'me'), [])
+  rivalsOnMatchPoint(starState, { purchasedStars: {}, playerWins: { me: 1, r1: 1, r2: 1 } } as any, 'me'), [])
+check('a rival yet to sign the board carries the consolation star', playerRedStars(starState, { purchasedStars: { r1: 1 } } as any, 'r1'), 4)
+check('...which the match-point read sees', rivalsOnMatchPoint(starState, { purchasedStars: {}, playerWins: { r2: 1 } } as any, 'me'), ['r1'])
 
 // ─── 4. Mission focus — combat conquests only ─────────────────────────────
 console.log('\n--- mission pursuit ---')
