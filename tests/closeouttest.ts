@@ -60,6 +60,18 @@ console.log('\n— the blob keeps real cards or none —')
   const already = { campaignId: 'c1', activeGameCards: { territoryDeck: ['tc-a'], playerHands: { p1: [] } } } as unknown as LegacyState
   check('a clean block is handed back as the same object', withoutPlaceholders(already) === already, true)
   check('no card block at all is fine', withoutPlaceholders({ campaignId: 'c1' } as LegacyState).activeGameCards, undefined)
+  // THE BOARD MIRROR TOO. A reload starts the board from it, and two
+  // placeholders in its face-up row outlived every server-side repair by
+  // hours, re-written on each reload of the acting machine (2026-09-07).
+  const mirrored = {
+    campaignId: 'c1',
+    activeGameState: { phase: 'fortify', cards: { sideboard: [HIDDEN_CARD_ID, HIDDEN_CARD_ID, 'tc-a', 'tc-b'], territoryDeck: [], territoryDeckCount: 20 }, players: [] },
+  } as unknown as LegacyState
+  const m = withoutPlaceholders(mirrored).activeGameState as unknown as { phase: string; cards: Record<string, unknown> }
+  check('placeholders leave the mirror\'s face-up row', m.cards.sideboard, ['tc-a', 'tc-b'])
+  check('...and the rest of the mirror stays', [m.phase, m.cards.territoryDeckCount], ['fortify', 20])
+  const cleanMirror = { campaignId: 'c1', activeGameState: { cards: { sideboard: ['tc-a'] } } } as unknown as LegacyState
+  check('a clean mirror is handed back as the same object', withoutPlaceholders(cleanMirror) === cleanMirror, true)
 }
 
 console.log('\n— the save: version with the state, no wholesale write of a shared campaign —')
@@ -89,6 +101,17 @@ console.log('\n— the deal refuses a placeholder, on both sides —')
   const board = bare(readFileSync('src/components/GameBoard.tsx', 'utf8'))
   check('the host refuses the same deal before asking the server',
     /const placeholder = placeholderIn\(gameStateRef\.current\)\s*if \(placeholder\) \{\s*throw new Error[\s\S]{0,200}?\}\s*await startLobby\(lobbyToStart, gameStateRef\.current\)/.test(board), true)
+}
+
+console.log('\n— online, the table is the board —')
+{
+  const app = bare(readFileSync('src/App.tsx', 'utf8'))
+  check('an online game resumes from its match row, the mirror only as a fallback',
+    /async function boardToResume\(ls: LegacyState\)[\s\S]{0,300}?if \(ls\.activeMatchId\) \{\s*const row = await loadMatchState\(ls\.activeMatchId\)[\s\S]{0,200}?return \(ls\.activeGameState as RestoredGameState/.test(app), true)
+  check('...on both ways back to the board', (app.match(/await boardToResume\(ls\)/g) ?? []).length, 2)
+  const board = bare(readFileSync('src/components/GameBoard.tsx', 'utf8'))
+  check('the mirror carries no hand online',
+    /const saved = onlineMatchRef\.current\s*\? \{ \.\.\.board, players: board\.players\.map\(p => \{ const \{ cards: _hand, \.\.\.rest \} = p; return rest \}\) \}\s*: board/.test(board), true)
 }
 
 console.log('\n— no hosting over a game still open —')

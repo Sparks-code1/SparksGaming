@@ -22,6 +22,7 @@ import { BUILD_STAMP } from '@/lib/buildStamp'
 import { matchState, reconcileSeats, setLobbyShape, readLobby, type Lobby } from '@/lib/lobby'
 import { DRAFT_TROOP_SLOTS, DRAFT_COIN_SLOTS, type SetupDoc } from '@/lib/setupFlow'
 import { isComputerSeat } from '@/lib/onlineMatch'
+import { loadMatchState } from '@/lib/actionDispatch'
 import LobbyScreen from '@/components/LobbyScreen'
 import DuneLobbyScreen from '@/components/dune/DuneLobbyScreen'
 import DuneMatchScreen from '@/components/dune/DuneMatchScreen'
@@ -64,6 +65,27 @@ export default function App() {
   /** The reconciled lobby whose setup (dice, factions, HQs) is being played out. */
   const [setupLobby, setSetupLobby]             = useState<Lobby | null>(null)
 
+  /**
+   * The board to put back on screen.
+   *
+   * ONLINE, THE TABLE IS THE BOARD. `activeGameState` is the acting machine's
+   * copy from its last turn boundary — the resume mirror of a one-screen game,
+   * and for an online game only a memory: up to a whole turn behind the row,
+   * with that machine's own view of the piles in it. Starting from it put the
+   * computer's turn back on the host after a reload, whose AI driver ran on it
+   * before the row arrived; and kept two placeholders in the face-up row on
+   * screen after every server row had been repaired (2026-09-07). So an
+   * online game resumes from its match row, and the mirror is the fallback
+   * for a row that cannot be read.
+   */
+  async function boardToResume(ls: LegacyState): Promise<RestoredGameState | null> {
+    if (ls.activeMatchId) {
+      const row = await loadMatchState(ls.activeMatchId).catch(() => null)
+      if (row?.state) return row.state as RestoredGameState
+    }
+    return (ls.activeGameState as RestoredGameState | null | undefined) ?? null
+  }
+
   // On mount: check Supabase for an in-progress game and resume it directly,
   // bypassing the between-game / dice-roll / setup screens entirely.
   useEffect(() => {
@@ -72,13 +94,14 @@ export default function App() {
     // pointer simply drops through to the picker.
     getActiveCampaignId()
       .then(id => (id ? loadLegacyState(id) : null))
-      .then(ls => {
+      .then(async ls => {
         // Seat labels everywhere read from the shared table, so point it at the
         // campaign roster before any screen renders.
         if (ls) applyRosterNames(getRoster(ls))
-        if (ls?.gameInProgress && ls.activeGameState) {
+        const board = ls?.gameInProgress ? await boardToResume(ls) : null
+        if (ls && board) {
           setLegacy(ls)
-          setRestoredGameState(ls.activeGameState as RestoredGameState)
+          setRestoredGameState(board)
           setScreen('playing')
         } else {
           setScreen('between-games')
@@ -412,11 +435,13 @@ export default function App() {
    * phase boundary and `gameInProgress` stays set — so this drops straight back
    * into the saved board rather than through the setup flow.
    */
-  function handleResumeGame(ls: LegacyState) {
-    if (!ls.activeGameState) return
+  async function handleResumeGame(ls: LegacyState) {
+    if (!ls.activeGameState && !ls.activeMatchId) return
+    const board = await boardToResume(ls)
+    if (!board) return
     setLegacy(ls)
     applyRosterNames(getRoster(ls))
-    setRestoredGameState(ls.activeGameState as RestoredGameState)
+    setRestoredGameState(board)
     setScreen('playing')
   }
 

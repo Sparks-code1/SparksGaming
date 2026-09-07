@@ -196,6 +196,29 @@ test('a computer seat takes its turn on the host without taking the host down', 
     console.log('TURN ORDER SEEN: ' + order.join(' -> '))
     expect(computerPlayed, 'the computer never took a turn after the guest had passed').toBe(true)
     await standing()
+    // NO PLACEHOLDER IN THE FACE-UP ROW. The acting machine refills the row
+    // from a pile it cannot see — a stack of `hidden-card` stand-ins — and the
+    // server's answer must put the real card in its place on every screen.
+    // "hidden cards are showing up where the face-up territory cards are"
+    // (2026-09-06, again after a reload on 2026-09-07). The row's slot label is
+    // the card's territory name, or the raw id when the id names no card.
+    const placeholdersShowing = async (s: Seat): Promise<number> => {
+      if (!(await s.page.locator('text=No signature yet').first().isVisible().catch(() => false))) return -1
+      return s.page.locator('text=hidden-card').count()
+    }
+    for (const s of seats) {
+      await expect.poll(() => placeholdersShowing(s), {
+        timeout: 15_000, message: s.name + ' shows a placeholder in the face-up row after the computer drew (-1 = no card panel on screen)',
+      }).toBe(0)
+    }
+    // ...AND AFTER A RELOAD, which starts the board from the campaign's saved
+    // mirror of the board and must take the server's row over it.
+    await host.page.reload()
+    await expect.poll(() => onBoard(host.page), { timeout: 40_000, message: 'the host never got the board back after a reload: ' }).toBe(true)
+    await expect.poll(() => placeholdersShowing(host), {
+      timeout: 20_000, message: 'the host shows a placeholder in the face-up row after a reload (-1 = no card panel on screen)',
+    }).toBe(0)
+    await standing()
     expect(unheld, 'the computer played without its hand on the host — the policy did not deliver it').toEqual([])
     expect(leaks, 'a secrets row reached a screen that does not play that seat').toEqual([])
   } finally {

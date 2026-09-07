@@ -1632,7 +1632,14 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
         : localSeatRef.current === null || localSeatRef.current === cur.id)
       if (!mine) return
     }
-    const { legacySnapshot: _snap, ...saved } = gameState
+    const { legacySnapshot: _snap, ...board } = gameState
+    // NO HAND IN THE MIRROR ONLINE. This machine's own hand rides gameState
+    // (mergeOwnSecrets) and rode into the campaign row with it, which every
+    // member of the campaign can read. Online the row is the board and the
+    // mirror only a fallback, and it needs no hand to be one.
+    const saved = onlineMatchRef.current
+      ? { ...board, players: board.players.map(p => { const { cards: _hand, ...rest } = p; return rest }) }
+      : board
     // Use updater so we never overwrite purchasedStars or other fields written concurrently
     setLegacyState(prev => {
       const next: LegacyState = { ...prev, gameInProgress: true, activeGameState: saved as Record<string, unknown> }

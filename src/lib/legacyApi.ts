@@ -535,13 +535,18 @@ export function saveLegacyState(state: LegacyState, opts?: SaveOptions): Promise
 }
 
 /**
- * The card block with every placeholder removed — piles, hands, discards. The
- * same object back when there is nothing to remove, so a clean save is not a
- * new object every time.
+ * The card block AND the board mirror with every placeholder removed — piles,
+ * hands, discards, the face-up row. The same object back when there is
+ * nothing to remove, so a clean save is not a new object every time.
+ *
+ * The mirror too (2026-09-07): the acting machine's autosave copies its whole
+ * board into `activeGameState`, face-up row included, and a reload starts the
+ * board from that copy before the server's row arrives. Two `hidden-card`
+ * ids dealt by the broken game sat in that row, and every reload of the
+ * acting machine wrote them straight back from the copy it had just
+ * restored — a fossil that outlived the repair of every server row by hours.
  */
 export function withoutPlaceholders(state: LegacyState): LegacyState {
-  const cards = state.activeGameCards
-  if (!cards) return state
   let changed = false
   const clean = (v: unknown): unknown => {
     if (Array.isArray(v)) {
@@ -554,8 +559,15 @@ export function withoutPlaceholders(state: LegacyState): LegacyState {
     }
     return v
   }
-  const next = clean(cards) as typeof cards
-  return changed ? { ...state, activeGameCards: next } : state
+  const cards = state.activeGameCards ? (clean(state.activeGameCards) as typeof state.activeGameCards) : state.activeGameCards
+  const mirror = state.activeGameState as { cards?: unknown } | null | undefined
+  const mirrorCards = mirror?.cards ? clean(mirror.cards) : mirror?.cards
+  if (!changed) return state
+  return {
+    ...state,
+    ...(state.activeGameCards ? { activeGameCards: cards } : {}),
+    ...(mirror?.cards ? { activeGameState: { ...(mirror as object), cards: mirrorCards } as typeof state.activeGameState } : {}),
+  }
 }
 
 /** Retries of a re-applied write before giving up (each is one round trip). */
