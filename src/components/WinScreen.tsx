@@ -483,7 +483,7 @@ export default function WinScreen({
     setSaving(true)
     const winName = signedName.trim() || winner.name
     await Promise.all([
-      saveLegacyState(cleaned, { reapply: cleanUp }),
+      saveLegacyState(cleaned, { reapply: cleanUp, from: legacy }),
       saveGameSession(cleaned.campaignId, gameNumber, winName, winner.factionId, legacyEvents),
     ]).catch(() => {})
     setSaving(false)

@@ -141,7 +141,7 @@ console.log('\n— every counter site hands the save a way to rebuild —')
   check('...guarded so the ledger cannot fold twice',
     /const closeOut[\s\S]{0,200}?if \(!b\.gameInProgress\) return b/.test(board), true)
   check('...and passed through to the save',
-    board.includes('saveFinishedCampaign(completed, closeOut)'), true)
+    board.includes('saveFinishedCampaign(completed, closeOut, from)'), true)
 
   // 4. Both comeback-power claims, which must pick against the row they write.
   check('the AI claim goes through the shared rule',
@@ -165,7 +165,7 @@ console.log('\n— every counter site hands the save a way to rebuild —')
   check('the win screen close-out is a function of the row',
     win.includes('const cleanUp = (b: LegacyState): LegacyState =>'), true)
   check('...and passed as the rebuild',
-    win.includes('saveLegacyState(cleaned, { reapply: cleanUp })'), true)
+    win.includes('saveLegacyState(cleaned, { reapply: cleanUp, from: legacy })'), true)
 
   // AND THE OLD EXPRESSION IS GONE FROM BOTH PLACES. It is the one that skips a
   // game, and it read as obviously correct, which is why it survived twice.

@@ -72,12 +72,12 @@ console.log('\n— the save: version with the state, no wholesale write of a sha
   check('...and records the version off the row it read',
     /noteLegacyVersion\(campaignId, \(data as CampaignRow\)\.legacy_version as number\)/.test(api), true)
   check('an unknown version on a shared campaign reads and rebuilds instead of upserting',
-    /\} else if \(campaignIsShared\(state\) && !legacyVersionColumnMissing\) \{[\s\S]{0,1600}?const merged = rebuild\(fresh\)\s*publishFreshLegacy\(merged\)\s*return performSave\(merged, opts, attempt \+ 1\)/.test(api), true)
+    /\} else if \(campaignIsShared\(state\) && !legacyVersionColumnMissing\) \{[\s\S]{0,1600}?const merged = rebuild\(fresh\)\s*publishFreshLegacy\(merged\)\s*return performSave\(merged, opts, attempt \+ 1, true\)/.test(api), true)
   check('...a screen with nothing to rebuild from keeps the row and says so',
-    /if \(!rebuild\) \{\s*noteKnownState\(fresh\)\s*publishFreshLegacy\(fresh\)[\s\S]{0,400}?throw new StaleCampaignError/.test(api), true)
+    /if \(!rebuild\) \{\s*noteKnownState\(fresh, 'adopted'\)\s*publishFreshLegacy\(fresh\)[\s\S]{0,400}?throw new StaleCampaignError/.test(api), true)
   check('...and the bound holds', /if \(attempt >= MAX_REAPPLY_ATTEMPTS\) throw new StaleCampaignError/.test(api), true)
   check('every save goes through the placeholder strip',
-    /const clean = withoutPlaceholders\(state\)\s*return saveQueue\.run\(state\.campaignId, \(\) => performSave\(clean, opts\)\)/.test(api), true)
+    /const clean = withoutPlaceholders\(state\)[\s\S]{0,400}?return saveQueue\.run\(state\.campaignId, \(\) => performSave\(clean, withBase\)\)/.test(api), true)
 }
 
 console.log('\n— the deal refuses a placeholder, on both sides —')

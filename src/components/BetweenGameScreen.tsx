@@ -190,8 +190,9 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
         const added = addRosterMember(getRoster(ls), chosen, ls.currentGameNumber,
           { userId: user.id, userEmail: user.email })
         if (!added.ok || !added.member) throw new Error(added.reason ?? 'Could not join the campaign')
+        const before = ls
         ls = { ...ls, roster: added.roster }
-        await saveLegacyState(ls)     // their entry, written by them
+        await saveLegacyState(ls, { from: before })     // their entry, written by them
         setLegacy(ls)
         me = added.member
       }
@@ -245,7 +246,7 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
     if (!result.ok) return result.reason ?? 'Could not link that player'
     const updated: LegacyState = { ...legacy, roster: result.roster }
     try {
-      await saveLegacyState(updated)
+      await saveLegacyState(updated, { from: legacy })
     } catch (e) {
       return e instanceof Error ? e.message : 'Could not save the link'
     }
@@ -266,7 +267,7 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
     if (!result.ok) return result.reason ?? 'Could not add that player'
     const updated: LegacyState = { ...legacy, roster: result.roster }
     try {
-      await saveLegacyState(updated)
+      await saveLegacyState(updated, { from: legacy })
     } catch (e) {
       // Do NOT keep the local copy on a failed save — the next write would send
       // a roster the server never agreed to.

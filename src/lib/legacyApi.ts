@@ -304,7 +304,7 @@ export async function loadLegacyState(campaignId: string): Promise<LegacyState |
     if (!joinCodeColumnMissing) ls.joinCode = row.join_code ?? null
     // This is now the copy this client agrees with — the baseline a refused
     // write is rebuilt against.
-    noteKnownState(ls)
+    noteKnownState(ls, 'adopted')
     return ls
   } catch {
     return null
@@ -506,6 +506,14 @@ export interface SaveOptions {
    * winner's copy and retried, so a race costs a round trip, not a star.
    */
   reapply?: (fresh: LegacyState) => LegacyState
+  /**
+   * The copy this state was DERIVED FROM — the `prev` of the updater that
+   * built it, or the screen's copy before the edit. A save is an edit, not a
+   * copy: when `from` is older than the copy this page last agreed with,
+   * only the difference between `from` and `state` is written, replayed onto
+   * the agreed copy. Saves made inside withLegacyEditBase get it for free.
+   */
+  from?: LegacyState
 }
 
 export function saveLegacyState(state: LegacyState, opts?: SaveOptions): Promise<void> {
@@ -519,7 +527,11 @@ export function saveLegacyState(state: LegacyState, opts?: SaveOptions): Promise
   // campaign blob and read back as a deal, they became the cards of a whole
   // game (2026-09-06). The blob keeps real cards or none.
   const clean = withoutPlaceholders(state)
-  return saveQueue.run(state.campaignId, () => performSave(clean, opts))
+  // The base is read NOW — the updater that is calling us is still running —
+  // and the rebase happens when the queue gets to this save.
+  const from = opts?.from ?? editBase ?? undefined
+  const withBase: SaveOptions | undefined = from ? { ...opts, from } : opts
+  return saveQueue.run(state.campaignId, () => performSave(clean, withBase))
 }
 
 /**
@@ -563,11 +575,111 @@ const MAX_REAPPLY_ATTEMPTS = 3
  */
 const lastKnownStates = new Map<string, LegacyState>()
 
-function noteKnownState(state: LegacyState) {
-  if (state?.campaignId) lastKnownStates.set(state.campaignId, state)
+/**
+ * THE PAGE'S LINEAGE: every copy this page has derived from the copy it last
+ * agreed with. A save whose `from` is in the lineage is a descendant of the
+ * agreed copy and may be written whole; a save whose `from` is NOT is a copy
+ * from before an adoption — stale by exactly whatever the adoption brought —
+ * and only its own edit is written, replayed onto the agreed copy.
+ *
+ * Why the version guard was not enough (2026-09-07): a page's saves run one
+ * after another, and the copy behind each was captured when the updater ran.
+ * The first save's rebuild adopted the server's copy and moved the version;
+ * the second, built from the page's copy BEFORE that adoption, then matched
+ * the new version and wrote the old copy whole. That is how a repaired
+ * campaign row read "game 1, stars intact" again fifteen seconds after the
+ * repair — five times — with every guard green.
+ */
+const lineages = new Map<string, WeakSet<object>>()
+
+/**
+ * `derived`: this page built the copy from its agreed line — add it to the
+ * lineage. `adopted`: the copy came from the server (a fresh read, a refused
+ * write, a rebuild) — every copy the page held before it is now stale, so the
+ * lineage starts over.
+ */
+function noteKnownState(state: LegacyState, mode: 'derived' | 'adopted' = 'derived') {
+  if (!state?.campaignId) return
+  lastKnownStates.set(state.campaignId, state)
+  const line = lineages.get(state.campaignId)
+  if (mode === 'adopted' || !line) lineages.set(state.campaignId, new WeakSet([state]))
+  else line.add(state)
 }
 
-async function performSave(state: LegacyState, opts?: SaveOptions, attempt = 0): Promise<void> {
+/** For tests: is this copy on the page's current line for its campaign? */
+export function onLegacyLineage(state: LegacyState): boolean {
+  return !!lineages.get(state.campaignId)?.has(state)
+}
+
+/** For tests: adopt a copy as the one this page agrees with. */
+export function adoptLegacyForTests(state: LegacyState): void {
+  noteKnownState(state, 'adopted')
+}
+
+/** The copy the running updater was handed — see withLegacyEditBase. */
+let editBase: LegacyState | null = null
+
+/**
+ * Run a state updater so that a save made inside it knows its base.
+ *
+ * The board edits its campaign copy through `setLegacyState(prev => ...)`
+ * fifty times over, and every one of those updaters calls saveLegacyState
+ * with the copy it built. Wrapping the updater here gives that save the
+ * `prev` it was built from, and files the result under the page's lineage
+ * when `prev` was — so no call site has to say so, and none can forget.
+ */
+export function withLegacyEditBase<T>(prev: LegacyState, fn: () => T): T {
+  const outer = editBase
+  editBase = prev
+  try {
+    const out = fn()
+    const line = lineages.get(prev.campaignId)
+    if (line?.has(prev) && out && typeof out === 'object') line.add(out as object)
+    return out
+  } finally {
+    editBase = outer
+  }
+}
+
+/**
+ * The copy to write: the state itself when it descends from the copy this
+ * page agrees with, otherwise the page's edit replayed onto that copy. An
+ * explicit `reapply` is that edit, stated by the caller; without one the
+ * edit is the difference between `from` and `state`.
+ *
+ * Called when the save RUNS, not when it is queued: the agreed copy can move
+ * while a save waits behind another, and it was exactly the waiting save
+ * that wrote the stale copy.
+ */
+export function rebaseOntoKnown(state: LegacyState, opts?: SaveOptions): LegacyState {
+  const known = lastKnownStates.get(state.campaignId)
+  const from = opts?.from
+  if (!known || !from || known === state || from === known) return state
+  if (lineages.get(state.campaignId)?.has(from)) return state
+  return opts?.reapply ? opts.reapply(known) : reapplyLegacyEdits(known, from, state)
+}
+
+async function performSave(
+  state: LegacyState,
+  opts?: SaveOptions,
+  attempt = 0,
+  /** True when `state` was built on the server's copy (a rebuild): the page's own copies are stale beside it. */
+  serverLine = false,
+): Promise<void> {
+  // ── THE EDIT, NOT THE COPY ────────────────────────────────────────────────
+  // A save built from a copy older than the one this page has since agreed
+  // with carries that copy's staleness as if it were an edit. Replay only
+  // what this save changed. See rebaseOntoKnown and the lineage above.
+  let rebased = false
+  if (attempt === 0) {
+    const based = rebaseOntoKnown(state, opts)
+    if (based !== state) {
+      console.info('[LegacySave] rebasing an edit made on an older copy of the campaign')
+      state = based
+      rebased = true
+    }
+  }
+  const line: 'derived' | 'adopted' = serverLine || rebased ? 'adopted' : 'derived'
   // supabase-js RESOLVES on failure with an `error` field rather than throwing.
   // Ignoring it — as this did — makes a rejected write indistinguishable from a
   // successful one, so play continues on state that was never persisted.
@@ -640,9 +752,9 @@ async function performSave(state: LegacyState, opts?: SaveOptions, attempt = 0):
         if (fresh && rebuild && attempt < MAX_REAPPLY_ATTEMPTS) {
           const merged = rebuild(fresh)
           publishFreshLegacy(merged)     // the app adopts the MERGED copy
-          return performSave(merged, opts, attempt + 1)
+          return performSave(merged, opts, attempt + 1, true)
         }
-        if (fresh) { noteKnownState(fresh); publishFreshLegacy(fresh) }
+        if (fresh) { noteKnownState(fresh, 'adopted'); publishFreshLegacy(fresh) }
         setConnection({
           state: 'error',
           message: 'Another player changed this campaign — your change was not saved',
@@ -651,7 +763,8 @@ async function performSave(state: LegacyState, opts?: SaveOptions, attempt = 0):
         throw new StaleCampaignError(state.campaignId, expected, actual)
       } else {
         legacyVersions.set(state.campaignId, data.legacy_version as number)
-        noteKnownState(state)          // the server and this client now agree
+        noteKnownState(state, line)    // the server and this client now agree
+        if (rebased) publishFreshLegacy(state)   // and the page takes the copy that was written
       }
     } else if (campaignIsShared(state) && !legacyVersionColumnMissing) {
       // ── A SHARED CAMPAIGN IS NEVER WRITTEN WHOLESALE ──────────────────────
@@ -676,7 +789,7 @@ async function performSave(state: LegacyState, opts?: SaveOptions, attempt = 0):
         const rebuild = opts?.reapply
           ?? (known ? (f: LegacyState) => reapplyLegacyEdits(f, known, state) : null)
         if (!rebuild) {
-          noteKnownState(fresh)
+          noteKnownState(fresh, 'adopted')
           publishFreshLegacy(fresh)
           setConnection({
             state: 'error',
@@ -687,7 +800,7 @@ async function performSave(state: LegacyState, opts?: SaveOptions, attempt = 0):
         }
         const merged = rebuild(fresh)
         publishFreshLegacy(merged)
-        return performSave(merged, opts, attempt + 1)
+        return performSave(merged, opts, attempt + 1, true)
       }
     } else {
       // A campaign on one machine, or a schema without the version column: the
@@ -708,7 +821,8 @@ async function performSave(state: LegacyState, opts?: SaveOptions, attempt = 0):
       } else if (error) message = error.message || 'Unknown database error'
       else if (data) {
         legacyVersions.set(state.campaignId, data.legacy_version as number)
-        noteKnownState(state)
+        noteKnownState(state, line)
+        if (rebased) publishFreshLegacy(state)
       }
     }
   } catch (e) {

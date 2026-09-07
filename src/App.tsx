@@ -137,7 +137,7 @@ export default function App() {
     if (roster !== getRoster(ls)) ls = { ...ls, roster }
     if (ls !== legacy) {
       setLegacy(ls)
-      await saveLegacyState(ls).catch(() => {})
+      await saveLegacyState(ls, { from: legacy ?? undefined }).catch(() => {})
     }
 
     setSlotConfig(Object.fromEntries(slots.map((s, i) => [ids[i], { isAI: s.isAI, difficulty: s.difficulty }])))
@@ -175,7 +175,7 @@ export default function App() {
       scarDeck: newDeckIds,
       dealtScars: [...(ls.dealtScars ?? []), ...newDealtScars],
     }
-    await saveLegacyState(updated).catch(() => {})
+    await saveLegacyState(updated, { from: ls }).catch(() => {})
     setLegacy(updated)
     setGameDeals(newDealtScars)
     setScreen('scar-dealing')
@@ -219,8 +219,9 @@ export default function App() {
         roster = added.roster
       }
       if (rec.aiToAdd.length > 0) {
+        const loaded = fresh
         fresh = { ...fresh, roster }
-        await saveLegacyState(fresh)
+        await saveLegacyState(fresh, { from: loaded })
       }
       // The seat rows must carry the REAL roster ids before the game starts —
       // the server decides whose turn it is by looking them up.
@@ -379,7 +380,7 @@ export default function App() {
       }
       if (dirty) {
         setLegacy(updated)
-        await saveLegacyState(updated).catch(() => {})
+        await saveLegacyState(updated, { from: legacy }).catch(() => {})
       }
     }
     setRestoredGameState(null)

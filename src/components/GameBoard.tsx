@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as PIXI from 'pixi.js'
 import type { Territory, ScarType } from '@/types/territory'
 import type { GameState, EndGameState, PendingEventKind } from '@/types/game'
@@ -28,7 +28,7 @@ import { connectedOwnedIds, injectAlienIslandTerritory, applyCustomSeaLines, ALI
 import {
   defaultLegacyState, saveLegacyState, loadLegacyState, awardRedStars,
   applyLegacyToTerritories, pickUnlocks, SCAR_META, saveGameSession,
-  onLegacyOverwritten,
+  onLegacyOverwritten, withLegacyEditBase,
   type LegacyEvent, type UnlockOption,
 } from '@/lib/legacyApi'
 import { getScarCard, type ScarCard, MERCENARY_CARD_IDS, BIOHAZARD_CARD_IDS } from '@/data/scarCards'
@@ -725,7 +725,21 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   const abilitiesRef = useRef<Record<string, AbilityId>>({})
 
   // ── Legacy state ─────────────────────────────────────────────────────────
-  const [legacyState, setLegacyState] = useState<LegacyState>(initialLegacy ?? defaultLegacyState())
+  const [legacyState, setLegacyStateRaw] = useState<LegacyState>(initialLegacy ?? defaultLegacyState())
+  /**
+   * Every legacy edit on this board runs inside withLegacyEditBase, so a save
+   * made from inside the updater knows the copy it was derived from — and a
+   * save built on a copy older than the one this page has since adopted
+   * writes only its own edit. Fifty updaters call saveLegacyState from
+   * inside themselves; this is the one place that tells the save path their
+   * `prev`. A value-set (`setLegacyState(copy)`) gets no base here, so the
+   * save beside it names one itself.
+   */
+  const setLegacyState = useCallback((update: LegacyState | ((prev: LegacyState) => LegacyState)) => {
+    setLegacyStateRaw(typeof update === 'function'
+      ? (prev: LegacyState) => withLegacyEditBase(prev, () => update(prev))
+      : update)
+  }, [])
   const legacyStateRef = useRef<LegacyState>(initialLegacy ?? defaultLegacyState())
   const [legacyEvents, setLegacyEvents] = useState<LegacyEvent[]>([])
   // Legacy UI modals
@@ -1637,7 +1651,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   // whose write won, and everyone else's copy is strictly older.
   useEffect(() => onLegacyOverwritten(fresh => {
     if (fresh.campaignId !== legacyStateRef.current.campaignId) return
-    console.info('[LegacySave] adopting the server copy after a refused write')
+    console.info('[LegacySave] adopting the campaign copy the save path settled on')
     legacyStateRef.current = fresh
     setLegacyState(fresh)
   }), [])
@@ -6765,18 +6779,20 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
      * copy — and optional for the one whose state is already a rebuild.
      */
     reapply?: (fresh: LegacyState) => LegacyState,
+    /** The copy `finished` was derived from — see SaveOptions.from. */
+    from?: LegacyState,
   ) {
-    await saveLegacyState(finished, reapply ? { reapply } : undefined)
+    await saveLegacyState(finished, { reapply, from })
     const stored = await loadLegacyState(finished.campaignId).catch(() => null)
     if (stored?.gameInProgress || stored?.activeGameState) {
       console.warn('[Finalize] A late autosave resurrected the finished game — rewriting')
       // Rebuilt from what the re-read actually returned, not from the copy that
       // lost: the resurrecting autosave is by definition newer than `finished`.
-      await saveLegacyState(reapply ? reapply(stored) : finished, reapply ? { reapply } : undefined)
+      await saveLegacyState(reapply ? reapply(stored) : finished, { reapply, from: reapply ? stored : from })
     }
   }
 
-  async function finalizeAndReturnToLobby(working: LegacyState) {
+  async function finalizeAndReturnToLobby(working: LegacyState, from?: LegacyState) {
     gameFinishedRef.current = true
     // The game is over, so the match is too. Close BOTH pointers: the row (so
     // nobody's campaign screen offers a dead game) and activeMatchId (so the
@@ -6823,13 +6839,13 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       const finished = applyCampaignCompletion(completed, outcome)
       setLegacyState(finished)
       setCampaignOutcome(outcome)
-      await saveFinishedCampaign(finished).catch(() => {})  // failure surfaces via the save-failure banner
+      await saveFinishedCampaign(finished, undefined, from).catch(() => {})  // failure surfaces via the save-failure banner
       return
     }
 
     setLegacyState(completed)
     try {
-      await saveFinishedCampaign(completed, closeOut)
+      await saveFinishedCampaign(completed, closeOut, from)
     } catch {
       // Do NOT advance to the lobby on a failed write: the lobby would reload
       // the pre-game row and silently discard everything this game produced.
@@ -6871,7 +6887,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // fortification all vanished between games while the runner-up's minor
     // city (written later, from a fresh copy) survived alone.
     const applyRewards = (b: LegacyState) => reapplyLegacyEdits(b, baseline, editedLegacy)
-    let working = applyRewards(legacyStateRef.current)
+    const rewardsBase = legacyStateRef.current
+    let working = applyRewards(rewardsBase)
     legacyStateRef.current = working
     setLegacyState(working)
     setShowWinScreen(false)
@@ -6883,7 +6900,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // rewards are in. The milestone MODALS below are hotseat furniture — the
     // online flags are set silently at finalize and announced with a notice.
     if (ceremonyMatchRef.current && gameStateRef.current.endGame) {
-      saveLegacyState(working, { reapply: applyRewards }).catch(() => {})
+      saveLegacyState(working, { reapply: applyRewards, from: rewardsBase }).catch(() => {})
       dispatch({ type: 'ENDGAME_REWARDS_DONE', playerId: gameStateRef.current.endGame.winnerId })
       return
     }
@@ -6923,7 +6940,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       return
     }
 
-    finalizeAndReturnToLobby(working)
+    finalizeAndReturnToLobby(working, rewardsBase)
   }
 
   // ── Online end-of-game ceremony ───────────────────────────────────────────
@@ -6993,11 +7010,12 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // record rewards seconds apart, and the loser of that race must rebuild
     // its city on the winner's copy rather than surrender it.
     const applyRewards = (b: LegacyState) => reapplyLegacyEdits(b, baseline, editedLegacy)
-    const working = applyRewards(legacyStateRef.current)
+    const rewardsBase = legacyStateRef.current
+    const working = applyRewards(rewardsBase)
     legacyStateRef.current = working
     setLegacyState(working)
     setRunnerUpWizardOpen(false)
-    saveLegacyState(working, { reapply: applyRewards }).catch(() => {})
+    saveLegacyState(working, { reapply: applyRewards, from: rewardsBase }).catch(() => {})
     if (localSeatRef.current) dispatch({ type: 'ENDGAME_REWARDS_DONE', playerId: localSeatRef.current })
   }
 
@@ -7088,7 +7106,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       ?? [...log].reverse().find(v => v.gameNumber === gameNumber))?.winnerName ?? null
     const winFaction = gameStateRef.current.players.find(p => p.id === eg.winnerId)?.factionId ?? null
     await Promise.all([
-      saveLegacyState(working, { reapply: applyFinalize }),
+      saveLegacyState(working, { reapply: applyFinalize, from: base }),
       saveGameSession(working.campaignId, gameNumber, winName, winFaction, legacyEvents),
     ]).catch(() => {})
 
@@ -7101,7 +7119,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       legacyStateRef.current = finished
       setLegacyState(finished)
       setCampaignOutcome(outcome)
-      await saveLegacyState(finished).catch(() => {})
+      await saveLegacyState(finished, { from: working }).catch(() => {})
       dispatch({ type: 'ENDGAME_CONTINUE', playerId: eg.winnerId, choice: 'quit' })
     }
   }
@@ -10118,17 +10136,17 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
               const sticker: import('@/types/legacy').Sticker = { id: `city-${Date.now()}-${currentPlayer.id}`, name: cityName, targetId: t.id, placement: 'territory', description: 'city:minor', placedByPlayerId: currentPlayer.id, appliedInGame: gameState.gameNumber }
               const newLegacy = { ...legacyState, stickers: [...legacyState.stickers, sticker] }
               setLegacyState(newLegacy)
-              saveLegacyState(newLegacy).catch(() => {})
+              saveLegacyState(newLegacy, { from: legacyState }).catch(() => {})
             } else if (action === 'destroy-city' && cityId) {
               const newDestroyed = [...legacyState.destroyedCities, { cityId, destroyedInGame: gameState.gameNumber, destroyedByPlayerId: currentPlayer.id }]
               const newLegacy = { ...legacyState, destroyedCities: newDestroyed }
               setLegacyState(newLegacy)
-              saveLegacyState(newLegacy).catch(() => {})
+              saveLegacyState(newLegacy, { from: legacyState }).catch(() => {})
             } else if (action === 'place-hq') {
               const sticker: import('@/types/legacy').Sticker = { id: `hq-${Date.now()}`, name: `${currentPlayer.factionId} HQ`, targetId: t.id, placement: 'territory', description: `HQ:${currentPlayer.factionId}`, appliedInGame: gameState.gameNumber }
               const newLegacy = { ...legacyState, stickers: [...legacyState.stickers, sticker] }
               setLegacyState(newLegacy)
-              saveLegacyState(newLegacy).catch(() => {})
+              saveLegacyState(newLegacy, { from: legacyState }).catch(() => {})
             }
             setCityTarget(null)
           }}
