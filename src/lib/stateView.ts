@@ -318,6 +318,34 @@ export function decksFromState(state: GameState): Record<string, string[]> {
  * Returns PATHS rather than a boolean so a failure names the field. "A deck
  * order is on the wire" sent people to the legacy block for months.
  */
+/**
+ * The first pile or hand in this state that carries a PLACEHOLDER — the id a
+ * client draws in place of a face-down pile it does not hold. A placeholder
+ * is display, never a card: a deal that carries one puts unknowable cards into
+ * play, and did (2026-09-06: a game re-hosted from a client's mirrored piles
+ * dealt `hidden-card` to every draw and every refill). Both pile stores are
+ * walked — the match's and the campaign blob's — hands included. Null when
+ * clean; otherwise the path, for the message.
+ */
+export function placeholderIn(state: unknown): string | null {
+  const stores: Array<[string, unknown]> = [
+    ['cards', (state as { cards?: unknown } | null)?.cards],
+    ['legacySnapshot.activeGameCards', activeCards((state ?? {}) as { legacySnapshot?: unknown })],
+  ]
+  for (const [name, store] of stores) {
+    if (!store || typeof store !== 'object') continue
+    for (const [k, v] of Object.entries(store as Record<string, unknown>)) {
+      if (Array.isArray(v) && v.includes(HIDDEN_CARD_ID)) return `${name}.${k}`
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        for (const [pk, pv] of Object.entries(v as Record<string, unknown>)) {
+          if (Array.isArray(pv) && pv.includes(HIDDEN_CARD_ID)) return `${name}.${k}.${pk}`
+        }
+      }
+    }
+  }
+  return null
+}
+
 export function deckOrdersIn(state: unknown): string[] {
   const secret = new Set<string>(SECRET_DECK_KEYS)
   const found: string[] = []

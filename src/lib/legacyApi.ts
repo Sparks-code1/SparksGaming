@@ -1,3 +1,4 @@
+import { HIDDEN_CARD_ID } from './stateView'
 import { supabase } from './supabase'
 import type { LegacyState } from '@/types/legacy'
 import type { ScarType } from '@/types/territory'
@@ -206,7 +207,7 @@ export function joinCodeConstraintActive(): boolean {
   return !joinCodeColumnMissing
 }
 
-interface CampaignRow { legacy_state: LegacyState; join_code?: string | null }
+interface CampaignRow { legacy_state: LegacyState; join_code?: string | null; legacy_version?: number | null }
 
 /**
  * Read one campaign, preferring the query that includes the code column and
@@ -215,6 +216,22 @@ interface CampaignRow { legacy_state: LegacyState; join_code?: string | null }
  * string types the result as a parser error instead.
  */
 async function fetchCampaignRow(campaignId: string) {
+  // THE VERSION COMES WITH THE STATE, in the same read. It used to be a separate
+  // select in loadLegacyState, and a page whose version read failed — or that
+  // reached the row by any other path — then held state with no version, which
+  // performSave took as licence to write the row wholesale. One such write put
+  // a finished game back to "game 1, in progress, stars intact" over four other
+  // machines' work (2026-09-06). Read together, they cannot come apart.
+  if (!joinCodeColumnMissing && !legacyVersionColumnMissing) {
+    const res = await supabase
+      .from('campaigns')
+      .select('legacy_state, join_code, legacy_version')
+      .eq('id', campaignId)
+      .single()
+    if (isMissingVersionColumn(res.error)) noteMissingVersionColumn()
+    else if (isMissingJoinCodeColumn(res.error)) noteMissingColumn()
+    else return { data: res.data as unknown as CampaignRow | null, error: res.error }
+  }
   if (!joinCodeColumnMissing) {
     const res = await supabase
       .from('campaigns')
@@ -253,15 +270,13 @@ export function healRenamedScarTypes(ls: LegacyState): LegacyState {
 export async function loadLegacyState(campaignId: string): Promise<LegacyState | null> {
   if (!campaignId) return null
   try {
-    // Record which version we are about to amend, so the next save can refuse
-    // to overwrite anyone who wrote in between. Its own query, because folding
-    // it into fetchCampaignRow would need a third missing-column fallback.
-    if (!legacyVersionColumnMissing) {
-      const v = await supabase.from('campaigns').select('legacy_version').eq('id', campaignId).maybeSingle()
-      if (isMissingVersionColumn(v.error)) noteMissingVersionColumn()
-      else if (typeof v.data?.legacy_version === 'number') noteLegacyVersion(campaignId, v.data.legacy_version)
-    }
     const { data, error } = await fetchCampaignRow(campaignId)
+    // The version is recorded off the same row as the state — see
+    // fetchCampaignRow. It used to be its own query, and a page whose version
+    // read failed then saved wholesale.
+    if (data && typeof (data as CampaignRow).legacy_version === 'number') {
+      noteLegacyVersion(campaignId, (data as CampaignRow).legacy_version as number)
+    }
     if (error || !data) {
       // A failed LOAD is not the same as "no campaign yet" — returning null for
       // both makes a transient outage look like a fresh campaign. Surface it on
@@ -499,7 +514,36 @@ export function saveLegacyState(state: LegacyState, opts?: SaveOptions): Promise
   if (!state.campaignId) {
     return Promise.reject(new Error('Campaign save failed: state has no campaignId'))
   }
-  return saveQueue.run(state.campaignId, () => performSave(state, opts))
+  // NO PLACEHOLDER IS EVER STORED. Online, the client's copy of the piles is a
+  // stack of `hidden-card` stand-ins for cards it cannot see; written into the
+  // campaign blob and read back as a deal, they became the cards of a whole
+  // game (2026-09-06). The blob keeps real cards or none.
+  const clean = withoutPlaceholders(state)
+  return saveQueue.run(state.campaignId, () => performSave(clean, opts))
+}
+
+/**
+ * The card block with every placeholder removed — piles, hands, discards. The
+ * same object back when there is nothing to remove, so a clean save is not a
+ * new object every time.
+ */
+export function withoutPlaceholders(state: LegacyState): LegacyState {
+  const cards = state.activeGameCards
+  if (!cards) return state
+  let changed = false
+  const clean = (v: unknown): unknown => {
+    if (Array.isArray(v)) {
+      const out = v.filter(x => x !== HIDDEN_CARD_ID)
+      if (out.length !== v.length) changed = true
+      return out
+    }
+    if (v && typeof v === 'object') {
+      return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, clean(x)]))
+    }
+    return v
+  }
+  const next = clean(cards) as typeof cards
+  return changed ? { ...state, activeGameCards: next } : state
 }
 
 /** Retries of a re-applied write before giving up (each is one round trip). */
@@ -609,7 +653,45 @@ async function performSave(state: LegacyState, opts?: SaveOptions, attempt = 0):
         legacyVersions.set(state.campaignId, data.legacy_version as number)
         noteKnownState(state)          // the server and this client now agree
       }
+    } else if (campaignIsShared(state) && !legacyVersionColumnMissing) {
+      // ── A SHARED CAMPAIGN IS NEVER WRITTEN WHOLESALE ──────────────────────
+      // This used to fall through to the upsert below whenever the page held no
+      // version for the campaign, which a failed version read, or a row reached
+      // by any path but loadLegacyState, could leave it without — and an upsert
+      // is the whole row, from whatever copy this machine happened to hold.
+      // Unknown means READ: take the row as it stands, rebuild this screen's
+      // edits onto it, and save through the guard like every other write. A
+      // screen that has nothing to rebuild from never read the row, so its copy
+      // is not an edit of anything: the row is kept, adopted, and the loss said.
+      if (attempt >= MAX_REAPPLY_ATTEMPTS) throw new StaleCampaignError(state.campaignId, -1, null)
+      const { data: now, error: rErr } = await supabase
+        .from('campaigns').select('legacy_version, legacy_state')
+        .eq('id', state.campaignId).maybeSingle()
+      if (rErr) message = rErr.message || 'Unknown database error'
+      else if (!now || typeof now.legacy_version !== 'number') message = 'the campaign row could not be read before saving'
+      else {
+        noteLegacyVersion(state.campaignId, now.legacy_version as number)
+        const fresh = now.legacy_state as LegacyState
+        const known = lastKnownStates.get(state.campaignId)
+        const rebuild = opts?.reapply
+          ?? (known ? (f: LegacyState) => reapplyLegacyEdits(f, known, state) : null)
+        if (!rebuild) {
+          noteKnownState(fresh)
+          publishFreshLegacy(fresh)
+          setConnection({
+            state: 'error',
+            message: 'This screen had not read the campaign — your change was not saved',
+            failures: connection.failures + 1,
+          })
+          throw new StaleCampaignError(state.campaignId, -1, now.legacy_version as number)
+        }
+        const merged = rebuild(fresh)
+        publishFreshLegacy(merged)
+        return performSave(merged, opts, attempt + 1)
+      }
     } else {
+      // A campaign on one machine, or a schema without the version column: the
+      // whole row, because there is nobody else's work in it to lose.
       const { data, error } = await supabase.from('campaigns').upsert({
         id: state.campaignId,
         world_name: state.worldName,

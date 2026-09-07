@@ -32,6 +32,7 @@ import {
   publicView,
   secretsFromState,
   decksFromState,
+  placeholderIn,
 } from '../_shared/stateView.gen.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -64,6 +65,18 @@ Deno.serve(async (req: Request) => {
   const state = body.state
   if (!matchId || !state || typeof state !== 'object') {
     return json({ error: 'matchId and state are required', code: 'bad-request' }, 400)
+  }
+  // A DEAL IS MADE OF CARDS. A client's mirrored piles are placeholders it
+  // cannot see, and a board hydrated from a campaign blob that stored them
+  // would deal them here as if they were cards — every draw and refill an
+  // unknowable `hidden-card` (2026-09-06). Refused, named, before anything is
+  // written.
+  const placeholder = placeholderIn(state)
+  if (placeholder) {
+    return json({
+      error: `the deal carries a card nobody can see (${placeholder}) — a placeholder is not a card`,
+      code: 'placeholder-deck',
+    }, 400)
   }
 
   // ── Who is asking ──────────────────────────────────────────────────────────

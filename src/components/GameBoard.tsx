@@ -32,7 +32,7 @@ import {
   type LegacyEvent, type UnlockOption,
 } from '@/lib/legacyApi'
 import { getScarCard, type ScarCard, MERCENARY_CARD_IDS, BIOHAZARD_CARD_IDS } from '@/data/scarCards'
-import { mergeOwnSecrets, HIDDEN_CARD_ID, type SeatState } from '@/lib/stateView'
+import { mergeOwnSecrets, HIDDEN_CARD_ID, placeholderIn, type SeatState } from '@/lib/stateView'
 import { handSize, heldHand } from '@/lib/hand'
 import { useBuildPresence } from '@/lib/buildPresence'
 import { BUILD_ID } from '@/lib/buildId'
@@ -7539,6 +7539,15 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
           // Everyone is already seated; this only hands over the board. The
           // status compare-and-swap inside means a second attempt — two
           // machines, one lobby — is refused rather than duplicated.
+          // A DEAL IS MADE OF CARDS — see deal-match, which refuses the same
+          // thing. A board hydrated from the campaign blob can carry the
+          // mirror's face-down placeholders in its piles (an older client stored
+          // them), and dealing those put unknowable cards into every draw
+          // (2026-09-06). Say why here rather than let the server say it.
+          const placeholder = placeholderIn(gameStateRef.current)
+          if (placeholder) {
+            throw new Error(`this board's piles carry placeholder cards (${placeholder}) — the previous game was never closed out; finish it first`)
+          }
           await startLobby(lobbyToStart, gameStateRef.current)
           // By id: we know exactly which match this is, and a game-number
           // lookup can land on a previous game's row that was never closed.

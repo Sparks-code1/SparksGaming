@@ -120,6 +120,24 @@ function decksFromState(state) {
     ) : {}
   };
 }
+function placeholderIn(state) {
+  const stores = [
+    ["cards", state?.cards],
+    ["legacySnapshot.activeGameCards", activeCards(state ?? {})]
+  ];
+  for (const [name, store] of stores) {
+    if (!store || typeof store !== "object") continue;
+    for (const [k, v] of Object.entries(store)) {
+      if (Array.isArray(v) && v.includes(HIDDEN_CARD_ID)) return `${name}.${k}`;
+      if (v && typeof v === "object" && !Array.isArray(v)) {
+        for (const [pk, pv] of Object.entries(v)) {
+          if (Array.isArray(pv) && pv.includes(HIDDEN_CARD_ID)) return `${name}.${k}.${pk}`;
+        }
+      }
+    }
+  }
+  return null;
+}
 function deckOrdersIn(state) {
   const secret = new Set(SECRET_DECK_KEYS);
   const found = [];
@@ -247,6 +265,7 @@ export {
   leaksDeckOrder,
   leaksOtherSeatsSecrets,
   mergeOwnSecrets,
+  placeholderIn,
   publicView,
   secretsFromState,
   viewForSeat

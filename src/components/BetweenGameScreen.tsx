@@ -724,7 +724,22 @@ export default function BetweenGameScreen({ onReadyForDiceRoll, onResumeGame, on
                     is already hosting — the panel above outranks it, because a
                     second lobby is the two-games problem all over again. On a
                     shared campaign it is THE start button and dresses as one. */}
-                {user && !openLobby && (
+                {/* NOT OVER AN OPEN GAME. A game whose ceremony never closed it out
+                    leaves the campaign on the old number, and hosting from there
+                    dealt the old game's stored piles as a new game (2026-09-06).
+                    The auto-host path already waits on this flag; the button
+                    waits with it, and says why. */}
+                {user && !openLobby && legacy.gameInProgress && legacy.activeMatchId && (
+                  <div style={{
+                    padding: '10px 12px', borderRadius: 6, fontSize: 11.5, lineHeight: 1.5,
+                    background: 'rgba(200,148,10,0.08)', border: '1px solid rgba(200,148,10,0.30)',
+                    color: '#c8b080', textAlign: 'center',
+                  }}>
+                    Game #{legacy.currentGameNumber} is still open online — its end-of-game
+                    ceremony has to finish before the next game can be hosted.
+                  </div>
+                )}
+                {user && !openLobby && !(legacy.gameInProgress && legacy.activeMatchId) && (
                   <button
                     onClick={hostOnlineGame}
                     disabled={hostingGame}
