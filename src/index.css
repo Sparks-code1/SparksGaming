@@ -101,8 +101,10 @@ html, body, #root {
   animation: hq-spin-in 0.8s cubic-bezier(0.34, 1.4, 0.64, 1) both;
 }
 
-/* Dice — real 3D cube: tumbles through space while rolling, then rotates to
-   land on the rolled face. .die3d-cube carries the six faces in preserve-3d. */
+/* Dice — real 3D cube: .die3d-cube carries the six faces in preserve-3d. The
+   tumble and the landing are driven from DieFace (src/lib/dieSpin.ts) as a
+   running angle, so the landing always continues the spin's direction; only
+   the landing's easing lives here. */
 .die3d-scene {
   position: relative;
   flex-shrink: 0;
@@ -118,17 +120,6 @@ html, body, #root {
   position: absolute;
   inset: 0;
   backface-visibility: hidden;
-}
-@keyframes die-cube-spin {
-  0%   { transform: rotateX(0deg)    rotateY(0deg)    rotateZ(0deg); }
-  25%  { transform: rotateX(200deg)  rotateY(110deg)  rotateZ(40deg); }
-  50%  { transform: rotateX(390deg)  rotateY(250deg)  rotateZ(-30deg); }
-  75%  { transform: rotateX(550deg)  rotateY(370deg)  rotateZ(35deg); }
-  100% { transform: rotateX(720deg)  rotateY(540deg)  rotateZ(0deg); }
-}
-.die3d-cube.spinning {
-  animation: die-cube-spin 1.15s linear infinite;
-  transition: none;
 }
 @keyframes die-hop {
   0%, 100% { transform: translateY(0); }

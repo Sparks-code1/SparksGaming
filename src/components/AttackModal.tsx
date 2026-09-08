@@ -6,6 +6,7 @@ import { resolveCombat, createMathRng, singleDieDelta, singleDieBonus, defenderD
 import type { ActiveCombat } from '@/types/game'
 import { troopsAfterEntry, minTroopsToEnter, battleMissileControls, type EntryCost } from '@/lib/gameLogic'
 import { dieKey } from '@/lib/missileFx'
+import { FACE_ANGLES, SPIN_RATE, spinWobble, forwardTo, cubeTransform } from '@/lib/dieSpin'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -200,15 +201,9 @@ const FACE_TRANSFORMS: Array<{ value: number; rotate: string }> = [
   { value: 5, rotate: 'rotateX(-90deg)' },
 ]
 
-// Cube orientation that brings each value to the front
-const SHOW_FACE: Record<number, string> = {
-  1: 'rotateX(0deg) rotateY(0deg)',
-  2: 'rotateX(-90deg) rotateY(0deg)',
-  3: 'rotateX(0deg) rotateY(-90deg)',
-  4: 'rotateX(0deg) rotateY(90deg)',
-  5: 'rotateX(90deg) rotateY(0deg)',
-  6: 'rotateX(0deg) rotateY(180deg)',
-}
+// The orientation that brings each value to the front is FACE_ANGLES in
+// dieSpin.ts — numbers, because the landing is computed from where the spin
+// left the cube, never a fixed string.
 
 // Exported: the defender's battle screen renders the same dice, so both
 // players watch the same fight in the same visual language.
@@ -250,6 +245,51 @@ export function DieFace({
   const half = size / 2
   const showValue = Math.max(1, Math.min(6, value))
 
+  // ── ONE DIRECTION, FROM THE THROW TO THE REST ──────────────────────────
+  // The spin is a running angle advanced every frame, so the cube's
+  // orientation is always known; the landing continues FORWARD to the next
+  // turn that shows the face. A CSS keyframe spin handed the landing
+  // transition its last animated angles and the face's fixed (smaller)
+  // ones, and every landing unwound the other way (2026-09-07).
+  const cubeRef = useRef<HTMLDivElement>(null)
+  const anglesRef = useRef({ x: 0, y: 0 })
+  const paintedRef = useRef(false)
+  useEffect(() => {
+    const cube = cubeRef.current
+    if (!cube) return
+    const a = anglesRef.current
+    const first = !paintedRef.current
+    paintedRef.current = true
+    if (spinning) {
+      cube.style.transition = 'none'
+      let last = performance.now()
+      let frame = 0
+      const step = (now: number) => {
+        const dt = Math.min(64, now - last)
+        last = now
+        a.x += dt * SPIN_RATE.x
+        a.y += dt * SPIN_RATE.y
+        cube.style.transform = cubeTransform(a.x, a.y, spinWobble(a.x))
+        frame = requestAnimationFrame(step)
+      }
+      frame = requestAnimationFrame(step)
+      return () => cancelAnimationFrame(frame)
+    }
+    const face = FACE_ANGLES[showValue] ?? FACE_ANGLES[1]
+    a.x = forwardTo(a.x, face.x)
+    a.y = forwardTo(a.y, face.y)
+    if (first) {
+      // First paint: sit on the face, no travel; the stylesheet's transition
+      // applies from the next frame on.
+      cube.style.transition = 'none'
+      cube.style.transform = cubeTransform(a.x, a.y, 0)
+      const t = requestAnimationFrame(() => { cube.style.transition = '' })
+      return () => cancelAnimationFrame(t)
+    }
+    cube.style.transition = ''
+    cube.style.transform = cubeTransform(a.x, a.y, 0)
+  }, [spinning, showValue])
+
   return (
     <div
       onClick={clickable ? onClick : undefined}
@@ -269,10 +309,7 @@ export function DieFace({
         transition: 'filter 0.25s, opacity 0.25s',
       }}
     >
-      <div
-        className={`die3d-cube${spinning ? ' spinning' : ''}`}
-        style={{ transform: spinning ? undefined : SHOW_FACE[showValue] }}
-      >
+      <div ref={cubeRef} className="die3d-cube">
         {FACE_TRANSFORMS.map(({ value: faceValue, rotate }) => {
           const pips = PIPS[faceValue] ?? []
           return (
