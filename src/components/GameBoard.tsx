@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as PIXI from 'pixi.js'
 import type { Territory, ScarType } from '@/types/territory'
-import type { GameState, EndGameState, PendingEventKind } from '@/types/game'
+import type { GameState, EndGameState, PendingEventKind, CombatDisplayMods } from '@/types/game'
 import { initialTurnState } from '@/types/game'
 import EndGameOverlay from './EndGameOverlay'
 import AdminConsole from './AdminConsole'
@@ -1048,7 +1048,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   // whole exchange rides match state and both machines see the same battle.
   const combatKeyRef = useRef<string | null>(null)
   const interactiveDefenseApiRef = useRef({
-    offer: (defDiceMax: number) => {
+    offer: (defDiceMax: number, mods: CombatDisplayMods) => {
       const srcId = attackSrcRef.current ?? '', tgtId = attackTgtRef.current ?? ''
       const st = gameStateRef.current
       const attackerId = st.territories[srcId]?.occupyingPlayerId ?? ''
@@ -1056,7 +1056,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       const key = `${srcId}>${tgtId}@${st.turnNumber}.${Date.now() % 1000000}`
       combatKeyRef.current = key
       dispatch({
-        type: 'COMBAT_OFFER', key, srcId, tgtId, attackerId, defenderId, defDiceMax,
+        type: 'COMBAT_OFFER', key, srcId, tgtId, attackerId, defenderId, defDiceMax, mods,
         // The territory may have been EMP'd earlier this turn — remote
         // replays must drop their modifier stacks from round one.
         emp: empTerritoryIdsRef.current.has(tgtId),

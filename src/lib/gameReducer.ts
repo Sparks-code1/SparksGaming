@@ -25,7 +25,7 @@
  * next, one verified stage at a time.
  */
 
-import { initialTurnState, type ActiveCombat, type GameState, type ServerCardPiles, type PendingEventChoice } from '@/types/game'
+import { initialTurnState, type ActiveCombat, type CombatDisplayMods, type GameState, type ServerCardPiles, type PendingEventChoice } from '@/types/game'
 import type { Territory } from '@/types/territory'
 import { applyCustomSeaLines, applyHqReserveTroops, cardCoinValue, continentsHeldInFull, injectAlienIslandTerritory, legalJoinWarTerritoryIds, troopsAfterEntry } from '@/lib/gameLogic'
 // The claim rule and the homeland lookup, shared with the draw modal and the AI
@@ -291,7 +291,7 @@ export type Action =
    * waiting); COMBAT_NEXT_ROUND clears the slots for the next roll.
    * RESOLVE_COMBAT / RETREAT / END_TURN all close the session.
    */
-  | { type: 'COMBAT_OFFER'; key: string; srcId: string; tgtId: string; attackerId: string; defenderId: string; defDiceMax: number; emp?: boolean }
+  | { type: 'COMBAT_OFFER'; key: string; srcId: string; tgtId: string; attackerId: string; defenderId: string; defDiceMax: number; emp?: boolean; mods?: CombatDisplayMods }
   /** EMP activated mid-battle: every die modifier is dead for this territory.
    *  Remote replays drop their modifier stacks the moment this lands. */
   | { type: 'COMBAT_SET_EMP'; key: string }
@@ -1183,7 +1183,9 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
         round: 1, atkDice: null, defDice: null,
         emp: !!action.emp,
       }
-      return only({ ...state, combat })
+      // The stack the attacker will resolve under, bounded like DECLARE_ATTACK's.
+      const mods = clampDisplayMods(action.mods)
+      return only({ ...state, combat: mods ? { ...combat, mods } : combat })
     }
 
     case 'COMBAT_PROPOSE_AUTO': {
@@ -1545,6 +1547,39 @@ export function endTurnTerritories(
     rules.falloutZoneId,
     rules.mercenaryComeback ?? false,
   ).territories
+}
+
+/**
+ * Bound the modifier stack an offer carries for the table to SHOW — the same
+ * discipline as clampCombatModifiers below: the server cannot derive the
+ * stack, so it can only refuse impossible values and oversized labels.
+ */
+export function clampDisplayMods(m: unknown): CombatDisplayMods | undefined {
+  if (!m || typeof m !== 'object') return undefined
+  const o = m as Record<string, unknown>
+  const int = (v: unknown, lo: number, hi: number) =>
+    typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.trunc(v))) : 0
+  const parts = Array.isArray(o.parts)
+    ? o.parts.slice(0, 32).flatMap((p): CombatDisplayMods['parts'] => {
+        if (!p || typeof p !== 'object') return []
+        const q = p as Record<string, unknown>
+        const label = typeof q.label === 'string' ? q.label.slice(0, 80) : ''
+        if (!label) return []
+        return [{
+          label,
+          ...(typeof q.highest === 'number' ? { highest: int(q.highest, -5, 5) } : {}),
+          ...(typeof q.lowest === 'number' ? { lowest: int(q.lowest, -5, 5) } : {}),
+        }]
+      }).slice(0, 8)   // junk and blanks do not eat the eight
+    : []
+  return {
+    defHighest: int(o.defHighest, -5, 5),
+    defLowest: int(o.defLowest, -5, 5),
+    parts,
+    atkBonusAllDice: int(o.atkBonusAllDice, 0, 3),
+    attackerSixesWin: !!o.attackerSixesWin,
+    nuclearFallout: !!o.nuclearFallout,
+  }
 }
 
 /**

@@ -1075,7 +1075,8 @@ function gameReducer(state, action, rng) {
         defDice: null,
         emp: !!action.emp
       };
-      return only({ ...state, combat });
+      const mods = clampDisplayMods(action.mods);
+      return only({ ...state, combat: mods ? { ...combat, mods } : combat });
     }
     case "COMBAT_PROPOSE_AUTO": {
       const c = state.combat;
@@ -1307,6 +1308,30 @@ function endTurnTerritories(state, rules) {
     rules.falloutZoneId,
     rules.mercenaryComeback ?? false
   ).territories;
+}
+function clampDisplayMods(m) {
+  if (!m || typeof m !== "object") return void 0;
+  const o = m;
+  const int = (v, lo, hi) => typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.trunc(v))) : 0;
+  const parts = Array.isArray(o.parts) ? o.parts.slice(0, 32).flatMap((p) => {
+    if (!p || typeof p !== "object") return [];
+    const q = p;
+    const label = typeof q.label === "string" ? q.label.slice(0, 80) : "";
+    if (!label) return [];
+    return [{
+      label,
+      ...typeof q.highest === "number" ? { highest: int(q.highest, -5, 5) } : {},
+      ...typeof q.lowest === "number" ? { lowest: int(q.lowest, -5, 5) } : {}
+    }];
+  }).slice(0, 8) : [];
+  return {
+    defHighest: int(o.defHighest, -5, 5),
+    defLowest: int(o.defLowest, -5, 5),
+    parts,
+    atkBonusAllDice: int(o.atkBonusAllDice, 0, 3),
+    attackerSixesWin: !!o.attackerSixesWin,
+    nuclearFallout: !!o.nuclearFallout
+  };
 }
 function clampCombatModifiers(m) {
   const clamp = (v, lo, hi, dflt = 0) => typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.trunc(v))) : dflt;
@@ -1616,6 +1641,7 @@ export {
   checkReinforcementPlacement,
   clampCombatModifiers,
   clampCombatResolution,
+  clampDisplayMods,
   compareRolls,
   computeTurnAdvance,
   createMathRng,

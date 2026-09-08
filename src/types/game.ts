@@ -252,6 +252,26 @@ export interface ActiveCombat {
    *  been EMP'd earlier this turn) and settable mid-battle, so remote replays
    *  drop their modifier stacks too. */
   emp?: boolean
+  /**
+   * THE MODIFIER STACK, AS THE ATTACKER'S MACHINE RESOLVES IT. Every screen
+   * used to derive its own from its own copy of the board and the campaign —
+   * and the campaign has no live sync, so a fortification, a comeback power
+   * or an ability one screen had not heard of left the table disagreeing
+   * about what was rolled (2026-09-07: a Bunker's +1 shown on the attacker's
+   * screen alone). Carried on the offer, bounded by the reducer, and read by
+   * every other screen in place of its own derivation.
+   */
+  mods?: CombatDisplayMods
+}
+
+/** The die modifiers a battle is fought under, in the shape the battle screens show them. */
+export interface CombatDisplayMods {
+  defHighest: number
+  defLowest: number
+  parts: Array<{ label: string; highest?: number; lowest?: number }>
+  atkBonusAllDice: number
+  attackerSixesWin: boolean
+  nuclearFallout: boolean
 }
 
 /** The shared card piles an online match's server state owns. */

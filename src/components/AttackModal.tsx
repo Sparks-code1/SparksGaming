@@ -3,7 +3,7 @@ import type { Territory } from '@/types/territory'
 import type { Player } from '@/types/player'
 import { playDice } from '@/lib/sounds'
 import { resolveCombat, createMathRng, singleDieDelta, singleDieBonus, defenderDieSteps, type CombatModifiers, type CombatOutcome, type CombatRoundLog } from '@/lib/gameReducer'
-import type { ActiveCombat } from '@/types/game'
+import type { ActiveCombat, CombatDisplayMods } from '@/types/game'
 import { troopsAfterEntry, minTroopsToEnter, battleMissileControls, type EntryCost } from '@/lib/gameLogic'
 import { dieKey } from '@/lib/missileFx'
 import { FACE_ANGLES, SPIN_RATE, spinWobble, forwardTo, cubeTransform } from '@/lib/dieSpin'
@@ -163,7 +163,8 @@ interface Props {
    * own). Absent for hotseat and any battle involving an AI.
    */
   interactiveDefense?: {
-    offer: (defDiceMax: number) => string
+    /** Opens the session, carrying the stack this machine will resolve under so every screen shows the same dice. */
+    offer: (defDiceMax: number, mods: CombatDisplayMods) => string
     getCombat: () => ActiveCombat | null
     proposeAuto: () => void
     postDice: (round: number, side: 'atk' | 'def', dice: number[], by?: 'attacker-idle' | 'ai') => void
@@ -697,7 +698,21 @@ export default function AttackModal({
   useEffect(() => {
     if (!interactiveDefense || (autoPlay && autoPlayFast) || offeredRef.current) return
     offeredRef.current = true
-    interactiveDefense.offer(maxDefDice)
+    // The stack THIS machine resolves the battle under travels with the offer,
+    // so the defender and every spectator show the dice this screen will —
+    // not the dice their own copy of the board would have modified.
+    interactiveDefense.offer(maxDefDice, {
+      defHighest: defenderDieBonus?.highest ?? 0,
+      defLowest: defenderDieBonus?.lowest ?? 0,
+      parts: (defenderDieBonusParts ?? []).map(p => ({
+        label: p.label,
+        ...(p.highest !== undefined ? { highest: p.highest } : {}),
+        ...(p.lowest !== undefined ? { lowest: p.lowest } : {}),
+      })),
+      atkBonusAllDice: attackerBonusAllDice,
+      attackerSixesWin,
+      nuclearFallout,
+    })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [interactiveDefense, autoPlay, autoPlayFast])
 

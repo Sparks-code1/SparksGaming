@@ -91,6 +91,10 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
   onResolveNow?: () => void
   onDismiss?: () => void
 }) {
+  // THE TABLE'S STACK, NOT THIS SCREEN'S. The offer carries the modifiers the
+  // attacker's machine resolves under; this screen's own derivation (the
+  // `mods` prop) is only for a session opened by a build that sent none.
+  const shown: DefenderBattleMods = combat.mods ?? mods
   /** The shared deadline, counted down from state so a missile fired anywhere
    *  extends it on every screen at once. */
   const [windowSecondsLeft, setWindowSecondsLeft] = useState<number | null>(null)
@@ -186,7 +190,7 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
   useEffect(() => {
     if (!combat.atkDice || !combat.defDice || atkSpin || defSpin) return
     const flips = combat.missileFlips ?? []
-    const sig = JSON.stringify([combat.atkDice, combat.defDice, flips, !!combat.emp])
+    const sig = JSON.stringify([combat.atkDice, combat.defDice, flips, !!combat.emp, shown])
     if (settleSigRef.current === sig) return
     const t = setTimeout(() => {
       settleSigRef.current = sig
@@ -194,10 +198,10 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
       const emp = !!combat.emp
       let atk = emp
         ? [...combat.atkDice!].sort((a, b) => b - a)
-        : combat.atkDice!.map(d => clampDie(d + mods.atkBonusAllDice)).sort((a, b) => b - a)
+        : combat.atkDice!.map(d => clampDie(d + shown.atkBonusAllDice)).sort((a, b) => b - a)
       let def = emp
         ? [...combat.defDice!].sort((a, b) => b - a)
-        : applyDefBonus([...combat.defDice!].sort((a, b) => b - a), mods.defHighest, mods.defLowest)
+        : applyDefBonus([...combat.defDice!].sort((a, b) => b - a), shown.defHighest, shown.defLowest)
       // Missiles land AFTER modifiers — an unmodifiable 6, same order as the
       // attacker's pipeline.
       for (const f of flips) {
@@ -206,14 +210,14 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
       }
       const pairs = Math.min(atk.length, def.length)
       const winners = Array.from({ length: pairs }, (_, i) =>
-        (atk[i] > def[i] || (mods.attackerSixesWin && atk[i] === 6 && def[i] === 6)) ? 'atk' as const : 'def' as const)
+        (atk[i] > def[i] || (shown.attackerSixesWin && atk[i] === 6 && def[i] === 6)) ? 'atk' as const : 'def' as const)
       setAnimAtk(atk)
       setAnimDef(def)
       setSettled({ atk, def, winners, missiles: flips.length > 0 })
     }, 500)
     return () => clearTimeout(t)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [combat.atkDice, combat.defDice, combat.missileFlips, atkSpin, defSpin])
+  }, [combat.atkDice, combat.defDice, combat.missileFlips, combat.mods, atkSpin, defSpin])
 
   const rollDefense = () => {
     const dice = rollN(diceCount)
@@ -314,8 +318,8 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
     return () => { clearInterval(iv); clearTimeout(t) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rollPending, needsConsent, diceCount, combat.round, combat.key])
-  const aLoss = settled ? settled.winners.filter(w => w === 'def').length + (mods.nuclearFallout ? 1 : 0) : 0
-  const dLoss = settled ? settled.winners.filter(w => w === 'atk').length + (mods.nuclearFallout ? 1 : 0) : 0
+  const aLoss = settled ? settled.winners.filter(w => w === 'def').length + (shown.nuclearFallout ? 1 : 0) : 0
+  const dLoss = settled ? settled.winners.filter(w => w === 'atk').length + (shown.nuclearFallout ? 1 : 0) : 0
 
   return (
     <div style={{
@@ -410,11 +414,11 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
           </div>
         )}
 
-        {settled && (combat.emp || mods.parts.length > 0 || settled.missiles) && (
+        {settled && (combat.emp || shown.parts.length > 0 || settled.missiles) && (
           <div style={{ fontSize: 10, color: '#b09870', textAlign: 'center', marginBottom: 10 }}>
             {combat.emp
               ? '📡 EMP — every die modifier is disabled in this territory'
-              : [...mods.parts.map(p => p.label), ...(settled.missiles ? ['🚀 Missile — die forced to an unmodifiable 6'] : [])].join(' · ')}
+              : [...shown.parts.map(p => p.label), ...(settled.missiles ? ['🚀 Missile — die forced to an unmodifiable 6'] : [])].join(' · ')}
           </div>
         )}
 
