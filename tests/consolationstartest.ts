@@ -61,6 +61,8 @@ console.log('\n— one count, everywhere —')
   check('the game-start grant reads career wins the same way the star does', /const wins = careerWins\(prev, p\.id\)/.test(board), true)
   check('...and the log names who starts on two', /Consolation stars — one for each player yet to sign the board/.test(board), true)
   check('the legend explains the star', /No signature yet = /.test(board), true)
+  check('...and the map under it still takes clicks — the wider legend covered Greenland (2026-09-07)',
+    /gap: 16, pointerEvents: 'none' \}\}>[\s\S]{0,500}?No signature yet = /.test(board), true)
   const ai = bare(readFileSync('src/lib/ai.ts', 'utf8'))
   check('the AI counts through the same function', /export function playerRedStars\([^)]*\): number \{\s*return redStarTotal\(legacy, playerId, state\.territories\)/.test(ai), true)
 }

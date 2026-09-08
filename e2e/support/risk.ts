@@ -482,16 +482,80 @@ export async function toPlace(page: Page): Promise<number> {
  * tried first because it is nearly always still right; the sweep behind it is
  * the whole map in order and costs a few seconds on the turn after a loss.
  */
+/**
+ * Territory click points that something OTHER than the map would receive.
+ *
+ * A panel over the map that takes clicks swallows the territory under it,
+ * and the seat that owns only that territory can never place a troop —
+ * which reads exactly like a seat that owns nothing (Greenland under the
+ * top-left HUD, 2026-09-07). elementFromPoint ignores click-through elements
+ * (pointer-events: none), so a HUD that lets clicks pass is not reported.
+ */
+/**
+ * Where the board draws each held territory's troop count — by construction
+ * inside the shape, which a territory's LABEL point need not be: a label
+ * placed off its coast for legibility clicks the ocean, and a seat whose only
+ * territory is drawn that way can never place a troop (Greenland, 2026-09-07).
+ */
+export async function troopMarkerPoints(page: Page): Promise<Array<{ x: number; y: number }>> {
+  return page.evaluate(() => Array.from(document.querySelectorAll('svg[style*="z-index: 5"] text'))
+    .filter(t => /^\d+$/.test((t.textContent ?? '').trim()))
+    .map(t => { const r = t.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } }))
+}
+
+/** The territory whose label point is nearest a screen point — a hint's worth of identity. */
+export async function nearestTerritory(page: Page, at: { x: number; y: number }): Promise<string> {
+  let best = TERRITORY_DEFINITIONS[0].id, bestD = Infinity
+  for (const t of TERRITORY_DEFINITIONS) {
+    const pt = await territoryPoint(page, t.id)
+    const d = (pt.x - at.x) ** 2 + (pt.y - at.y) ** 2
+    if (d < bestD) { bestD = d; best = t.id }
+  }
+  return best
+}
+
+export async function coveredTerritoryPoints(page: Page): Promise<string[]> {
+  const points: Array<[string, number, number]> = []
+  for (const t of TERRITORY_DEFINITIONS) { const pt = await territoryPoint(page, t.id); points.push([t.id, pt.x, pt.y]) }
+  return page.evaluate((pts: Array<[string, number, number]>) => pts.flatMap(([id, x, y]) => {
+    const el = document.elementFromPoint(x, y)
+    if (!el || el.tagName === 'CANVAS') return []
+    const cls = el.className && typeof el.className === 'string' ? '.' + el.className.split(' ')[0] : ''
+    return [`${id} under <${el.tagName.toLowerCase()}${cls}> "${(el.textContent ?? '').trim().slice(0, 40)}"`]
+  }), points)
+}
+
 export async function draftableTerritory(
   page: Page, hint?: string,
 ): Promise<{ id: string; owed: number }> {
   const owed = await toPlace(page)
   if (owed === 0) return { id: hint ?? '', owed }
-  const tries = [...(hint ? [hint] : []), ...TERRITORY_DEFINITIONS.map(t => t.id)]
-  for (const id of tries) {
-    await clickTerritory(page, id)
+  // THE BOARD CARDS PANEL, ENLARGED, COVERS THE MAP. Only its ⤢ button opens
+  // it, and a stray click there (the setup's last press landing after the
+  // board mounted, 2026-09-07) left a seat unable to place a single troop.
+  // A player would close it; so does this, and says so.
+  const enlarged = page.locator('button', { hasText: '✕ Close' })
+  if (await enlarged.count()) {
+    console.log('[harness] the Board Cards panel was open over the map — closing it before the draft')
+    await enlarged.first().click()
+    await page.waitForTimeout(300)
+  }
+  // THE LAYOUT'S CONTRACT, checked before the first click: every territory's
+  // click point reaches the map. A covered one is named, not searched for.
+  const blocked = await coveredTerritoryPoints(page)
+  if (blocked.length) throw new Error('a panel over the map takes the clicks meant for: ' + blocked.join(' | ') + `\n${await where(page)}`)
+  // The hint, then every troop marker on the map (one of them is this seat's,
+  // and each sits inside its territory), then every label point.
+  const markers = await troopMarkerPoints(page)
+  const tries: Array<{ id?: string; at?: { x: number; y: number } }> = [
+    ...(hint ? [{ id: hint }] : []),
+    ...markers.map(at => ({ at })),
+    ...TERRITORY_DEFINITIONS.map(t => ({ id: t.id })),
+  ]
+  for (const t of tries) {
+    if (t.at) { await page.mouse.click(t.at.x, t.at.y); await page.waitForTimeout(250) } else await clickTerritory(page, t.id!)
     const now = await toPlace(page)
-    if (now < owed) return { id, owed: now }
+    if (now < owed) return { id: t.id ?? (await nearestTerritory(page, t.at!)), owed: now }
   }
   const paint = await paintReport(page)
   if (!paint.painted) {
@@ -499,8 +563,10 @@ export async function draftableTerritory(
       + ' (the map asset or the hit canvas), not a game refusing troops.'
       + `\n${await where(page)}`)
   }
+  const covered = await coveredTerritoryPoints(page)
   throw new Error('no territory on the map accepted a reinforcement.'
-    + ' Either this seat owns nothing, or the map point maths is wrong.'
+    + ` Either this seat owns nothing, or the map point maths is wrong (${markers.length} troop markers tried).`
+    + (covered.length ? `\ncovered click points: ${covered.join(' | ')}` : '\nno territory click point is covered by anything')
     + `\n${await where(page)}`)
 }
 

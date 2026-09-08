@@ -153,6 +153,27 @@ every failure, and `draftableTerritory` says "the board never painted" with
 that line before it will blame the game. Proven by withholding the asset with
 `page.route(..., abort)`: the walk fails naming `asset 0 shapes`.
 
+### A panel over the map is not a game refusing troops either
+
+The same message came back on 2026-09-07, three runs in a row, with the map
+painted: 147 shapes, the hit canvas present, a marker for every holding. The
+seat owned one territory and no click reached it. `draftableTerritory` now
+asks the page what sits under every territory's click point before it clicks
+anything (`coveredTerritoryPoints`: `elementFromPoint`, which ignores the
+click-through HUD) and names the offender instead of sweeping. It named the
+Board Cards panel, enlarged — the state only its ⤢ button produces, and a
+stray press from the setup walk landing after the board had mounted produced
+it. The draft closes that panel first, as a player would, and logs that it
+did; anything else covering a territory still fails by name.
+
+The draft also clicks the troop MARKERS before the label points
+(`troopMarkerPoints`, the `z-index: 5` numerals): a marker is drawn inside its
+territory by construction, and a label placed off its coast for legibility
+is a click on the ocean. The old sweep also walked every label point in
+atlas order, and one of those points is the ⤢ button — so a seat whose
+territory came late in the order could open the panel with its own sweep
+and then fail on it.
+
 ### Two maps, and they are not the same map
 
 Setup's HQ picker is an **SVG**, one `<polygon>` per territory, each carrying a

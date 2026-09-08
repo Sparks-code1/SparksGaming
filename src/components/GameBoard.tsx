@@ -8953,7 +8953,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
 
           </div>
 
-          <div style={{ fontSize: 14, color: '#000', fontFamily: 'Arial, sans-serif', fontWeight: 'bold', paddingLeft: 2, display: 'flex', gap: 16 }}>
+          <div style={{ fontSize: 14, color: '#000', fontFamily: 'Arial, sans-serif', fontWeight: 'bold', paddingLeft: 2, display: 'flex', gap: 16, pointerEvents: 'none' }}>
             <span>4 cards = <span style={{ color: '#c0392b' }}>★</span></span>
             <span>HQ = <span style={{ color: '#c0392b' }}>★</span></span>
             <span>No signature yet = <span style={{ color: '#c0392b' }}>★</span></span>
