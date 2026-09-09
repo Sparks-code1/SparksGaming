@@ -95,7 +95,10 @@ check('a rival on 3 stars is flagged as match point',
   rivalsOnMatchPoint(starState, starLegacy, 'me'), ['r1'])
 check('nobody at 3 stars -> no match point',
   rivalsOnMatchPoint(starState, { purchasedStars: {}, playerWins: { me: 1, r1: 1, r2: 1 } } as any, 'me'), [])
-check('a rival yet to sign the board carries the consolation star', playerRedStars(starState, { purchasedStars: { r1: 1 } } as any, 'r1'), 4)
+// The consolation star only exists once somebody has signed, so the fixture
+// records a win for a player who is not in this battle.
+check('a rival yet to sign the board carries the consolation star', playerRedStars(starState, { purchasedStars: { r1: 1 }, playerWins: { me: 1 } } as any, 'r1'), 4)
+check('...and nobody carries one before the first board is signed', playerRedStars(starState, { purchasedStars: { r1: 1 } } as any, 'r1'), 3)
 check('...which the match-point read sees', rivalsOnMatchPoint(starState, { purchasedStars: {}, playerWins: { r2: 1 } } as any, 'me'), ['r1'])
 
 // ─── 4. Mission focus — combat conquests only ─────────────────────────────

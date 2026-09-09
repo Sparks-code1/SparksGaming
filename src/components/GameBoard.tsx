@@ -9,7 +9,7 @@ import type { LegacyState } from '@/types/legacy'
 import type { Player } from '@/types/player'
 import { TERRITORY_DEFINITIONS, MAP_WIDTH, MAP_HEIGHT, buildTerritory } from '@/data/territoryData'
 import { FACTION_COLORS, NEUTRAL_COLOR } from '@/data/mockGameState'
-import { playerSignatureCount, doubleSigners, rosterName } from '@/lib/roster'
+import { doubleSigners, rosterName } from '@/lib/roster'
 import type { FactionId } from '@/types/faction'
 import TerritoryPanel from './TerritoryPanel'
 import SVGMapLayer from './SVGMapLayer'
@@ -2309,31 +2309,17 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ── Unsigned-player bonus star (game 2+) ─────────────────────────────────
-  // Any player who has never won a previous game starts with 1 purchased red star.
-  // Keys off the roster id, so signing the board follows the person across
-  // faction changes, seat changes, and games they sat out.
-  useEffect(() => {
-    if (!initialLegacy || initialLegacy.currentGameNumber < 2) return
-    const bonusPlayerIds = playerSetups
-      .filter(s => playerSignatureCount(initialLegacy, s.playerId) === 0)
-      .map(s => s.playerId)
-    if (bonusPlayerIds.length === 0) return
-    setLegacyState(prev => {
-      const existing = prev.purchasedStars ?? {}
-      // Only add the star if they don't already have it — prevents double-award on remount
-      const merged: Record<string, number> = { ...existing }
-      let changed = false
-      for (const pid of bonusPlayerIds) {
-        if ((merged[pid] ?? 0) !== 1) { merged[pid] = 1; changed = true }
-      }
-      if (!changed) return prev
-      const next = { ...prev, purchasedStars: merged }
-      saveLegacyState(next).catch(() => {})
-      return next
-    })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  // ── THE CONSOLATION STAR IS COUNTED, NOT STORED ──────────────────────────
+  // It used to be written into `purchasedStars` here, one per unsigned player
+  // at the start of every game from the second on. When the rule was written
+  // down properly (redStars.ts, 2026-09-07) the star was made a fact about
+  // the record — read off the victory log, granted by nobody, zeroed by
+  // nobody — and this writer was not found, so both applied: an unsigned
+  // player carried the star twice. Grant took a second HQ on turn one of
+  // game 3 and the board declared him the winner on three (2026-09-09).
+  //
+  // Nothing replaces it. `consolationStar` is the whole rule, and a stored
+  // copy of a computed thing is only ever a second answer to one question.
 
   // ── Shared mission placement (once per game, on mount) ───────────────────
   // ONE mission card is placed face up for the whole table. Any player may

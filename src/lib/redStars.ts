@@ -34,8 +34,23 @@ export function hasSignedBoard(legacy: LegacyState | null | undefined, playerId:
   return careerWins(legacy, playerId) > 0
 }
 
-/** The consolation star: one for a player yet to sign the board, none once they have. */
+/**
+ * Has ANYONE signed the board yet?
+ *
+ * The consolation star only exists opposite a missile: a signature brings a
+ * missile at every game start, and the star is what everyone else brings
+ * instead. In game one nobody has signed, so nobody draws a missile and
+ * nobody draws a star — the scale is already level, and handing every
+ * faction a star there would make the first game a race to two.
+ */
+export function campaignHasSignature(legacy: LegacyState | null | undefined): boolean {
+  if ((legacy?.victoryLog ?? []).length > 0) return true
+  return Object.values(legacy?.playerWins ?? {}).some(n => (n ?? 0) > 0)
+}
+
+/** The consolation star: one for a player yet to sign a board somebody else has. */
 export function consolationStar(legacy: LegacyState | null | undefined, playerId: string): 0 | 1 {
+  if (!campaignHasSignature(legacy)) return 0
   return hasSignedBoard(legacy, playerId) ? 0 : 1
 }
 
