@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { gameReducer, createMathRng, clampDisplayMods, type Action } from '@/lib/gameReducer'
+import { gameReducer, createMathRng, clampDisplayMods, defenderDieSteps, applyDefenderDieBonus, type Action } from '@/lib/gameReducer'
 import { initialTurnState, type GameState } from '@/types/game'
 // THE TABLE AGREES ABOUT WHAT WAS ROLLED.
 //
@@ -107,6 +107,46 @@ console.log('\n— and a screen says which battle it is showing —')
   check('...and EMP said rather than shown as a zero stack', /EMP — every modifier dead/.test(prompt), true)
   check('the report is written where the dice are settled, not where they arrive',
     prompt.indexOf('[Battle] ${combat.key} round') < prompt.indexOf('setAnimAtk(atk)'), true)
+}
+
+console.log('\n— the reveal every screen watches —')
+{
+  // The modified roll used to animate only where it was rolled: the attacker
+  // walked one step per modifier while every other screen jumped from the raw
+  // roll to the final one — indistinguishable from a roll nothing modified.
+  // Bunker, Fortification and Bear Trap each 'only worked for the attacker'
+  // (2026-09-09). Both screens now walk the SAME defenderDieSteps.
+  const parts = [
+    { label: '🏰 Bunker — defender highest +1', highest: 1 },
+    { label: '🐻 Bear Trap — defender lowest −1', lowest: -1 },
+  ]
+  const snaps = defenderDieSteps([5, 3], parts)
+  check('one snapshot per named source, in order', snaps, [[6, 3], [6, 2]])
+  check('...and the last is exactly what the battle resolves on',
+    snaps[snaps.length - 1], applyDefenderDieBonus([5, 3], { highest: 1, lowest: -1 }))
+  check('a source that moves nothing still takes its step',
+    defenderDieSteps([6, 1], [{ label: 'Bunker', highest: 1 }]), [[6, 1]])
+
+  const prompt = bare(readFileSync('src/components/DefenderBattlePrompt.tsx', 'utf8'))
+  check('the prompt builds its steps through the shared function',
+    /defenderDieSteps\(rawDef, parts\)\.forEach\(\(snap, i\) =>/.test(prompt), true)
+  check('...naming each source, and marking the dice that moved',
+    /const moved = snap\.flatMap\(\(v, j\) => \(v !== curDef\[j\] \? \[j\] : \[\]\)\)/.test(prompt), true)
+  check('...the attacker bonus takes a step of its own', /label: `⚔ Aggressive — all attack dice/.test(prompt), true)
+  check('...and a stack with no breakdown still moves the dice once',
+    /label: 'Defence modifiers', highest: shown\.defHighest, lowest: shown\.defLowest/.test(prompt), true)
+  check('EMP reveals nothing — there is nothing to reveal', /if \(!emp\) \{\s*const rawAtk/.test(prompt), true)
+  check('the walk settles on the RAW roll first', /setAnimAtk\(\[\.\.\.combat\.atkDice!\]\.sort\(\(a, b\) => b - a\)\)\s*setAnimDef\(rawDef\)\s*finalRef\.current = final\s*setReveal\(\{ steps, idx: -1 \}\)/.test(prompt), true)
+  check('...at the attacker\'s tempo', /\}, next === 0 \? 850 : 1000\)/.test(prompt), true)
+  check('...and the winners light only after the last step', /const f = finalRef\.current\s*if \(f\) \{ setAnimAtk\(f\.atk\); setAnimDef\(f\.def\); setSettled\(f\) \}/.test(prompt), true)
+  check('a battle with nothing to reveal still settles at once',
+    /if \(steps\.length === 0\) \{\s*setAnimAtk\(atk\)\s*setAnimDef\(def\)\s*setSettled\(final\)\s*return\s*\}/.test(prompt), true)
+  check('the moving dice are lit', /glow=\{taken \|\| flashing\('def', i\)/.test(prompt) && /glow=\{taken \|\| flashing\('atk', i\)/.test(prompt), true)
+  check('...and the source is named while they move', /💥 \{flash\.label\}/.test(prompt), true)
+  check('a new round clears the walk with everything else', /setReveal\(null\)\s*setFlash\(null\)\s*finalRef\.current = null/.test(prompt), true)
+  const modal = bare(readFileSync('src/components/AttackModal.tsx', 'utf8'))
+  check('one battle, one gunshot — the sound is shared, not copied', /export function playGunshot\(\)/.test(modal)
+    && /import \{ DieFace, playGunshot \} from '\.\/AttackModal'/.test(prompt), true)
 }
 
 console.log(pass ? '\nall combat-mods pins hold' : '\nFAILED')

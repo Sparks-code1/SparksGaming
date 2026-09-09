@@ -16,10 +16,20 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import type { ActiveCombat, CombatWindowState } from '@/types/game'
-import { DieFace } from './AttackModal'
+import { DieFace, playGunshot } from './AttackModal'
 import { playDice, playMissile } from '@/lib/sounds'
 import { diceArrivalKey } from '@/lib/gameLogic'
+import { defenderDieSteps } from '@/lib/gameReducer'
 import { emitMissileStrike, dieKey } from '@/lib/missileFx'
+
+/** One modifier taking effect: the dice AFTER it, and which of them moved. */
+interface RevealStep {
+  label: string
+  side: 'atk' | 'def'
+  indices: number[]
+  atk: number[]
+  def: number[]
+}
 
 const ATK_COLOR = '#c0392b'
 const DEF_COLOR = '#2471a3'
@@ -49,7 +59,8 @@ const clampDie = (v: number) => Math.max(1, Math.min(6, v))
 export interface DefenderBattleMods {
   defHighest: number
   defLowest: number
-  parts: Array<{ label: string }>
+  /** Named sources, each with the shift it makes — one animated step apiece. */
+  parts: Array<{ label: string; highest?: number; lowest?: number }>
   atkBonusAllDice: number
   attackerSixesWin: boolean
   nuclearFallout: boolean
@@ -136,6 +147,21 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
   const [animAtk, setAnimAtk] = useState<number[]>([])
   const [animDef, setAnimDef] = useState<number[]>([])
   const [settled, setSettled] = useState<{ atk: number[]; def: number[]; winners: Array<'atk' | 'def'>; missiles: boolean } | null>(null)
+  /**
+   * THE SAME REVEAL THE ATTACKER WATCHES, on every other screen.
+   *
+   * The attacker's modal settles on the RAW roll and then walks one step per
+   * named modifier — a gunshot, the affected dice moving, the source named.
+   * Every other screen used to jump silently from the raw roll to the final
+   * one, which is indistinguishable from a roll that was never modified at
+   * all: Bunker, Fortification and Bear Trap each 'only worked for the
+   * attacker' (2026-09-09). The steps are built from the stack the offer
+   * carried, through the same defenderDieSteps the attacker animates, so the
+   * two screens cannot drift.
+   */
+  const [reveal, setReveal] = useState<{ steps: RevealStep[]; idx: number } | null>(null)
+  const [flash, setFlash] = useState<{ side: 'atk' | 'def'; indices: Set<number>; label: string } | null>(null)
+  const finalRef = useRef<{ atk: number[]; def: number[]; winners: Array<'atk' | 'def'>; missiles: boolean } | null>(null)
   const prevRoundRef = useRef(combat.round)
   const seenAtkRef = useRef(false)
   const seenDefRef = useRef(false)
@@ -149,6 +175,9 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
       seenDefRef.current = false
       settleSigRef.current = ''
       setSettled(null)
+      setReveal(null)
+      setFlash(null)
+      finalRef.current = null
       setAnimAtk([])
       setAnimDef([])
     }
@@ -243,13 +272,79 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
             + ` hi ${sign(shown.defHighest)} lo ${sign(shown.defLowest)}`
             + `${shown.parts.length ? ' — ' + shown.parts.map(x => x.label).join(' · ') : ''})`)
         + (flips.length ? ` · ${flips.length} missile flip(s)` : ''))
-      setAnimAtk(atk)
-      setAnimDef(def)
-      setSettled({ atk, def, winners, missiles: flips.length > 0 })
+      const final = { atk, def, winners, missiles: flips.length > 0 }
+      // ── ONE STEP PER MODIFIER, AS THE ATTACKER SEES IT ─────────────────
+      // EMP kills every modifier, so there is nothing to reveal; a missile
+      // flip lands after the walk, in the final values.
+      const steps: RevealStep[] = []
+      if (!emp) {
+        const rawAtk = [...combat.atkDice!].sort((a, b) => b - a)
+        let curAtk = rawAtk
+        let curDef = rawDef
+        if (shown.atkBonusAllDice !== 0) {
+          curAtk = rawAtk.map(d => clampDie(d + shown.atkBonusAllDice))
+          steps.push({
+            label: `⚔ Aggressive — all attack dice ${shown.atkBonusAllDice > 0 ? '+' : ''}${shown.atkBonusAllDice}`,
+            side: 'atk', indices: curAtk.map((_, i) => i), atk: curAtk, def: curDef,
+          })
+        }
+        // Named sources when the offer carried them; otherwise one aggregate
+        // step, the same fallback the attacker's modal uses for a stack with
+        // no breakdown — a screen with no names still shows the dice move.
+        const named = shown.parts.filter(p => p.highest !== undefined || p.lowest !== undefined)
+        const parts = named.length > 0 ? named
+          : (shown.defHighest !== 0 || shown.defLowest !== 0)
+            ? [{ label: 'Defence modifiers', highest: shown.defHighest, lowest: shown.defLowest }]
+            : []
+        defenderDieSteps(rawDef, parts).forEach((snap, i) => {
+          const moved = snap.flatMap((v, j) => (v !== curDef[j] ? [j] : []))
+          curDef = snap
+          steps.push({ label: parts[i].label, side: 'def', indices: moved, atk: curAtk, def: snap })
+        })
+      }
+      if (steps.length === 0) {
+        setAnimAtk(atk)
+        setAnimDef(def)
+        setSettled(final)
+        return
+      }
+      // Back to the raw roll, then let the walk carry it to the final.
+      setAnimAtk([...combat.atkDice!].sort((a, b) => b - a))
+      setAnimDef(rawDef)
+      finalRef.current = final
+      setReveal({ steps, idx: -1 })
     }, 500)
     return () => clearTimeout(t)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [combat.atkDice, combat.defDice, combat.missileFlips, combat.mods, atkSpin, defSpin])
+
+  // One step at a time, at the attacker's tempo: 850ms to the first, a second
+  // between the rest, then a beat on the final dice before the winners light.
+  useEffect(() => {
+    if (!reveal) return
+    const next = reveal.idx + 1
+    if (next >= reveal.steps.length) {
+      const done = setTimeout(() => {
+        const f = finalRef.current
+        if (f) { setAnimAtk(f.atk); setAnimDef(f.def); setSettled(f) }
+        setFlash(null)
+        setReveal(null)
+      }, 950)
+      return () => clearTimeout(done)
+    }
+    const t = setTimeout(() => {
+      const step = reveal.steps[next]
+      playGunshot()
+      setAnimAtk(step.atk)
+      setAnimDef(step.def)
+      setFlash({ side: step.side, indices: new Set(step.indices), label: step.label })
+      setReveal({ steps: reveal.steps, idx: next })
+    }, next === 0 ? 850 : 1000)
+    return () => clearTimeout(t)
+  }, [reveal])
+
+  /** The die this step is moving, lit while it moves. */
+  const flashing = (side: 'atk' | 'def', i: number) => flash?.side === side && flash.indices.has(i)
 
   const rollDefense = () => {
     const dice = rollN(diceCount)
@@ -402,7 +497,7 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
                     const taken = (combatWindow?.flips ?? []).some(f => f.side === 'atk' && f.dieIndex === i)
                     return (
                       <DieFace key={i} value={taken ? 6 : v} borderColor={ATK_COLOR} spinning={atkSpin} dataDie={dieKey('atk', i)}
-                        glow={taken ? '#F1C40F' : settled && settled.winners[i] === 'atk' ? WIN_GLOW : undefined}
+                        glow={taken || flashing('atk', i) ? '#F1C40F' : settled && settled.winners[i] === 'atk' ? WIN_GLOW : undefined}
                         dim={!taken && !!settled && i < settled.winners.length && settled.winners[i] === 'def'} />
                     )
                   })}
@@ -423,7 +518,7 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
                     const clickable = canMissile && !taken && !!combatWindow && !missileInFlight
                     return (
                       <DieFace key={i} value={taken ? 6 : v} borderColor={DEF_COLOR} spinning={defSpin} dataDie={dieKey('def', i)}
-                        glow={taken ? '#F1C40F' : settled && settled.winners[i] === 'def' ? WIN_GLOW : undefined}
+                        glow={taken || flashing('def', i) ? '#F1C40F' : settled && settled.winners[i] === 'def' ? WIN_GLOW : undefined}
                         dim={!!settled && i < settled.winners.length && settled.winners[i] === 'atk'}
                         clickable={clickable}
                         onClick={clickable ? () => {
@@ -446,7 +541,12 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
           </div>
         )}
 
-        {settled && (combat.emp || shown.parts.length > 0 || settled.missiles) && (
+        {flash && (
+          <div style={{ fontSize: 12, color: '#F1C40F', textAlign: 'center', marginBottom: 10, fontWeight: 'bold' }}>
+            💥 {flash.label}
+          </div>
+        )}
+        {!flash && settled && (combat.emp || shown.parts.length > 0 || settled.missiles) && (
           <div style={{ fontSize: 10, color: '#b09870', textAlign: 'center', marginBottom: 10 }}>
             {combat.emp
               ? '📡 EMP — every die modifier is disabled in this territory'

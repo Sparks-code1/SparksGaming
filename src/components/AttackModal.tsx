@@ -21,8 +21,14 @@ interface ModStep {
   def: number[]
 }
 
-/** Synthesized gunshot — noise burst with a fast decay through a lowpass. */
-function playGunshot() {
+/**
+ * Synthesized gunshot — noise burst with a fast decay through a lowpass.
+ *
+ * Exported for the same reason as DieFace: the defender's screen replays
+ * this modifier reveal step for step, and one battle should sound like one
+ * battle wherever it is watched.
+ */
+export function playGunshot() {
   try {
     const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
     const ctx = new Ctx()
