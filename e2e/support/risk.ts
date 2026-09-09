@@ -540,10 +540,11 @@ export async function draftableTerritory(
     await enlarged.first().click()
     await page.waitForTimeout(300)
   }
-  // THE LAYOUT'S CONTRACT, checked before the first click: every territory's
-  // click point reaches the map. A covered one is named, not searched for.
-  const blocked = await coveredTerritoryPoints(page)
-  if (blocked.length) throw new Error('a panel over the map takes the clicks meant for: ' + blocked.join(' | ') + `\n${await where(page)}`)
+  // NOT ASSERTED UP FRONT. The territory info panel opens where a player
+  // clicks and covers a territory or two — ordinary play, and asserting
+  // against it failed a run whose seat could place perfectly well
+  // (2026-09-09). What matters is whether this seat can place; if it
+  // cannot, the coverage is named in the throw at the end.
   // The hint, then every troop marker on the map (one of them is this seat's,
   // and each sits inside its territory), then every label point.
   const markers = await troopMarkerPoints(page)

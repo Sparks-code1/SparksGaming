@@ -164,7 +164,11 @@ click-through HUD) and names the offender instead of sweeping. It named the
 Board Cards panel, enlarged — the state only its ⤢ button produces, and a
 stray press from the setup walk landing after the board had mounted produced
 it. The draft closes that panel first, as a player would, and logs that it
-did; anything else covering a territory still fails by name.
+did. The coverage is NOT asserted up front — the territory info panel opens
+where a player clicks and covers a territory or two, which is ordinary play,
+and asserting against it failed a run whose seat could place perfectly well
+(2026-09-09). It is named in the throw, once the draft has actually found
+nowhere to place.
 
 The draft also clicks the troop MARKERS before the label points
 (`troopMarkerPoints`, the `z-index: 5` numerals): a marker is drawn inside its
