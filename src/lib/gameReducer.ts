@@ -1036,8 +1036,13 @@ export function gameReducer(state: GameState, action: Action, rng: Rng): Reducer
           },
           players: state.players.map(p =>
             p.id === action.playerId ? { ...p, isEliminated: false, joinedWarThisGame: true } : p),
-          // Rejoining IS the start of their turn.
+          // Rejoining IS the start of their turn — and its reinforcement.
+          // Those three troops are the whole allowance, so the turn is marked
+          // as already drafted; without the mark the phase below handed them a
+          // pool as well, which is a floor of 3 for a player holding one
+          // territory, and a re-entry landed 6 (2026-09-09).
           phase: 'reinforce',
+          turn: { ...state.turn, rejoinedThisTurn: true },
         },
         effects: [{ kind: 'joined-war', playerId: action.playerId, territoryId: action.territoryId }],
       }

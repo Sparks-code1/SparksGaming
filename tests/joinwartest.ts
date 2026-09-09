@@ -2,7 +2,7 @@
 // somewhere legal to re-enter. With nowhere to go they are skipped silently
 // rather than being asked to forfeit.
 import { computeTurnAdvance, gameReducer, createMathRng } from '@/lib/gameReducer'
-import { legalJoinWarTerritoryIds } from '@/lib/gameLogic'
+import { legalJoinWarTerritoryIds, calcDraftTroops } from '@/lib/gameLogic'
 import { initialTurnState } from '@/types/game'
 
 let pass = true
@@ -112,6 +112,32 @@ check('already forfeited -> skipped even though a spot exists',
   check('joining puts them back in the war', joined.players[1].isEliminated, false)
   check('and it is their turn to reinforce',
     [joined.currentPlayerIndex, joined.phase], [1, 'reinforce'])
+
+  // ── THE THREE TROOPS ARE THE WHOLE ALLOWANCE ─────────────────────────────
+  // Rejoining puts the player into their reinforce phase, and that phase
+  // hands out a draft pool with a floor of 3 for anyone holding one
+  // territory. So a re-entry placed 3 and then drafted 3 more, and General
+  // Vex rejoined with 6 (2026-09-09). The turn is marked as already drafted.
+  check('the re-entry lands exactly three troops', joined.territories.open.troops, 3)
+  check('...and the turn is marked as having had its reinforcement',
+    joined.turn.rejoinedThisTurn, true)
+  check('...so the draft pool for that turn is nothing',
+    calcDraftTroops({
+      playerId: 'p1', factionId: 'f1', territories: joined.territories,
+      legacy: null, ability: null, rejoinedThisTurn: joined.turn.rejoinedThisTurn,
+    }), 0)
+  check('...where an unmarked turn on the same board would draft the floor of 3',
+    calcDraftTroops({
+      playerId: 'p1', factionId: 'f1', territories: joined.territories,
+      legacy: null, ability: null,
+    }), 3)
+  // The mark is this turn's, not the game's: their NEXT turn drafts normally.
+  const { state: nextTurn } = gameReducer(
+    { ...joined, phase: 'fortify' } as never,
+    { type: 'END_TURN', endTerritories: joined.territories, hqReservePlayerIds: [], playerId: 'p1' } as never,
+    createMathRng())
+  check('the mark is cleared with the rest of the turn', nextTurn.turn.rejoinedThisTurn, false)
+  check('...and a fresh turn state carries it false', initialTurnState().rejoinedThisTurn, false)
 }
 
 console.log(pass ? '\nALL PASS' : '\nFAILURES PRESENT')

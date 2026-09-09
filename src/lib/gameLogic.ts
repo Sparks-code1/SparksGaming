@@ -689,8 +689,19 @@ export function calcDraftTroops(args: {
   ability: string | null
   /** Bonus from an active global event (0 today â€” events no longer auto-draw). */
   eventBonus?: number
+  /**
+   * This turn began by rejoining the war (`turn.rejoinedThisTurn`). The three
+   * troops the re-entry placed are the turn's whole reinforcement, so the
+   * pool is nothing. Pass it only when computing for the player whose turn is
+   * RUNNING â€” a pool computed for the NEXT player is against a turn that has
+   * not started, where the mark is another player's.
+   */
+  rejoinedThisTurn?: boolean
 }): number {
   const { playerId, factionId, territories, legacy, ability, eventBonus = 0 } = args
+
+  // The re-entry already paid this turn's troops onto the map.
+  if (args.rejoinedThisTurn) return 0
 
   const roundUp = ability === 'balk-round-up'
   const primitive = (legacy?.alienWeaknessPowers ?? {})[factionId] === 'wp-primitive'

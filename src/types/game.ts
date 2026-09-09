@@ -46,6 +46,12 @@ export interface TurnState {
    *  so no client — however confused — can drain a territory by undoing more
    *  than was placed. Reset with the rest of the turn at END_TURN. */
   placedThisTurn: Record<string, number>
+  /**
+   * This turn began by rejoining the war, so its reinforcement has already
+   * been placed: the three troops of the re-entry ARE the allowance, and no
+   * draft pool is granted on top of them. Reset with the rest of the turn.
+   */
+  rejoinedThisTurn: boolean
   /** An uncontested expansion into an unoccupied territory holding a standing
    *  city happened this turn. Such a move is NOT a conquest, so it normally
    *  earns no card — the Resourceful comeback power grants one for it. */
@@ -90,6 +96,7 @@ export function initialTurnState(): TurnState {
     captured: false, captureCount: 0, conqueredIds: [], conqueredViaSeaIds: [],
     bearTrapTerritoryId: null, attackedTerritoryIds: [], shieldedTerritoryIds: [],
     placedThisTurn: {},
+    rejoinedThisTurn: false,
     expandedIntoCity: false,
     richCardsTradedIn: 0, resourcesTradedIn: 0, knockedOutRichPlayer: false,
     continentsAtTurnStart: 0, eligibleForRichCard: false, richCardTerritoryIds: [],

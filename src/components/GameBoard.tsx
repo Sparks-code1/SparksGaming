@@ -1442,6 +1442,7 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       territories: initialState.territories,
       legacy: initialLegacy ?? null,
       ability: (initialLegacy?.chosenFactionAbilities ?? {})[cp.factionId] ?? null,
+      rejoinedThisTurn: initialState.turn?.rejoinedThisTurn,
     })
   })
   const [placementHistory, setPlacementHistory] = useState<string[]>([])
@@ -2607,6 +2608,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       territories: gameState.territories,
       legacy: legacyStateRef.current ?? null,
       ability: playerAbility(cp.id),
+      // A turn that began by rejoining has already had its troops placed.
+      rejoinedThisTurn: gameState.turn.rejoinedThisTurn,
     })
     // The ref is written synchronously so the AI driver — which runs later in
     // this same effects pass when an AI's turn arrives over the wire — decides
@@ -5575,6 +5578,13 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
     // Through the reducer: a re-entry that existed on one machine only left
     // the other boards showing a dead player holding live territory.
     dispatch({ type: 'JOIN_WAR', playerId, territoryId })
+    // THE THREE TROOPS ARE THE ALLOWANCE. Online the draft-pool effect reads
+    // the turn's mark and grants nothing; hotseat has no such effect and
+    // would keep whatever the last turn left in the pool, so it is said here
+    // too rather than left to a leftover that happens to be zero.
+    troopsRef.current = 0
+    setTroopsToPlace(0)
+    setPlacementHistory([])
     setJoinTheWarPlayerId(null)
   }
 
@@ -6655,6 +6665,11 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
       // (endTerritories already reflects the previous players' scar changes;
       // the next player's own scar effect happened at the end of THEIR last turn)
       const nextFactionId = gameState.players.find(p => p.id === nextPlayerId)?.factionId ?? ''
+      // No rejoinedThisTurn here: this is the NEXT player's pool, computed
+      // against the turn now ending, whose mark is not theirs. A player who
+      // rejoins does so on their own turn, and the branch above returns
+      // before this point when the next player is the one being offered a
+      // re-entry — so this line never runs for a rejoining player.
       const nextTroops = calcDraftTroops({
         playerId: nextPlayerId,
         factionId: nextFactionId,
