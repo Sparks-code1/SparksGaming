@@ -88,5 +88,26 @@ console.log('\n— the wiring —')
   check('the reducer bounds the stack before storing it', /const mods = clampDisplayMods\(action\.mods\)\s*return only\(\{ \.\.\.state, combat: mods \? \{ \.\.\.combat, mods \} : combat \}\)/.test(reducer), true)
 }
 
+console.log('\n— and a screen says which battle it is showing —')
+{
+  // Dice that were never modified look exactly like dice that had nothing to
+  // modify, so neither state is left silent: a session that arrives without
+  // the attacker's stack says so once, and every settle says which stack it
+  // used and what it did to the roll (2026-09-09).
+  const prompt = bare(readFileSync('src/components/DefenderBattlePrompt.tsx', 'utf8'))
+  check('a session with no stack warns, once per battle',
+    /if \(saidRef\.current === combat\.key\) return\s*saidRef\.current = combat\.key\s*if \(combat\.mods\) return\s*console\.warn\(/.test(prompt), true)
+  check('...naming the fallback and what it costs',
+    /the offer carried no modifier stack[\s\S]{0,220}?no live[\s\S]{0,40}?sync/.test(prompt), true)
+  check('every settle reports the raw roll and what this screen showed',
+    /console\.info\(`\[Battle\] \$\{combat\.key\} round \$\{combat\.round\}: attacker[\s\S]{0,200}?defender \$\{rawDef\.join\(','\)\} → \$\{def\.join\(','\)\}/.test(prompt), true)
+  check('...and says whose stack it used',
+    /combat\.mods \? "the table's stack" : "THIS SCREEN'S OWN"/.test(prompt), true)
+  check('...with the shifts and the named parts', /hi \$\{sign\(shown\.defHighest\)\} lo \$\{sign\(shown\.defLowest\)\}/.test(prompt), true)
+  check('...and EMP said rather than shown as a zero stack', /EMP — every modifier dead/.test(prompt), true)
+  check('the report is written where the dice are settled, not where they arrive',
+    prompt.indexOf('[Battle] ${combat.key} round') < prompt.indexOf('setAnimAtk(atk)'), true)
+}
+
 console.log(pass ? '\nall combat-mods pins hold' : '\nFAILED')
 process.exit(pass ? 0 : 1)

@@ -95,6 +95,29 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
   // attacker's machine resolves under; this screen's own derivation (the
   // `mods` prop) is only for a session opened by a build that sent none.
   const shown: DefenderBattleMods = combat.mods ?? mods
+
+  /**
+   * A SCREEN QUIETLY SHOWING A DIFFERENT BATTLE FROM EVERYONE ELSE is the
+   * failure shape that has cost this table the most time, and it has no
+   * symptom: dice that were never modified look exactly like dice that had
+   * nothing to modify. So both halves are said out loud — that a session
+   * arrived without the attacker's stack, and, at every settle, which stack
+   * this screen actually used and what it did to the roll.
+   *
+   * Without `combat.mods` this screen derives the modifiers from its own copy
+   * of the campaign, which has no live sync — so a fortification another
+   * player placed is invisible here, and this screen shows a different
+   * battle. That is the fallback, not the design (see the `shown` note).
+   */
+  const saidRef = useRef('')
+  useEffect(() => {
+    if (saidRef.current === combat.key) return
+    saidRef.current = combat.key
+    if (combat.mods) return
+    console.warn(`[Battle] ${combat.key}: the offer carried no modifier stack —`
+      + ' this screen is deriving its own from a campaign copy that has no live'
+      + " sync, so its dice can differ from the attacker's")
+  }, [combat.key, combat.mods])
   /** The shared deadline, counted down from state so a missile fired anywhere
    *  extends it on every screen at once. */
   const [windowSecondsLeft, setWindowSecondsLeft] = useState<number | null>(null)
@@ -211,6 +234,15 @@ export default function DefenderBattlePrompt({ combat, role, attackerName, defen
       const pairs = Math.min(atk.length, def.length)
       const winners = Array.from({ length: pairs }, (_, i) =>
         (atk[i] > def[i] || (shown.attackerSixesWin && atk[i] === 6 && def[i] === 6)) ? 'atk' as const : 'def' as const)
+      const rawDef = [...combat.defDice!].sort((a, b) => b - a)
+      const sign = (n: number) => (n >= 0 ? '+' + n : String(n))
+      console.info(`[Battle] ${combat.key} round ${combat.round}: attacker ${atk.join(',')}`
+        + ` · defender ${rawDef.join(',')} → ${def.join(',')}`
+        + (emp ? ' (EMP — every modifier dead)'
+          : ` (${combat.mods ? "the table's stack" : "THIS SCREEN'S OWN"}:`
+            + ` hi ${sign(shown.defHighest)} lo ${sign(shown.defLowest)}`
+            + `${shown.parts.length ? ' — ' + shown.parts.map(x => x.label).join(' · ') : ''})`)
+        + (flips.length ? ` · ${flips.length} missile flip(s)` : ''))
       setAnimAtk(atk)
       setAnimDef(def)
       setSettled({ atk, def, winners, missiles: flips.length > 0 })
