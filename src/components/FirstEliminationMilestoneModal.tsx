@@ -4,6 +4,15 @@ interface Props {
   eliminatedPlayerName: string
   eliminatedFactionName: string
   conquerorName: string
+  /**
+   * Who answers for the fallen faction, from THIS screen's point of view:
+   * this player, the computer (which has already answered), or somebody at
+   * another machine. Only 'you' is offered the pick; everyone else is told
+   * what is happening and given a way out of the modal.
+   */
+  chooser: 'you' | 'computer' | 'other'
+  /** The power the computer took, when it is the one choosing. */
+  chosenPowerName?: string
   onComplete: () => void
 }
 
@@ -14,7 +23,7 @@ type Step = 'announce' | 'unlocks'
  * eliminated in the campaign. Shown before the eliminated player chooses their
  * comeback power.
  */
-export default function FirstEliminationMilestoneModal({ eliminatedPlayerName, eliminatedFactionName, conquerorName, onComplete }: Props) {
+export default function FirstEliminationMilestoneModal({ eliminatedPlayerName, eliminatedFactionName, conquerorName, chooser, chosenPowerName, onComplete }: Props) {
   const [step, setStep] = useState<Step>('announce')
 
   return (
@@ -69,8 +78,26 @@ export default function FirstEliminationMilestoneModal({ eliminatedPlayerName, e
           <Unlock icon="🔵" color="#3498DB" title="Comeback Powers">
             Every faction that gets eliminated claims a permanent <strong>comeback power </strong>
             (the blue slot on its faction card). Each power can only ever be claimed by one
-            faction. <strong style={{ color: '#3498DB' }}>{eliminatedPlayerName}</strong> chooses
-            first, right now: <em>Expand, Aggressive, Mobile HQ, Mercenary, Resilient or Resourceful</em>.
+            faction.{' '}
+            {chooser === 'computer' ? (
+              <>
+                <strong style={{ color: '#3498DB' }}>{eliminatedPlayerName}</strong> is played by
+                the computer, which has taken{' '}
+                <strong style={{ color: '#3498DB' }}>{chosenPowerName ?? 'the first power still free'}</strong>.
+                Nobody at the table picks for it.
+              </>
+            ) : chooser === 'you' ? (
+              <>
+                <strong style={{ color: '#3498DB' }}>You</strong> choose first, right now:{' '}
+                <em>Expand, Aggressive, Mobile HQ, Mercenary, Resilient or Resourceful</em>.
+              </>
+            ) : (
+              <>
+                <strong style={{ color: '#3498DB' }}>{eliminatedPlayerName}</strong> chooses first,
+                on their own screen — <em>Expand, Aggressive, Mobile HQ, Mercenary, Resilient or
+                Resourceful</em>. Yours is not the screen that answers.
+              </>
+            )}
           </Unlock>
 
           <Unlock icon="🧍" color="#c0a060" title="Mercenary Scar Cards ×3">
@@ -99,7 +126,7 @@ export default function FirstEliminationMilestoneModal({ eliminatedPlayerName, e
               color: '#E8DCC8', cursor: 'pointer', fontFamily: 'Georgia, serif', letterSpacing: 0.5,
             }}
           >
-            💀 Choose a Comeback Power →
+            {chooser === 'you' ? '💀 Choose a Comeback Power →' : 'Continue →'}
           </button>
         </div>
       )}

@@ -1338,7 +1338,13 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
   const [comebackEliminatedPlayer, setComebackEliminatedPlayer] = useState<Player | null>(null)
   const [isFirstElimination, setIsFirstElimination] = useState(false)
   // First Blood milestone screen — shown before the comeback power choice
-  const [firstElimInfo, setFirstElimInfo] = useState<{ eliminatedName: string; factionId: string; conquerorName: string } | null>(null)
+  const [firstElimInfo, setFirstElimInfo] = useState<{
+    eliminatedName: string; factionId: string; conquerorName: string
+    /** Who answers for the fallen faction, from THIS screen's point of view. */
+    chooser: 'you' | 'computer' | 'other'
+    /** The power the computer took, so the announcement can name it. */
+    chosenPowerName?: string
+  } | null>(null)
   // Mobile HQ comeback power: one HQ move per turn, at any point in the turn.
   // Refs mirror the state because the PIXI click handler is a long-lived
   // closure and must read the live values (same pattern as fortify/expand).
@@ -6038,12 +6044,24 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
           const alreadyHasPower = !!(legacyStateRef.current?.comebackPowers ?? {})[ep.factionId]
           if (alreadyHasPower) continue
           const isFirst = !legacyStateRef.current?.firstEliminationTriggered
+          // Decided before the announcement so the milestone can name it: the
+          // same power the auto-claim below takes.
+          const aiPick = ep.isAI ? COMEBACK_POWERS.find(c => !claimedSoFar.has(c.id)) : undefined
           if (isFirst) {
             const conqueror = state.players.find(pl => pl.id === currentPId)
             setFirstElimInfo({
               eliminatedName: ep.name,
               factionId: ep.factionId,
               conquerorName: conqueror?.name ?? 'the enemy',
+              // WHOSE PICK IT IS, ON THIS SCREEN. First Blood is announced to
+              // the whole table, and it ended every screen on "Choose a Comeback
+              // Power →" — a button only the fallen player's own machine could
+              // honour, and that nobody could honour when the fallen player was
+              // the computer, which claims its power for itself (2026-09-09).
+              chooser: ep.isAI ? 'computer'
+                : (!onlineMatchRef.current || localSeatRef.current === ep.id) ? 'you'
+                : 'other',
+              chosenPowerName: aiPick?.name,
             })
             // ── FIRST BLOOD: EVERY SCREEN LEARNS IT, ONE MACHINE RECORDS IT ──
             //
@@ -6080,11 +6098,10 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             })
           }
           if (ep.isAI) {
-            const pick = COMEBACK_POWERS.find(c => !claimedSoFar.has(c.id))
-            if (pick) {
-              claimedSoFar.add(pick.id)
+            if (aiPick) {
+              claimedSoFar.add(aiPick.id)
               if (!remote) autoClaimComebackPower(ep)
-              showWeaknessNotice(`🔵 ${ep.name} claims the "${pick.name}" comeback power`)
+              showWeaknessNotice(`🔵 ${ep.name} claims the "${aiPick.name}" comeback power`)
             }
             continue   // a second faction eliminated by the same stroke still gets its power
           }
@@ -9628,6 +9645,8 @@ export default function GameBoard({ initialLegacy, playerOrder, playerSetups, pl
             eliminatedPlayerName={firstElimInfo.eliminatedName}
             eliminatedFactionName={FACTION_NAMES_FB[firstElimInfo.factionId] ?? firstElimInfo.factionId}
             conquerorName={firstElimInfo.conquerorName}
+            chooser={firstElimInfo.chooser}
+            chosenPowerName={firstElimInfo.chosenPowerName}
             onComplete={() => setFirstElimInfo(null)}
           />
         )
